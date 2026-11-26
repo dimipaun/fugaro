@@ -169,7 +169,7 @@ func personalPoolRefusal(resp *http.Response) error {
 		return &ExitError{Code: exitCodeFor(resp.StatusCode), Err: refused}
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
-		return userErr("the installation's credentials service serves no personal pool (%d): that route ships with `fugaro update`, the whole upgrade — run it and try again", resp.StatusCode)
+		return userErr("the installation's credentials service serves no personal pool (%d): that route ships with `fugaro update` — run it and try again", resp.StatusCode)
 	}
 	return remote(fmt.Errorf("the installation's credentials service refused this call (%d) and its answer is not one this release reads", resp.StatusCode))
 }
@@ -190,7 +190,7 @@ func exitCodeFor(status int) int {
 func personalPoolServiceURL(lc *localcfg.Config) (string, error) {
 	raw := configuredCredentialsServiceURL(lc)
 	if raw == "" {
-		return "", userErr("this installation has no credentials service in its local config, so there is no address to keep a pool of your own at: the service is deployed by `fugaro update`, which is the whole upgrade — run it and try again")
+		return "", userErr("no credentials service in this installation's local config, so there is no address to keep a pool of your own at: `fugaro update` deploys it")
 	}
 	return raw, nil
 }
@@ -207,9 +207,9 @@ func runAccountsPoolAddPersonal(cmd *cobra.Command, name string, members []strin
 	// answers, and this record is not a config entry.
 	switch {
 	case o.owner != "" || len(o.allowUsers) > 0:
-		return userErr("--personal records a pool of your own, which is served to you alone (R9): --owner and --allow-user name who a config pool is served to; nothing was recorded")
+		return userErr("--personal is served to you alone (R9): --owner and --allow-user name who a config pool is served to; nothing was recorded")
 	case o.serviceAccount != "":
-		return userErr("--personal records a pool of your own, and --service-account is the principal of a pool of the project's config (D3181); nothing was recorded")
+		return userErr("a pool of your own is one person's, and --service-account is a config pool's principal (D3181); nothing was recorded")
 	case o.strategy != "":
 		return userErr("--personal takes --rule and not --strategy: a pool of your own keeps no config to write a strategy in; nothing was recorded")
 	case o.layer != "":
@@ -263,11 +263,11 @@ func runAccountsAddPersonal(cmd *cobra.Command, name string, o accountsAddOption
 	// and the confirmation flags have nothing to act on here.
 	switch {
 	case o.repos != "":
-		return userErr("--personal writes nothing to this project's config, so --repos does not apply: the runs you launch are bound by the project's own admissions; nothing was stored")
+		return userErr("--personal writes no config, so --repos does not apply: the runs you launch are bound by the project's own admissions; nothing was stored")
 	case o.profile != "":
-		return userErr("--personal writes nothing to this project's config, so --profile does not apply: a pool of your own is no profile's account; nothing was stored")
+		return userErr("--personal writes no config, so --profile does not apply: a pool of your own is no profile's account; nothing was stored")
 	case o.typ != "":
-		return userErr("--personal declares no credential, so --type does not apply: your token lives in your own container and is listed by no account of the config; nothing was stored")
+		return userErr("--personal declares no credential, so --type does not apply: your token lives in your own container, listed by no account; nothing stored")
 	case o.ask || o.yes:
 		return userErr("--personal asks nothing, so --ask and --yes have nothing to stand in for: drop them; nothing was stored")
 	}
@@ -299,7 +299,7 @@ func runAccountsAddPersonal(cmd *cobra.Command, name string, o accountsAddOption
 		return err
 	}
 	if !found {
-		return userErr("you have no personal pool %s in this project: declare it with `fugaro accounts pool add %s --personal`, then run this again; nothing was stored",
+		return userErr("you have no personal pool %s in this project: declare it with `fugaro accounts pool add %s --personal`; nothing was stored",
 			pluginwire.Printable(o.pool), pluginwire.Printable(o.pool))
 	}
 	if o.claude {
