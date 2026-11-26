@@ -174,24 +174,25 @@ func claudeGateProblem(lines []claudeGateLine) string {
 	return fmt.Sprintf("%s %d %s:\n%s", claudeGateLead, len(lines), plural(len(lines), "repository", "repositories"), strings.Join(rows, "\n"))
 }
 
-// noticeClaudeGate is the step `fugaro update` runs after its stage loop: it
-// reads every enrolled repository through the same free function the stages
-// read (C1) and reports one line per repository the gate will stop, naming the
-// pins and the edit that takes them out of its way.
+// noticeClaudeGate reports one line per enrolled repository the gate will stop,
+// naming the pins and the edit that takes them out of its way, off the views
+// the update's own read of the enrolled list took (C1).
 //
-// It is here for the reason noticeRepoValues is: the release stops these runs,
-// and a person is owed the list before it does (CLAUDE.md's HARD RULE — the
-// update is the whole upgrade). It is a notice and not a write: the project's
-// provider table and the repository's own pin are the owner's files, and
-// neither is this machine's to edit. So it writes nothing, and it never fails
-// the update: a repository the reader could not read earns no line here,
-// because the reader's own unread line is where that is said.
-func (e *initEngine) noticeClaudeGate(ctx context.Context) {
-	r, o := e.r, e.r.o
-	if o.doorName() != updateDoor.name {
-		return
-	}
-	views, _ := e.repos(ctx)
+// It is the update's step after the stage loop, and it rides noticeRepoValues'
+// turn because that step is the same thing — one pass over the enrolled list,
+// one line per repository, needs-you — and because the step list in
+// init_stages.go is KS12's file in this plan's own order, which this task does
+// not write.
+//
+// It is a notice and not a write, for the reason noticeRepoValues is one: the
+// release stops these runs, so a person is owed the list before it does
+// (CLAUDE.md's HARD RULE — the update is the whole upgrade) — while the
+// project's provider table and the repository's own pin are the owner's files,
+// and neither is this machine's to edit. It never fails the update: a
+// repository the reader could not read earns no line, because the reader's own
+// unread line is where that is said.
+func (e *initEngine) noticeClaudeGate(views []repoView) {
+	r := e.r
 	var lines []initflow.RepoLine
 	for _, l := range claudeGateLines(e.lc, views) {
 		lines = append(lines, newRepoLine(l.Repo, initflow.RepoNeedsYou, l.Detail))
