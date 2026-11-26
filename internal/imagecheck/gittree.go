@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -178,6 +179,24 @@ func (g *GitTree) Glob(pattern string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// Size is the blob's size in bytes, without reading it (sizedTree): git
+// answers from the object header, and a blobless clone fetches the header and
+// not the contents.
+func (g *GitTree) Size(path string) (int64, error) {
+	if _, err := g.BlobID(path); err != nil {
+		return 0, err
+	}
+	out, err := g.git(g.dir, "cat-file", "-s", g.head+":"+path)
+	if err != nil {
+		return 0, fmt.Errorf("the size of %s: %w", path, err)
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("the size of %s: %w", path, err)
+	}
+	return n, nil
 }
 
 // ReadFile reads a regular file of the head tree: one git cat-file, which

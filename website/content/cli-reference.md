@@ -4467,6 +4467,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for refresh |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun) |
+| `--on-divergence` | string | "" | no | the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs; refused in a coding agent's session |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout) |

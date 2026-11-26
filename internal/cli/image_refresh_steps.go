@@ -428,6 +428,9 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		fmt.Fprintf(w, "  %s runs on the project's shared jobs, so its workflows' images are the project's catalog entries: this run rebuilds none of them (M7, D2312)\n", oneLineCLI(t.spec.Name))
 		return nil
 	}
+	// The shared half of the step, before the baked rebuilds and never
+	// stopping them (refreshSharedImages' own comment).
+	sharedErr := r.refreshSharedImages(ctx, p, t)
 	cloneErr := r.refreshCloneJobs(ctx, p, t)
 	host, err := infra.RegistryHost(t.lc)
 	if err != nil {
@@ -458,7 +461,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	if len(todo) == 0 {
 		fmt.Fprintln(w, "  No changes: every selected image is built from its current base")
-		return cloneErr
+		return errors.Join(sharedErr, cloneErr)
 	}
 	b, err := newCloudBuilder(ctx, t.lc)
 	if err != nil {
@@ -490,11 +493,11 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		if p.managed != nil {
 			var err error
 			if g, err = p.managed.admitBuild(ctx, p, t, wf, host); err != nil {
-				return builtSoFar(err, built)
+				return errors.Join(builtSoFar(err, built), sharedErr)
 			}
 		}
 		if err := r.announceBuild(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath), g); err != nil {
-			return builtSoFar(err, built)
+			return errors.Join(builtSoFar(err, built), sharedErr)
 		}
 		// The lease is taken before the submission and closed after it, and it
 		// is the whole of what bounds this build's cost (T4, D1543): an
@@ -507,7 +510,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		lease, err := openBuildLease(ctx, r.w, t.lc, t.spec.Name, t.spec.Slug, pricers)
 		if err != nil {
 			notes()
-			return builtSoFar(err, built)
+			return errors.Join(builtSoFar(err, built), sharedErr)
 		}
 		id, ended, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID)
 		if id == "" && err != nil {
@@ -540,10 +543,10 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 				err = withNote(err, fmt.Sprintf("Cloud Build build %s of %s/%s was already submitted and KEEPS RUNNING (and billing) in Cloud Build: follow it with gcloud builds describe %s --region %s --project %s; a rerun started now may find no build record yet and offer a duplicate build, so wait for it to finish first",
 					oneLine(id), t.spec.Name, wf, quoteWord(id), quoteWord(t.lc.BuildRegion()), quoteWord(t.lc.GCPProject)))
 			}
-			return builtSoFar(err, built)
+			return errors.Join(builtSoFar(err, built), sharedErr)
 		}
 		built = append(built, wf)
 	}
 	notes()
-	return cloneErr
+	return errors.Join(sharedErr, cloneErr)
 }
