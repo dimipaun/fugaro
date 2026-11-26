@@ -380,6 +380,14 @@ func TestStoredFollowUpRefusesADifferentRigorRequest(t *testing.T) {
 // the run's layers already resolve.
 const rigorNoEffect = "has no effect"
 
+// rigorLayer is a case's body of rigor: text as the project layer a launch
+// reads it from: S1 (D3237) lifts rigor.default and rigor.areas out of a
+// repository's file, so a case's rigor text is the layer's, and layerPins
+// reads a repository's own file — hence the anchor line it is handed here.
+func rigorLayer(body string) string {
+	return layerPins("version: 1\nproject: aurora\n" + body)
+}
+
 // TestRunNotesAModeThatIsWhatTheLayersAlreadyResolve: the request is the
 // narrowest rank of the order (LD3), so --mode decides whether it asks for more
 // or for less, and the one request that decides nothing is the request for the
@@ -420,6 +428,14 @@ func TestRunNotesAModeThatIsWhatTheLayersAlreadyResolve(t *testing.T) {
 			// gate refuses an image older than reviewLevelsSince.
 			writeBuildRecord(t, f, appSlug, "web", release0160)
 			checkoutWorkflows(t, c.rigorYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+			// The mode a run resolves is the layers' (S1, D3237:
+			// config.Resolve drops a repository file's rigor.default and
+			// rigor.areas), so this case's rigor text is published as the
+			// project layer — the checkout's own copy of it decides nothing —
+			// and the file is anchored to the project that layer names, which
+			// is what makes it apply.
+			anchorCheckoutFile(t)
+			publishedLayer(t, f, rigorLayer(c.rigorYAML))
 			id := fmt.Sprintf("20261025-13000%d-abcd", i)
 			args := []string{"run", "--repo", "acme/app", "--run-id", id, "--mode", c.mode}
 			for _, p := range c.paths {

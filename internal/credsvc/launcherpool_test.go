@@ -114,19 +114,38 @@ func lpPools() []config.Pool {
 	}
 }
 
-// lpPolicyDoc is the fixture's published node: chainPolicyDoc's document — the
-// two pool members the bundle holds, the admissions they are judged by and the
-// spread switch — with the one key this file's subject needs, `model_routing`
-// (PL3, D3177). chainFixture writes NO such key on purpose (an installation
-// `fugaro update` has not migrated), and that state is a pool nothing resolves
-// here, so the marker is spliced onto the same document rather than shared with
-// it. Its presence alone is what the lookup reads; the table inside it is
-// never consulted on this path.
+// lpPolicyDoc is the fixture's published node, in the shape `fugaro project
+// policy publish` really writes: chainPolicyDoc's document — the two pool
+// members the bundle holds, the admissions they are judged by and the spread
+// switch — with `model_routing` (PL3, D3177) spliced on, and the pools written
+// into BOTH blocks the way a publish writes them (publishedCraftPools,
+// modelRoutingForPublish). chainFixture writes NO such key on purpose (an
+// installation `fugaro update` has not migrated), and that state is a pool
+// nothing resolves here.
+//
+// The two blocks are not interchangeable, and this is the whole reason the
+// document is built here rather than shared: `craft_pools` is read by job
+// images a release behind, so every publish strips a pool's rule, principal and
+// threshold out of it, and the pool in C2's shape — the one this service
+// resolves a launcher's pool from — travels under the key. A fixture that left
+// the principal in `craft_pools` would be a node no publish produces, and the
+// lookup would resolve a launcher's pool here while resolving nobody's pool on
+// an installation anyone published.
 func lpPolicyDoc(t *testing.T, pools ...config.Pool) string {
 	t.Helper()
-	doc := chainPolicyDoc(t, pools...)
+	stripped := make([]config.Pool, 0, len(pools))
+	for _, p := range pools {
+		q := p
+		q.Rule, q.Principal, q.Threshold = "", nil, nil
+		stripped = append(stripped, q)
+	}
+	encoded, err := json.Marshal(pools)
+	if err != nil {
+		t.Fatalf("the test's own pools do not marshal: %v", err)
+	}
+	doc := chainPolicyDoc(t, stripped...)
 	return trimBrace(doc) + `,
-		"model_routing": {"entries": [{"match": "*", "chain": [{"kind": "launcher-pool"}]}], "pools": []}}`
+		"model_routing": {"entries": [{"match": "*", "chain": [{"kind": "launcher-pool"}]}], "pools": ` + string(encoded) + `}}`
 }
 
 // trimBrace is doc with its closing brace and the whitespace before it removed,
@@ -232,10 +251,13 @@ func newLauncherPools(t *testing.T, storeNet bool, pools ...config.Pool) *lpFixt
 // because the reader refuses such a pool where it is published (a pool with no
 // members serves nothing): the state the contract answers "none" for is a node
 // that carries one anyway, which is a hand-edited node — and an administrator
-// holding the database can write any project state (F61).
+// holding the database can write any project state (F61). It goes into the
+// block the lookup reads (ModelRouting.Pools) for lpPolicyDoc's reason: a pool
+// spliced into `craft_pools` alone carries no principal, so it would answer
+// "none" before the members were ever counted and this state would pin nothing.
 func (f *lpFixture) withEmptyPool(t *testing.T) *lpFixture {
 	t.Helper()
-	f.policy.shared.CraftPools = append(f.policy.shared.CraftPools,
+	f.policy.shared.ModelRouting.Pools = append(f.policy.shared.ModelRouting.Pools,
 		lpPool(lpEmptyPool, testLauncherAccount, lpPoolPrincipal(routing.PrincipalPerson, testLauncherSub)))
 	return f
 }

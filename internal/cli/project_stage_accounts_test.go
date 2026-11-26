@@ -122,7 +122,7 @@ func stageAccountProject(t *testing.T, extra string) (projectPath, repoPath stri
 	if _, err := f.WriteString("budget: { mode: enforce, per_run_usd: 2 }\n" + extra); err != nil {
 		t.Fatal(err)
 	}
-	return path, writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+	return path, pinnedFile(t, strings.Replace(cliMinimalYAML, "workflows:",
 		"agent: { auth: api-key, model: claude-sonnet-5-5, models: { background: claude-haiku-4-5 } }\nworkflows:", 1))
 }
 

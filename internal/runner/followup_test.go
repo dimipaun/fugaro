@@ -122,6 +122,7 @@ func (h *fuHarness) followUpRecipe(t *testing.T, id, previous, text string, rcp 
 // (task.Spec.Resumes, resume_test.go), and it is stored and run the same way.
 func (h *fuHarness) followUpSpec(t *testing.T, spec *task.Spec) {
 	t.Helper()
+	h.taskWithLayer(spec)
 	store := runstore.Open(h.bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
