@@ -173,6 +173,18 @@ type Policy struct {
 	// ConcurrencyCap).
 	Credentials *Credentials `json:"credentials,omitempty"`
 
+	// Pause is the pause block (R11 of docs/model-credentials-routing): the
+	// in-job floor, the shortest pause and the longest one, which the
+	// credentials service decides an exhausted chain by (PR3). It is a
+	// top-level key BESIDE `credentials` and not a member of it, for the reason
+	// the table is one: a member added inside that block would make a reader of
+	// the release behind refuse the WHOLE policy, and the node is re-read while
+	// runs are in flight (F49, R21). nil is every default, and the accessors on
+	// the block are how a consumer asks — a consumer never reads a member
+	// directly, because an absent member's meaning is a value and not a zero
+	// (WaitInJobDuration, MinPauseDuration, MaxPauseDuration).
+	Pause *Pause `json:"pause,omitempty"`
+
 	// Profiles are the project's job profiles (design project-centric §4.1,
 	// task 3.1), keyed by profile name. A repository's workflow selects one by
 	// name (config.Workflow.JobProfile, default DefaultProfileName) and the
@@ -861,6 +873,14 @@ var knownTopLevelKeys = map[string]bool{
 	// table while runs are in flight (F49, R21). The pools' own new members live
 	// inside it, so `craft_pools` stays byte for byte what that reader decodes.
 	"model_routing": true,
+	// The pause block (PR9 of docs/model-credentials-routing): a top-level key
+	// and not a member of any block, for the reason every key above is one — a
+	// reader of the release behind lists it in UnknownKeys and keeps reading the
+	// whole policy, which is what lets an update publish it while runs are in
+	// flight (F49, R21). `credentials` is left byte for byte as that reader
+	// decodes it, and `credentials.wait_threshold` stays decodable beside the
+	// block this key replaces.
+	"pause": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -1185,6 +1205,20 @@ const (
 	DefaultConcurrencyPerToken = 1
 )
 
+// The pause block's defaults (R11 of docs/model-credentials-routing): a reset
+// nearer than 5 minutes is waited out inside the job (D3184), a pause is never
+// shorter than 30 minutes (D3190 as amended by the owner), and a reset beyond
+// 6 hours — and a chain's total paused time beyond it — halts the run instead
+// (D3187, D3190). They are what an absent member means, so a project that
+// writes nothing pauses by the plan's own figures rather than by a zero: a run
+// would wait in the job for nothing, and a chain whose maximum was zero would
+// halt on every exhaustion.
+const (
+	DefaultPauseWaitInJob = 5 * time.Minute
+	DefaultPauseMinPause  = 30 * time.Minute
+	DefaultPauseMaxPause  = 6 * time.Hour
+)
+
 // Credentials is the cascade's settings block (D152, D153). Every member is
 // optional and every accessor below answers what an absent one means, so the
 // two spellings of "the operator wrote nothing" — an absent block and an empty
@@ -1246,13 +1280,49 @@ type Backoff struct {
 	Cap     string `json:"cap,omitempty" yaml:"cap,omitempty"`
 }
 
-// credentialsMembers, backoffMembers are the member names the two structs are
-// spelled with, read from their own json tags (carrierMembers) so a field this
-// type gains is held to its spelling without a second list — the same
-// arrangement accountMembers and profileMembers have.
+// Pause is the pause block's settings (R11, D3184, D3187, D3190): the three
+// instants the credentials service decides an exhausted chain by — the floor
+// under which a reset is waited out inside the job, the minimum a pause lasts
+// however near the reset is, and the maximum a pause and a chain's total
+// paused time may reach.
+//
+// It is a block of its own and not a member of `credentials` (F49, R21): the
+// node is re-read while runs are in flight — the runner at bootstrap and on
+// every model call through the service — and a release-behind reader decodes
+// that block strictly, so a member added inside it would make that reader
+// refuse the WHOLE policy. An unknown top-level key it lists in UnknownKeys and
+// reads past, which is what lets an update publish this block while the runs of
+// the release behind keep going.
+//
+// Every member is optional and every accessor below answers what an absent one
+// means, so the two spellings of "the operator wrote nothing" — an absent block
+// and an empty one — are one policy. The block states durations and no instant:
+// the service computes the resume time from its own knowledge of the reset
+// (R19), and nothing here is a value a job chooses.
+type Pause struct {
+	// WaitInJob is the floor: a reset nearer than this is waited out inside the
+	// job, as a run has always done it, and one beyond it is the service's to
+	// pause or halt (D3184). Absent is DefaultPauseWaitInJob.
+	WaitInJob string `json:"wait_in_job,omitempty" yaml:"wait_in_job,omitempty"`
+	// MinPause is the shortest pause the service may place, whatever the reset
+	// says (D3190 as amended): the mechanism costs a job launch, and a pause
+	// shorter than this is not worth one. Absent is DefaultPauseMinPause.
+	MinPause string `json:"min_pause,omitempty" yaml:"min_pause,omitempty"`
+	// MaxPause is the longest pause, and at once the bound on a whole chain's
+	// paused time (D3187, D3190): a reset beyond it halts the run at once, and a
+	// chain whose paused time would pass it does not pause again. Absent is
+	// DefaultPauseMaxPause.
+	MaxPause string `json:"max_pause,omitempty" yaml:"max_pause,omitempty"`
+}
+
+// credentialsMembers, backoffMembers and pauseMembers are the member names the
+// structs are spelled with, read from their own json tags (carrierMembers) so a
+// field one of these types gains is held to its spelling without a second list
+// — the same arrangement accountMembers and profileMembers have.
 var (
 	credentialsMembers = carrierMembers(reflect.TypeOf(Credentials{}))
 	backoffMembers     = carrierMembers(reflect.TypeOf(Backoff{}))
+	pauseMembers       = carrierMembers(reflect.TypeOf(Pause{}))
 	// orchestratorMembers is the block's own names, and the class names of
 	// policy.Orchestrator.DecisionModelPerClass are inside it as map keys: a
 	// class that is not one of the two, or one written twice in another case,
@@ -1316,6 +1386,34 @@ func (c *Credentials) ConcurrencyCap() int {
 		return DefaultConcurrencyPerToken
 	}
 	return *c.ConcurrencyPerToken
+}
+
+// WaitInJobDuration is the in-job floor in force: the written duration, or
+// DefaultPauseWaitInJob. It is nil-safe, so a policy with no pause block reads
+// the plan's own default rather than a zero no comparison matches.
+func (p *Pause) WaitInJobDuration() time.Duration {
+	if p == nil {
+		return DefaultPauseWaitInJob
+	}
+	return credentialsDuration(p.WaitInJob, DefaultPauseWaitInJob)
+}
+
+// MinPauseDuration is the shortest pause in force: the written duration, or
+// DefaultPauseMinPause.
+func (p *Pause) MinPauseDuration() time.Duration {
+	if p == nil {
+		return DefaultPauseMinPause
+	}
+	return credentialsDuration(p.MinPause, DefaultPauseMinPause)
+}
+
+// MaxPauseDuration is the longest pause in force, and the bound on a chain's
+// whole paused time: the written duration, or DefaultPauseMaxPause.
+func (p *Pause) MaxPauseDuration() time.Duration {
+	if p == nil {
+		return DefaultPauseMaxPause
+	}
+	return credentialsDuration(p.MaxPause, DefaultPauseMaxPause)
 }
 
 // credentialsDuration reads a written duration, or answers def when the member
@@ -1412,6 +1510,74 @@ func checkOrchestratorMembers(raw json.RawMessage) error {
 		return fmt.Errorf("projectpolicy: orchestrator.decision_model_per_class: %w", err)
 	}
 	return checkNoDuplicateNames("orchestrator.decision_model_per_class", classes)
+}
+
+// checkPauseMembers holds the block's member names to their spelling, for the
+// reason checkCredentialsMembers gives: encoding/json folds a member name, so a
+// member written in another case reaches a member this Fugaro has and which one
+// it is depends on the order the document wrote them in.
+func checkPauseMembers(raw json.RawMessage) error {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: pause: %w", err)
+	}
+	if err := checkMemberNames("pause", names, pauseMembers); err != nil {
+		return fmt.Errorf("projectpolicy: %w", err)
+	}
+	return nil
+}
+
+// ValidPause holds the pause block to its rule: each written member is a
+// positive duration, and the three are in the order the service decides by —
+// the in-job floor under the shortest pause, and the shortest pause under the
+// longest (R11).
+//
+// It is exported for ValidCredentials' reason: the block is written in two
+// documents and one of them is not this package's — `pause` is the published
+// node's key and this machine's own local config states it under the same name
+// (localcfg) — so internal/localcfg calls it at load, and `at` names the key
+// the operator actually wrote.
+//
+// The comparison is the EFFECTIVE triple and not the written one, the backoff
+// pair's own rule (ValidCredentials): an absent member is its default, so a
+// document that writes one of the three is held to the other two's defaults.
+// The alternative would leave the state the rule exists to refuse reachable by
+// writing one member — {"max_pause": "1m"} alone is a 30-minute floor under a
+// one-minute maximum.
+//
+// The two comparisons are strict: a floor equal to the shortest pause is a
+// floor that never applies (every reset is either nearer than the floor, and
+// waited out in the job, or at least the floor, and so at least the whole
+// pause — the in-job branch would swallow the boundary), and a shortest pause
+// equal to the longest would leave a pause no reset can be placed in: the
+// service halts a reset beyond the maximum and may not place one under the
+// minimum, so the two instants have to leave room between them.
+func ValidPause(p *Pause, at string) error {
+	var floor, min, max string
+	if p != nil {
+		floor, min, max = p.WaitInJob, p.MinPause, p.MaxPause
+	}
+	for _, m := range []struct{ name, value string }{
+		{"wait_in_job", floor}, {"min_pause", min}, {"max_pause", max},
+	} {
+		if _, err := validCredentialsDuration("projectpolicy: "+at+"."+m.name, m.value); err != nil {
+			return err
+		}
+	}
+	// The three are compared as the service would use them, and an absent
+	// member is its default, so a document that writes one of them is held to
+	// the other two's defaults: {"max_pause": "1m"} alone is a 30-minute floor
+	// under a one-minute maximum.
+	effective := &Pause{WaitInJob: floor, MinPause: min, MaxPause: max}
+	if effective.WaitInJobDuration() >= effective.MinPauseDuration() {
+		return fmt.Errorf("projectpolicy: %s.wait_in_job: the floor (%s) is not under min_pause (%s): a reset the floor covers is waited out in the job, so the floor has to leave the pause a reset to be placed on (an absent member is its default)",
+			at, effective.WaitInJobDuration(), effective.MinPauseDuration())
+	}
+	if effective.MinPauseDuration() >= effective.MaxPauseDuration() {
+		return fmt.Errorf("projectpolicy: %s.min_pause: the shortest pause (%s) is not under max_pause (%s): a reset beyond the maximum halts the run, so a minimum at or above it leaves no reset a pause may be placed on (an absent member is its default)",
+			at, effective.MinPauseDuration(), effective.MaxPauseDuration())
+	}
+	return nil
 }
 
 // ValidCredentials holds the block's own values to their rules: the value the
@@ -1681,6 +1847,32 @@ func decodePolicy(raw []byte, keys map[string]bool, strict bool) (*Policy, bool,
 			return nil, true, err
 		}
 		p.Credentials = &c
+	}
+
+	// The pause block is judged on its own (PR9): no member of it is read
+	// against another block, and the two documents that carry the same block —
+	// this node and the local config the publish copies it from — are held to
+	// the same rules by ValidPause. A block that sets nothing is no block
+	// (SetsNothing's rule, as the orchestrator block states it): nil is what the
+	// decoder answers for an absent member, so the two spellings of "this
+	// project states no pause" are one answer and a writer that round trips this
+	// policy writes no member for it.
+	if praw, ok := doc["pause"]; ok && !IsNull(praw) {
+		if err := checkPauseMembers(praw); err != nil {
+			return nil, true, err
+		}
+		dec := json.NewDecoder(bytes.NewReader(praw))
+		dec.DisallowUnknownFields()
+		var ps Pause
+		if err := dec.Decode(&ps); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: pause: %w", err)
+		}
+		if err := ValidPause(&ps, "pause"); err != nil {
+			return nil, true, err
+		}
+		if ps != (Pause{}) {
+			p.Pause = &ps
+		}
 	}
 
 	// The orchestrator block is judged on its own (D1239): no member of it is
