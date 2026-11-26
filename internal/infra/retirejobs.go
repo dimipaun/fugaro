@@ -209,7 +209,9 @@ func LiveProjectJobs(ctx context.Context, c *Clients, gcpProject, region string)
 				continue
 			}
 			jobs = append(jobs, LiveProjectJob{
-				Name: j.Name, Region: region, Labels: maps.Clone(j.Labels),
+				// The listing names a job by its full resource path; the API
+				// delete and the executions read both want the short one.
+				Name: lastSegment(j.Name), Region: region, Labels: maps.Clone(j.Labels),
 				Profile: j.Labels[gcp.LabelProfile], Provider: j.Labels[labelProvider], Account: j.Labels[labelAccount],
 			})
 		}
