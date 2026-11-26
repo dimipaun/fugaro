@@ -59,16 +59,19 @@ import {
   SETUP_BAKE_DEFAULT,
   SETUP_BAKE_NO,
   SETUP_BAKE_YES,
+  SETUP_BUDGET_DEFAULT,
   SETUP_NOTES,
   setupConfirmID,
   setupView,
 } from '../../src/main/setupview'
+import type { SetupViewFields } from '../../src/main/setupview'
 import {
   SETUP_ANSWERS_MISSING,
   SETUP_ANSWERS_NOT_AN_OBJECT,
   SETUP_ANSWERS_UNKNOWN_KEY,
   SETUP_APPLY_UNKNOWN_ARGUMENT,
   SETUP_BAKE_REFUSAL,
+  SETUP_BUDGET_REFUSAL,
   SETUP_BYTES_CHANGED_REFUSAL,
   SETUP_DIR_MODE,
   SETUP_DEADLINE_MS,
@@ -100,6 +103,8 @@ import { NEW_READ_BOUNDS } from '../../src/source/new-reads'
 import {
   SETUP_ANSWER_KEYS,
   SETUP_ANSWERS_FILE_KEYS,
+  SETUP_BUDGET_MAX,
+  SETUP_BUDGET_MIN,
   SETUP_RIGOR_MODES,
 } from '../../src/shared/new-ops'
 import { SourceRefusal } from '../../src/source/source'
@@ -385,6 +390,7 @@ function aWizard(
   options: {
     readonly feeds?: readonly (string | null)[]
     readonly floor?: string | null
+    readonly budgetFloor?: string | null
     readonly cliVersion?: string
     readonly answers?: () => Record<string, unknown>
     readonly plan?: (answers: SetupAnswersHeld) => Uint8Array
@@ -409,6 +415,7 @@ function aWizard(
     plan: rows.planner,
     cliVersion: options.cliVersion ?? '0.120.0',
     floor: options.floor ?? null,
+    budgetFloor: options.budgetFloor ?? null,
     // The licence is valid unless a case says otherwise: the lapse's gate is at
     // the door (`lapseHandlers`) *and* here, where the apply really starts.
     lapsed: options.lapsed ?? (() => false),
@@ -597,6 +604,39 @@ describe('the answers main accepts', () => {
     for (const bake of ['yes', 1, 'true', {}]) {
       expect(() => validateSetupAnswers(anAnswers({ bake_repos: bake }))).toThrow(SETUP_BAKE_REFUSAL)
     }
+  })
+
+  it('refuses an amount that is not a whole number of units the alert can be made with', () => {
+    // The bounds are the alert's own (`managed.Budget.Check`), so the door
+    // refuses what the run would refuse later -- after a child exists -- and it
+    // refuses it as `SETUP_BUDGET_REFUSAL` rather than as a missing member: the
+    // operator did answer, with an amount nothing can be created at.
+    for (const budget of [0, -1, 1.5, 10_000_001, '100', NaN, Infinity, {}, [], true]) {
+      expect(
+        () => validateSetupAnswers(anAnswers({ budget })),
+        JSON.stringify(budget) ?? 'undefined',
+      ).toThrow(SETUP_BUDGET_REFUSAL)
+    }
+    // Both ends of the range are amounts the alert takes, and they are the
+    // schema's own (`schemas/setup-answers.schema.json`).
+    expect(validateSetupAnswers(anAnswers({ budget: SETUP_BUDGET_MIN })).budget).toBe(SETUP_BUDGET_MIN)
+    expect(validateSetupAnswers(anAnswers({ budget: SETUP_BUDGET_MAX })).budget).toBe(SETUP_BUDGET_MAX)
+    expect(validateSetupAnswers(anAnswers({ budget: 100 })).budget).toBe(100)
+  })
+
+  it('holds an amount nobody answered as absent, and never as zero', () => {
+    // The acceptance's third clause at main's own door. `undefined` is "nobody
+    // answered" -- the CLI reads an absent member as its own default -- while
+    // `0` is an amount the alert cannot be created with, which the case above
+    // refuses. Collapsing the first into the second would stop a setup whose
+    // operator left the field alone.
+    for (const budget of [undefined, null]) {
+      const held = validateSetupAnswers(anAnswers({ budget }))
+      expect(held.budget).toBeUndefined()
+      expect(Object.keys(held)).toContain('budget')
+    }
+    const bare = validateSetupAnswers(anAnswers())
+    expect(bare.budget).toBeUndefined()
   })
 })
 
@@ -889,6 +929,7 @@ describe('setup.plan', () => {
         // The switch was left out too, and the window says what that means
         // (the CLI bakes) rather than drawing the absence as a `no`.
         bakeRepos: undefined,
+        budgetUnits: undefined,
         digest: subject?.kind === 'setup' ? subject.digest : '',
         planArgv: PLAN_ARGV,
         applyArgv: APPLY_ARGV,
@@ -903,6 +944,9 @@ describe('setup.plan', () => {
     // Not `no`: nobody answered the switch, and the CLI's rule for an absent
     // `bake_repos` is that it bakes, so the row has to say what will happen.
     expect(subject.bake).toBe(SETUP_BAKE_DEFAULT)
+    // An amount nobody answered is drawn the same way: as the amount the run
+    // will use rather than as a blank or a zero.
+    expect(subject.budget).toBe(SETUP_BUDGET_DEFAULT)
     expect(subject.digest).toMatch(/^[0-9a-f]{64}$/)
     // The window shows both command lines field by field, so what it shows is
     // what is spawned and not a summary of it.
@@ -927,6 +971,61 @@ describe('setup.plan', () => {
       ),
     )
     expect(made).toHaveLength(1)
+  })
+
+  it('keeps the amount out of the bytes, and off the window, for a CLI that cannot take it', async () => {
+    // T6's second clause: the answers reader refuses an unknown member **by
+    // name**, so a document carrying `budget` handed to an older CLI stops the
+    // whole setup. The amount is therefore dropped, and dropped from the **held
+    // answers** rather than from the bytes alone: the window and the child are
+    // one document, and a window confirming 250 for a run that applies its own
+    // 100 is the one thing this screen exists to prevent.
+    const { wizard, calls, confirmer } = aWizard({
+      floor: '0.120.0',
+      budgetFloor: '0.121.0',
+      cliVersion: '0.120.0',
+    })
+    await wizard['setup.plan'](planArgs(anAnswers({ budget: 250 })))
+    const bytes = (calls[0] as SpawnCall).child.bytes[0] as Uint8Array
+    expect(new TextDecoder().decode(bytes)).not.toContain('budget')
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    expect(subject.budget).toBe(SETUP_BUDGET_DEFAULT)
+    // ...and the digest is still the digest of those bytes, so the apply's own
+    // re-check holds: the drop happens before the serialiser, not after it.
+    expect(subject.digest).toBe(setupAnswersDigest(bytes))
+  })
+
+  it('gives the amount to a CLI whose answers reader takes it', async () => {
+    // The other branch, which is the one a release turns on: at or above the
+    // floor the amount reaches the bytes in the schema's own place, and the
+    // window draws it in the unit the run reads it in.
+    const { wizard, calls, confirmer } = aWizard({
+      floor: '0.120.0',
+      budgetFloor: '0.120.0',
+      cliVersion: '0.120.0',
+    })
+    await wizard['setup.plan'](planArgs(anAnswers({ budget: 250 })))
+    const bytes = (calls[0] as SpawnCall).child.bytes[0] as Uint8Array
+    const document = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
+    expect(Object.keys(document)).toEqual([...SETUP_ANSWERS_FILE_KEYS])
+    expect(document['budget']).toBe(250)
+    const subject = confirmer.opened[0]?.subject
+    if (subject?.kind !== 'setup') throw new Error('the window was not shown a setup')
+    expect(subject.budget).toBe('250 USD')
+    expect(subject.digest).toBe(setupAnswersDigest(bytes))
+  })
+
+  it('drops the amount for a floor no release has set, which is the state today', async () => {
+    // `BUDGET_ANSWER_CLI_FLOOR` is `null`: no release carries the member, so
+    // nothing is sent however new the CLI is. This is the case that fails when
+    // the release sets the constant, which is the point -- the line that changes
+    // is the line a reviewer reads.
+    const { wizard, calls } = aWizard({ floor: '0.120.0' })
+    await wizard['setup.plan'](planArgs(anAnswers({ budget: 250 })))
+    expect(new TextDecoder().decode((calls[0] as SpawnCall).child.bytes[0] as Uint8Array)).not.toContain(
+      'budget',
+    )
   })
 
   it('says yes as `yes` for a bake switch the answers set', async () => {
@@ -1508,19 +1607,27 @@ function fakeDocument(): FakeDocument {
   return document
 }
 
-/** setupFields is the subject the window is served: exactly what
- * `wizardrun.ts` hands `confirmer.open`, which is `setupView`'s own output. */
-function setupFields(): ConfirmSubjectFields {
-  return setupView({
+/** setupInputs are what `wizardrun.ts` builds the setup view from, for a case
+ * that wants a subject of its own: the answers main parsed and the held bytes'
+ * digest. */
+function setupInputs(): SetupViewFields {
+  return {
     project: PROJECT,
     region: REGION,
     name: NAME,
     rigor: RIGOR,
     bakeRepos: true,
+    budgetUnits: undefined,
     digest: 'a'.repeat(64),
     planArgv: PLAN_ARGV,
     applyArgv: APPLY_ARGV,
-  })
+  }
+}
+
+/** setupFields is the subject the window is served: exactly what
+ * `wizardrun.ts` hands `confirmer.open`, which is `setupView`'s own output. */
+function setupFields(): ConfirmSubjectFields {
+  return setupView(setupInputs())
 }
 
 /** fakeBridge answers the two channels with the subject and records the
@@ -1567,7 +1674,7 @@ function wordsUnder(document: FakeDocument, label: string): readonly (string | n
 }
 
 describe('the window the setup view is drawn in', () => {
-  it('draws the five answers, the digest, both commands and the four sentences', async () => {
+  it('draws the answers, the digest, both commands and the four sentences', async () => {
     const document = fakeDocument()
     const { bridge } = fakeBridge(setupFields())
     await mountConfirm(document, bridge)
@@ -1575,12 +1682,16 @@ describe('the window the setup view is drawn in', () => {
     // The `<pre>` above the rows holds a launch's task and nothing for a setup:
     // a heading over an empty box is a field an operator looks for a value in.
     expect((document.byId.get('confirm-task-heading') as FakeElement).textContent).toBe('')
-    // The five answers **as main parsed them**, the digest last of the rows.
+    // The answers **as main parsed them**, the digest last of the rows.
     expect(fieldValue(document, 'Project')).toBe(PROJECT)
     expect(fieldValue(document, 'Region')).toBe(REGION)
     expect(fieldValue(document, 'Name')).toBe(NAME)
     expect(fieldValue(document, 'Rigor')).toBe(RIGOR)
     expect(fieldValue(document, 'Bake repositories')).toBe(SETUP_BAKE_YES)
+    // The amount in the run's own unit, and the default's own word for one
+    // nobody answered: the window shows what will happen, which for this answer
+    // is the run's amount rather than a blank.
+    expect(fieldValue(document, 'Budget alert')).toBe(SETUP_BUDGET_DEFAULT)
     expect(fieldValue(document, 'SHA-256 of the answers')).toBe('a'.repeat(64))
     // Both command lines, field by field, under their own labels: one window
     // spawns two children in turn, and one label for both would leave the
@@ -1599,6 +1710,13 @@ describe('the window the setup view is drawn in', () => {
     for (const markups of [document.byId.get('confirm-fields') as FakeElement]) {
       expect(markups.markup).toEqual([])
     }
+  })
+
+  it('draws the amount the operator answered, in the unit the run reads it in', async () => {
+    const document = fakeDocument()
+    const { bridge } = fakeBridge(setupView({ ...setupInputs(), budgetUnits: 250 }))
+    await mountConfirm(document, bridge)
+    expect(fieldValue(document, 'Budget alert')).toBe('250 USD')
   })
 
   it('offers the pointer-only writing button and keeps Cancel focused', async () => {
@@ -1634,6 +1752,7 @@ describe('the window the setup view is drawn in', () => {
         name: '',
         rigor: RIGOR,
         bakeRepos: false,
+        budgetUnits: undefined,
         digest: 'b'.repeat(64),
         planArgv: PLAN_ARGV,
         applyArgv: APPLY_ARGV,

@@ -98,6 +98,20 @@ export const SETUP_BAKE_YES = 'yes'
 export const SETUP_BAKE_NO = 'no'
 export const SETUP_BAKE_DEFAULT = 'not answered: the CLI bakes'
 
+/** SETUP_BUDGET_DEFAULT is the budget row's word for an amount nobody answered,
+ * by `SETUP_BAKE_DEFAULT`'s rule: the run applies its own amount
+ * (`managed.DefaultBudgetAmount`, D2212), and the row that says so is the row
+ * that tells the truth -- an empty line would read as an alert of nothing. It
+ * is also what a console that held the amount back draws (`holdBudget`), so the
+ * row never claims an amount the child was not given. */
+export const SETUP_BUDGET_DEFAULT = 'not answered: the CLI uses its own 100'
+
+/** SETUP_BUDGET_CURRENCY is the unit the amount is drawn in. The console sends
+ * no currency, so the run takes USD (`managed.DefaultBudgetCurrency`, D2211),
+ * and a bare figure beside a question about money is the one thing this row
+ * cannot leave unsaid. */
+export const SETUP_BUDGET_CURRENCY = 'USD'
+
 /**
  * SetupView is the whole of what the setup window is shown, and it is a **copy**
  * rather than the held answers: the flow holds the answers' bytes and their
@@ -108,7 +122,7 @@ export const SETUP_BAKE_DEFAULT = 'not answered: the CLI bakes'
  * which matters most for the digest: a window that could rewrite it would be a
  * window whose yes is checked against nothing.
  *
- * The five answers are the ones main **parsed and validated** (`wizardrun.ts`),
+ * The answers are the ones main **parsed and validated** (`wizardrun.ts`),
  * and not the object the renderer sent: a row drawn from the renderer's own
  * spelling would be a window that shows what was asked for rather than what will
  * happen, and the whole point of this window is that the operator reads the
@@ -126,6 +140,11 @@ export interface SetupView {
   readonly name: string
   readonly rigor: SetupRigor
   readonly bake: string
+  /** the budget answer in its two states: the amount in whole units, or
+   * `SETUP_BUDGET_DEFAULT` for one nobody answered -- which is also what a
+   * console that held the amount back for an older CLI draws, so the row always
+   * says what the run will use rather than what was typed. */
+  readonly budget: string
   /** the SHA-256 of the exact bytes the child is given on its stdin, in
    * lowercase hex. It is the *plan's* digest: apply re-checks the held bytes
    * against it, so a buffer that changed under the window is refused instead of
@@ -150,6 +169,11 @@ export interface SetupViewFields {
    * operator's own answer, and `undefined` is a switch nobody answered, which
    * the CLI reads as yes (`SETUP_BAKE_DEFAULT`). */
   readonly bakeRepos: boolean | undefined
+  /** the amount in its **two** states, and `undefined` is the one that matters:
+   * nobody answered it, or this console held it back because the installed CLI
+   * cannot take the member (`wizardrun.ts`'s `holdBudget`). Both mean the run
+   * applies its own default, which is what the row says. */
+  readonly budgetUnits: number | undefined
   readonly digest: string
   readonly planArgv: readonly string[]
   readonly applyArgv: readonly string[]
@@ -172,6 +196,10 @@ export function setupView(fields: SetupViewFields): SetupView {
         : fields.bakeRepos
           ? SETUP_BAKE_YES
           : SETUP_BAKE_NO,
+    budget:
+      fields.budgetUnits === undefined
+        ? SETUP_BUDGET_DEFAULT
+        : `${String(fields.budgetUnits)} ${SETUP_BUDGET_CURRENCY}`,
     digest: fields.digest,
     planArgv: Object.freeze([...fields.planArgv]),
     applyArgv: Object.freeze([...fields.applyArgv]),

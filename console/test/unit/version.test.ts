@@ -39,6 +39,7 @@ import { describe, expect, it } from 'vitest'
 
 import { parseVersionLine } from '../../src/main/spawn'
 import {
+  BUDGET_ANSWER_CLI_FLOOR,
   BUDGET_COMPUTE_CLI_FLOOR,
   CLI_HARD_FLOOR_VERSION,
   CLI_VERSION_BUILT_AGAINST,
@@ -62,6 +63,7 @@ import {
   SUPPORTED_CLI_MINORS,
   UNREADABLE_VERSION,
   classifyCliVersion,
+  budgetAnswerSupported,
   budgetComputeSupported,
   compareMinors,
   hidesView,
@@ -632,6 +634,53 @@ describe('the console improvements’ floors', () => {
     }
     for (const line of ['0.27.0', '0.27.1', '0.28.0', '1.0.0', '0.27.0+build.7']) {
       expect(meetsCliFloor(line, floor), line).toBe(true)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The setup answers' `budget` member floor (the managed-flag-ergonomics plan's
+// T6, D2210).
+// ---------------------------------------------------------------------------
+
+describe('budgetAnswerSupported', () => {
+  it('names no release, because no release carries the member yet', () => {
+    // **The same idiom as the floors above**: T2b of the plan put `budget` in
+    // the answers file on this tree and in no tag, so the constant is `null`
+    // and a reader refuses. It matters more here than for a flag: the CLI's
+    // answers reader refuses an unknown member **by name**, so a document
+    // carrying `budget` handed to an older CLI would stop the whole setup
+    // rather than ignore one question. A release that ships the member sets
+    // this constant to its own version in a one-line pull request, and this
+    // case fails then, which is the point: the line that changes is the line a
+    // reviewer reads.
+    expect(BUDGET_ANSWER_CLI_FLOOR).toBeNull()
+    const source = readFileSync(join(__dirname, '..', '..', 'src', 'shared', 'version.ts'), 'utf8')
+    expect(source).toContain('export const BUDGET_ANSWER_CLI_FLOOR: string | null = null')
+    // A floor of its own rather than `SETUP_CLI_FLOOR`: the two questions are
+    // two members that arrived in two releases, and one constant for both would
+    // hold the amount back until the whole answers file is out -- or worse,
+    // hand it to a CLI that has the file and not the member.
+    expect(source).not.toContain('BUDGET_ANSWER_CLI_FLOOR: string | null = SETUP_CLI_FLOOR')
+  })
+
+  it('refuses every version while the constant is unset', () => {
+    for (const line of ['0.29.4', '0.30.0', '1.4.2', '99.99.99', 'dev']) {
+      expect(budgetAnswerSupported(line), line).toBe(false)
+    }
+  })
+
+  it('is the patch comparison every other floor is, once a release names itself', () => {
+    // The branch a release takes, driven as an argument because the constant is
+    // unset: below the floor is a refusal however close, the floor and
+    // everything above it are not, and a line that cannot be placed at all is a
+    // refusal.
+    const floor = '0.31.0'
+    for (const line of ['0.30.9', '0.31.0-rc.1', 'dev', '']) {
+      expect(budgetAnswerSupported(line, floor), line).toBe(false)
+    }
+    for (const line of ['0.31.0', '0.31.1', '0.32.0', '1.0.0', '0.31.0+build.7']) {
+      expect(budgetAnswerSupported(line, floor), line).toBe(true)
     }
   })
 })

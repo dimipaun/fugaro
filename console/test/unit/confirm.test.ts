@@ -2959,10 +2959,11 @@ const SETUP_PLAN_ARGV: readonly string[] = [
 ]
 const SETUP_APPLY_ARGV: readonly string[] = [BINARY, 'setup', '--answers-file', '-', '--events', '--json']
 
-/** setupSubject is one setup window's subject as `setupView` builds it: the five
+/** setupSubject is one setup window's subject as `setupView` builds it: the
  * answers main parsed, the digest of the bytes it holds and the two command
  * lines. `bakeRepos` is answered, so the window draws the operator's own word
- * for it rather than the CLI's default. */
+ * for it rather than the CLI's default; `budgetUnits` is not, so it draws the
+ * run's own amount. */
 function setupSubject(): SetupView {
   return setupView({
     project: PROJECT,
@@ -2970,6 +2971,7 @@ function setupSubject(): SetupView {
     name: PROJECT,
     rigor: 'pro',
     bakeRepos: true,
+    budgetUnits: undefined,
     digest: 'a'.repeat(64),
     planArgv: SETUP_PLAN_ARGV,
     applyArgv: SETUP_APPLY_ARGV,

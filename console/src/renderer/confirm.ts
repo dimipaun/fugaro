@@ -30,7 +30,7 @@
 //     the operator reads.
 //
 // **The setup half is the same window with a subject of its own** (SW3a,
-// D2904): `'setup'` is a first `fugaro setup`, and what it draws is the five
+// D2904): `'setup'` is a first `fugaro setup`, and what it draws is the
 // answers **the main process parsed** (never the renderer's own object), the
 // SHA-256 of the bytes the child is given on its stdin, the two command lines,
 // and the console's four sentences of what a yes does -- that `--json` confirms
@@ -177,7 +177,7 @@ export type SettingsEntryFields = SettingsEntryView
  *
  * Two things about it are the point rather than the drawing:
  *
- *   - **the five answers are main's**, parsed and held by `wizardrun.ts` before
+ *   - **the answers are main's**, parsed and held by `wizardrun.ts` before
  *     this window existed. They are drawn the way the launch's rows are -- as the
  *     main process's own values -- because that is what they are: every one of
  *     them has been through the CLI's own grammar, so a project row can hold
@@ -197,6 +197,7 @@ export interface SetupFields {
   readonly name: string
   readonly rigor: string
   readonly bake: string
+  readonly budget: string
   readonly digest: string
   readonly planArgv: readonly string[]
   readonly applyArgv: readonly string[]
@@ -406,6 +407,7 @@ const FIELDS = Object.freeze({
   name: 'Name',
   rigor: 'Rigor',
   bake: 'Bake repositories',
+  budget: 'Budget alert',
   digest: 'SHA-256 of the answers',
   planCommand: 'Plan command',
   applyCommand: 'Apply command',
@@ -988,7 +990,7 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     cancel.focus()
   }
 
-  /** drawSetup is the first setup's set of rows: the five answers as main
+  /** drawSetup is the first setup's set of rows: the answers as main
    * parsed them, the digest of the very bytes the child is given, the two command
    * lines, and the four sentences of what a yes does. Every one of them is the
    * main process's own value or its own sentence, which is why they are drawn as
@@ -1006,6 +1008,7 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     row(FIELDS.name, setup.name === '' ? NONE : setup.name)
     row(FIELDS.rigor, setup.rigor)
     row(FIELDS.bake, setup.bake)
+    row(FIELDS.budget, setup.budget)
     code(FIELDS.digest, setup.digest)
     command(setup.planArgv, FIELDS.planCommand)
     command(setup.applyArgv, FIELDS.applyCommand)

@@ -58,6 +58,8 @@ import {
   WIZARD_ANSWER_CLASS,
   WIZARD_APPLY_BUSY,
   WIZARD_ATTEMPT_CLASS,
+  WIZARD_BUDGET_DEFAULT,
+  WIZARD_BUDGET_NOTE,
   WIZARD_BUSY_CLASS,
   WIZARD_CLASS,
   WIZARD_COMMAND_NONE,
@@ -88,6 +90,7 @@ import {
   WIZARD_SUBMIT_LABEL,
   WIZARD_YES,
   drawWizard,
+  wizardBadBudget,
   wizardNotAChoice,
   wizardUnanswered,
 } from '../../src/renderer/wizard/wizard'
@@ -389,6 +392,89 @@ describe('the setup wizard’s questions', () => {
     await flush()
     const payload = calls[0]?.payload as { readonly answers: SetupAnswers }
     expect(payload.answers.bake_repos).toBe(false)
+  })
+
+  it('draws the budget field with the CLI’s own amount in it, and says it is an alert', () => {
+    const { root } = setupHarness(() => feedOf(DONE))
+    // The default the browser puts in the field, which is what a press that
+    // never touches it sends: the CLI's own amount (`managed.DefaultBudgetAmount`,
+    // D2212), so the wizard's prefill and the run's own default are one figure.
+    expect(controlOf(root, 'budget').getAttribute('value')).toBe(WIZARD_BUDGET_DEFAULT)
+    expect(WIZARD_BUDGET_DEFAULT).toBe('100')
+    // The note is the row's whole point (D2210): an amount a person reads as a
+    // cap on their runs would be read as a figure the console does not enforce.
+    const note = classed(rowFor(root, 'budget'), WIZARD_NOTE_CLASS)[0]?.textContent ?? ''
+    expect(note).toBe(WIZARD_BUDGET_NOTE)
+    expect(note).toMatch(/alert/)
+    expect(note).toMatch(/not a cap/)
+  })
+
+  it('sends the amount the operator typed, as a number the run can read', async () => {
+    const { root, calls } = setupHarness(() => feedOf(DONE))
+    fill(root, ANSWERED)
+    controlOf(root, 'budget').value = ' 250 '
+    submitOf(root).click()
+    await flush()
+    const payload = calls[0]?.payload as { readonly answers: SetupAnswers }
+    expect(payload.answers).toEqual({
+      gcp_project: 'acme-one',
+      region: 'us-east5',
+      name: '',
+      rigor: 'pro',
+      budget: 250,
+      bake_repos: true,
+    })
+    expect(typeof payload.answers.budget).toBe('number')
+  })
+
+  it('sends no amount at all for a field left empty', async () => {
+    // The acceptance's third clause. An empty field is not an amount of zero:
+    // the run reads an absent `budget` as its own default, while `0` is an
+    // amount no alert can be created with.
+    const { root, calls } = setupHarness(() => feedOf(DONE))
+    fill(root, ANSWERED)
+    controlOf(root, 'budget').value = ''
+    submitOf(root).click()
+    await flush()
+    const payload = calls[0]?.payload as { readonly answers: SetupAnswers }
+    expect(payload.answers).not.toHaveProperty('budget')
+    expect(Object.keys(payload.answers)).toEqual([...SETUP_ANSWER_KEYS].filter((key) => key !== 'budget'))
+  })
+
+  it('refuses an amount that is not a whole number of units, and sends nothing', async () => {
+    for (const typed of ['0', '10,000', '1.5', '1e3', 'abc', '-5', '10000000000']) {
+      const { root, calls } = setupHarness(() => feedOf(DONE))
+      fill(root, ANSWERED)
+      controlOf(root, 'budget').value = typed
+      submitOf(root).click()
+      await flush()
+      expect(calls, JSON.stringify(typed)).toEqual([])
+      expect(answersOf(root), JSON.stringify(typed)).toEqual([
+        wizardBadBudget('Monthly budget alert'),
+      ])
+    }
+  })
+
+  it('treats a field of spaces as empty, and not as a malformed amount', async () => {
+    const { root, calls } = setupHarness(() => feedOf(DONE))
+    fill(root, ANSWERED)
+    controlOf(root, 'budget').value = '  '
+    submitOf(root).click()
+    await flush()
+    expect(calls).toHaveLength(1)
+    const payload = calls[0]?.payload as { readonly answers: SetupAnswers }
+    expect(payload.answers).not.toHaveProperty('budget')
+    expect(answersOf(root)).toEqual([WIZARD_DONE])
+  })
+
+  it('refuses an amount above the alert’s own ceiling', async () => {
+    const { root, calls } = setupHarness(() => feedOf(DONE))
+    fill(root, ANSWERED)
+    controlOf(root, 'budget').value = '10000001'
+    submitOf(root).click()
+    await flush()
+    expect(calls).toEqual([])
+    expect(answersOf(root)).toEqual([wizardBadBudget('Monthly budget alert')])
   })
 
   it('refuses a select answered outside its own choices, and sends nothing for it', async () => {

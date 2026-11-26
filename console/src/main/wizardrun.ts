@@ -92,7 +92,12 @@ import type { SetupRigor } from '../shared/new-ops'
 import { NEW_READ_BOUNDS, throughClasses } from '../source/new-reads'
 import type { NewReadBounds } from '../source/new-reads'
 import { SourceRefusal } from '../source/source'
-import { UNREADABLE_VERSION, budgetAnswerSupported, meetsCliFloor } from '../shared/version'
+import {
+  BUDGET_ANSWER_CLI_FLOOR,
+  UNREADABLE_VERSION,
+  budgetAnswerSupported,
+  meetsCliFloor,
+} from '../shared/version'
 
 // ---------------------------------------------------------------------------
 // The two names, and the floor.
@@ -582,6 +587,12 @@ export interface SetupWizardDeps {
    * carries them: every setup refuses its own sentence rather than spawning an
    * argv nothing answers. */
   readonly floor?: string | null
+  /** `budgetFloor` is the **other** floor: the release whose answers reader takes
+   * the `budget` member (`BUDGET_ANSWER_CLI_FLOOR`, `shared/version.ts`). It is a
+   * seam like `floor` because the constant is `null` until a release names
+   * itself, so the branch that keeps the amount could not be driven through it;
+   * `null` is the state today. */
+  readonly budgetFloor?: string | null
   /** `lapsed` answers whether the licence has lapsed for the installation this
    * setup runs in, and it is asked **where the apply really starts** and not
    * only at the door: the window's own yes reaches `runApply` from `decide`,
@@ -788,7 +799,9 @@ export function createSetupWizard(deps: SetupWizardDeps): SetupWizard {
    * a refusal of a form this console drew.
    */
   const holdBudget = (answers: SetupAnswersHeld): SetupAnswersHeld => {
-    if (budgetAnswerSupported(deps.cliVersion)) return answers
+    if (budgetAnswerSupported(deps.cliVersion, deps.budgetFloor ?? BUDGET_ANSWER_CLI_FLOOR)) {
+      return answers
+    }
     return Object.freeze({ ...answers, budget: undefined })
   }
 
@@ -828,6 +841,7 @@ export function createSetupWizard(deps: SetupWizardDeps): SetupWizard {
           region: answers.region,
           name: answers.name,
           rigor: answers.rigor,
+          budgetUnits: answers.budget,
           bakeRepos: answers.bake_repos,
           digest: shownDigest,
           planArgv: planPlan.argv,
