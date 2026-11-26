@@ -136,6 +136,13 @@ doctor_json() { # doctor_json PROJECT PROBLEM...
     "$ok" "${checks:+,$checks}" >"$fx/doctor-$project.json"
 }
 
+# doctor_doc PROJECT JSON: a doctor document written whole, for the answers
+# doctor_json's own shape cannot make — a doctor that refuses with no check at
+# all, and one that answered checks and still does not say ok.
+doctor_doc() { # doctor_doc PROJECT JSON
+  printf '%s' "$2" >"$fx/doctor-$1.json"
+}
+
 # update_log PATH KEEP_INFLIGHT EXTRA_LINES...
 update_log() { # update_log PATH KEEP_INFLIGHT LINE...
   local path=$1 keep=$2
@@ -345,6 +352,38 @@ test_a_warning_on_the_workspace_fails() {
   expect_contains "$out" "the fix belongs IN the update" "the row says where the fix belongs"
 }
 
+test_a_doctor_that_refuses_with_no_check_is_unmeasured() {
+  fixtures_ok
+  doctor_doc ws '{"ok": false, "checks": []}'
+  CHECK851_TEST_ENV=(
+    CHECK851_WORKSPACE_UPDATE_LOG="$fx/ws-update.log"
+    CHECK851_MEMBER_UPDATE_LOG="$fx/member-update.log"
+    CHECK851_WORKSPACE_RUN=shrt
+    CHECK851_MEMBER_RUN=long
+  )
+  run_check
+  expect_status "$status" 2 "a doctor that answers an empty list has converged nothing"
+  expect_contains "$out" "FACT workspace-converged: FAIL" "the workspace's doctor row is unmeasured"
+  expect_contains "$out" "NO check at all" "the row says the list was empty"
+  expect_absent "$out" "FACT workspace-converged: PASS" "an empty list is not read as converged"
+}
+
+test_a_doctor_that_does_not_answer_ok_fails() {
+  fixtures_ok
+  doctor_doc fugaro '{"ok": false, "checks": [{"id": "base", "severity": "info", "problem": ""}]}'
+  CHECK851_TEST_ENV=(
+    CHECK851_WORKSPACE_UPDATE_LOG="$fx/ws-update.log"
+    CHECK851_MEMBER_UPDATE_LOG="$fx/member-update.log"
+    CHECK851_WORKSPACE_RUN=shrt
+    CHECK851_MEMBER_RUN=long
+  )
+  run_check
+  expect_status "$status" 1 "a doctor that refuses is not a converged installation"
+  expect_contains "$out" "FACT member-converged: FAIL" "the member's doctor row is the finding"
+  expect_contains "$out" "answers ok=no" "the row quotes the answer it read"
+  expect_contains "$out" "a refusal is not an installation that converged" "the row says why it is a finding"
+}
+
 test_a_warning_on_the_member_fails() {
   fixtures_ok
   doctor_json fugaro "the plugin pin is at the previous release" >"$fx/doctor-fugaro.json"
@@ -384,6 +423,24 @@ test_a_step_that_did_not_land_fails() {
   expect_contains "$out" "FACT member-update-line: FAIL" "the member's update-log row is the finding"
   expect_contains "$out" "the policy publish was refused" "the row quotes the line"
   expect_contains "$out" "the next release has to take it inside the update" "the row says what to do"
+}
+
+test_the_notes_own_steps_are_not_failure_lines() {
+  fixtures_ok
+  update_log "$fx/ws-update.log" no \
+    "fugaro update: 2 in flight: update waits for none and changes nothing they hold, and these steps can still reach them:" \
+    "  credentials service: a call between the node's raise and its move is refused" \
+    "  policy: a cascade project's runs pick up the new policy at their next model call"
+  CHECK851_TEST_ENV=(
+    CHECK851_WORKSPACE_UPDATE_LOG="$fx/ws-update.log"
+    CHECK851_MEMBER_UPDATE_LOG="$fx/member-update.log"
+    CHECK851_WORKSPACE_RUN=shrt
+    CHECK851_MEMBER_RUN=long
+  )
+  run_check
+  expect_status "$status" 0 "the steps the note names can still reach a run; they are not steps that did not land"
+  expect_contains "$out" "FACT workspace-update-line: PASS" "the note the HARD RULE asks for is read as that note"
+  expect_absent "$out" "line(s) that name a step which did not land" "the note's own 'refused' line is not a failure"
 }
 
 test_a_log_path_that_cannot_be_read_is_unmeasured() {
@@ -547,6 +604,8 @@ t test_dry_run_measures_nothing
 t test_a_converged_pair_and_two_finished_runs_pass
 t test_a_warning_on_the_workspace_fails
 t test_a_warning_on_the_member_fails
+t test_a_doctor_that_refuses_with_no_check_is_unmeasured
+t test_a_doctor_that_does_not_answer_ok_fails
 t test_a_warning_on_the_member_with_the_switch_off_fails
 t test_a_quiet_members_run_served_a_personal_token_fails
 t test_a_quiet_log_that_cannot_be_read_is_unmeasured
@@ -554,6 +613,7 @@ t test_a_quiet_run_the_service_wrote_nothing_for_is_unmeasured
 t test_a_doctor_document_that_cannot_be_read_is_unmeasured
 t test_an_update_log_without_the_in_flight_line_fails
 t test_a_step_that_did_not_land_fails
+t test_the_notes_own_steps_are_not_failure_lines
 t test_a_log_path_that_cannot_be_read_is_unmeasured
 t test_a_run_that_is_not_terminal_fails
 t test_a_halt_inside_the_update_window_fails

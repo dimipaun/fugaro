@@ -129,7 +129,11 @@ on_error() {
 IN_FLIGHT_PHRASE='in flight: update waits for none and changes nothing they hold'
 # A line of an update that says a step it owed did not land. An update that
 # failed a step and printed it is the release that ships an operator step, which
-# the HARD RULE forbids.
+# the HARD RULE forbids. The note about the runs in flight is not scanned (the
+# reader skips it whole): the steps it names are the ones that can still REACH a
+# run, and one of them says 'refused' in its own words
+# (internal/cli/update_in_flight.go), so a scan that read it would fail every
+# release that names what it does not touch.
 FAILURE_WORDS='refused|failed|could not|not applied|permission denied'
 # The workspace's own credentials service, as the installation names it
 # (internal/infra's CredentialsServiceName): the first label of a Cloud Run host,
@@ -253,7 +257,10 @@ update   argv: a file of the update's own output, the phrase that names the runs
          in flight, and the words that mean a step did not land. Prints
          `lines=`, `inflight=yes|no`, and one `failure=<line>` line per line
          matching those words, so the caller can read a step that did not land
-         rather than only its count.
+         rather than only its count. The note that phrase names — its own line
+         and the indented steps it lists under it, which are the steps that can
+         still reach a run and not steps that did not land — is skipped whole,
+         because one of them says 'refused' in its own words.
 runs     argv: `fugaro runs ls --json`'s file and the run id asked about (or its
          last characters). Prints the row's status, terminal, outcome and its
          halt's reason, moment, detail and workspace marker; `found=no` when no
@@ -307,8 +314,20 @@ def update(path, phrase, words):
     print("lines=%d" % len(lines))
     print("inflight=" + ("yes" if any(phrase in one for one in lines) else "no"))
     pattern = re.compile(words, re.IGNORECASE)
+    in_note = False
     for one in lines:
         text = one.strip()
+        if phrase in one:
+            # The note the HARD RULE requires the update to print, and the steps
+            # it names under it: a step that can still reach a run in flight is
+            # not a step that did not land, and one of them says so with the word
+            # 'refused' (update_in_flight.go). The note is skipped whole — its
+            # line and the two-space indented lines that follow it.
+            in_note = True
+            continue
+        if in_note and one.startswith("  "):
+            continue
+        in_note = False
         if not text or not pattern.search(text):
             continue
         print("failure=" + re.sub(r"\s+", " ", text)[:300])
@@ -428,15 +447,24 @@ step_converged() { # step_converged KEY PROJECT WHERE
     unmeasured "$key" "the doctor document for ${where} (${project}) could not be read ($(last_line "$(cat "$SCRATCH/doctor-$key.err" 2>/dev/null || true)")): 'fugaro doctor --project ${project} --all --json' failed. Run it here yourself and read its output"
     return 0
   fi
-  local out warnings checks
+  local out ok warnings checks
   out=$(reader doctor "$SCRATCH/doctor-$key.json") || die "the doctor document could not be parsed ($(last_line "$out"))"
+  ok=$(field_of ok "$out")
   warnings=$(field_of warnings "$out")
   checks=$(field_of checks "$out")
-  if [ "${warnings:-0}" -eq 0 ]; then
-    fact "$key" PASS "doctor on ${where} (${project}) reports ${checks:-?} checks and NO warning after the update: the installation is where the release the CLI is says it should be, with no step left for a person to take — which is what R11 asks the update to converge to, and what the HARD RULE calls 'the whole upgrade, and it works perfectly'. Run it yourself: fugaro doctor --project ${project} --all"
+  if [ "${checks:-0}" -eq 0 ]; then
+    unmeasured "$key" "the doctor document for ${where} (${project}) carries NO check at all (ok=${ok:-?}): a doctor that answers an empty list has not said the installation converged, and 'converged, no warning' is not readable off an empty list. Run 'fugaro doctor --project ${project} --all --json' here yourself and read what it says"
     return 0
   fi
-  fact "$key" FAIL "doctor on ${where} (${project}) reports ${warnings} warning(s) after the update: $(printf '%s' "$(lines_of warning "$out" | head -n 3 | tr '\n' '; ')" | head -c 500). An update that leaves a warning is an update with another step behind it, which is exactly what the HARD RULE forbids — the fix belongs IN the update of the same release, not in a runbook"
+  if [ "$ok" = yes ] && [ "${warnings:-0}" -eq 0 ]; then
+    fact "$key" PASS "doctor on ${where} (${project}) answers ok=yes, reports ${checks} checks and NO warning after the update: the installation is where the release the CLI is says it should be, with no step left for a person to take — which is what R11 asks the update to converge to, and what the HARD RULE calls 'the whole upgrade, and it works perfectly'. Run it yourself: fugaro doctor --project ${project} --all"
+    return 0
+  fi
+  if [ "${warnings:-0}" -gt 0 ]; then
+    fact "$key" FAIL "doctor on ${where} (${project}) reports ${warnings} warning(s) after the update (ok=${ok:-?}, ${checks} checks): $(printf '%s' "$(lines_of warning "$out" | head -n 3 | tr '\n' '; ')" | head -c 500). An update that leaves a warning is an update with another step behind it, which is exactly what the HARD RULE forbids — the fix belongs IN the update of the same release, not in a runbook"
+    return 0
+  fi
+  fact "$key" FAIL "doctor on ${where} (${project}) answers ok=${ok:-no} over ${checks} check(s) with no warning named: a doctor that does not answer ok is a doctor that refused, and a refusal is not an installation that converged — R11 reads 'both sides converged with no other step' off ok=yes. Run 'fugaro doctor --project ${project} --all' here yourself and read why it refused"
 }
 
 # step_update_log: the update's own line about the runs in flight, and no step

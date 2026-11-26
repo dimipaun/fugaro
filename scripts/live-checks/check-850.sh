@@ -17,16 +17,21 @@
 # launches no run: the token, the launches, the switch and the removals are the
 # owner's own acts, and what the script measures is what they left. It reads the
 # workspace's own project (its two Cloud Run services' IAM policies, the
-# person's container and its policy, and the intake's own audit lines), the
-# workspace's credentials-service log for the runs, and the runs themselves.
+# person's container, the workspace's own account's accessor read off that
+# project's IAM policy, and the intake's own audit lines), the workspace's
+# credentials-service log for the runs, and the runs themselves.
 #
 #   * U6 and "nothing but the two invoke grants": each of the workspace's two
 #     services binds `roles/run.invoker` to the person's own principal, and the
 #     workspace's own project IAM names that person in no binding at all.
-#   * U5: the person's container in the workspace's project gives the
-#     workspace's account an accessor whose CONDITION is a prefix rule — the
-#     `fugaro_u_` prefix and the one name served (R6) — and the intake's own
-#     line says the person wrote it (op create, scope user, status ok).
+#   * U5 and R6: the workspace's own account holds `secretAccessor` on the
+#     workspace's PROJECT under a condition naming BOTH halves of the one name
+#     served — the `fugaro_u_` prefix AND the `claude-oauth-token` it ends in,
+#     which is what the workspace's own root writes (a project-level conditional
+#     member, not a grant on the container) — and the intake's own line says the
+#     person wrote the container (op create, scope user, status ok). A grant
+#     with no condition, or one that names the prefix alone, reaches every other
+#     person's container: both are FAILs.
 #   * R7: a run launched in each of two members, on a member whose switch is on,
 #     is served that person's container — the service's own `credsvc: audit`
 #     line for the run names it — and a second person's run in a member is served
@@ -45,9 +50,12 @@
 #             fugaro (the guards and the two members' run listings).
 # Where:      run from anywhere. The workspace's own GCP project is
 #             ${CHECK850_WORKSPACE_PROJECT} — there is no default, because the
-#             member's project carries none of what this check reads. The region
-#             is never named: every read is a project's. A project, service,
-#             account or container naming belong is refused by name.
+#             member's project carries none of what this check reads — and the
+#             workspace's two services are read in `${CHECK850_REGION}`
+#             (us-east5 unless you name another): a Cloud Run call carries a
+#             region, and one that is left out makes gcloud ask for it. A
+#             project, service, account or container naming belong is refused by
+#             name.
 # Creates:    nothing. The copies of the policies, the listing and the log
 #             entries this run reads sit in a scratch directory (mode 0700)
 #             removed from the exit trap even on a failure or Ctrl-C.
@@ -63,8 +71,12 @@
 #             reads `FAIL — not reached`.
 #
 # Knobs (all CHECK850_*): DRY_RUN, KEEP_SCRATCH, WORKSPACE_PROJECT (REQUIRED),
-# INSTALLATION (the installation the guard reads; fugaro), PERSON (the roster
-# person's email, the `user:` principal the two grants are read for; REQUIRED),
+# REGION (the region the workspace's two Cloud Run services run in; us-east5),
+# WORKSPACE_ACCOUNT (the workspace's own service account, the one R6's accessor
+# is held by; `fugaro-workspace@<the workspace's project>.iam.gserviceaccount.com`
+# when unset), INSTALLATION (the installation the guard reads; fugaro), PERSON
+# (the roster person's email, the `user:` principal the two grants are read for;
+# REQUIRED),
 # PERSON_SUB (their `sub`, the container name's middle field; read off the
 # intake's own line when unset), CONTAINER (their container's id in the
 # workspace's project; read off the listing when unset), MEMBER_ONE_PROJECT and
@@ -133,6 +145,13 @@ INTAKE_SERVICE=fugaro-intake
 # the accessor U5 and R6 are about.
 PERSON_PREFIX=fugaro_u_
 PERSON_TOKEN_NAME=claude-oauth-token
+# R6's accessor: the workspace's own root writes it as a PROJECT-level
+# conditional member and not as a grant on the container
+# (deploy/terraform/gcp/roots/workspace/main.tf's
+# google_project_iam_member.workspace_person_token), because a container's name
+# is the verified token's own `sub` and no plan knows it at apply time. The role
+# is internal/infra/tf's WorkspaceBundleAccessorRole.
+ACCESSOR_ROLE=roles/secretmanager.secretAccessor
 # The service's own sentences, grepped and never paraphrased. Each is a
 # constant of internal/credsvc (personal_workspace.go's personalSwitchOff,
 # dynamicsecrets.go's per-user half and wire.go's ErrorSlipOwnerRemoved): a
@@ -260,9 +279,10 @@ doctor document. None of them carries a credential's value.
 
 policy  argv: `gcloud … get-iam-policy … --format=json`'s file. Prints
         `principal=<member>` for every member of every binding, and
-        `binding=<role>|<members,joined>|<condition expression or ->` per
-        binding, so a case can say WHO an accessor is and under WHAT condition.
-        A policy with no bindings prints `bindings=0`.
+        `binding=<role>|<members,joined>|<condition title or ->|<condition
+        expression or ->` per binding, so a case can say WHO an accessor is and
+        under WHAT condition — the title AND the expression, which is what R6's
+        accessor is read on. A policy with no bindings prints `bindings=0`.
 list    argv: a `--format=json` listing. Prints `name=<name>` per resource, and
         the name is the LAST path segment (`fugaro-credentials`, not the whole
         `projects/p/locations/r/services/fugaro-credentials`), so a case can
@@ -328,8 +348,10 @@ def policy(path):
         role = text(b.get("role"))
         members = b.get("members") if isinstance(b.get("members"), list) else []
         cond = b.get("condition") if isinstance(b.get("condition"), dict) else {}
+        title = text(cond.get("title")) if cond else "-"
         expr = text(cond.get("expression")) if cond else "-"
-        print("binding=%s|%s|%s" % (role, ",".join(text(m) for m in members), expr or "-"))
+        print("binding=%s|%s|%s|%s" % (role, ",".join(text(m) for m in members),
+                                       title or "-", expr or "-"))
         for m in members:
             print("principal=" + text(m))
 
@@ -523,9 +545,10 @@ step_grants() {
     return 0
   fi
   gcloud projects get-iam-policy "$WORKSPACE_PROJECT" --format=json >"$SCRATCH/project.json" 2>"$SCRATCH/project.err" || true
-  gcloud run services list --project "$WORKSPACE_PROJECT" --format=json >"$SCRATCH/services.json" 2>"$SCRATCH/services.err" || true
+  gcloud run services list --project "$WORKSPACE_PROJECT" --region "$REGION" --platform=managed \
+    --format=json >"$SCRATCH/services.json" 2>"$SCRATCH/services.err" || true
   if [ ! -s "$SCRATCH/project.json" ] || [ ! -s "$SCRATCH/services.json" ]; then
-    unmeasured "$key" "the workspace's project (${WORKSPACE_PROJECT}) could not be read: 'gcloud projects get-iam-policy' or 'gcloud run services list' answered nothing ($(last_line "$(cat "$SCRATCH/services.err" 2>/dev/null || true)")). Run both here yourself — the check needs an owner of that project — and run it again"
+    unmeasured "$key" "the workspace's project (${WORKSPACE_PROJECT}) could not be read: 'gcloud projects get-iam-policy' or 'gcloud run services list --region ${REGION} --platform=managed' answered nothing ($(last_line "$(cat "$SCRATCH/services.err" 2>/dev/null || true)")). Run both here yourself — the check needs an owner of that project, and the region its two services run in (CHECK850_REGION, ${REGION} now) — and run it again"
     return 0
   fi
   local list svc granted="" missing="" body
@@ -540,12 +563,13 @@ step_grants() {
     local name
     name=$(printf '%s\n' "$list" | sed -n "s|^name=${svc}$|${svc}|p" | head -n 1)
     if [ -z "$name" ]; then
-      missing="${missing}${missing:+, }${svc} (the workspace's project serves no service whose name starts with it)"
+      missing="${missing}${missing:+, }${svc} (the workspace's project serves no service whose name starts with it in ${REGION}; if its two services run in another region, name it with CHECK850_REGION)"
       continue
     fi
-    gcloud run services get-iam-policy "$name" --project "$WORKSPACE_PROJECT" --format=json >"$SCRATCH/policy-$svc.json" 2>"$SCRATCH/policy-$svc.err" || true
+    gcloud run services get-iam-policy "$name" --project "$WORKSPACE_PROJECT" --region "$REGION" --platform=managed \
+      --format=json >"$SCRATCH/policy-$svc.json" 2>"$SCRATCH/policy-$svc.err" || true
     if [ ! -s "$SCRATCH/policy-$svc.json" ]; then
-      unmeasured "$key" "the invoke grant on ${name} could not be read ($(last_line "$(cat "$SCRATCH/policy-$svc.err" 2>/dev/null || true)")): run 'gcloud run services get-iam-policy ${name} --project ${WORKSPACE_PROJECT} --format=json' here yourself and run the check again"
+      unmeasured "$key" "the invoke grant on ${name} could not be read in ${REGION} ($(last_line "$(cat "$SCRATCH/policy-$svc.err" 2>/dev/null || true)")): run 'gcloud run services get-iam-policy ${name} --project ${WORKSPACE_PROJECT} --region ${REGION} --format=json' here yourself and run the check again"
       return 0
     fi
     body=$(reader policy "$SCRATCH/policy-$svc.json")
@@ -563,7 +587,7 @@ step_grants() {
     fact "$key" FAIL "the two invoke grants are not both there: ${missing}. WC2's whole point is that a roster person holds the invoke grant on the workspace's credentials service and on its intake and NOTHING else — a person refused here is a person whose runs and whose token have nowhere to go. Re-apply the workspace's own root ('fugaro update' on the workspace's project) and run the check again"
     return 0
   fi
-  fact "$key" PASS "both of the workspace's services bind roles/run.invoker to user:${PERSON} — ${granted} — and the project's own IAM names that person in no binding: the roster person holds the two invoke grants and nothing else on the workspace's project, which is the premise U6 (does the platform admit them with a gcloud identity token) is read on. Read it yourself: gcloud run services get-iam-policy <service> --project ${WORKSPACE_PROJECT}"
+  fact "$key" PASS "both of the workspace's services bind roles/run.invoker to user:${PERSON} — ${granted} — and the project's own IAM names that person in no binding: the roster person holds the two invoke grants and nothing else on the workspace's project, which is the premise U6 (does the platform admit them with a gcloud identity token) is read on. Read it yourself: gcloud run services get-iam-policy <service> --project ${WORKSPACE_PROJECT} --region ${REGION}"
 }
 
 # step_container: U5 and D2960's "stored once". The container exists once in the
@@ -588,38 +612,51 @@ step_container() {
     fi
     CONTAINER=$(printf '%s\n' "$names" | head -n 1)
   fi
-  gcloud secrets get-iam-policy "$CONTAINER" --project "$WORKSPACE_PROJECT" \
-    --format=json >"$SCRATCH/container.json" 2>"$SCRATCH/container.err" || true
-  if [ ! -s "$SCRATCH/container.json" ]; then
-    unmeasured "$key" "the container ${CONTAINER}'s policy could not be read ($(last_line "$(cat "$SCRATCH/container.err" 2>/dev/null || true)")): run 'gcloud secrets get-iam-policy ${CONTAINER} --project ${WORKSPACE_PROJECT} --format=json' here yourself and run the check again"
+  # R6's accessor is a PROJECT-level conditional member and not a grant on the
+  # container (roots/workspace/main.tf's
+  # google_project_iam_member.workspace_person_token): a container's name is the
+  # verified token's own `sub`, which no plan knows at apply time, so the grant
+  # is written on the workspace's project and narrowed by its condition.
+  gcloud projects get-iam-policy "$WORKSPACE_PROJECT" --format=json >"$SCRATCH/project.json" 2>"$SCRATCH/project.err" || true
+  if [ ! -s "$SCRATCH/project.json" ]; then
+    unmeasured "$key" "the workspace's project policy could not be read, so the accessor ${WORKSPACE_ACCOUNT} holds on it could not be read either ($(last_line "$(cat "$SCRATCH/project.err" 2>/dev/null || true)")): run 'gcloud projects get-iam-policy ${WORKSPACE_PROJECT} --format=json' here yourself and run the check again"
     return 0
   fi
-  local body conditioned="" unconditional="" expr
-  body=$(reader policy "$SCRATCH/container.json")
-  while IFS='|' read -r role members condition; do
+  local body role members title expr
+  local conditioned="" unconditional="" prefix_only="" other=""
+  body=$(reader policy "$SCRATCH/project.json")
+  while IFS='|' read -r role members title expr; do
     [ -n "$role" ] || continue
+    [ "$role" = "$ACCESSOR_ROLE" ] || continue
     case ",$members," in
-    *,serviceAccount:*) ;;
+    *",serviceAccount:${WORKSPACE_ACCOUNT},"*) ;;
     *) continue ;;
     esac
-    case "$condition" in
-    *"$PERSON_PREFIX"*)
-      conditioned="${conditioned}${conditioned:+, }${role} under '${condition}'"
-      ;;
-    -)
-      unconditional="${unconditional}${unconditional:+, }${role}"
-      ;;
-    *)
-      expr="$condition"
-      ;;
-    esac
+    if [ "$expr" = "-" ]; then
+      unconditional="${unconditional}${unconditional:+, }${ACCESSOR_ROLE}"
+      continue
+    fi
+    local has_prefix=no has_name=no
+    case "$expr" in *"$PERSON_PREFIX"*) has_prefix=yes ;; esac
+    case "$expr" in *"$PERSON_TOKEN_NAME"*) has_name=yes ;; esac
+    if [ "$has_prefix" = yes ] && [ "$has_name" = yes ]; then
+      conditioned="${conditioned}${conditioned:+, }${ACCESSOR_ROLE} under '${title}' (${expr})"
+    elif [ "$has_prefix" = yes ]; then
+      prefix_only="${prefix_only}${prefix_only:+, }${ACCESSOR_ROLE} under '${title}' (${expr})"
+    else
+      other="${other}${other:+, }${ACCESSOR_ROLE} under '${title}' (${expr})"
+    fi
   done <<<"$(lines_of binding "$body")"
   if [ -n "$unconditional" ]; then
-    fact "$key" FAIL "the workspace's account is an accessor on ${CONTAINER} with NO condition (${unconditional}): R6's accessor is conditioned to the ${PERSON_PREFIX} prefix and the one name served, so an unconditional grant is one that reads EVERY container of the workspace — including every other person's token. Re-apply the workspace's own root and run the check again"
+    fact "$key" FAIL "the workspace's own account (${WORKSPACE_ACCOUNT}) holds ${unconditional} on ${WORKSPACE_PROJECT}'s own IAM with NO condition: R6's accessor is conditioned to the ${PERSON_PREFIX} prefix AND the ${PERSON_TOKEN_NAME} name its grant serves, so an unconditional one reads EVERY secret of the workspace's project — every other person's token among them. Re-apply the workspace's own root ('fugaro update' on the workspace's project) and run the check again"
+    return 0
+  fi
+  if [ -n "$prefix_only" ]; then
+    fact "$key" FAIL "the workspace's own account holds ${prefix_only} — the ${PERSON_PREFIX} prefix ALONE. R6's condition names BOTH halves (${PERSON_PREFIX} and ${PERSON_TOKEN_NAME}), and a prefix-only one admits every personal secret a person keeps in the workspace's project, every other person's container among them: that widening is what U5 reads and what internal/infra/tf's cover refuses. Re-apply the workspace's own root and run the check again"
     return 0
   fi
   if [ -z "$conditioned" ]; then
-    fact "$key" FAIL "no binding on ${CONTAINER} gives a service account an accessor under a condition naming the ${PERSON_PREFIX} prefix${expr:+, and one binding carries the condition '${expr}'}: the bindings are $(printf '%s' "$(printf '%s\n' "$body" | grep '^binding=' | head -n 3 | tr '\n' '; ')" | head -c 400). U5 is exactly this read — whether a real workspace's service can read a person's container through a prefix-conditioned accessor — so a policy without one is the answer NO. Re-apply the workspace's own root and run the check again"
+    fact "$key" FAIL "no binding on ${WORKSPACE_PROJECT}'s own IAM gives ${WORKSPACE_ACCOUNT} ${ACCESSOR_ROLE} under a condition naming the ${PERSON_PREFIX} prefix and the ${PERSON_TOKEN_NAME} it ends in${other:+, and one binding carries ${other}}: the bindings of that role are $(printf '%s' "$(printf '%s\n' "$body" | grep "^binding=${ACCESSOR_ROLE}|" | head -n 3 | tr '\n' '; ' || true)" | head -c 400). U5 is exactly this read — whether a real workspace's service can read a person's container through a prefix-conditioned accessor — so a policy without one is the answer NO. Re-apply the workspace's own root and run the check again"
     return 0
   fi
   # The intake's own lines: the person wrote it, with the two grants and no role.
@@ -636,7 +673,7 @@ step_container() {
     return 0
   fi
   PERSON_SUB=$(printf '%s' "$act" | cut -d'|' -f5)
-  fact "$key" PASS "${CONTAINER} is the one container under ${PERSON_PREFIX} in ${WORKSPACE_PROJECT} (D2960: stored once, at the workspace), a service account of the project reaches it under a condition naming the prefix (${conditioned}), and the intake's own line says it was written by sub ${PERSON_SUB} with '$(printf '%s' "$act" | cut -d'|' -f1-3 | tr '|' ' ')' — a person who holds nothing but the two invoke grants. U5 answered YES: a workspace's service reads a person's container through a prefix-conditioned accessor"
+  fact "$key" PASS "${CONTAINER} is the one container under ${PERSON_PREFIX} in ${WORKSPACE_PROJECT} (D2960: stored once, at the workspace), the workspace's own account (${WORKSPACE_ACCOUNT}) holds ${conditioned} on the project's own IAM — the prefix AND the ${PERSON_TOKEN_NAME} name, so it reaches this container and no other personal secret of the project — and the intake's own line says it was written by sub ${PERSON_SUB} with '$(printf '%s' "$act" | cut -d'|' -f1-3 | tr '|' ' ')' — a person who holds nothing but the two invoke grants. U5 answered YES: a workspace's service reads a person's container through a prefix-conditioned accessor"
 }
 
 # step_served KEY RUN WHERE — the run was served the person's own container. The
@@ -843,8 +880,8 @@ plan() {
   local key
   say "CHECK 850 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [network, read] the guard: fugaro doctor --project ${INSTALLATION} --all and fugaro version"
-  say "  [network, read] gcloud projects get-iam-policy ${WORKSPACE_PROJECT:-<workspace project>} and gcloud run services list/get-iam-policy — the two invoke grants (U6)"
-  say "  [network, read] gcloud secrets list --filter=name:${PERSON_PREFIX} and get-iam-policy <container> — one container, read under a prefix condition (U5)"
+  say "  [network, read] gcloud projects get-iam-policy ${WORKSPACE_PROJECT:-<workspace project>} and gcloud run services list/get-iam-policy --region ${REGION} --platform=managed — the two invoke grants (U6)"
+  say "  [network, read] gcloud secrets list --filter=name:${PERSON_PREFIX} — one container — and the project's own policy, where ${WORKSPACE_ACCOUNT} holds ${ACCESSOR_ROLE} under a condition naming ${PERSON_PREFIX} AND ${PERSON_TOKEN_NAME} (U5, R6)"
   say "  [network, read] gcloud logging read on ${INTAKE_SERVICE} in ${WORKSPACE_PROJECT:-<workspace project>} — the intake's own line for the person's write"
   say "  [network, read] gcloud logging read on ${CREDENTIALS_SERVICE} in ${WORKSPACE_PROJECT:-<workspace project>} — what the service served or refused each run"
   say "  [network, read] fugaro runs ls --json${REMOVED_PROJECT:+ --project ${REMOVED_PROJECT}} — the removed person's run, halted"
@@ -928,6 +965,11 @@ REMOVED_AT=${CHECK850_REMOVED_AT:-}
 LOG_AGE=${CHECK850_LOG_AGE:-24h}
 LOG_LIMIT=${CHECK850_LOG_LIMIT:-200}
 GRACE_SECONDS=${CHECK850_GRACE_SECONDS:-60}
+REGION=${CHECK850_REGION:-us-east5}
+WORKSPACE_ACCOUNT=${CHECK850_WORKSPACE_ACCOUNT:-}
+WORKSPACE_ACCOUNT=${WORKSPACE_ACCOUNT#serviceAccount:}
+[ -n "$WORKSPACE_ACCOUNT" ] ||
+  WORKSPACE_ACCOUNT="fugaro-workspace@${WORKSPACE_PROJECT}.iam.gserviceaccount.com"
 DRY_RUN=${CHECK850_DRY_RUN:-$DRY_RUN_CLI}
 KEEP_SCRATCH=${CHECK850_KEEP_SCRATCH:-}
 ACCOUNT=$(gcloud config get-value account 2>/dev/null | head -n 1 || true)

@@ -5,10 +5,12 @@
 # and the cases assert what the script printed and what it refused.
 #
 # The bends are the row's own. A person named in the workspace's project IAM is
-# the "nothing but the two invoke grants" premise broken; a binding whose
-# condition never names the fugaro_u_ prefix, or one with no condition at all, is
-# U5 answered NO; an intake line written by another sub, or none at all, is the
-# person's own write missing; a run served a shared entry where R7 places the
+# the "nothing but the two invoke grants" premise broken; the workspace's account
+# holding no conditioned accessor on the project's own IAM — a condition naming
+# the fugaro_u_ prefix alone, one that names something else, no condition at all,
+# or one held by another account — is U5 answered NO; an intake line written by
+# another sub, or none at all, is the person's own write missing; a run served a
+# shared entry where R7 places the
 # person's token, or a second person's run served the first's container, is the
 # serving half wrong. Beside them: the four refusals the release writes (the
 # switch off, the deleted token, the removal in and out of its minute, a run that
@@ -67,8 +69,14 @@ PREFIX=fugaro_u_
 CONTAINER=${PREFIX}${SUB}-claude-oauth-token
 SHARED=shared-claude-oauth-token
 WORKSPACE=ws
-SA=ws-run@ws.iam.gserviceaccount.com
-PREFIX_CONDITION='resource.name.startsWith("projects/-/secrets/fugaro_u_")'
+SA=fugaro-workspace@ws.iam.gserviceaccount.com
+# R6's accessor as the workspace's own root writes it: a PROJECT-level member
+# whose condition names the prefix AND the name the token's container ends in
+# (gcp.WorkspacePersonTokenCondition). The prefix alone is the widening the row
+# exists to catch.
+ACCESSOR_COND='resource.name.extract("/secrets/{secret}").startsWith("fugaro_u_") && resource.name.extract("/secrets/{secret}").endsWith("_claude-oauth-token")'
+PREFIX_ONLY_COND='resource.name.extract("/secrets/{secret}").startsWith("fugaro_u_")'
+ACCESSOR_TITLE=fugaro-workspace-person-token
 RID_ONE=20261126-000000-per1
 RID_TWO=20261126-000000-per2
 RID_OTHER=20261126-000000-oth1
@@ -120,11 +128,19 @@ case "${1:-} ${2:-}" in
   case "${3:-}" in
   list)
     failing services && { echo "fake gcloud: the service listing could not be read" >&2; exit 1; }
+    case "$args" in
+    *"--region"*) ;;
+    *) echo "fake gcloud: a Cloud Run call with no --region would prompt" >&2; exit 2 ;;
+    esac
     cat "$fx/services.json"
     ;;
   get-iam-policy)
     failing service-policy && { echo "fake gcloud: the service policy could not be read" >&2; exit 1; }
     name=${4:-}
+    case "$args" in
+    *"--region"*) ;;
+    *) echo "fake gcloud: a Cloud Run call with no --region would prompt" >&2; exit 2 ;;
+    esac
     policy=$fx/policy-$name.json
     [ -r "$policy" ] || { echo "fake gcloud: no policy for service $name" >&2; exit 1; }
     cat "$policy"
@@ -135,10 +151,6 @@ case "${1:-} ${2:-}" in
 "secrets list")
   failing secrets && { echo "fake gcloud: the container listing could not be read" >&2; exit 1; }
   cat "$fx/secrets.json"
-  ;;
-"secrets get-iam-policy")
-  failing container-policy && { echo "fake gcloud: the container policy could not be read" >&2; exit 1; }
-  cat "$fx/container.json"
   ;;
 "logging read")
   case "$args" in
@@ -163,16 +175,18 @@ chmod +x "$work/bin/gcloud"
 # A fixture generator is one python program per shape, so what the fakes serve is
 # JSON a parser accepts and never a string a bash case matched.
 
-policy_json() { # policy_json OUT "ROLE|MEMBERS|CONDITION-OR--"...
+policy_json() { # policy_json OUT "ROLE|MEMBERS|CONDITION-OR--[|TITLE]"...
   python3 - "$@" <<'PY'
 import json, sys
 out, specs = sys.argv[1], sys.argv[2:]
 bindings = []
 for spec in specs:
-    role, members, cond = spec.split("|")
+    parts = spec.split("|")
+    role, members, cond = parts[0], parts[1], parts[2]
     binding = {"role": role, "members": [m for m in members.split(",") if m]}
     if cond != "-":
-        binding["condition"] = {"title": "c", "expression": cond}
+        binding["condition"] = {"title": parts[3] if len(parts) > 3 else "c",
+                                "expression": cond}
     bindings.append(binding)
 with open(out, "w") as fh:
     json.dump({"bindings": bindings}, fh)
@@ -244,15 +258,15 @@ REMOVED_AT=$(now_iso 0)
 fixtures_ok() {
   rm -f "$fx/fail"
   : >"$fx/fail"
-  policy_json "$fx/project.json" "roles/viewer|user:someone@example.com|-"
+  policy_json "$fx/project.json" \
+    "roles/viewer|user:someone@example.com|-" \
+    "roles/secretmanager.secretAccessor|serviceAccount:$SA|$ACCESSOR_COND|$ACCESSOR_TITLE"
   listing_json "$fx/services.json" \
     "projects/$WORKSPACE/locations/us-east5/services/fugaro-credentials" \
     "projects/$WORKSPACE/locations/us-east5/services/fugaro-intake"
   policy_json "$fx/policy-fugaro-credentials.json" "roles/run.invoker|user:$PERSON|-"
   policy_json "$fx/policy-fugaro-intake.json" "roles/run.invoker|user:$PERSON|-"
   listing_json "$fx/secrets.json" "projects/$WORKSPACE/secrets/$CONTAINER"
-  policy_json "$fx/container.json" \
-    "roles/secretmanager.secretAccessor|serviceAccount:$SA|$PREFIX_CONDITION"
   log_json "$fx/log-intake.json" "intake|$NOW|create|user|ok|user:$PERSON|$SUB|$CONTAINER"
   log_json "$fx/log-$RID_ONE.json" "audit|$NOW|ok|$CONTAINER|A|personal|$RID_ONE|slip-1|$PERSON"
   log_json "$fx/log-$RID_TWO.json" "audit|$NOW|ok|$CONTAINER|A|personal|$RID_TWO|slip-2|$PERSON"
@@ -310,6 +324,7 @@ test_help() {
   expect_contains "$out" "Usage:" "--help prints the usage"
   expect_contains "$out" "WORKSPACE_PROJECT" "--help names the project every read lands in"
   expect_contains "$out" "REMOVED_AT" "--help names the moment the removal was made"
+  expect_contains "$out" "CHECK850_REGION" "--help names the region the two services are read in"
 }
 
 test_dry_run_measures_nothing() {
@@ -353,7 +368,8 @@ test_a_missing_invoke_grant_fails() {
 
 test_a_person_named_in_the_project_iam_is_unmeasured() {
   fixtures_ok
-  policy_json "$fx/project.json" "roles/viewer|user:$PERSON|-" "roles/run.invoker|user:$PERSON|-"
+  policy_json "$fx/project.json" "roles/viewer|user:$PERSON|-" "roles/run.invoker|user:$PERSON|-" \
+    "roles/secretmanager.secretAccessor|serviceAccount:$SA|$ACCESSOR_COND|$ACCESSOR_TITLE"
   run_check
   expect_status "$status" 2 "a person who holds a role on the project is not the premise U6 is read on"
   expect_contains "$out" "FACT invoke-grants: FAIL" "the grants row is unmeasured"
@@ -380,23 +396,44 @@ test_a_project_policy_that_cannot_be_read_is_unmeasured() {
 
 test_an_unconditional_accessor_fails() {
   fixtures_ok
-  policy_json "$fx/container.json" "roles/secretmanager.secretAccessor|serviceAccount:$SA|-"
+  policy_json "$fx/project.json" "roles/secretmanager.secretAccessor|serviceAccount:$SA|-"
   run_check
-  expect_status "$status" 1 "an accessor with no condition reads every person's token"
+  expect_status "$status" 1 "an accessor with no condition reads every secret of the project"
   expect_contains "$out" "FACT person-container: FAIL" "the container row is the finding"
   expect_contains "$out" "with NO condition" "the row says what is wrong with the accessor"
-  expect_contains "$out" "reads EVERY container of the workspace" "the row says what that costs"
+  expect_contains "$out" "reads EVERY secret of the workspace's project" "the row says what that costs"
+}
+
+test_an_accessor_whose_condition_names_the_prefix_alone_fails() {
+  fixtures_ok
+  policy_json "$fx/project.json" \
+    "roles/secretmanager.secretAccessor|serviceAccount:$SA|$PREFIX_ONLY_COND|$ACCESSOR_TITLE"
+  run_check
+  expect_status "$status" 1 "a prefix-only condition reads every other person's container"
+  expect_contains "$out" "FACT person-container: FAIL" "the container row is the finding"
+  expect_contains "$out" "prefix ALONE" "the row says which half is missing"
+  expect_contains "$out" "every other person's container among them" "the row says what the widening costs"
 }
 
 test_an_accessor_whose_condition_never_names_the_prefix_fails() {
   fixtures_ok
-  policy_json "$fx/container.json" \
+  policy_json "$fx/project.json" \
     "roles/secretmanager.secretAccessor|serviceAccount:$SA|resource.name.startsWith(\"projects/-/secrets/elsewhere_\")"
   run_check
   expect_status "$status" 1 "a condition that never names the prefix is not R6's accessor"
   expect_contains "$out" "FACT person-container: FAIL" "the container row is the finding"
   expect_contains "$out" "condition naming the fugaro_u_ prefix" "the row names what the condition had to say"
   expect_contains "$out" "is the answer NO" "the row says U5 is answered by this read"
+}
+
+test_an_accessor_held_by_another_account_fails() {
+  fixtures_ok
+  policy_json "$fx/project.json" \
+    "roles/secretmanager.secretAccessor|serviceAccount:someone-else@ws.iam.gserviceaccount.com|$ACCESSOR_COND|$ACCESSOR_TITLE"
+  run_check
+  expect_status "$status" 1 "R6's accessor is the workspace's own account's"
+  expect_contains "$out" "FACT person-container: FAIL" "the container row is the finding"
+  expect_contains "$out" "gives $SA" "the row names the account it looked for"
 }
 
 test_two_containers_is_unmeasured() {
@@ -610,7 +647,9 @@ t test_a_person_named_in_the_project_iam_is_unmeasured
 t test_the_workspace_serving_no_such_service_fails
 t test_a_project_policy_that_cannot_be_read_is_unmeasured
 t test_an_unconditional_accessor_fails
+t test_an_accessor_whose_condition_names_the_prefix_alone_fails
 t test_an_accessor_whose_condition_never_names_the_prefix_fails
+t test_an_accessor_held_by_another_account_fails
 t test_two_containers_is_unmeasured
 t test_an_intake_line_written_by_another_sub_fails
 t test_an_intake_log_that_cannot_be_read_is_unmeasured
