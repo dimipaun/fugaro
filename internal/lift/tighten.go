@@ -207,7 +207,7 @@ func levelOffLine(repo string, layer map[string]any, w tightenValue) string {
 	return fmt.Sprintf("%s: %s %s dropped; the project runs %s", repo, w.path, w.text, levelOf(w.path))
 }
 
-// levelOf is the review level a widen path names: agent.levels.l2.effort is l2.
+// levelOf is the review level a tighten path names: agent.levels.l2.effort is l2.
 func levelOf(path string) string {
 	segs := strings.Split(path, ".")
 	if len(segs) < 3 {
