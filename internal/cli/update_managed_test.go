@@ -1571,7 +1571,12 @@ func TestUpdateManagedAppliesInASessionNobodyIsAt(t *testing.T) {
 	if n := len(r.ran(t, "apply")); n != 2 {
 		t.Errorf("%d terraform apply(s) ran, want the two the run covered:\n%s", n, got)
 	}
-	stepLineInLog(t, got+newestLog(t, "update"), "  "+initflow.GateOrdinary())
+	// The sentence the covered step prints is the run's own account of it and
+	// goes where that account goes (initRun.stageDetail): the log, which is
+	// where a run that is not --verbose keeps it.
+	if log := newestLog(t, "update"); !strings.Contains(log, initflow.GateOrdinary()) {
+		t.Errorf("the applied step does not say what covered it, so nothing reads as the run's own account:\n%s", log)
+	}
 	recs := audits(t, r)
 	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted {
 		t.Fatalf("%d record(s) after an admitted plan, want two admitted: %+v", len(recs), recs)
