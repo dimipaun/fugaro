@@ -376,10 +376,11 @@ func newSlipID() (string, error) {
 // credential to read and no admission to consult; the policy is read for its
 // pools and for nothing else.
 func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	tok, err := bearerFromHTTP(r)
+	tok, err := personBearerFromHTTP(r)
 	if err != nil {
 		// No line: the call is refused before its caller was verified, which is
 		// the one refusal on this route with nothing to name.
+		s.log.Warn("credsvc: a slip grant carried no readable token", "reason", err.Error())
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
 		return
 	}
@@ -1188,6 +1189,7 @@ func (s *Server) refuseGrant(ctx context.Context, w http.ResponseWriter, caller 
 // unreadable). It is refuseVerifier's mapping and not a second one, because the
 // two classes refuse for the same reasons.
 func (s *Server) refuseLauncher(w http.ResponseWriter, err error) {
+	s.log.Warn("credsvc: a slip grant's caller was refused", "reason", err.Error())
 	switch {
 	case errors.Is(err, ErrUnverifiedJob):
 		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
