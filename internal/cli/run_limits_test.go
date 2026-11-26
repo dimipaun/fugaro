@@ -12,6 +12,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -38,6 +39,18 @@ const limitsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_b
 func limitsCheckout(t *testing.T) {
 	t.Helper()
 	baseBranchCheckout(t, limitsRepo, limitsYAML, "main")
+}
+
+// limitsCfg is the configuration the fixture's file resolves to: the checkout's
+// own layer, with no project layer over it (Resolve's layerless arm, which is
+// what the launcher resolves for a repository whose project publishes none).
+func limitsCfg(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, _, ps := config.Resolve([]byte(limitsYAML), nil)
+	if len(ps) > 0 {
+		t.Fatalf("limitsYAML: %v", ps)
+	}
+	return cfg
 }
 
 // limitsImage gives the fixture's web job a build record naming the release
@@ -543,7 +556,7 @@ func TestRunLimitNeverAboveTheModeCeiling(t *testing.T) {
 	f := newCloudFixture(t)
 	limitsImage(t, f)
 	limitsCheckout(t)
-	above := chainRoundCeiling(rigor.Pro) + 7
+	above := chainRoundCeiling(limitsCfg(t), rigor.Pro) + 7
 	args := []string{"run", "--run-id", "20261110-140000-abcd", "--max-review-rounds", fmt.Sprint(above), "A task"}
 	if _, _, err := execute(t, args...); err != nil {
 		t.Fatalf("--max-review-rounds %d: %v", above, err)
@@ -567,8 +580,8 @@ func TestRunClampedRoundsRefusalNamesTheFigure(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error", err)
 	}
-	want := fmt.Sprintf("A %s run's own review loop starts from %d rounds per run (the mode's default, held inside the recipe's %d)",
-		rigor.Pro, chainRoundCeiling(rigor.Pro), recipe.MaxReviewRounds)
+	want := fmt.Sprintf("A %s run's own review loop starts from %d rounds per run (the file's own number where it tightens the mode's, the mode's default where it does not, held inside the recipe's %d)",
+		rigor.Pro, chainRoundCeiling(limitsCfg(t), rigor.Pro), recipe.MaxReviewRounds)
 	for _, w := range []string{"--max-review-rounds 0", "must be at least 1", want} {
 		if !strings.Contains(err.Error(), w) {
 			t.Fatalf("err = %v, want it to name %q", err, w)

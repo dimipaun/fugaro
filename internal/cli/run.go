@@ -1927,8 +1927,8 @@ func chainLimitGate(ctx context.Context, env *cloudEnv, o *runOptions, spec *tas
 	}
 	if r := o.limits.rounds; r != nil {
 		if *r < 1 {
-			return userErr("--max-review-rounds %d: a chain's review rounds must be at least 1. A %s run's own review loop starts from %d rounds per run (the mode's default, held inside the recipe's %d), so a limit below that bounds a chain that could never spend it",
-				*r, c.mode, chainRoundCeiling(c.mode), recipe.MaxReviewRounds)
+			return userErr("--max-review-rounds %d: a chain's review rounds must be at least 1. A %s run's own review loop starts from %d rounds per run (the file's own number where it tightens the mode's, the mode's default where it does not, held inside the recipe's %d), so a limit below that bounds a chain that could never spend it",
+				*r, c.mode, chainRoundCeiling(c.cfg, c.mode), recipe.MaxReviewRounds)
 		}
 		n := int(e.MaxReviewRounds)
 		spec.Overrides.MaxReviewRounds = &n
