@@ -1161,6 +1161,7 @@ flag	run	value		--mode
 flag	run	value		--owner-ruled
 flag	run	value		--path
 flag	run	value		--plan-task
+flag	run	value		--pool
 flag	run	value		--pr
 flag	run	value		--project
 flag	run	value		--recipe

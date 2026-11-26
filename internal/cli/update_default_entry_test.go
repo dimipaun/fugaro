@@ -355,7 +355,7 @@ func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItCouldNotRead(t *testing.T
 func TestUpdatePreviousVersionWithABakedWorkflowConvergesInOneUpdate(t *testing.T) {
 	r := newConvergeRig(t, staleNode(t))
 	onlyRepos(t, r)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
 		t.Fatalf("the published node is version %d after one update, want this binary's %d", got, projectpolicy.Version)
@@ -423,7 +423,7 @@ func TestTheWithheldEntryWarningIsOneLineAndNamesTheAction(t *testing.T) {
 	t.Run("a workflow of this checkout that writes no image of its own", func(t *testing.T) {
 		r := newConvergeRig(t, staleNode(t))
 		onlyRepos(t, r)
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		line := oneWithheldEntryLine(t, out)
 		if !strings.Contains(line, "dockerfile") {

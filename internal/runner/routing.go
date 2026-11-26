@@ -453,12 +453,11 @@ func (r *run) pairingNamesTheProjectsProviderKey() bool {
 // than a run (validate, doctor): the gateway is what decides whether the switch
 // has anything to act on at all (design §6.2, D11).
 //
-// The mode is no longer one of the facts (AB1b, D3009): the budget mode is
+// The mode is not one of the facts (AB1b, I1, D3009): the budget mode is
 // observe or enforce and there is always a gateway, so every credential the
-// gateway can carry has one in every mode. The argument stays until I1 drops it
-// with its callers in the CLI, and it is ignored rather than removed for that
-// one reason.
-func GatewayOn(auth, mode string) bool {
+// gateway can carry has one in every mode, and there is no argument left for a
+// caller to pass.
+func GatewayOn(auth string) bool {
 	switch auth {
 	case "api-key", "vertex", config.AuthCascade:
 		return true
@@ -469,14 +468,13 @@ func GatewayOn(auth, mode string) bool {
 // ServiceSwitchedAuth reports whether an auth is one the credentials service
 // serves once the installation's switch is on: api-key and oauth (B2.2, F30).
 //
-// It is not GatewayOn, and GatewayOn keeps its two-argument answer, because the
-// two are different questions. GatewayOn answers whether a run's gateway exists
-// at all — a fact about the auth and the budget mode, and nothing else — while
-// whether a repository is *switched* is a fact about its job's environment
-// (credentialsServiceURLEnv, B2.3), which the readers that hold a configuration
-// and no run (validate, doctor) cannot see. A reader that asked this predicate
-// in GatewayOn's place would answer "switched" for every api-key repository
-// there is, and read a mount that is not there.
+// It is not GatewayOn, because the two are different questions. GatewayOn
+// answers whether a run's gateway exists at all — a fact about the auth and
+// nothing else — while whether a repository is *switched* is a fact about its
+// job's environment (credentialsServiceURLEnv, B2.3), which the readers that
+// hold a configuration and no run (validate, doctor) cannot see. A reader that
+// asked this predicate in GatewayOn's place would answer "switched" for every
+// api-key repository there is, and read a mount that is not there.
 //
 // cascade is deliberately not here: it is served by the service on every
 // installation that has one, and reaches it through GatewayOn's own arm

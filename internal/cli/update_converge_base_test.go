@@ -46,7 +46,7 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 	// The stale base is what the assertions after the run are about: the job
 	// images the records show were built on the previous release's base, which
 	// is what the images stage has to move.
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// The pin this release's images stage resolves, verifies and records: the
 	// one value whose movement is this installation reaching the slim base.

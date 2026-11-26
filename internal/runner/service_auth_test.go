@@ -322,7 +322,7 @@ func TestASwitchedRunIsAdmittedWhateverTheMode(t *testing.T) {
 		mode string
 	}{
 		{"a mode left unset", "api-key", ""},
-		{"the word that was a mode", "api-key", policy.ModeOff},
+		{"the word that was a mode", "api-key", "off"},
 		{"observe", "oauth", policy.ModeObserve},
 		{"enforce", "oauth", policy.ModeEnforce},
 	} {
@@ -344,7 +344,7 @@ func TestASwitchedRunIsAdmittedWhateverTheMode(t *testing.T) {
 		r := svcRun(t, "api-key", func(r *run) {
 			r.d.Local = true
 			r.d.Env = []string{url, "ANTHROPIC_API_KEY=" + plantedKey}
-			r.spend = Spend{Mode: policy.ModeOff}
+			r.spend = Spend{Mode: "off"}
 		})
 		if err := r.applyRouting(nil, false); err != nil {
 			t.Fatalf("a local run was refused for the switch (D149): %v", err)
