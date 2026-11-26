@@ -332,23 +332,26 @@ func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
 	}
 }
 
-// TestFollowUpDocumentedTokenOverrideCommandWorks runs the EXACT command
-// reference/followup.md's usage-limit section documents (--token NAME added
+// TestFollowUpDocumentedPoolOverrideCommandWorks runs the EXACT command
+// reference/followup.md's usage-limit section documents (--pool NAME added
 // to a plain follow-up), substituting real values for its placeholders, so
 // the skill's documented command and the CLI's actual behavior cannot drift
-// apart again (review finding, task 9b round 2). A later edit to the
-// skill's command shape, or a regression in the override itself, fails
-// this test.
-func TestFollowUpDocumentedTokenOverrideCommandWorks(t *testing.T) {
-	args := documentedFollowUpOverrideCommand(t, "7", "acme/app", "acme-personal", fuID)
-	f := newCloudFixture(t)
-	f.appendConfig(t, appClaudeAccountsConfig)
-	variant := gcp.WorkflowVariant("web", "acme-personal")
-	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
-	seedAppFollowUpRoot(t, f, "")
-	var got gcpfake.RunCall
-	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
+// apart again (review finding, task 9b round 2). CS12 replaced the flag it
+// names — the account switch the section describes is a pool switch, and
+// --token is refused where the project's table serves the run — so what the
+// command must carry is the pool, read off the run's grant the way
+// run_pool_test.go's TestAFollowUpUsesItsOwnLaunchersPool reads it. A later
+// edit to the skill's command shape, or a regression in the flag it names,
+// fails this test.
+func TestFollowUpDocumentedPoolOverrideCommandWorks(t *testing.T) {
+	// The skill file is read before the fixture: building a checkout fixture
+	// leaves the process in its own repository directory.
+	args := documentedFollowUpOverrideCommand(t, "7", "acme/app", "team", wallRunIDAt(0, "140000", "feed"))
+	f := poolFixture(t, poolEveryModelTableYAML)
+	root := wallRunIDAt(3, "090000", "cccc")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, f.job)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	asked, grants := stubSlipGrant(t)
 	out, _, err := execute(t, append(args, "more work")...)
 	if err != nil {
 		t.Fatalf("documented command %v: %v", args, err)
@@ -356,11 +359,11 @@ func TestFollowUpDocumentedTokenOverrideCommandWorks(t *testing.T) {
 	if !strings.Contains(out, `"status": "launched"`) {
 		t.Fatalf("documented command %v: result %s, want launched", args, out)
 	}
-	if want := gcp.JobName(appSlug, variant); got.Job != want {
-		t.Fatalf("documented command %v launched job %q, want %q", args, got.Job, want)
+	if grants() != 1 {
+		t.Fatalf("documented command %v made %d grant calls, want exactly one: a run has one slip", args, grants())
 	}
-	if got := readSpec(t, f, fuID).OAuthToken; got != "acme-personal" {
-		t.Fatalf("documented command %v: OAuthToken = %q, want acme-personal", args, got)
+	if got := asked()[0].NamedPool; got != "team" {
+		t.Fatalf("documented command %v: the grant names the pool %q, want %q", args, got, "team")
 	}
 }
 
@@ -576,9 +579,9 @@ func TestRunTokenImageGateSkippedForDefaultAccount(t *testing.T) {
 
 // followUpOverrideCommandRE finds reference/followup.md's documented
 // account-switch relaunch: a fenced inline span naming fugaro run --pr,
-// --token and --run-id together, so a later rewording of the skill's own
+// --pool and --run-id together, so a later rewording of the skill's own
 // text is read fresh each time, not copied into the test.
-var followUpOverrideCommandRE = regexp.MustCompile("`(fugaro run --pr N --repo <owner/name> --token NAME --run-id <id> --json)`")
+var followUpOverrideCommandRE = regexp.MustCompile("`(fugaro run --pr N --repo <owner/name> --pool NAME --run-id <id> --json)`")
 
 // documentedFollowUpOverrideCommand reads reference/followup.md's own
 // account-switch relaunch command and substitutes real values for its
@@ -595,7 +598,7 @@ func documentedFollowUpOverrideCommand(t *testing.T, pr, repo, name, runID strin
 	}
 	m := followUpOverrideCommandRE.FindStringSubmatch(string(data))
 	if m == nil {
-		t.Fatal("reference/followup.md no longer documents the account-switch relaunch command (fugaro run --pr N --repo <owner/name> --token NAME --run-id <id> --json)")
+		t.Fatal("reference/followup.md no longer documents the account-switch relaunch command (fugaro run --pr N --repo <owner/name> --pool NAME --run-id <id> --json)")
 	}
 	fields := strings.Fields(m[1])
 	if fields[0] != "fugaro" {

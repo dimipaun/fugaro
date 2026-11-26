@@ -567,9 +567,18 @@ func TestWatchReconnectSendsAFullSnapshotAndBumpsSeq(t *testing.T) {
 	// The connection goes away without a word, as a network does.
 	f.db.DropStreams()
 
+	// A document already in flight when the stream drops still reads up, so the
+	// first down one may be a few documents later; each is the next sequence.
 	down := sink.next(t, testPatience)
-	if down.Sources[0].State != graph.SourceDown {
-		t.Fatalf("the source is %+v while the stream is gone, want it down", down.Sources[0])
+	for i := 0; down.Sources[0].State != graph.SourceDown; i++ {
+		if i >= 3 {
+			t.Fatalf("the source is %+v while the stream is gone, want it down", down.Sources[0])
+		}
+		next := sink.next(t, testPatience)
+		if next.Seq != down.Seq+1 {
+			t.Errorf("a document while the stream drops is seq %d, want %d", next.Seq, down.Seq+1)
+		}
+		down = next
 	}
 	if down.Sources[0].Reason == "" {
 		t.Errorf("a down source carries no reason: %+v", down.Sources[0])
@@ -577,8 +586,8 @@ func TestWatchReconnectSendsAFullSnapshotAndBumpsSeq(t *testing.T) {
 	if len(down.Nodes) != len(first.Nodes) {
 		t.Errorf("the down document drew %d nodes, want the last known %d", len(down.Nodes), len(first.Nodes))
 	}
-	if down.Seq != first.Seq+1 {
-		t.Errorf("the down document is seq %d, want %d", down.Seq, first.Seq+1)
+	if down.Seq <= first.Seq {
+		t.Errorf("the down document is seq %d, want after %d", down.Seq, first.Seq)
 	}
 	child.stillRunning(t, 20*testFloor)
 

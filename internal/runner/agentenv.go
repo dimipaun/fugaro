@@ -127,10 +127,10 @@ func (r *run) imageEnv(declared, held []string) map[string]string {
 // service's upstream from, so a reader of this fact and the gateway cannot
 // disagree about whether the credentials service serves this run's calls.
 //
-// The agent's environment reads it as the run's own auth spelling today
-// (servedAuth answers cascade where this is true), and reads it as
-// agent.EnvSpec.ChainServed once CS6 passes it in the EnvSpec literal — the
-// same task that gives the gateway itself the fact (one file, runner.go).
+// The agent's environment reads it twice: as the run's own auth spelling
+// (servedAuth answers cascade where this is true) and as agent.EnvSpec's
+// ChainServed, which the EnvSpec literal fills in from here (model-credentials-
+// routing CS6).
 func (r *run) chainServed() bool { return r.serviceModelPath() }
 
 // resolveMixedStages answers the run's stage accounts: the stages of the one

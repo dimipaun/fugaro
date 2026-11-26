@@ -22,7 +22,10 @@ var updateSpendGolden = flag.Bool("update", false, "rewrite testdata/spend_accur
 
 // spendGoldenPath is the record the two halves of SA1.4 share: the runner
 // writes it and the CLI reads it, so the figures one side records are the
-// figures the other prints.
+// figures the other prints. Re-recorded when a repository's file stopped
+// deciding the pins (S1, lift L8, D3237): the fixture's models move to a project
+// layer, so the record carries project_layer and config_sha256 is the hash of
+// the file without them.
 var spendGoldenPath = filepath.Join("testdata", "spend_accuracy_result.golden.json")
 
 // TestSpendFieldsEndToEnd (SA1.4, F7, D2650) drives a stage's calls through

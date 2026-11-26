@@ -57,6 +57,7 @@ func TestFollowUpCarriesTheOwnersRuling(t *testing.T) {
 	const ruling = "Counsel cleared the MIT text as it stands. Keep the approval flow; product will revisit it next quarter."
 	spec := &task.Spec{Version: 1, RunID: followID, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: "Tidy up.",
 		Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID, OwnerRuled: ruling}
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +106,7 @@ func (h *fuHarness) ruledFollowUp(t *testing.T, id, previous, text, ruling strin
 	h.followUp(t, id, previous, text)
 	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: text,
 		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, OwnerRuled: ruling}
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

@@ -1624,7 +1624,15 @@ workflows:
 			if tc.enforce {
 				r.e.lc.Budget = &localcfg.Budget{Mode: localcfg.BudgetEnforce}
 			}
-			r.writeConfig(t, tc.yaml)
+			// The pin is what decides the prompt, and a repository file's
+			// agent.model is lifted (S1, D3237): config.Resolve drops it, so
+			// the file resolves with no model at all and every case would
+			// read "a pin goes direct". The pin is published as the project
+			// layer the file is anchored to, which is where a real
+			// installation keeps it.
+			file, layer := testutil.FixturePins(tc.yaml, config.LiftedKeyPaths())
+			r.writeConfig(t, file)
+			attachLayer(t, "aurora", layer)
 			res, err := r.run(t)
 			if err != nil || len(res.Left) != 1 {
 				t.Fatalf("%v, left %v", err, res.Left)

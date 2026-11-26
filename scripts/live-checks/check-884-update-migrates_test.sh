@@ -14,8 +14,12 @@
 # that fails, one that left a step for you (not a failure — the command is
 # unfinished, not refused), a published policy this CLI refuses or cannot read, a
 # repository update that fails or is left for you, one that moves a ref of the
-# checkout, and one that leaves a working-tree change: the last is the diff the
-# update offers, which is its own behaviour and not a repository's source moving.
+# checkout, and one that leaves a working-tree change (which is not a
+# repository's source moving). The migration's own noticing is read too: the
+# convergence prints one notice LINE per repository whose default branch still
+# carries a value an older release wrote — a plugin pin, `budget.mode: off` —
+# naming the file and the exact edit, where a release behind offered a diff it
+# wrote (D943, D3340).
 #
 # Usage: bash scripts/live-checks/check-884-update-migrates_test.sh
 set -euo pipefail
@@ -380,19 +384,42 @@ SH
   expect_contains "$out" "moved a reference of acme/other" "a repository update that moves a ref"
 }
 
-test_a_repository_update_that_leaves_a_diff_is_not_a_source_moving() {
-  case_dir repo_update_leaves_a_diff
-  # The update offers the plugin pin's removal as a diff the owner commits or
-  # does not (CLAUDE.md's HARD RULE): a change in the working tree is the
-  # update's offer, not a repository's source moving.
+test_the_installation_update_names_the_notice_for_a_repository_a_release_behind_wrote() {
+  case_dir notice_lines
+  # The convergence reads every enrolled repository's default branch and, where
+  # one still carries a value an older release wrote, prints one line naming the
+  # file and the edit — never a diff it writes into a checkout (D943, D3340).
+  # A notice is a `needs you` and not a failure: the row still passes and names
+  # the lines it saw.
+  {
+    printf 'fugaro update: the installation test converged\n'
+    printf 'acme/sub-app: needs you: .claude/settings.json: delete the fugaro entry from extraKnownMarketplaces and the fugaro@fugaro entry from enabledPlugins: an older fugaro pinned the plugin here, and nothing writes a pin any more\n'
+    printf 'acme/other: needs you: fugaro.yaml: delete the budget.mode line: it is not a budget mode any more (there is always a budget, and a mode left unset is observe)\n'
+  } >"$answers/install.out"
+  run884
+  expect_status "$status" 0 "an installation update that prints a notice line"
+  expect_row "$out" update PASS "an installation update that prints a notice line"
+  expect_contains "$out" "Its notice lines" "an installation update that prints a notice line"
+  expect_contains "$out" "acme/sub-app: needs you: .claude/settings.json:" "an installation update that prints a notice line"
+  expect_contains "$out" "acme/other: needs you: fugaro.yaml: delete the budget.mode line" "an installation update that prints a notice line"
+  expect_not_contains "$out" "|FAIL|" "an installation update that prints a notice line"
+  expect_not_contains "$out" "UNVERIFIED" "an installation update that prints a notice line"
+}
+
+test_a_working_tree_change_a_repository_update_leaves_is_not_a_source_moving() {
+  case_dir working_tree_change
+  # The update writes no plugin pin any more — a leftover pin is a notice line,
+  # named in the update row — so a working-tree change in a checkout is not the
+  # diff it offers: a repository's source is what may not move.
   cat >"$answers/repoupdate-does-sub" <<'SH'
-printf 'the removal the update offers\n' >>README.md
+printf 'a working-tree change\n' >>README.md
 SH
   run884
-  expect_status "$status" 0 "a repository update that leaves a diff"
-  expect_row "$out" source PASS "a repository update that leaves a diff"
-  expect_contains "$out" "left 1 working-tree change of acme/sub-app" "a repository update that leaves a diff"
-  expect_contains "$out" "commits nothing" "a repository update that leaves a diff"
+  expect_status "$status" 0 "a repository update that leaves a working-tree change"
+  expect_row "$out" source PASS "a repository update that leaves a working-tree change"
+  expect_contains "$out" "left 1 working-tree change of acme/sub-app" "a repository update that leaves a working-tree change"
+  expect_contains "$out" "not a repository's source moving" "a repository update that leaves a working-tree change"
+  expect_not_contains "$out" "the diff the update offers" "a repository update that leaves a working-tree change"
 }
 
 test_a_checkout_whose_head_moves_is_a_finding() {
@@ -444,7 +471,8 @@ t test_a_policy_without_the_new_keys_still_passes_and_says_so
 t test_a_repository_update_that_fails_is_a_finding
 t test_a_repository_update_that_leaves_a_step_for_you_is_unverified
 t test_a_repository_update_that_moves_a_ref_is_a_finding
-t test_a_repository_update_that_leaves_a_diff_is_not_a_source_moving
+t test_a_working_tree_change_a_repository_update_leaves_is_not_a_source_moving
+t test_the_installation_update_names_the_notice_for_a_repository_a_release_behind_wrote
 t test_a_checkout_whose_head_moves_is_a_finding
 t test_an_unknown_argument_is_refused
 

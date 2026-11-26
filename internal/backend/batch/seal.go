@@ -6,30 +6,27 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 )
 
-// SealKey is the installation's budget seal key as a sealed launch needs it
-// (batch-run-identity R13): the key version's name and that version's public
-// key, which is the whole of what `fugaro update` records in the
-// installation's `batch:` block and the whole of what a launcher may hold. The
-// private half never leaves Cloud KMS, and no launcher holds a grant on it, so
-// nothing here can open anything: wrapping to this public key is what makes
-// the sealed key safe to carry on the job, because only the credentials
-// service can unwrap it.
+// SealKey is the installation's seal-key fact as the block carries it
+// (batch-run-identity R13): the Cloud KMS key version's name and that version's
+// public key, which is the whole of what `fugaro update` records in the
+// installation's `batch:` block. The private half never leaves Cloud KMS.
+//
+// **Nothing on Batch wraps to it** (BR1, D3101 as amended): a Batch launch
+// carries its run's identity as a ticket the installation's credentials service
+// issues (internal/cli's launch_identity.go), and the seal it does not carry is
+// the budget token's, which is refused below rather than wrapped. So this type
+// is the shape of the option BRS's batch.go declares (Options.SealKey) and no
+// more: no launch of this backend reads either half.
 //
 // Both halves are strings because that is what the block carries (the setting
 // is a written value, not a parsed one) and this type only carries it: how a
 // public key is spelled in the block is the key-release contract's business,
-// not this seam's, so BR1 is the one that reads either half.
-//
-// **This is the type of Options.SealKey** (batch.go): naming the type here is
-// what lets BR1 change its shape without touching the file that holds the
-// options, which BRS alone writes.
+// not this seam's.
 type SealKey struct {
 	// VersionName is the Cloud KMS key version the block names, as a full
-	// resource name: the wrapped blob has to say which version it was wrapped
-	// to, and the service releases against that same version.
+	// resource name.
 	VersionName string
-	// PublicKey is that version's public key, the one the seal key is
-	// encrypted to.
+	// PublicKey is that version's public key, in the block's own spelling.
 	PublicKey string
 }
 
@@ -62,13 +59,12 @@ type SealKey struct {
 // own contract: the value leaves the launcher once, as the execution's
 // override member).
 //
-// **This is the helper BR1 owns** (D3101, R3): that task wraps the key with
-// the installation's seal key (Options.SealKey), returns the variable the run
-// opens its session from under the name contract C1 fixes, and keeps this
-// refusal for a launch whose block names no key -- with `fugaro update` as the
-// fix. Two things it must hold to, whatever the carrier becomes: the plain
-// seal key is never a variable of a Batch job (R5), and a refusal never quotes
-// the key's value (R7).
+// **This is the helper BR1 owns** (D3101 as amended, R8): a Batch launch
+// carries its run's identity as a ticket, so the secret entries a launch hands
+// this backend are the budget token's and nothing else, and every one of them
+// is refused. Two things it must hold to, whatever the carrier becomes: the
+// plain seal key is never a variable of a Batch job (R5), and a refusal never
+// quotes the key's value (R7).
 func (b *Backend) sealedVars(full string, entries []backend.EnvVar) (map[string]string, error) {
 	if len(entries) == 0 {
 		return nil, nil
@@ -94,6 +90,12 @@ func (b *Backend) sealedVars(full string, entries []backend.EnvVar) (map[string]
 // job is kept -- the limit the owner answered with (P1), and not a mechanism
 // somebody owes. entry is the marker's name and never its value: the name is
 // the most an operator may be shown (R7, and the value is the seal key).
+//
+// It closes with the one thing that keeps it from reading as "a Batch run has
+// no identity at all": this refusal is about the budget token alone, and a
+// Batch run's identity is its ticket (BR1, R8) -- the same sentence the two
+// documents carry (`TestDocsBudgetTokenChannelAnswersTheBatchSeal` holds all
+// three to it).
 func tokenCarrierRefusal(full, entry string) error {
-	return fmt.Errorf("launching %s: the launch carries %s, and a Batch job has no carrier for the budget token's seal key: a Batch job has no per-execution override, so the only place a launch's variable can go is the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept -- a standing copy in the job resource, and the marker's value IS the seal key, so it is never a variable of a Batch job, sealed or plain, and nothing was created; this refusal is deliberate, and it is the documented limit (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — one that names a budget database, with the signer account it mints through — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, entry)
+	return fmt.Errorf("launching %s: the launch carries %s, and a Batch job has no carrier for the budget token's seal key: a Batch job has no per-execution override, so the only place a launch's variable can go is the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept -- a standing copy in the job resource, and the marker's value IS the seal key, so it is never a variable of a Batch job, sealed or plain, and nothing was created; this refusal is deliberate, and it is the documented limit (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — one that names a budget database, with the signer account it mints through — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run. This refusal is about the budget token alone: a Batch run's identity travels as its ticket, which the launcher asks the installation's credentials service for, naming the job it is about to create, before anything exists", full, entry)
 }

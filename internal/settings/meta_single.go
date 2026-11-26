@@ -218,6 +218,38 @@ var singleMeta = map[string]Meta{
 		Group:       GroupMachine,
 		Type:        TypeString,
 	},
+	// The pause block (R11 of docs/model-credentials-routing, D3184, D3187,
+	// D3190): the three settings the credentials service decides between
+	// waiting, pausing and halting by, once every source a chain can reach is
+	// exhausted. They are the project's own and local-only (LayerLocal), and
+	// the group is Runs because what they change is what a run does rather
+	// than what it spends: a pause holds no container open and pays for
+	// nothing (D138).
+	//
+	// No entry states a bound, and that is deliberate: the rule holding the
+	// three to each other is about the block (projectpolicy.ValidPause — the
+	// in-job floor under the shortest pause under the longest), so a Min or a
+	// Max beside one of them would be a second and weaker copy of a rule the
+	// write already refuses by. A value left out is its default, which is the
+	// description's own word.
+	"pause.wait_in_job": {
+		Label:       "Wait in the job",
+		Description: "How long a run waits inside its own job for an exhausted credential's reset before it pauses.",
+		Group:       GroupRuns,
+		Type:        TypeDuration,
+	},
+	"pause.min_pause": {
+		Label:       "Shortest pause",
+		Description: "The shortest a run's pause may be, even when the reset it waits for is nearer.",
+		Group:       GroupRuns,
+		Type:        TypeDuration,
+	},
+	"pause.max_pause": {
+		Label:       "Longest paused time",
+		Description: "The longest one chain may stay paused in total before a run halts instead of pausing.",
+		Group:       GroupRuns,
+		Type:        TypeDuration,
+	},
 	// The planning pass's switch is the project's, and the group is this
 	// machine's because that is where the order puts it (SM0's GroupMachine):
 	// the panel's groupings are the owner's answer and not this file's.
