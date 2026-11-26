@@ -90,6 +90,12 @@ const (
 	SHAMax = 64
 	// MACMax is the length of a tag: 32 bytes of HMAC-SHA-256, lowercase hex.
 	MACMax = 64
+	// SigChars is the length of the other tag: 64 bytes of Ed25519 as unpadded
+	// base64url, which is `ConsumerSignatureSize` written out and C1's
+	// `DeviceSignatureSize` (O6). A fixed length is what makes a signature an
+	// identity of one shape rather than a body, and J5r pins the same number in
+	// the rules.
+	SigChars = 86
 	// BootMax bounds a heartbeat's holder id.
 	BootMax = 64
 	// TokenMax bounds a push registration's token (P5.2.1). It is a length
@@ -141,13 +147,18 @@ var (
 	Directions = []string{"inbox", "outbox", "heartbeat"}
 	// Fields is the exact field set of a message; any other field is refused.
 	Fields = []string{
-		"id", "sender", "text", "at", "mac", "acked",
+		"id", "sender", "text", "at", "mac", "sig", "acked",
 		"agent", "kind", "options", "reply_to", "action",
 		"token", "platform", "prefs",
 	}
 	// RequiredFields is the fields a message must have, in the order they are
-	// checked.
-	RequiredFields = []string{"id", "sender", "text", "at", "mac"}
+	// checked. The tag is not among them: a record carries exactly one of
+	// `mac` and `sig` (D171's MAC or O6's device signature), so "the tag is
+	// there" is a rule about the pair rather than about one name, and it is
+	// checked after these. A record with neither is still refused at `mac` —
+	// the field a phone paired the old way writes — because that is the shape
+	// the vectors pin.
+	RequiredFields = []string{"id", "sender", "text", "at"}
 )
 
 // directionField is the name the direction is covered under, which no stored
@@ -208,6 +219,13 @@ const (
 	CodeBadWindow Code = "bad-window"
 	// CodeBadMAC: a mac is not 64 lowercase hex characters.
 	CodeBadMAC Code = "bad-mac"
+	// CodeBadSig: a sig is not 86 characters of unpadded base64url, which is
+	// one 64-byte Ed25519 signature in the one spelling this protocol uses.
+	CodeBadSig Code = "bad-sig"
+	// CodeBadTag: a record carries both tags. One record has exactly one
+	// scheme -- D171's MAC or O6's device signature -- and a reader that
+	// accepted both would have to choose which one it believed.
+	CodeBadTag Code = "bad-tag"
 	// CodeDuplicateEntry: a list names the same id or option twice.
 	CodeDuplicateEntry Code = "duplicate-entry"
 )
@@ -223,7 +241,8 @@ var Codes = []Code{
 	CodeEmptyString, CodeBadKey, CodeTooLong, CodeTooMany, CodeTooFew,
 	CodeBadCharacter, CodeBadTimestamp, CodeUnknownKind, CodeUnknownVerb,
 	CodeUnknownPlatform, CodeFieldNotAllowed, CodeBadTarget, CodeBadSHA,
-	CodeBadZone, CodeBadWindow, CodeBadMAC, CodeDuplicateEntry,
+	CodeBadZone, CodeBadWindow, CodeBadMAC, CodeBadSig, CodeBadTag,
+	CodeDuplicateEntry,
 }
 
 // Refusal is the schema's answer for a value it will not accept. Field is the
@@ -641,6 +660,11 @@ type Message struct {
 	Text   string
 	At     int64
 	MAC    string
+	// Sig is the O6 device signature, when the record carries one instead of a
+	// MAC. Which of the two a record carries is the device node's answer and
+	// not this struct's: the gate is what refuses the scheme a node does not
+	// use (J5b).
+	Sig string
 	// Kind is the effective kind: the message's own, or KindMessage when it
 	// carries none.
 	Kind string
@@ -731,6 +755,10 @@ type Heartbeat struct {
 	At   int64
 	Boot string
 	MAC  string
+	// Sig is the O6 device signature, when the heartbeat carries one instead of
+	// a MAC: a phone paired the new way signs its heartbeat with its device key
+	// like every other record it writes (J5b).
+	Sig string
 	// Agents is the advertised agent list, which "list agents" reads out and
 	// D163 defaults to. It is empty when the heartbeat advertises none.
 	Agents []Agent
@@ -815,9 +843,9 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 	if bad != nil {
 		return nil, bad
 	}
-	mac := macField(r["mac"])
-	if mac.bad != nil {
-		return nil, mac.bad
+	mac, sig, tagRefusal := tagFields(r, "mac")
+	if tagRefusal != nil {
+		return nil, tagRefusal
 	}
 
 	message := &Message{
@@ -826,6 +854,7 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 		Text:   text.value,
 		At:     at,
 		MAC:    mac.value,
+		Sig:    sig.value,
 		Kind:   KindMessage,
 	}
 
@@ -1052,11 +1081,11 @@ func ValidateHeartbeat(r Record) (*Heartbeat, *Refusal) {
 	if boot.bad != nil {
 		return nil, boot.bad
 	}
-	mac := macField(r["mac"])
-	if mac.bad != nil {
-		return nil, mac.bad
+	mac, sig, tagRefusal := tagFields(r, "mac")
+	if tagRefusal != nil {
+		return nil, tagRefusal
 	}
-	heartbeat := &Heartbeat{At: at, Boot: boot.value, MAC: mac.value}
+	heartbeat := &Heartbeat{At: at, Boot: boot.value, MAC: mac.value, Sig: sig.value}
 	if r.has("agents") {
 		agents := agentsField(r["agents"])
 		if agents.bad != nil {
@@ -1103,13 +1132,14 @@ var (
 	actionRequired     = []string{"id", "verb", "target"}
 	confirmationFields = []string{"id", "at"}
 	repoTargetFields   = []string{"repo", "pr"}
-	heartbeatFields    = []string{"at", "boot", "agents", "mac"}
-	heartbeatRequired  = []string{"at", "boot", "mac"}
+	heartbeatFields    = []string{"at", "boot", "agents", "mac", "sig"}
+	heartbeatRequired  = []string{"at", "boot"}
 	agentFields        = []string{"id", "name"}
 )
 
 // CanonicalBytes is the one serialisation of a record that a tag covers: the
-// record without `mac` and without `acked`, plus the direction, as JSON with
+// record without its tag — `mac` or `sig` — and without `acked`, plus the
+// direction, as JSON with
 // keys sorted by code point, no insignificant whitespace, absent fields omitted
 // (never null), strings as UTF-8 with JSON's own escaping only, and numbers as
 // integers.
@@ -1147,11 +1177,14 @@ func CanonicalBytes(record Record, direction string) ([]byte, error) {
 	if record.has(directionField) {
 		return nil, errors.New("mailbox: a record may not carry its own direction; the reader supplies it")
 	}
-	// A copy with the two uncovered fields dropped, so the caller's record is
-	// never written to.
+	// A copy with the uncovered fields dropped, so the caller's record is
+	// never written to. Both tags are dropped and not only the one this record
+	// carries: the covered bytes are what a tag is made over, and a record
+	// carrying both is refused before anything is signed or verified, so the
+	// bytes are the same whichever scheme the writer used.
 	covered := make(map[string]any, len(record)+1)
 	for key, value := range record {
-		if key == "mac" || key == "acked" {
+		if key == "mac" || key == "sig" || key == "acked" {
 			continue
 		}
 		covered[key] = value
@@ -1891,6 +1924,71 @@ func macField(value any) checked[string] {
 	}
 	if len(s) != MACMax || !hexPattern.MatchString(s) {
 		return bad[string](CodeBadMAC, "mac")
+	}
+	return ok(s)
+}
+
+// tagFields reads a record's one tag: D171's `mac` or O6's `sig`, exactly one
+// of the two. The name is the field a record with neither is refused at, which
+// is `mac` on both records that carry a tag — the vectors' "unsigned message"
+// and "unsigned heartbeat" both pin that code and field, and a phone paired the
+// old way is the caller that meets it.
+//
+// The two are read together rather than one after the other because the rule is
+// about the pair: a record carrying both is refused before either shape is
+// judged, since a reader that checked the first and stopped would be choosing a
+// scheme on the writer's behalf.
+func tagFields(r Record, field string) (checked[string], checked[string], *Refusal) {
+	hasMAC, hasSig := r.has("mac"), r.has("sig")
+	if hasMAC && hasSig {
+		return checked[string]{}, checked[string]{}, refuse(CodeBadTag, "sig")
+	}
+	if hasMAC {
+		mac := macField(r["mac"])
+		if mac.bad != nil {
+			return checked[string]{}, checked[string]{}, mac.bad
+		}
+		return mac, checked[string]{}, nil
+	}
+	if hasSig {
+		sig := sigField(r["sig"])
+		if sig.bad != nil {
+			return checked[string]{}, checked[string]{}, sig.bad
+		}
+		return checked[string]{}, sig, nil
+	}
+	return checked[string]{}, checked[string]{}, refuse(CodeMissingField, field)
+}
+
+// sigField validates a device signature's shape: 86 characters of unpadded
+// base64url, which is exactly 64 bytes (O6, `DeviceSignatureSize`). Length and
+// character set share one code because they are one question — is this a
+// signature? — and the canonical spelling is required for the reason the mac's
+// lowercase is: base64url's last character of a 64-byte value carries two bits
+// the encoding discards, so three other strings decode to the same signature
+// and a verifier that accepted them would be reading a value the signer never
+// wrote. Whether the signature is the RIGHT one needs the device's public key,
+// and that is verify.go's, not the schema's.
+func sigField(value any) checked[string] {
+	s, isString := value.(string)
+	if !isString {
+		return bad[string](CodeWrongType, "sig")
+	}
+	if s == "" {
+		return bad[string](CodeEmptyString, "sig")
+	}
+	if len(s) != SigChars {
+		return bad[string](CodeBadSig, "sig")
+	}
+	// The strict decoder answers the alphabet, the canonical spelling and the
+	// length in one call: base64url's last character of a 64-byte value carries
+	// two bits the encoding discards, so three other strings decode to the same
+	// signature, and `Strict()` refuses them rather than normalising one
+	// spelling into another. It is the decoder the published consumer key uses,
+	// which is what makes one signature have one spelling on both ends.
+	signature, err := consumerKeyEncoding.DecodeString(s)
+	if err != nil || len(signature) != ConsumerSignatureSize {
+		return bad[string](CodeBadSig, "sig")
 	}
 	return ok(s)
 }

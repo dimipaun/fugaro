@@ -32,6 +32,8 @@
 //   6. **the text classes the contract names** are the console's own closed set,
 //      so SRC's readers sanitize every answer through a class that exists.
 
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import { RIGOR_MODE_WORDS } from '../../src/shared/rigor'
@@ -44,6 +46,8 @@ import {
   NEW_OPERATION_TEXT_CLASSES,
   SETUP_ANSWER_KEYS,
   SETUP_ANSWERS_FILE_KEYS,
+  SETUP_BUDGET_MAX,
+  SETUP_BUDGET_MIN,
   SETUP_RIGOR_MODES,
   decodeNewOperationAnswer,
 } from '../../src/shared/new-ops'
@@ -193,19 +197,55 @@ describe('the fixtures answer every operation with a value that decodes', () => 
 })
 
 describe('an answers object never names a file', () => {
-  it('carries the five questions, and the five are the wizard’s own', () => {
-    expect(SETUP_ANSWER_KEYS).toEqual(['gcp_project', 'region', 'name', 'rigor', 'bake_repos'])
+  it('carries the six questions, and the six are the wizard’s own', () => {
+    // The order is the CLI's own (`setupAnswerQuestions`): `budget` sits between
+    // the rigor mode and the bake switch, which is where D2210 asks it.
+    expect(SETUP_ANSWER_KEYS).toEqual([
+      'gcp_project',
+      'region',
+      'name',
+      'rigor',
+      'budget',
+      'bake_repos',
+    ])
+  })
+
+  it('answers only members the answers file itself declares, with the alert’s own bounds', () => {
+    // The file the CLI decodes is `schemas/setup-answers.schema.json`, and it is
+    // the authority for both halves of this: a question this console asks must be
+    // a member **of that document** (`additionalProperties: false` refuses any
+    // other by name), and the budget's two bounds must be the alert's own. Read
+    // as bytes off the repository rather than restated, because a schema that
+    // moved its range and a console that kept the old one is exactly the drift
+    // this catches.
+    const schema = JSON.parse(
+      readFileSync(new URL('../../../schemas/setup-answers.schema.json', import.meta.url), 'utf8'),
+    ) as {
+      readonly properties: Readonly<Record<string, { readonly minimum?: number; readonly maximum?: number }>>
+      readonly additionalProperties: boolean
+    }
+    const members = Object.keys(schema.properties)
+    // The console asks a **subset** of the file: `location` and `budget_currency`
+    // are members the CLI answers for itself (the place's region, and USD,
+    // D2211), so a console key outside the file is the failure and not a missing
+    // one.
+    for (const key of SETUP_ANSWER_KEYS) {
+      expect(members, `${key} is not a member of the answers file`).toContain(key)
+    }
+    expect(schema.additionalProperties).toBe(false)
+    expect(schema.properties['budget']?.minimum).toBe(SETUP_BUDGET_MIN)
+    expect(schema.properties['budget']?.maximum).toBe(SETUP_BUDGET_MAX)
   })
 
   it('leaves the file’s version to main, which writes the file', () => {
-    // The renderer sends the five answers; the file main hands the CLI on stdin
+    // The renderer sends the six answers; the file main hands the CLI on stdin
     // carries the schema's `version` beside them (`schemas/setup-answers.json`,
     // ST1), and `version` is nobody's answer.
     expect(SETUP_ANSWERS_FILE_KEYS).toEqual(['version', ...SETUP_ANSWER_KEYS])
     expect(SETUP_ANSWER_KEYS).not.toContain('version')
   })
 
-  it('has no key of the five that could name a path', () => {
+  it('has no key of the six that could name a path', () => {
     for (const key of SETUP_ANSWERS_FILE_KEYS) {
       expect(key, `${key} is not an answer`).not.toMatch(/file|path|stdin/i)
     }
@@ -314,11 +354,12 @@ describe('the text classes the contract names', () => {
 })
 
 /** SETUP_ANSWERS is the answers object the fixture bridge's `setup.plan` answer
- * stands for: the five questions, filled in. */
+ * stands for: the six questions, filled in. */
 const SETUP_ANSWERS = Object.freeze({
   gcp_project: 'fugaro-dev',
   region: 'europe-west1',
   name: 'fugaro',
   rigor: 'startup' as const,
+  budget: 250,
   bake_repos: false,
 })

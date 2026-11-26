@@ -1055,6 +1055,13 @@ their own, so this row — which counts the literals — moved by one and not by
 folder changed; the row is named here for the reason the ones above are: a reader who finds the
 figure stale should find who moved it.)
 
+(Amended 2026-11-25: the stateless-orchestrator plan's BF1 — the runner writing its open findings
+beside the run's record at finalize — added `internal/runner/findings.go`, whose artifact carries the
+review's own severity word per finding, which moved the *Files in `internal/runner` that mention
+`Severity` at all* row from 5 to 6. The writer copies the word rather than deciding on it, so the
+*Sites that compare a finding's severity to a value* row above did not move: nothing in that file
+branches on a severity, and the triage that does is another folder's.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
@@ -1066,7 +1073,7 @@ figure stale should find who moved it.)
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
-| Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
+| Files in `internal/runner` that mention `Severity` at all | 6 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 66 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 161 | `ls internal/cli/docs_*_test.go \| wc -l` |

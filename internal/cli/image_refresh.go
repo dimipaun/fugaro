@@ -30,6 +30,36 @@ import (
 // D1543): its cost is bounded by the lease it takes from the project's budget
 // before the submission (image_build_lease.go), not by a question.
 
+// refreshView is the repository a refresh runs for where no working directory
+// is its screen: `fugaro update` read it from the project's own list (a view,
+// C1) and hands it here, with this run's local project config — the file the
+// base step writes and the one before it that a rollback needs. Its fugaro.yaml
+// is the file the reader read at the repository's default branch, and the two
+// things the refresh otherwise reads off a checkout — the URL the runs clone
+// from and whether that file writes git.base_branch itself — are answered from
+// the view (viewRepoURL, config.SetsGitBaseBranch), so nothing here reads a
+// directory (R6, R10).
+type refreshView struct {
+	v      repoView
+	lc     *localcfg.Config
+	lcPath string
+	lcOld  []byte
+}
+
+// setsBaseBranch is whether the repository's own fugaro.yaml writes
+// git.base_branch: the question fileSetsBaseBranch answers for a checkout from
+// its resolution's sources, answered here from the bytes the reader read, which
+// is the same file (a repository's own value wins over the project's, so the
+// source is the file exactly when it writes one).
+func (rv *refreshView) setsBaseBranch() *bool {
+	sets := config.SetsGitBaseBranch(rv.v.YAML)
+	return &sets
+}
+
+// repoURL is the URL this repository's runs and builds clone from, where a
+// checkout answers with its origin remote (checkoutURL).
+func (rv *refreshView) repoURL() (string, error) { return viewRepoURL(rv.lc, rv.v) }
+
 type refreshOptions struct {
 	cloud         cloudOptions
 	repo          string
@@ -48,8 +78,15 @@ type refreshOptions struct {
 	// changes nothing; a run that could not answer refuses rather than
 	// proceeding (managed_ask.go). It is refused beside --yes.
 	ask bool
-	// dir is the checkout to refresh ("" is the working directory).
+	// dir is the checkout to refresh ("" is the working directory). It is read
+	// only where view is nil: a refresh for a repository the caller read from
+	// the project has no checkout at all.
 	dir string
+	// view is the repository to refresh where the caller has no checkout for it
+	// (U4): the converge's checkout stage passes the view it read, and preflight
+	// resolves the repository, its fugaro.yaml and its origin from it instead of
+	// from a directory. dir and view are never both set.
+	view *refreshView
 	// door is the door this refresh runs under, empty for the command itself:
 	// the converge runs the refresh as one of its own steps
 	// (init_checkout_upgrade.go's stepCtx), and a step of `fugaro update`'s
@@ -110,8 +147,12 @@ type refreshOptions struct {
 
 // checkoutName is how a message names the checkout: "this checkout" when
 // the working directory is the one, the directory itself (Printable) when
-// o.dir sets another.
+// o.dir sets another, and the repository where the refresh runs for one the
+// caller read from the project and there is no checkout to name (o.view).
 func (o refreshOptions) checkoutName(root string) string {
+	if o.view != nil {
+		return "the repository " + pluginwire.Printable(o.view.v.Repo)
+	}
 	if o.dir == "" {
 		return "this checkout"
 	}
@@ -164,6 +205,16 @@ type refreshPlan struct {
 	lcPath           string
 	lcOld            []byte
 	cfg              *config.Config
+	// view is the repository this refresh runs for where the caller read it
+	// from the project's own list rather than from a checkout (U4): it is what
+	// steps 3 and 4 build the spec from, and nil for a refresh whose screen is
+	// a directory.
+	view *refreshView
+	// sets is whether cfg's own file writes git.base_branch (infra.Inputs'
+	// FileSetsBaseBranch), which is what the spec of a repository read from the
+	// project is built with: there is no second resolution to read it off, so
+	// the plan carries the answer (U4).
+	sets             *bool
 	workflows, kinds []string
 	// want[kind] is the reference the kind's builds move to, and is set
 	// only when that reference is already known offline: the entry the
@@ -230,7 +281,7 @@ func (e *noCheckout) Unwrap() error { return e.err }
 func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions) (*refreshPlan, error) {
 	ver := releaseVersion()
 	if ver == "" {
-		return nil, &refusedAsIs{userErr("fugaro image refresh pins this release's base images through the remote repository, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro update --base-image KIND=<tag>", Version)}
+		return nil, releaseRefusal()
 	}
 	// --repo, resolved before the checkout is looked for: where o.repo is a
 	// path -- or is neither owner/name nor one -- the refusal below would
@@ -295,6 +346,57 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	if oi, ok := readOrigin(ctx, root); !ok || !repoKnown(lc, oi) {
 		return nil, userErr("%s is not one of project %s's repositories in the local config, and fugaro image refresh never onboards a repository: onboard it with fugaro update --repo in %s first", pluginwire.Printable(repo), lc.Name, o.checkoutName(root))
 	}
+	return preflightPlan(ctx, o, root, lc, lcPath, old, cfg, repo, ver)
+}
+
+// refreshPreflightView is step 1 for a repository the caller read from the
+// project's own list (refreshOptions.view): the same plan as refreshPreflight,
+// from the view's fugaro.yaml and this machine's local-config entry for it,
+// and never from a working directory (R6, R10). The repository's entry is
+// required and its provider must be one this machine knows, because the region,
+// the registry host, the image names and the build's clone URL are all read
+// from them (V1, D3350): a repository without one is the checkout stage's line
+// to report, never a refresh started on a guess.
+func refreshPreflightView(ctx context.Context, o refreshOptions, rv *refreshView) (*refreshPlan, error) {
+	ver := releaseVersion()
+	if ver == "" {
+		return nil, releaseRefusal()
+	}
+	repo := rv.v.Repo
+	if _, err := task.CanonicalRepo(repo); err != nil {
+		return nil, userErr("%s is not a repository this refresh can build: %v", pluginwire.Printable(repo), err)
+	}
+	if _, err := rv.repoURL(); err != nil {
+		return nil, userErr("%v", err)
+	}
+	for _, c := range preflight.Environment(os.Getenv, rv.lc.GCPProject) {
+		if !c.OK {
+			return nil, userErr("%s; %s", c.Problem, c.Fix)
+		}
+	}
+	p, err := preflightPlan(ctx, o, "", rv.lc, rv.lcPath, rv.lcOld, rv.v.Cfg, repo, ver)
+	if err != nil {
+		return nil, err
+	}
+	p.view, p.sets = rv, rv.setsBaseBranch()
+	return p, nil
+}
+
+// releaseRefusal is the refusal a development build gets: this release has no
+// published base images for a repository to be pinned to. One function, since
+// the checkout and the view ask it of the same run (U4).
+func releaseRefusal() error {
+	return &refusedAsIs{userErr("fugaro image refresh pins this release's base images through the remote repository, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro update --base-image KIND=<tag>", Version)}
+}
+
+// preflightPlan is the whole of the plan past the repository's own files: the
+// selected workflows and their kinds, the custom-base stop, and each workflow's
+// verdict from its build record (the one cloud read of a refresh). It is one
+// function for the checkout and for the view so that the two answer the same
+// question about the same repository (R6); root is the checkout the plan prints
+// for, "" for a repository the run read from the project and has no directory
+// for.
+func preflightPlan(ctx context.Context, o refreshOptions, root string, lc *localcfg.Config, lcPath string, old []byte, cfg *config.Config, repo, ver string) (*refreshPlan, error) {
 	all := slices.Sorted(maps.Keys(cfg.Workflows))
 	wfs := all
 	if len(o.workflows) > 0 {
@@ -384,7 +486,9 @@ func (p *refreshPlan) print(w io.Writer) {
 	for _, wf := range p.workflows {
 		fmt.Fprintf(w, "     %s: %s\n", wf, p.why[wf])
 	}
-	fmt.Fprintln(w, "  5. then, if this checkout's fugaro.yaml lacks gcp_project: the fugaro update --anchor command to run next (fugaro image refresh never writes fugaro.yaml)")
+	if p.root != "" {
+		fmt.Fprintln(w, "  5. then, if this checkout's fugaro.yaml lacks gcp_project: the fugaro update --anchor command to run next (fugaro image refresh never writes fugaro.yaml)")
+	}
 }
 
 // current: nothing for steps 2 and 4 to do, since every kind already records
@@ -578,8 +682,13 @@ type refreshSteps struct {
 
 var newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
 	return refreshSteps{
-		base:     func(ctx context.Context) error { return r.refreshBase(ctx, e, p.kinds) },
-		reload:   func(ctx context.Context) (*refreshTarget, error) { return refreshReload(ctx, p) },
+		base: func(ctx context.Context) error { return r.refreshBase(ctx, e, p.kinds) },
+		reload: func(ctx context.Context) (*refreshTarget, error) {
+			if p.view != nil {
+				return refreshReloadView(ctx, p)
+			}
+			return refreshReload(ctx, p)
+		},
 		checkJob: func(ctx context.Context, t *refreshTarget) error { return r.refreshCheckJob(ctx, t) },
 		builds:   func(ctx context.Context, t *refreshTarget) error { return r.refreshBuilds(ctx, p, t) },
 	}
@@ -641,7 +750,15 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		// The caller's account of its own steps: see refreshOptions.detail.
 		r.detail = o.detail
 	}
-	p, err := refreshPreflight(ctx, o, iopts)
+	var p *refreshPlan
+	var err error
+	if o.view != nil {
+		// A refresh for a repository the caller read from the project: no
+		// working directory is its screen (R6, R10).
+		p, err = refreshPreflightView(ctx, o, o.view)
+	} else {
+		p, err = refreshPreflight(ctx, o, iopts)
+	}
 	if err != nil {
 		return refreshStopped(1, nil, o, err)
 	}
@@ -713,7 +830,11 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// and goes into the run's log beside it, which is the run's full output
 	// (D1352).
 	note := sayThrough(r.rep, r.w)
-	refreshAnchorNote(ctx, note, p.root, o.checkoutName(p.root), t.lc)
+	if p.root != "" {
+		// Step 5 is the checkout's own: it names fugaro.yaml, which a refresh
+		// for a repository read from the project never wrote and cannot place.
+		refreshAnchorNote(ctx, note, p.root, o.checkoutName(p.root), t.lc)
+	}
 	if r.rep == nil {
 		// A refresh a caller drives is one stage of that run: its own line says
 		// this refresh is done, where the reporter's closing line says it for

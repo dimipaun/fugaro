@@ -84,6 +84,8 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
+import { SETUP_BUDGET_MAX, SETUP_BUDGET_MIN } from '../../src/shared/new-ops'
+
 import {
   ALLOWED_OPERATION_FLAGS,
   COMPATIBILITY_UNREADABLE,
@@ -2531,8 +2533,8 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('refuses a path in the wizard’s answers, and a sixth key, before any child exists', () => {
-    // The wizard's payload is an **object of the five questions** and never a
+  it('refuses a path in the wizard’s answers, and a seventh key, before any child exists', () => {
+    // The wizard's payload is an **object of the six questions** and never a
     // path (AL, D2904): the only `--answers-file` word this surface ever emits
     // is the literal `-` main writes into the row's argv, so nothing a renderer
     // sends can name a file -- and an answer that *holds* a path is refused
@@ -2561,13 +2563,26 @@ describe('the argument schemas', () => {
     // The payload itself is never a path or a string: the member is an object.
     expect(refused('/etc/passwd')).toContain('answers')
     expect(refused('aurora-prod')).toContain('answers')
-    // A sixth key -- including the answers file's own `version`, which is
+    // A seventh key -- including the answers file's own `version`, which is
     // main's to add and not a question a renderer answers.
     expect(refused({ ...answers, version: 1 })).toContain('version')
     expect(refused({ ...answers, answers_file: '/tmp/wizard.json' })).toContain('answers_file')
-    // A question that is missing is not defaulted: every one of the five is
-    // required, which is what keeps a half-answered wizard off the child.
+    // A question that is missing is not defaulted: five of the six questions the
+    // wizard draws are required here, which is what keeps a half-answered wizard
+    // off the child -- `budget` is the sixth and the only one that may be
+    // **absent**: an empty field is an answer, and main writes no member for it
+    // (D2210).
     expect(refused({ gcp_project: 'aurora-prod' })).toContain('region')
+    // The budget is a whole amount inside the alert's own bounds, and nothing
+    // else: a string, a fraction and a zero are all refused by name.
+    for (const budget of ['100', 2.5, 0, -1, SETUP_BUDGET_MAX + 1, true, null]) {
+      expect(refused({ ...answers, budget }), String(budget)).toContain('budget')
+    }
+    // The two bounds are answers and not refusals: the alert's own range is
+    // 1 to 10,000,000 whole units (`schemas/setup-answers.schema.json`).
+    for (const budget of [SETUP_BUDGET_MIN, SETUP_BUDGET_MAX, 100]) {
+      expect(validateArguments('setup.plan', { answers: { ...answers, budget } }).ok, String(budget)).toBe(true)
+    }
     // The two members with a grammar of their own.
     expect(refused({ ...answers, rigor: 'hotfix' })).toContain('poc, startup, pro, critical')
     expect(refused({ ...answers, bake_repos: 'yes' })).toContain('bake_repos')
@@ -2576,13 +2591,24 @@ describe('the argument schemas', () => {
     expect(refused({ ...answers, name: 'au‮bora' })).toContain('name')
 
     // ...and the well-formed payload is accepted, with main's own document
-    // handed back as the string the child reads on its stdin: the five
-    // questions and the `version` main added, and nothing the renderer sent.
+    // handed back as the string the child reads on its stdin: the six questions
+    // and the `version` main added, and nothing the renderer sent.
     const decision = validateArguments('setup.plan', { answers })
     expect(decision.ok).toBe(true)
     const file = decision.ok ? decision.args['answers'] : null
     expect(typeof file).toBe('string')
     expect(JSON.parse(String(file))).toEqual({ version: 1, ...answers })
+    // An answered budget is written as a **number** and one the operator left
+    // empty is written as no member at all: the CLI's reader takes the absent
+    // member as its own default amount (D2212), so the console never writes a
+    // zero in its place.
+    const withBudget = validateArguments('setup.plan', { answers: { ...answers, budget: 250 } })
+    expect(withBudget.ok).toBe(true)
+    expect(JSON.parse(String(withBudget.ok ? withBudget.args['answers'] : ''))).toEqual({
+      version: 1,
+      ...answers,
+      budget: 250,
+    })
 
     // **The apply carries no answers at all.** Its own handler hands the child
     // the file main held when it showed the plan window, so a payload here is a

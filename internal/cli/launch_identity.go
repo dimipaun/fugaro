@@ -66,6 +66,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/identitywire"
@@ -266,14 +267,46 @@ func (u *ticketUnanswered) Unwrap() error { return u.err }
 // service's — asks the same question of the same route with the parts it has.
 // account is the account the execution will run as (runAccount), derived by the
 // caller because the launch's own slip names the same string and the two must
-// not be able to disagree; job is the job the execution will really run on.
-func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.Spec, account string, job *launchProjectJob, reviewJob bool, now time.Time) (launchIdentityAsk, error) {
+// not be able to disagree; job is the job the execution will really run on, and
+// variant is the workflow it is created with — run.go's jobWorkflow of the
+// spec's workflow and its account token, the same string the backend is handed
+// as backend.LaunchSpec.Workflow, derived by the caller for the same reason
+// account is: a Batch job's name must be the one this launch really creates.
+func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.Spec, account, variant string, job *launchProjectJob, reviewJob bool, now time.Time) (launchIdentityAsk, error) {
+	// A Batch launch names its job in the ask, and has to have one to name
+	// (BR1, R1): the name is the launcher's own derivation (batchJobName), over
+	// the variant the create is made with, it is what the service writes on the
+	// run's issuance record with the ticket, and the VM that claims the run is
+	// held to a job spelled that way (BR17, BR2). R18's rule that a Cloud Run
+	// launch names none is the empty value here.
+	var batchJob identitywire.JobName
+	if launchBackend(e.be) == backend.CloudBatch {
+		full, err := batchJobName(e.lc, slug, variant, spec)
+		if err != nil {
+			return launchIdentityAsk{}, err
+		}
+		batchJob = full
+	}
+	// R7's bridge is R18's refusal on Batch: a job there has no carrier for the
+	// sealed object a bridged launch hands over (internal/backend/batch's
+	// sealedVars refuses it), so a Batch launch with no ticket is a run that
+	// could hold no identity at all, and it is refused here rather than left to
+	// stop at its claim with the launcher long gone. reason is the service's
+	// own answer where there was one — C1's code, never its free text — because
+	// a person sent to the service's log by nothing is a person who cannot tell
+	// an installation to update from one to opt in (O15).
+	bridged := func(bridge, reason string) (launchIdentityAsk, error) {
+		if launchBackend(e.be) == backend.CloudBatch {
+			return launchIdentityAsk{}, batchTicketRefusal(bridge, reason, spec)
+		}
+		return launchIdentityAsk{bridge: bridge}, nil
+	}
 	service := e.ticketServiceURL()
 	if service == "" {
 		// R7's first answer. The launch signs locally as it did before the
 		// service existed, and nothing here is judged: an installation with no
 		// service has no ticket route to be a release behind.
-		return launchIdentityAsk{bridge: bridgeNoService}, nil
+		return bridged(bridgeNoService, "")
 	}
 	served, err := e.executionServesTheService(ctx, slug, spec, job, reviewJob)
 	if err != nil {
@@ -286,7 +319,7 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 		// is off, a `vertex` repository), so the job kept every mount it had and
 		// a ticket would be an identity the run cannot claim (it reads the
 		// address to claim at). The launch signs locally, exactly as main did.
-		return launchIdentityAsk{bridge: bridgeNoService}, nil
+		return bridged(bridgeNoService, "")
 	}
 	if err := checkSlipServiceURL(service); err != nil {
 		// The rule is asked again because what is presented to this URL is a
@@ -294,7 +327,7 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 		// cleartext.
 		return launchIdentityAsk{}, err
 	}
-	req, err := e.launchTicketRequest(ctx, slug, spec, account, job)
+	req, err := e.launchTicketRequest(ctx, slug, spec, account, job, batchJob)
 	if err != nil {
 		return launchIdentityAsk{}, err
 	}
@@ -302,9 +335,9 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 	ans, err := launchAskTicket(ctx, i, req)
 	switch {
 	case errors.Is(err, errLaunchTicketNotServed):
-		return launchIdentityAsk{bridge: bridgeNotServed}, nil
+		return bridged(bridgeNotServed, identitywire.RefusalNotServed)
 	case errors.Is(err, errLaunchTicketReleaseBehind):
-		return launchIdentityAsk{bridge: bridgeReleaseBehind}, nil
+		return bridged(bridgeReleaseBehind, bridgeReleaseBehind)
 	case err != nil:
 		return launchIdentityAsk{}, err
 	}
@@ -426,7 +459,7 @@ func (e *cloudEnv) presentedIdentity() func(ctx context.Context, serviceURL stri
 // same derivations the sealed token's claims were built from (budgetBranch,
 // budgetPRs, launchIdentityWindow), so the ticket a run holds and the claims it
 // would have held name one branch, one set of pull requests and one runtime.
-func (e *cloudEnv) launchTicketRequest(ctx context.Context, slug string, spec *task.Spec, account string, job *launchProjectJob) (identitywire.TicketRequest, error) {
+func (e *cloudEnv) launchTicketRequest(ctx context.Context, slug string, spec *task.Spec, account string, job *launchProjectJob, jobName identitywire.JobName) (identitywire.TicketRequest, error) {
 	me, err := e.lc.Me(ctx)
 	if err != nil {
 		return identitywire.TicketRequest{}, userErr("%v", err)
@@ -452,9 +485,11 @@ func (e *cloudEnv) launchTicketRequest(ctx context.Context, slug string, spec *t
 		// file's — and a run the resident re-issues reads no context repository.
 		req.ContextRepos = nil
 	}
-	// Job stays empty: it is the full resource name of the Cloud Batch job this
-	// launch is about to create, and a Cloud Run launch — every launch this
-	// release makes — names none (R18).
+	// Job is the full resource name of the Cloud Batch job this launch is about
+	// to create, and the empty value for a Cloud Run launch — every launch of
+	// that backend names none (R18): the service writes it on the run's record,
+	// and the VM that claims the run is held to it (BR1, BR17).
+	req.Job = jobName
 	return req, nil
 }
 

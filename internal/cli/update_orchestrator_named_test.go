@@ -123,7 +123,7 @@ func TestUpdateNamedMigrationWithRunInFlight(t *testing.T) {
 
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"})
 
 	// The note is the owner's requirement of 2026-11-09, read over an
 	// installation that also holds a named orchestrator's nodes: the update

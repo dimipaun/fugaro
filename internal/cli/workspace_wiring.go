@@ -542,6 +542,7 @@ func (o *workspaceOwnerSide) folderClient(ctx context.Context) (*infra.Folders, 
 		ResourceManager: o.lc.Endpoints.ResourceManager,
 		Firebase:        o.lc.Endpoints.FirebaseManagement,
 		Billing:         o.lc.Endpoints.CloudBilling,
+		QuotaProject:    o.lc.GCPProject,
 	}, o.lc.Endpoints.NoAuth, nil)
 	if err != nil {
 		o.err = remote(err)

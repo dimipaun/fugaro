@@ -48,6 +48,14 @@
 // `src/main/fuses.ts` accounts for. Without the binary it skips, and says why.
 // The signature those fuses sit inside is verified on a Mac, by the owner, in
 // Check 59a.
+//
+// **The distribution is the file's one outside dependency, and it is a
+// download.** Nothing here reaches the network: the block above is the only
+// part that needs anything a `npm ci` did not put on disk, and it needs a
+// *file* -- the unpacked Electron -- rather than a connection, so a machine
+// that has not run the install step skips it rather than failing. The fixture
+// block below covers the same ground with no download at all, so the real
+// `@electron/fuses` flip and read-back still run on every machine.
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -302,6 +310,106 @@ describe('the pinned @electron/fuses the hook is written against', () => {
       () => fuses.getCurrentFuseWire(notABinary),
     ]) {
       await expect(call()).rejects.toThrow(/sentinel/)
+    }
+  })
+})
+
+/** FUSE_SENTINEL is the 32 bytes the pinned `@electron/fuses` scans a binary
+ * for. The wire follows it: one byte for the version, one for the wire's
+ * length, then one byte per fuse. */
+const FUSE_SENTINEL = 'dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'
+
+/** UPSTREAM_WIRE is the pinned Electron's own nine fuses at the states it ships
+ * them in, read off the real wire -- and, for the three this build leaves alone,
+ * the states `LEFT_ALONE_FUSES` records. A fixture written from it is one the
+ * hook may run over: `afterPack` refuses a wire whose left-alone fuses are not
+ * at those defaults, and refuses a wire that is not nine long. */
+const UPSTREAM_WIRE: readonly FuseState[] = [
+  FuseState.ENABLE, // 0 RunAsNode
+  FuseState.DISABLE, // 1 EnableCookieEncryption
+  FuseState.ENABLE, // 2 EnableNodeOptionsEnvironmentVariable
+  FuseState.ENABLE, // 3 EnableNodeCliInspectArguments
+  FuseState.DISABLE, // 4 EnableEmbeddedAsarIntegrityValidation
+  FuseState.DISABLE, // 5 OnlyLoadAppFromAsar
+  FuseState.DISABLE, // 6 LoadBrowserProcessSpecificV8Snapshot
+  FuseState.ENABLE, // 7 GrantFileProtocolExtraPrivileges
+  FuseState.ENABLE, // 8 WasmTrapHandlers
+]
+
+/** fixtureElectron writes a file shaped the way the pinned package reads one:
+ * the sentinel, the V1 header and one byte per fuse. It is the local stand-in
+ * for the Electron distribution -- no download, and a wire whose length this
+ * file decides. */
+function fixtureElectron(dir: string, wire: readonly FuseState[]): string {
+  const file = join(dir, 'fixture-electron')
+  writeFileSync(
+    file,
+    Buffer.concat([
+      Buffer.from(FUSE_SENTINEL),
+      Buffer.from([1, wire.length]),
+      Buffer.from([...wire]),
+    ]),
+  )
+  return file
+}
+
+/** fixtureContext is a Linux `AfterPackContext` whose `appOutDir` is the
+ * fixture's own directory: `linuxExecutable` joins `appOutDir` to the
+ * executable name, so the file the hook flips is the fixture. */
+function fixtureContext(appOutDir: string): AfterPackContext {
+  return {
+    electronPlatformName: 'linux',
+    appOutDir,
+    packager: {
+      appInfo: { productFilename: 'Fugaro Console', sanitizedName: 'fugaro-console' },
+      executableName: 'fixture-electron',
+    },
+  }
+}
+
+// **The same ground, with nothing downloaded at all.** The block at the end of
+// this file reads the real distribution's wire and skips wherever nothing has
+// downloaded one -- every CI run, and every machine that has not run the
+// install step. This block is what the skip would otherwise leave uncovered: a
+// file built to the layout the pinned package reads, driven through the real
+// `afterPack`, so the flip and the read-back run against `@electron/fuses`'s own
+// parser -- not against `fakeFuses` above -- on every machine, offline included.
+// It does not stand in for the real binary: the signature those fuses sit inside
+// is still the owner's Check 59a.
+describe('a fixture Electron-shaped binary, with no distribution downloaded', () => {
+  it('flips the six into it, leaves the three alone, and reads the wire back', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fuses-fixture-'))
+    try {
+      const binary = fixtureElectron(dir, UPSTREAM_WIRE)
+      await afterPack(fixtureContext(dir))
+      const { getCurrentFuseWire } = await import('@electron/fuses')
+      const wire = (await getCurrentFuseWire(binary)) as unknown as Record<string, unknown>
+      expect(Object.keys(wire).filter((key) => key !== 'version')).toHaveLength(ACCOUNTED_FUSE_COUNT)
+      for (const fuse of FLIPPED_FUSES) {
+        expect(wire[String(fuse.option)], fuse.name).toBe(
+          fuse.value ? FuseState.ENABLE : FuseState.DISABLE,
+        )
+      }
+      for (const fuse of LEFT_ALONE_FUSES) {
+        expect(wire[String(fuse.option)], fuse.name).toBe(
+          fuse.upstreamDefault ? FuseState.ENABLE : FuseState.DISABLE,
+        )
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a fixture whose wire carries a fuse nobody decided about', async () => {
+    // A tenth fuse, which is what an Electron bump ahead of this file looks
+    // like: every flip takes, and the hook still stops the build rather than
+    // letting a wire this file has not accounted for be signed.
+    const dir = mkdtempSync(join(tmpdir(), 'fuses-fixture-long-'))
+    try {
+      fixtureElectron(dir, [...UPSTREAM_WIRE, FuseState.DISABLE])
+      await expect(afterPack(fixtureContext(dir))).rejects.toThrow(/holds 10 fuses .* about 9/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })

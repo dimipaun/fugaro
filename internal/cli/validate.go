@@ -786,7 +786,7 @@ func craftModelProblems(cfg *config.Config, lc *localcfg.Config, repo string, cl
 	}
 	routes := runner.ProvidersFor(claimed, repo)
 	ps := config.CheckAllowed(cfg.Agent, e, ceiling.AllowedModels, lc.Routing, routes, crafts...)
-	if runner.GatewayOn(cfg.Agent.Auth, e.Mode) {
+	if runner.GatewayOn(cfg.Agent.Auth) {
 		// The table is the run's own — lc.Providers' rows and the owner's
 		// model_prices — and a refused one is left alone: budgetProblems and
 		// providerProblems have already reported why (a malformed catalog, a
@@ -1504,7 +1504,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			ps = append(ps, config.CheckProviderPolicy(a, allowed, repo, routes, prices)...)
 			ps = append(ps, config.CheckProviderAuth(a, routes)...)
 			ps = append(ps, config.CheckProviderGateway(a, bg, routes, mode)...)
-			if prices != nil && runner.GatewayOn(cfg.Agent.Auth, mode) {
+			if prices != nil && runner.GatewayOn(cfg.Agent.Auth) {
 				// CheckPins is the runner's other price rule, and it runs only
 				// with the gateway on (checkBudget). A routed pin is the route's
 				// own ID and is claimed by the entry that resolved it, so
@@ -1696,14 +1696,12 @@ const (
 // neither api-key nor vertex (oauth, or nothing at all) is no gateway whichever
 // key the job holds, so it is inert either way.
 //
-// The budget mode is not an argument (AB1b, D3009): whether a run has a gateway
-// is a fact about its auth alone now, and the mode GatewayOn is asked with is
-// the one every run is accounted for under (C1, R3) rather than a value any
-// caller reads out of a file. A caller that passed its own mode passed a
-// string that decided nothing — and, for a mode left unset, the word that is
-// not a mode any more.
+// The budget mode is not an argument (AB1b, I1, D3009): whether a run has a
+// gateway is a fact about its auth and nothing else, and a caller that passed a
+// mode passed a string that decided nothing — for a mode left unset, the word
+// that is not a mode any more.
 func routingReachOf(sw *config.RoutingClaude, auth string) (routingReach, runner.RoutingInert) {
-	gateway := runner.GatewayOn(auth, policy.ModeObserve)
+	gateway := runner.GatewayOn(auth)
 	why := runner.RoutingInertReason(sw, auth, gateway, false)
 	switch {
 	case runner.RoutingInertReason(sw, auth, gateway, true) == runner.RoutingActs:

@@ -24,9 +24,15 @@
 //   - a **wrong default** (a region that is not the CLI's, baking off) fails the
 //     defaults case, which reads the region out of the input's own `value` and
 //     the bake out of which option is `selected`;
-//   - an answers object assembled from anything but the five rows fails the
+//   - an answers object assembled from anything but the six rows fails the
 //     send case, which compares the payload with the object it typed into the
 //     form, member for member;
+//   - a **budget field drawn without the CLI's own 100**, one whose amount is
+//     sent as the field's string, one left empty that still carries a member, or
+//     one answered `0`, `10.5` or a text, fails the budget cases: the field is
+//     prefilled with 100, a whole amount inside the alert's bounds is sent as a
+//     number, an empty field sends no member at all, and anything else is
+//     refused here with the console's own sentence;
 //   - a feed drawn **out of order**, or one whose kinds are lost, fails the
 //     event-order case;
 //   - a `left_for_you` line whose **Copy is drawn for a word MG0's builder
@@ -57,6 +63,8 @@ import { newOpsFrom } from '../../src/renderer/new-bridge'
 import {
   WIZARD_ANSWER_CLASS,
   WIZARD_APPLY_BUSY,
+  WIZARD_BUDGET_DEFAULT,
+  WIZARD_BUDGET_NOTE,
   WIZARD_ATTEMPT_CLASS,
   WIZARD_BUSY_CLASS,
   WIZARD_CLASS,
@@ -88,10 +96,16 @@ import {
   WIZARD_SUBMIT_LABEL,
   WIZARD_YES,
   drawWizard,
+  wizardBudgetSentence,
   wizardNotAChoice,
   wizardUnanswered,
 } from '../../src/renderer/wizard/wizard'
-import { NEW_OPS_NOT_AVAILABLE, SETUP_ANSWER_KEYS, SETUP_RIGOR_MODES } from '../../src/shared/new-ops'
+import {
+  NEW_OPS_NOT_AVAILABLE,
+  SETUP_ANSWER_KEYS,
+  SETUP_BUDGET_MAX,
+  SETUP_RIGOR_MODES,
+} from '../../src/shared/new-ops'
 import type { NewOps, SetupAnswers } from '../../src/shared/new-ops'
 
 const FIRST = Object.freeze({ kind: 'first-installation' as const, command: 'fugaro setup', reason: '' })
@@ -171,7 +185,7 @@ function classed(root: FakeNode, className: string): readonly FakeNode[] {
   return everyNode(root).filter((node) => node.getAttribute('class') === className)
 }
 
-/** rowsOf is the form's five question rows, in the order they were drawn. */
+/** rowsOf is the form's six question rows, in the order they were drawn. */
 function rowsOf(root: FakeNode): readonly FakeNode[] {
   return classed(root, WIZARD_QUESTION_CLASS)
 }
@@ -259,7 +273,8 @@ async function flush(): Promise<void> {
 }
 
 /** fill answers the whole form the way an operator would: the text fields by
- * their own `value`, the two selects by the option's word. */
+ * their own `value`, the two selects by the option's word. The budget is a text
+ * field and takes the empty string like any other. */
 function fill(
   root: FakeNode,
   answers: {
@@ -267,6 +282,7 @@ function fill(
     readonly region: string
     readonly name: string
     readonly rigor: string
+    readonly budget: string
     readonly bake_repos: string
   },
 ): void {
@@ -274,6 +290,7 @@ function fill(
   controlOf(root, 'region').value = answers.region
   controlOf(root, 'name').value = answers.name
   controlOf(root, 'rigor').value = answers.rigor
+  controlOf(root, 'budget').value = answers.budget
   controlOf(root, 'bake_repos').value = answers.bake_repos
 }
 
@@ -286,19 +303,23 @@ const ANSWERED = Object.freeze({
   region: 'us-east5',
   name: '',
   rigor: 'pro',
+  budget: WIZARD_BUDGET_DEFAULT,
   bake_repos: WIZARD_YES,
 })
 
 describe('the setup wizard’s questions', () => {
-  it('asks the contract’s five questions, in its own order, with the CLI’s defaults', () => {
+  it('asks the contract’s six questions, in its own order, with the CLI’s defaults', () => {
     const { root } = setupHarness(() => feedOf(DONE))
     expect(rowsOf(root).map((row) => row.getAttribute(WIZARD_QUESTION_ATTRIBUTE))).toEqual([
       ...SETUP_ANSWER_KEYS,
     ])
     expect(WIZARD_QUESTIONS.map((question) => question.key)).toEqual([...SETUP_ANSWER_KEYS])
-    // The defaults are the CLI's own: the US place's region, and baking on.
+    // The defaults are the CLI's own: the US place's region, the budget the CLI
+    // itself suggests, and baking on.
     expect(controlOf(root, 'region').getAttribute('value')).toBe('us-east5')
     expect(controlOf(root, 'gcp_project').getAttribute('value')).toBe('')
+    expect(controlOf(root, 'budget').getAttribute('value')).toBe(WIZARD_BUDGET_DEFAULT)
+    expect(WIZARD_BUDGET_DEFAULT).toBe('100')
     expect(
       optionsOf(root, 'bake_repos')
         .filter((option) => option.getAttribute('selected') === '')
@@ -319,7 +340,13 @@ describe('the setup wizard’s questions', () => {
     expect([...WIZARD_RIGOR_MODES].sort()).toEqual(
       SETUP_RIGOR_MODES.filter((mode) => mode !== 'hotfix').sort(),
     )
-    // No secret is asked for here, and there is no field beyond the five.
+    // The budget row is a question about an alert: it says so in its own note,
+    // and what an empty field takes (D2210).
+    const budgetRow = textOf(rowFor(root, 'budget'))
+    expect(budgetRow).toContain(WIZARD_BUDGET_NOTE)
+    expect(WIZARD_BUDGET_NOTE).toContain('alert')
+    expect(WIZARD_BUDGET_NOTE).toContain(WIZARD_BUDGET_DEFAULT)
+    // No secret is asked for here, and there is no field beyond the six.
     expect(rowsOf(root)).toHaveLength(SETUP_ANSWER_KEYS.length)
     expect(classed(root, WIZARD_LEAD_CLASS)[0]?.textContent).toContain('no secret')
   })
@@ -375,11 +402,56 @@ describe('the setup wizard’s questions', () => {
       region: 'us-east5',
       name: '',
       rigor: 'pro',
+      budget: 100,
       bake_repos: true,
     })
     // The form's own refusal is cleared by a press that got past it: what is
     // left is the run's own sentence and nothing about the form.
     expect(answersOf(root)).toEqual([WIZARD_DONE])
+  })
+
+  it('sends the budget as a number, whatever an operator typed into the field', async () => {
+    const { root, calls } = setupHarness(() => feedOf(DONE))
+    fill(root, { ...ANSWERED, budget: '250' })
+    submitOf(root).click()
+    await flush()
+    const payload = calls[0]?.payload as { readonly answers: SetupAnswers }
+    expect(payload.answers.budget).toBe(250)
+    // A number on the wire and never the string the field holds: the CLI decodes
+    // the member as an integer, so a document carrying `"250"` is refused by the
+    // file's schema rather than read as this operator's answer.
+    expect(typeof payload.answers.budget).toBe('number')
+  })
+
+  it('sends no budget at all for a field left empty, and the CLI records its own default', async () => {
+    const { root, calls } = setupHarness(() => feedOf(DONE))
+    fill(root, { ...ANSWERED, budget: '' })
+    submitOf(root).click()
+    await flush()
+    expect(calls).toHaveLength(1)
+    const payload = calls[0]?.payload as { readonly answers: SetupAnswers }
+    // The member is **absent**, not `undefined` and not zero: an absent budget is
+    // how the run takes the CLI's own 100 USD (D2212), while a written `0` is an
+    // amount the installation refuses.
+    expect('budget' in payload.answers).toBe(false)
+    expect(payload.answers).toEqual({
+      gcp_project: 'acme-one',
+      region: 'us-east5',
+      name: '',
+      rigor: 'pro',
+      bake_repos: true,
+    })
+  })
+
+  it('refuses a budget that is not a whole amount inside the alert’s bounds, and sends nothing', async () => {
+    const { root, calls } = setupHarness(() => feedOf(DONE))
+    for (const refused of ['0', '10.5', 'abc', '-5', `${String(SETUP_BUDGET_MAX + 1)}`]) {
+      fill(root, { ...ANSWERED, budget: refused })
+      submitOf(root).click()
+      await flush()
+      expect(calls, `${refused} was sent`).toEqual([])
+      expect(answersOf(root)).toEqual([wizardBudgetSentence()])
+    }
   })
 
   it('reads baking off the switch, and sends a written no as `false`', async () => {

@@ -56,8 +56,8 @@ type IssueSyncGitHub struct {
 	// canonical repository name (owner/name, task.CanonicalRepo). The spelling
 	// is held to the canonical form because the adapter lists and opens issues
 	// by it: an entry in another case, or with a trailing ".git", is a
-	// repository no lookup reaches, silently — the rule image_map's keys are
-	// held to, for the same reason.
+	// repository no lookup reaches, silently — the rule the repository-to-image
+	// map (`repo_images`) holds its keys to, for the same reason.
 	Repos []string `json:"repos,omitempty"`
 	// Mirror is whether an unapproved, spec-less item with no external id opens
 	// an issue of its own (D2719). False is the default and means it does not:
@@ -161,11 +161,11 @@ func checkIssueSyncMembers(raw json.RawMessage) error {
 // is named once and as the canonical owner/name the adapter looks it up by.
 //
 // The name's rule is task.CanonicalRepo's, which is what the CLI canonicalizes
-// a --repo to and what image_map's keys are held to, so a name this node
-// carries and a name a command writes are judged by one rule. It is stated as
-// the canonical form rather than as a shape: a key in another case is a
-// repository no lookup reaches, and the refusal names the spelling that is
-// read.
+// a --repo to and what the repository-to-image map (`repo_images`) holds its
+// keys' paths to, so a name this node carries and a name a command writes are
+// judged by one rule. It is stated as the canonical form rather than as a
+// shape: a key in another case is a repository no lookup reaches, and the
+// refusal names the spelling that is read.
 func validIssueSync(b *IssueSync) error {
 	if b == nil || b.GitHub == nil {
 		return nil

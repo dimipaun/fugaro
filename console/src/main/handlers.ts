@@ -71,13 +71,13 @@
 //     it in for both.
 //
 // **The setup answers cross one seam that does not typecheck by itself**, and it
-// is named here rather than hidden: `setup.plan`'s payload carries the five
+// is named here rather than hidden: `setup.plan`'s payload carries the six
 // answers as an object, and the allow-list (`ipc.ts`) validates each one and
 // hands the **serialised** answers file over as one string -- main's own bytes,
 // which is what keeps a path and an unvalidated member out of the child's
 // document. The wizard (`wizardrun.ts`) takes the answers as the object it
 // validates and serialises itself (`serialiseSetupAnswers`), so the join is
-// `setupAnswersFromFile` below: main's own text, parsed back into the five
+// `setupAnswersFromFile` below: main's own text, parsed back into the six
 // values, and validated by the wizard's own reader before anything is spawned.
 
 import {
@@ -230,7 +230,7 @@ interface Session {
 /**
  * SETUP_ANSWERS_UNREADABLE is what the `setup.plan` seam answers when main's own
  * answers text cannot be read back. It is a programming-error guard and not a
- * state an operator reaches: the allow-list built that text out of five values
+ * state an operator reaches: the allow-list built that text out of six values
  * it validated one at a time, and nothing between `dispatch` and here rewrites
  * it.
  */
@@ -276,9 +276,9 @@ function bindingKeyOf(installation: BoundInstallation): string {
  *
  * The string is the answers **file** the allow-list built and main holds in
  * memory (`setupAnswersValue`, `ipc.ts`), and this is the other end of the same
- * seam: `version` is the file's schema member and not one of the five questions,
+ * seam: `version` is the file's schema member and not one of the six questions,
  * so it is dropped here and added again by the wizard's own serialiser when it
- * makes the bytes the child reads. Every member the five names is read with its
+ * makes the bytes the child reads. Every member the six names is read with its
  * own type checked, and a document that is not this console's own text is
  * refused rather than half-read: what a child decodes is a claim about a
  * project, a region and a rigor, and half of that document is not a plan anyone
@@ -298,6 +298,16 @@ export function setupAnswersFromFile(text: string): ValidatedArguments {
   const answers: Record<string, ValidatedArgument> = {}
   for (const key of SETUP_ANSWER_KEYS) {
     const member = record[key]
+    // `budget` is the one question the file may leave out (D2210, D2212): an
+    // operator who emptied the wizard's field sends no member, and the run takes
+    // its own default. When the member is there it is a number, because it is
+    // the one question whose answer is not a word.
+    if (key === 'budget') {
+      if (member === undefined) continue
+      if (typeof member !== 'number') throw new SourceRefusal(SETUP_ANSWERS_UNREADABLE)
+      answers[key] = member
+      continue
+    }
     if (typeof member !== 'string' && typeof member !== 'boolean') {
       throw new SourceRefusal(SETUP_ANSWERS_UNREADABLE)
     }

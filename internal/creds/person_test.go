@@ -1,13 +1,10 @@
 package creds
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
-// The tests of C1 (internal/creds/person.go): the grant's two shapes are read strictly, the stub
-// reader answers R9's default, and the names the person's half is spelled with are pinned where a
-// change to one of them is a change to a wire format or to a published policy key.
+// The tests of C1 (internal/creds/person.go): the grant's two shapes are read strictly, and the
+// names the person's half is spelled with are pinned where a change to one of them is a change to a
+// wire format or to a published policy key.
 
 // TestPersonGrantDecodesStrictly: the shapes of the workspace grant are the contract, so every way
 // of being another shape is refused rather than read. The two that matter most are the ones a
@@ -101,21 +98,14 @@ func TestPersonGrantDecodesStrictly(t *testing.T) {
 	}
 }
 
-// TestStubSwitchIsOff: the stub is the other side of C1 for WC5, WC7 and WC11 before WC6's reader
-// exists, and the one answer that keeps it honest is R9's own default — off for every project, and
-// an error for none, because an absent key is off and a refusal would mean a policy that could not
-// be read, which is the other thing a caller of this interface has to act on.
-func TestStubSwitchIsOff(t *testing.T) {
-	var reader PersonSwitchReader = StubPersonSwitch{}
-	for _, project := range []string{"acme", "", "a-project-of-a-later-release"} {
-		on, err := reader.PersonSwitchOn(context.Background(), project)
-		if err != nil {
-			t.Fatalf("StubPersonSwitch.PersonSwitchOn(%q): %v", project, err)
-		}
-		if on {
-			t.Errorf("StubPersonSwitch.PersonSwitchOn(%q) = true: a stub that turned the personal half on would offer a person's own token on a member that never asked for it (D2972)", project)
-		}
-	}
+// TestPersonSwitchKeyIsSpelled: the key of R9's switch is a wire spelling three readers share — the
+// member's own `fugaro settings set`, the member's published policy, and the workspace's service —
+// so a change to it here would move all three with nothing red.
+//
+// C1 ships no reader for the interface beside it: the stub that answered OFF for every project is
+// deleted once WC6's reader exists (person_stub.go, I1), and the process's own default after that is
+// the service's (credsvc's unwiredPersonSwitch).
+func TestPersonSwitchKeyIsSpelled(t *testing.T) {
 	if PersonSwitchKey != "personal_workspace_tokens" {
 		t.Errorf("PersonSwitchKey = %q, want %q: it is the key of the member's published policy and of the member's own settings row, so a spelling that moved here would move both with nothing red (R9)", PersonSwitchKey, "personal_workspace_tokens")
 	}

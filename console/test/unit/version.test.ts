@@ -56,6 +56,7 @@ import {
   REDUCED_VIEWS,
   RUNS_LIST_PAGE_CLI_FLOOR,
   RUNS_STREAM_CLI_FLOOR,
+  SETUP_BUDGET_CLI_FLOOR,
   SETUP_CLI_FLOOR,
   SPEND_STREAM_CLI_FLOOR,
   SKEW_HEADLINES,
@@ -72,7 +73,10 @@ import {
   orchestratorMapSupported,
   parseCliVersion,
   planStatusNoMergesSupported,
+  RUNS_LIST_OLDER_CLI_FLOOR,
   renderVersionSkew,
+  runsListOlderSupported,
+  setupBudgetSupported,
   runsListPageSupported,
   SEATS_CLI_FLOOR,
   seatsSupported,
@@ -637,6 +641,51 @@ describe('the console improvements’ floors', () => {
 })
 
 // ---------------------------------------------------------------------------
+// The setup answers file's budget member (D2210, task T6).
+// ---------------------------------------------------------------------------
+
+describe('setupBudgetSupported', () => {
+  it('is the release that accepts the amount without its currency, and no earlier one', () => {
+    // The console answers `budget` and never `budget_currency` (D2211), and the
+    // member alone is not what the floor is about: `budget` has been in the
+    // document since 0.28.0 and no release refuses it by name, but before 0.29.0
+    // nothing wrote the currency the document left out back from the default, so
+    // the amount reached the run's own trio rule and the whole plan or apply
+    // ended there. The floor is the first release that reads a half-answered pair
+    // as a whole one, and this is that number rather than a `null`: 0.29.0 reads
+    // an amount on its own perfectly well, so a floor that refused every version
+    // would drop an answer the operator gave (`console/docs/json-contract.md`
+    // §6.32).
+    expect(SETUP_BUDGET_CLI_FLOOR).toBe('0.29.0')
+    expect(setupBudgetSupported('0.29.0')).toBe(true)
+    expect(setupBudgetSupported('0.29.1')).toBe(true)
+    expect(setupBudgetSupported('0.30.0')).toBe(true)
+    for (const line of ['0.28.9', '0.29.0-rc.1', 'dev', '']) {
+      expect(setupBudgetSupported(line), line).toBe(false)
+    }
+  })
+
+  it('is the patch comparison every other floor is, and a `null` floor refuses everything', () => {
+    // The rule is `meetsCliFloor`'s rather than a seventh copy of it: below the
+    // floor is a refusal however close, the floor itself and everything above it
+    // are not, and a line that cannot be placed at all is a refusal. The floor is
+    // driven as an argument -- which is what that parameter is for -- and a
+    // `null` is the state a console would be in before the release exists, which
+    // is a refusal for every line.
+    const floor = '0.31.0'
+    for (const line of ['0.30.9', '0.31.0-rc.1', 'dev', '']) {
+      expect(setupBudgetSupported(line, floor), line).toBe(false)
+    }
+    for (const line of ['0.31.0', '0.31.1', '1.0.0', '0.31.0+build.7']) {
+      expect(setupBudgetSupported(line, floor), line).toBe(true)
+    }
+    for (const line of ['0.29.0', '99.99.99', 'dev']) {
+      expect(setupBudgetSupported(line, null), line).toBe(false)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // The orchestrator map's floor (the console-fixes plan's CG7a, F40, D3221).
 // ---------------------------------------------------------------------------
 
@@ -716,6 +765,65 @@ describe('planStatusNoMergesSupported', () => {
     }
     for (const line of ['0.33.0', '0.33.1', '0.34.0', '1.0.0', '0.33.0+build.7']) {
       expect(planStatusNoMergesSupported(line, floor), line).toBe(true)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Live list's "Load older" floor (the console-fixes plan's IR7, F4).
+// ---------------------------------------------------------------------------
+
+describe('runsListOlderSupported', () => {
+  it('names no release, because no release carries the run index yet', () => {
+    // The cursor and the page are 0.16.0's (`RUNS_LIST_PAGE_CLI_FLOOR`), but a
+    // 0.16.0 CLI pages the window it was given: IR1's index is what makes
+    // `--after` a position in the listing rather than a row inside the window,
+    // and it is on this tree and in no tag. So the constant is `null` -- the
+    // state `PLAN_STATUS_NO_MERGES_CLI_FLOOR` above is in -- and the Live list
+    // draws no "Load older" on any installation today. A release that ships the
+    // index sets this constant to its own version in a one-line pull request,
+    // and this case fails then, which is the point: the line that changes is the
+    // line a reviewer reads.
+    expect(RUNS_LIST_OLDER_CLI_FLOOR).toBeNull()
+    const source = readFileSync(join(__dirname, '..', '..', 'src', 'shared', 'version.ts'), 'utf8')
+    expect(source).toContain('export const RUNS_LIST_OLDER_CLI_FLOOR: string | null = null')
+  })
+
+  it('is asked after the page floor, not instead of it', () => {
+    // The two floors gate different reads and the older one is the stricter:
+    // `runsListPageSupported` says the *words* exist (`--limit`, `--after`,
+    // #1545), and this one says a page may go **past the window the read was
+    // given**. A release could raise one without the other, so a caller asks
+    // both -- and the console today answers no to this one for every CLI.
+    expect(RUNS_LIST_PAGE_CLI_FLOOR).toBe('0.16.0')
+    for (const line of ['0.16.0', '0.32.0', '1.0.0', '0.16.0+build.7']) {
+      expect(runsListPageSupported(line), line).toBe(true)
+      expect(runsListOlderSupported(line), line).toBe(false)
+    }
+    // Below the page floor neither is asked: the words themselves are the newer
+    // CLI's, so the older floor is not the one refusing there.
+    for (const line of ['0.15.9', '0.15.2', 'dev', '']) {
+      expect(runsListPageSupported(line), line).toBe(false)
+      expect(runsListOlderSupported(line), line).toBe(false)
+    }
+  })
+
+  it('answers no for every version while the constant is unset, and is the patch comparison once one names itself', () => {
+    for (const line of ['0.16.0', '0.32.0', '1.0.0', 'dev', '']) {
+      expect(runsListOlderSupported(line), line).toBe(false)
+    }
+    // The branch a release takes: the constant becomes the version whose index
+    // read lands, and the comparison is `meetsCliFloor`'s -- below the floor is
+    // not supported however close, the floor itself and everything above it are,
+    // and a line that cannot be placed at all is not. The floor is driven as an
+    // argument here because the constant is unset; that parameter exists for
+    // this case (`runsListOlderSupported`'s note).
+    const floor = '0.34.0'
+    for (const line of ['0.33.9', '0.34.0-rc.1', 'dev', '']) {
+      expect(runsListOlderSupported(line, floor), line).toBe(false)
+    }
+    for (const line of ['0.34.0', '0.34.1', '0.35.0', '1.0.0', '0.34.0+build.7']) {
+      expect(runsListOlderSupported(line, floor), line).toBe(true)
     }
   })
 })

@@ -161,6 +161,12 @@ func routeAct(path string) (purpose, credential string) {
 		// tier — and naming one would be recording a fact the route does not
 		// have.
 		return PurposeSlipClaim, ""
+	case PoolDesignatePath:
+		// A designation's line is the grant's own shape (PL4): the launcher's
+		// act, writing a record of names — the principal, the project and the
+		// pool — and issuing no credential at all, so there is no name of one
+		// for the line to carry (credentiallessPurpose, callerWithoutJobPurpose).
+		return PurposePoolDesignate, ""
 	case WorkflowSecretsPath:
 		// The workflow-secrets route's credential is the CONTAINER the value
 		// was read from, and THAT NAME IS NOT IN THE PATH: it is the record's
@@ -263,7 +269,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
 		return true
 	// The six identity routes (C1, R2): a run's identity is issued here, with
 	// every one of them answered ahead of the shared parse below. The
@@ -1160,6 +1166,15 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		s.shared[folded] = sa
 	}
+	// The launcher's pool (C2's lookup, PL4): the real one, in place of the stub
+	// launcherPool() answers while the seam is nil. It is assigned here and not
+	// in an init because the lookup reads THIS deployment — the project, the
+	// published policy and the designation subtree are the Server's own — and a
+	// process builds one server for the installation or the workspace it serves
+	// (Config). The seam itself is C2's and is package-level (chain.go), so a
+	// process that built two servers would have the later one's lookup answer
+	// for both: no deployment does, and a test builds one per fixture.
+	LauncherPools = launcherPools{s: s}
 	return s, nil
 }
 
@@ -1231,7 +1246,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+PoolDesignatePath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1406,6 +1421,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.slipGrant(ctx, w, r)
+		return
+	}
+	if r.URL.Path == PoolDesignatePath {
+		// The designation route, answered before the shared parse for the
+		// launcher class's own reason one step further (PL4): its caller is a
+		// person or a roster service account recording what its OWN runs are
+		// served from, which is an act no run of this installation carries —
+		// the runs it answers for do not exist yet — so RequestFromHTTP would
+		// refuse the call for the identity headers it never had. The body is
+		// this route's own read (readDesignateRequest).
+		//
+		// It is not a workspace's route: a workspace's service resolves it to
+		// the unserved scope (aheadOfTheSharedParse, servesWorkspaceRoute), and
+		// the member's own pool is the installation's answer, not the
+		// workspace's.
+		s.poolDesignate(ctx, w, r)
 		return
 	}
 	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {
@@ -2221,13 +2252,24 @@ type slipBinding struct {
 	id      string
 	owner   string
 	allowed []string
-	// slip is the WHOLE record the binding was verified from, and it is
-	// carried only by a call admitted under a WORKSPACE slip (C2, R7): the
-	// personal reader is handed the record and answers the candidate the call
-	// is served first from it (Personal's own signature), and a member's slip
-	// has no such reader on its path. A nil here is therefore "this call was
-	// not admitted under a workspace slip", and it is what keeps the two
-	// halves apart without a second flag.
+	// slip is the WHOLE record the binding was verified from, and BOTH readers
+	// carry it: verifyCallSlip for an installation's call and
+	// verifyPersonCallSlip for a workspace's. The chain walk reads the run's
+	// launcher and its grant off it (chain.go's planSource, grantOf,
+	// principalOf), so a binding that left it out would resolve no launcher's
+	// pool for exactly the runs the pool is for — a project run's call is the
+	// installation reader's.
+	//
+	// It travels with EVERY record either reader verifies, the one whose grant
+	// covers nothing among them: the empty grant is the release-behind launcher,
+	// and the walk answers it from the old record rather than from the table
+	// (chain.go's chainFor), so a binding that left the record out would move
+	// that run.
+	//
+	// A binding with no record is therefore not "this call was not admitted
+	// under a slip". It is the fail-closed direction of the gate — planSource
+	// resolves no pool for one, and grantOf answers "a run nothing granted" —
+	// which no reader produces today.
 	slip *creds.Slip
 	// secret is the claim secret the call presented. It is held for ONE thing:
 	// registering it with the call's scrub (callScrubs), so a value the run
@@ -2392,7 +2434,17 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		// re-read from the record once the window has passed.
 		s.slips.put(slipID, sl, now)
 	}
-	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret}, nil
+	// The record travels with the binding: the walk reads the run's launcher and
+	// its grant off it (chain.go), and this is the reader every PROJECT run's
+	// call is admitted by — so without it no project run could be served from
+	// its launcher's pool at all (D3179-amended, F51, R7). It travels for a slip
+	// that covers no source of the new kinds as well, and the empty grant is
+	// what the walk reads as the release-behind launcher: an empty list is never
+	// a grant that covers everything (CS14, contract-pools.md), so the call is
+	// answered from the repository's OLD record (chain.go's chainFor), which is
+	// that run's own reach and not the table's.
+	record := sl
+	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret, slip: &record}, nil
 }
 
 // verifyPersonCallSlip reads and verifies the slip a WORKSPACE's call presents

@@ -683,25 +683,8 @@ func TestFugaroYAMLStatesTheShippedReviewSettings(t *testing.T) {
 				pinned = strings.TrimSpace(strings.TrimPrefix(line, key+": "))
 			}
 		}
-		if pinned == "" {
-			t.Fatalf("%s pins no %s model: this test reads the block to hold the comment to it", path, key)
-		}
-		// The pin has to be the comment's for that role, not merely in it: a
-		// comment line that names a pinned model has to name the role the pin
-		// belongs to, so a pair swapped in the block — the coder's ID written
-		// under `reviewer:` and the other way round — fails here. A pin that
-		// only asked whether each ID appears somewhere in the comment passed
-		// that swap, while the comment then explained each role with the other
-		// role's model: the drift this test exists for.
-		tied := false
-		for _, line := range strings.Split(comment, "\n") {
-			if strings.Contains(line, pinned) && strings.Contains(line, key) {
-				tied = true
-				break
-			}
-		}
-		if !tied {
-			t.Errorf("%s's comment has no line naming both the %s and the %q the file pins for it: the comment explains each role with its own model, and one naming a pinned model for the wrong role is the drift this test exists for", path, key, pinned)
+		if pinned != "" {
+			t.Errorf("%s pins the %s model %q: the models are the project's choice (D3237), published in its layer, and a repository file carrying them is refused", path, key, pinned)
 		}
 	}
 }

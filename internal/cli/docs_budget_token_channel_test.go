@@ -153,6 +153,12 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 		// The reason, which is what makes the answer a limit rather than a
 		// missing mechanism: the key would live in the job's definition.
 		"the job's definition",
+		// BR1's sentence, and the one the seal's refusal closes with: this
+		// limit is about the budget token alone. A reader who took "an
+		// installation that mints cannot launch any run on Batch" as "a Batch
+		// run has no identity at all" would look for a mechanism that is not
+		// coming, while the identity BR1 gives a Batch run is a ticket.
+		"a Batch run's identity travels as its ticket",
 		// And the reason as the threat model states it: what the carrier adds
 		// is a standing copy in the resource and the reaper as a reader, not a
 		// boundary that the launchers were behind.
@@ -201,6 +207,7 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 		"Batch runs no sealed budget run",
 		"cannot launch any run on Batch",
 		"names a budget database, with the signer account it mints through",
+		"a Batch run's identity travels as its ticket",
 	} {
 		if !strings.Contains(sec16, want) {
 			t.Errorf("%s §1.6 does not say %q: §1.6 is where a reader learns what this backend does with a secret, and the seal's answer belongs beside the secretVariables paragraph", cbDesign, want)
@@ -219,7 +226,7 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 	if c10 == "" {
 		t.Fatalf("%s has no C10 row: the decision table the answer has to reach is gone", cbDesign)
 	}
-	for _, want := range []string{"refuse", "sealed launch", "cannot launch any run on Batch"} {
+	for _, want := range []string{"refuse", "sealed launch", "cannot launch any run on Batch", "a Batch run's identity travels as its ticket"} {
 		if !strings.Contains(c10, want) {
 			t.Errorf("%s's C10 row does not say %q: §1.6's answer has to reach the decision table too, or the table reads as though the backend carried every secret the design lists\n\nrow: %s", cbDesign, want, c10)
 		}
@@ -256,6 +263,10 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 		// found missing from the refusal.
 		"cannot launch any run on Batch",
 		"names a budget database, with the signer account it mints through",
+		// BR1's sentence is the refusal's close: the limit is the budget
+		// token's, and the identity a Batch run carries is the ticket the
+		// launcher asks the service for (D3101 as amended).
+		"a Batch run's identity travels as its ticket",
 	} {
 		if !strings.Contains(message, want) {
 			t.Errorf("internal/backend/batch/seal.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing\n\nmessage: %s", want, design, message)
@@ -367,8 +378,11 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 		}
 	}
 	// And the mode is not read (AB4): the documents state a condition with no
-	// mode in it, so neither may the two functions that decide it.
-	for _, gone := range []string{"BudgetMode()", "BudgetOff", "ModeOff", "policy.read"} {
+	// mode in it, so neither may the two functions that decide it. The two
+	// identifiers that named the removed mode are not on the list any more —
+	// I1 deleted them with every reader, so nothing in this tree can spell one
+	// and the compiler is what holds that.
+	for _, gone := range []string{"BudgetMode()", "policy.read"} {
 		if strings.Contains(backendOn+mintOn, gone) {
 			t.Errorf("internal/cli/launch_budget.go still decides the minting condition with %q: %s says a launch mints for a budget database and its signer, whatever the mode is and whether or not a policy was published (AB4)", gone, design)
 		}
