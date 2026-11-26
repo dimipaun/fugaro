@@ -250,7 +250,7 @@ var metaAgent = []struct {
 	}},
 	{"agent.models.vision", Meta{
 		Label:       "Vision model",
-		Description: "The model a stage whose own model cannot read an image falls back to.",
+		Description: "The model a run's coder stages run when the task names an image their own model cannot read.",
 		Group:       GroupRuns,
 		Type:        TypeString,
 	}},

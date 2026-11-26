@@ -169,7 +169,7 @@ func registerLayerMeta() {
 	})
 	each("layer.defaults.agent.models.vision", Meta{
 		Label:       "Vision model",
-		Description: "The model a stage falls back to when its own model cannot read an image.",
+		Description: "The model a run's coder stages run when the task names an image their own model cannot read.",
 		Group:       GroupProfiles,
 		Type:        TypeString,
 	})

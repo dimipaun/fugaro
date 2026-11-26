@@ -16,13 +16,14 @@ import (
 // The vision check in force, as doctor says it (V6, D2011): the coder model's
 // image rate, whether this repository's own file sets agent.models.vision, and
 // — where it sets neither and the repository tracks a picture — the finding
-// that the next stage to read one dies at the gateway.
+// that a task naming one of those pictures is refused at bootstrap.
 //
 // The three facts are one check and not three because they are one question: a
 // coder whose price row carries an image rate reads a picture itself and the
 // slot is beside the point (D2016), a coder that cannot read one is covered by
-// the slot, and a coder that has neither is a run that pays for a stage's work
-// and throws it away (the issue's own complaint, forward.go's refusal). Only
+// the slot for the runs that name a picture, and a coder that has neither
+// cannot read the repository's own pictures at all — the read is denied and a
+// task that names one is refused at launch (D2017). Only
 // the last state is a warning, and only where the repository tracks an image
 // file: most repositories track a logo or a favicon, and a check that warned on
 // one would warn on nearly every screen (D2005's own rule for the run's half).
@@ -120,18 +121,19 @@ func doctorVisionReads(coder, vision string) doctorCheck {
 		Severity: "info",
 		Problem: fmt.Sprintf("the coder model %s is priced with an image rate, so a stage of this repository reads a picture itself; %s",
 			pluginwire.Printable(coder), doctorVisionSlot(vision)),
-		Fix: "nothing to do: a coder that can read an image keeps its own model, and the vision slot is for a stage whose own model cannot read one",
+		Fix: "nothing to do: a coder that can read an image keeps its own model, and the vision slot is for a run whose coder cannot read one",
 	}
 }
 
 // doctorVisionSlotCovers is the covered state: a coder priced without an image
-// rate, with a model named for the stages that read one.
+// rate, with a model named for the runs that read one — the runs whose task
+// names an image file or whose launch attached one, and no others (D2017).
 func doctorVisionSlotCovers(coder, vision string) doctorCheck {
 	return doctorCheck{
 		ID:       doctorVisionID,
 		OK:       true,
 		Severity: "info",
-		Problem: fmt.Sprintf("the coder model %s is priced without an image rate, and %s, which a stage that reads a picture runs instead",
+		Problem: fmt.Sprintf("the coder model %s is priced without an image rate, and %s, which a run whose task names an image runs in the coder's place",
 			pluginwire.Printable(coder), doctorVisionSlot(vision)),
 		Fix: "nothing to do: the vision slot is set, and a model it names is priced through the same table as every other pin",
 	}
@@ -141,7 +143,10 @@ func doctorVisionSlotCovers(coder, vision string) doctorCheck {
 // that cannot read an image and no slot, in a repository whose base branch
 // tracks none. It is a measurement rather than a warning — nothing is at risk
 // — and it is said at all because the state one image file away from the
-// finding is worth a reader knowing they are in.
+// finding is worth a reader knowing they are in. The image it would take is one
+// the base branch tracks *and a task names*: a run that names none keeps the
+// coder's own model and is refused the read (D2017), so the file alone decides
+// nothing.
 func doctorVisionNoImages(coder string) doctorCheck {
 	return doctorCheck{
 		ID:       doctorVisionID,
@@ -154,11 +159,13 @@ func doctorVisionNoImages(coder string) doctorCheck {
 }
 
 // doctorVisionFinding is the state D2011's warning is for: a coder that cannot
-// read an image, no slot, and a repository that tracks one. The stage pays for
-// its work and the gateway refuses the request that carries the picture, which
-// is the failure the whole work exists to prevent. The slot is said through
-// doctorVisionSlot's empty answer rather than by this function's own words, so
-// the state reads the same wherever doctor names it.
+// read an image, no slot, and a repository that tracks one. A task that names
+// one of those files is refused at bootstrap — the stage it would read the
+// picture in never runs — and a task that names none keeps the coder's model
+// and is refused the read itself, which is the work the repository's own
+// pictures cannot be read for. The slot is said through doctorVisionSlot's
+// empty answer rather than by this function's own words, so the state reads the
+// same wherever doctor names it.
 func doctorVisionFinding(coder, ref string, files []string, repo string) doctorCheck {
 	names := make([]string, len(files))
 	for i, f := range files {
@@ -167,7 +174,7 @@ func doctorVisionFinding(coder, ref string, files []string, repo string) doctorC
 	return doctorCheck{
 		ID:       doctorVisionID,
 		Severity: "warning",
-		Problem: fmt.Sprintf("the coder model %s is priced without an image rate, %s, and %s tracks %s: a stage that reads one is refused by the gateway mid-run, after its work is paid for",
+		Problem: fmt.Sprintf("the coder model %s is priced without an image rate, %s, and %s tracks %s: a task that names one of them is refused at bootstrap, before any work",
 			pluginwire.Printable(coder), doctorVisionSlot(""), pluginwire.Printable(ref), strings.Join(names, ", ")),
 		Fix: fmt.Sprintf("set agent.models.vision to a model that can read images (%s models use %s vision <id>), and price that model's images with model_prices' image_tokens (0 refuses an image)",
 			selfCommand(), quoteWord(repo)),
