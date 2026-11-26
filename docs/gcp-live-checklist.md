@@ -14656,7 +14656,11 @@ token's reach is unchanged; **D2077**(a): a workflow's build secrets come from t
 that a build of one repository is served its **own** provider credential and its **own** record and
 never another's: the service's line is compared with the account the build's own record says it ran as
 (**G20**, the one field of that line a call cannot claim for itself), with the provider's credential
-name, and with the repository's slug. A catalog entry's build is **not** an account that route admits —
+name, and with the repository's slug — which a catalog build carries as the KEY of its own record step,
+`builds/<slug>/catalog/<entry>/image.json`, since a catalog request has no `_SLUG` substitution and a
+repository-level image and its daily check job are retired (**D1900**, **M2**); that slug is the
+**source** repository's the entry is baked from, the served repository only where the entry is sourced
+from it, so the row names the source repository beside the slug where the two differ. A catalog entry's build is **not** an account that route admits —
 it runs as the project's build identity, **D2301** — so it never asks the route at all: its own row is
 that build's status, that identity and the mount its request carries, and the service's line for the
 repository is read and compared beside it (a line that names the service must still name the build's own
@@ -14731,7 +14735,11 @@ repository is printed **redacted** in the failure's reason; where the newest bui
 its own call is answered by the service's **entry** route, whose lines name the project's build identity
 and **no** repository (one token covers the entry's repositories), so a repository with no `build` line
 and no refusal reads **INFO** with that reason, while a **refused** line under its slug — which nothing
-of this installation's writes — is a **FAIL**. The repository's daily check job is found by
+of this installation's writes — is a **FAIL**. The slug that lookup is under is the build's own, read
+off the build and never off a job: the repository's own `_SLUG` substitution where it has one, else the
+KEY of its record step, `builds/<slug>/catalog/<entry>/image.json` — the entry's source repository's
+slug, which the row names beside the slug where the two differ — and a build that carries neither reads
+as a row that **could not be measured**, never as the absence "there is no line". The repository's daily check job is found by
 the slug label the installation writes — and a repository the installation deploys **no** check job for
 reads **INFO** rather than a row that could not be measured, because a repository-level image check is
 disabled with the repository-level images (**D1900**, `internal/infra`'s IS2) and the installation emits
