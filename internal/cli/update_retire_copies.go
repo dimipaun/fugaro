@@ -51,16 +51,17 @@ import (
 // first plan, because that is the mutation the plan depends on. Nothing between
 // the two halves plans anything.
 //
-// # Inert until IS6, and why that is a switch
+// # Live from IS6, and why it was a switch
 //
 // What a release may retire is what that release drops, and nothing else: the
 // set comes from IS5's record — the names whose value is in the grammar, the
 // same for every operator of the installation — gated on
-// infra.ProjectCopiesDropped, the one bit IS6 turns when it removes the
-// workflow_secrets loop from projectSecretContainers. While this release still
-// derives those containers the bit is off, the set is empty, and this step does
-// nothing on any installation, whatever an operator's own config holds and
-// whatever the cloud looks like.
+// infra.ProjectCopiesDropped, the bit IS6 turned when it removed the
+// workflow_secrets loop from projectSecretContainers. While the release still
+// derived those containers the bit was off, the set was empty, and this step
+// did nothing on any installation, whatever an operator's own config held and
+// whatever the cloud looked like. This release is the one that drops them, so
+// the bit is on and the step runs.
 //
 // The run then subtracts the names ITS OWN plan still produces
 // (infra.UnplannedCopies, against the config before discovery and against the
@@ -223,8 +224,36 @@ func (r *initRun) removeRetiredCopiesFromState(ctx context.Context, t *tf.TF, co
 
 // workflowCopiesInGrammar is the names whose value the installation already
 // holds in the fugaro_p_<name> grammar — the interface IS13 consumes, and the
-// half of it that IS5 wrote. Three facts have to hold, and all three are read
-// fresh:
+// half of it that IS5 wrote, read on the one run whose decision is a cloud
+// write (the copies it may mark, delete and take out of the state).
+func (r *initRun) workflowCopiesInGrammar(ctx context.Context, lc *localcfg.Config) ([]string, *gcp.Secrets) {
+	copied, svc, read := r.copiedWorkflowSecrets(ctx, lc, "workflow-secret copies were not retired")
+	if !read {
+		return nil, nil
+	}
+	return copied, svc
+}
+
+// workflowSecretsCopiedForPlan is Inputs.CopiedWorkflowSecrets for the
+// repository root a converge is about to plan (IS6): copiedWorkflowSecrets
+// with the plan's own subject, as a NON-NIL list even when the read could not
+// be made — a read that failed marks nothing, so the root keeps every mount,
+// every accessor and every project copy, which is the direction both halves of
+// the migration fail in.
+func (r *initRun) workflowSecretsCopiedForPlan(ctx context.Context, lc *localcfg.Config) []string {
+	copied, _, _ := r.copiedWorkflowSecrets(ctx, lc, "this repository's workflow secrets stay mounted")
+	if copied == nil {
+		return []string{}
+	}
+	return copied
+}
+
+// copiedWorkflowSecrets is the record's answer for an installation: the names
+// whose value it holds in the fugaro_p_<name> grammar, so that a name NOT in the
+// answer is one IS5 skipped and nothing may move for it — no mount, no accessor,
+// no project copy (the plan's acceptance for IS6, and IS13's own set).
+//
+// Three facts have to hold, and all three are read fresh:
 //
 //   - the project record holds the name. IS5 writes an entry only after the
 //     copy's value is in the grammar, and the record is what IS6 reads to
@@ -241,47 +270,57 @@ func (r *initRun) removeRetiredCopiesFromState(ctx context.Context, t *tf.TF, co
 //
 // The container names are derived (secretname.Project), never listed, so this
 // reads two metadata calls per name and no value.
-func (r *initRun) workflowCopiesInGrammar(ctx context.Context, lc *localcfg.Config) ([]string, *gcp.Secrets) {
-	// No record, no retirement: the two halves of the migration move together
+//
+// subject is the opening clause of the warnings a read-level failure prints,
+// so each caller's line says what ITS half did not do. read is false when the
+// read could not be made at all, and every caller then treats the record as
+// naming nothing — the direction that leaves every mount, every accessor and
+// every project copy standing, which is what IS13 does with the same answer and
+// what keeps the two halves from disagreeing about one installation.
+func (r *initRun) copiedWorkflowSecrets(ctx context.Context, lc *localcfg.Config, subject string) ([]string, *gcp.Secrets, bool) {
+	// No record, no answer: the two halves of the migration move together
 	// (IS5's header), and an installation with no database has no record for a
 	// name to be in.
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
-		return nil, nil
+		return nil, nil, true
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
 	if err != nil {
-		r.warn(fmt.Sprintf("workflow-secret copies were not retired: the database the record is in could not be opened (%s)", safetext.FieldErr(err)))
-		return nil, nil
+		r.warn(fmt.Sprintf("%s: the database the record is in could not be opened (%s)", subject, safetext.FieldErr(err)))
+		return nil, nil, false
 	}
-	if why := budgetDBUnadopted(ctx, lc, infra.NewDB(db, lc.Name, lc.GCPProject, ""), "workflow-secret copies were not retired", selfCommand()+" update"); why != "" {
+	if why := budgetDBUnadopted(ctx, lc, infra.NewDB(db, lc.Name, lc.GCPProject, ""), subject, selfCommand()+" update"); why != "" {
 		r.warn(why)
-		return nil, nil
+		return nil, nil, false
 	}
 	rec, found, err := creds.ReadProjectSecrets(ctx, db)
 	if err != nil {
-		r.warn(fmt.Sprintf("workflow-secret copies were not retired: the record could not be read (%s)", safetext.FieldErr(err)))
-		return nil, nil
+		r.warn(fmt.Sprintf("%s: the record could not be read (%s)", subject, safetext.FieldErr(err)))
+		return nil, nil, false
 	}
 	if !found || len(rec.Secrets) == 0 {
-		return nil, nil
+		// Read, and it names nothing: an empty record and a missing one are one
+		// answer here, and neither is the nil Inputs.CopiedWorkflowSecrets takes
+		// for a caller that read no record at all.
+		return []string{}, nil, true
 	}
 	svc, err := gcp.NewSecrets(ctx, gcpOptions(lc))
 	if err != nil {
-		r.warn(fmt.Sprintf("workflow-secret copies were not retired: %s", safetext.FieldErr(err)))
-		return nil, nil
+		r.warn(fmt.Sprintf("%s: %s", subject, safetext.FieldErr(err)))
+		return nil, nil, false
 	}
-	var out []string
+	out := []string{}
 	for _, name := range slices.Sorted(maps.Keys(rec.Secrets)) {
 		ok, err := inGrammar(ctx, svc, name)
 		if err != nil {
-			r.warn(fmt.Sprintf("workflow secret %s: its value in the %s grammar could not be read (%s), so its project copy stays", name, secretname.ProjectPrefix, safetext.FieldErr(err)))
+			r.warn(fmt.Sprintf("workflow secret %s was left as it is: its value in the %s grammar could not be read (%s)", name, secretname.ProjectPrefix, safetext.FieldErr(err)))
 			continue
 		}
 		if ok {
 			out = append(out, name)
 		}
 	}
-	return out, svc
+	return out, svc, true
 }
 
 // inGrammar is whether one name's value is readable from the grammar: the

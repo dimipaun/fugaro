@@ -1362,7 +1362,8 @@ export const FINISHED_KEYS = [
  * what it has read. Keys accepted and not read (`title`, `project_layer`,
  * `config_sha256`, `image_age_s`, `changed_files`, `owner_decisions`, `rigor`,
  * `artifact_count`, `artifact_bytes`, `task_pr`, `record_pr`, `pr`,
- * `pushed_head`, `started_at`, `draft_fallback`, `pr_status_at`, `stale_draft`,
+ * `pushed_head`, `started_at`, `draft_fallback`, `needs_guidance`,
+ * `pr_status_at`, `stale_draft`,
  * `execution`, `batch`, `halt`, `previous_run`, `base_branch`, `failure_class`,
  * `derived`, `follow_up_of`)
  * are the ones this screen has no use for yet; they are listed so that a
@@ -1498,6 +1499,13 @@ export const FINISHED_KEYS = [
  * (`NON_TEXT_STRING_KEYS`, beside `waiting_until`, and its **presence** is what
  * says a resume is due rather than a string to draw) and `resumed_by` is a run
  * id, the class `previous_run` and `run_id` carry.
+ *
+ * **`needs_guidance` arrived with the Pro stop (docs/rigor-modes LV5.2, LD8)**,
+ * between `draft_fallback` and `pr_status_at` in the struct, and `runs ls`
+ * writes it on a row whose record says the run's agent asked a question it may
+ * not settle by itself. It is a flag like `draft_fallback` beside it and not a
+ * status: the row's `outcome` stays `draft`, and the key says what the draft is
+ * waiting for. No screen draws it yet, so it is accepted and dropped.
  */
 export const RECORD_KEYS = [
   'run',
@@ -1548,6 +1556,7 @@ export const RECORD_KEYS = [
   'follow_up',
   'follow_up_of',
   'draft_fallback',
+  'needs_guidance',
   'pr_status_at',
   'stale_draft',
 ]
@@ -2363,6 +2372,7 @@ const RECORD_MEMBERS: Readonly<Record<string, RecordMemberKind>> = Object.freeze
   previous_run: 'text',
   follow_up: 'flag',
   draft_fallback: 'flag',
+  needs_guidance: 'flag',
   pr_status_at: 'stamp',
   stale_draft: 'flag',
 })

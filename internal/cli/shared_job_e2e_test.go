@@ -321,6 +321,14 @@ func (e *sharedJobE2E) mintRun(t *testing.T, ctx context.Context) {
 // identity from, and, for a Bitbucket job, the installation's credentials
 // service.
 //
+// The values a LAUNCHER puts on one execution rather than on the job — a slip
+// or a ticket — are not here: this fixture hands the run the job's deployment,
+// and the model environment a shared job's run goes by is neither the job's nor
+// the launch's but the published policy's, which the fixture publishes like any
+// other node (internal/runner's resolvePolicy). The launch is asked about that
+// half of its own environment where it would be written, at
+// TestSharedJobLaunchWritesNoModelEnvironment.
+//
 // The service's address is the one value of the job's environment a test moves:
 // the deployed job names the installation's own service, and the stand-in
 // beside it on loopback takes that place, as a platform supplies the real one.

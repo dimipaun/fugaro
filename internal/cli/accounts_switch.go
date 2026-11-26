@@ -155,6 +155,17 @@ func runAccountsSwitch(cmd *cobra.Command, from, to string, o accountsSwitchOpti
 	if err := accountsSwitchCoverage(after, to, keys); err != nil {
 		return err
 	}
+	// The jobs this switch stops declaring, asked of the installation before a
+	// byte is written and before a line of the plan is printed: a job a run is
+	// in flight on cannot be retired, and the write may not land before that is
+	// known (issue #3686's own failure, and update_retire_jobs.go's
+	// accountsSwitchJobRefusal). --dry-run asks nothing of the cloud, because it
+	// writes nothing.
+	if !o.dryRun {
+		if err := accountsSwitchJobRefusal(cmd.Context(), lc, keys, from, command); err != nil {
+			return err
+		}
+	}
 	accountsSwitchLines(cmd, keys, from, to)
 	if o.dryRun {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\ndry run: nothing was written; run `%s` to write %s and converge\n",

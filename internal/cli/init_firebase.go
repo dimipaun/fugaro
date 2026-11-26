@@ -202,7 +202,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil, nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil, nil, nil)
 		if err != nil {
 			return plan, err
 		}

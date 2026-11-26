@@ -1545,3 +1545,30 @@ func TestEveryNameInThisFileIsUsed(t *testing.T) {
 		}
 	}
 }
+
+// A shared image's name is the key's alone (§2.6): no repository, no
+// workflow, and the same key is the same name for every repository that
+// resolves it. The prefix is what keeps it readable as a shared image and
+// distinguishable from the catalog entries living in the same registry.
+func TestSharedImageNameIsTheKeysAlone(t *testing.T) {
+	key := strings.Repeat("ab", 32)
+	got, err := SharedImageName("us-east5-docker.pkg.dev/proj", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "us-east5-docker.pkg.dev/proj/" + SharedRegistryRepoID() + "/" + SharedImagePrefix + "abababababab"
+	if got != want {
+		t.Errorf("SharedImageName() = %q, want %q", got, want)
+	}
+	if again, err := SharedImageName("us-east5-docker.pkg.dev/proj/", key); err != nil || again != got {
+		t.Errorf("a trailing slash in the registry changed the name: %q, %v", again, err)
+	}
+	// A name a repository could be confused with is refused rather than
+	// spelled: a key of the wrong shape would put two repositories' images
+	// under one path.
+	for _, bad := range []string{"", "abc", strings.ToUpper(key), strings.ReplaceAll(key, "a", "z"), key + "0"} {
+		if got, err := SharedImageName("us-east5-docker.pkg.dev/proj", bad); err == nil {
+			t.Errorf("SharedImageName(%q) = %q, want a refusal", bad, got)
+		}
+	}
+}

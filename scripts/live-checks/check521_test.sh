@@ -187,7 +187,27 @@ run)
   cat "$FAKE_JSON_DIR/launch.json"
   ;;
 runs)
-  cat "$FAKE_JSON_DIR/rows.json"
+  # The real listing answers a page and `--limit N` cuts it to the newest N
+  # rows, so a check that read a run out of a listing cut to one row would read
+  # the wrong one — the fixture is written newest-first and a limit is its head.
+  # A stand-in that ignored the flag could not tell a check that picks its own
+  # row out of the listing from one that reads the listing by position.
+  limit=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --limit=*) limit=${1#--limit=} ;;
+    --limit) limit=${2:-}; shift ;;
+    esac
+    shift
+  done
+  ROWS_LIMIT="$limit" FAKE_JSON_DIR="$FAKE_JSON_DIR" python3 - <<'PY'
+import json, os, sys
+doc = json.load(open(os.path.join(os.environ["FAKE_JSON_DIR"], "rows.json")))
+limit = os.environ.get("ROWS_LIMIT") or ""
+if limit.isdigit() and int(limit) > 0:
+    doc["runs"] = (doc.get("runs") or [])[: int(limit)]
+json.dump(doc, sys.stdout)
+PY
   ;;
 cancel)
   printf 'cancel %s\n' "$*" >>"$FAKE_LOG_DIR/cancel.calls"
@@ -445,7 +465,8 @@ test_happy_path() {
   calls=$(cat "$dir/logs/fugaro.calls")
   expect_contains "$calls" "doctor --json (in $dir/sandbox)" "happy path: doctor runs in the sandbox checkout"
   expect_contains "$calls" "run --repo $dir/sandbox --json" "happy path: the run is launched from the sandbox checkout"
-  expect_contains "$calls" "runs ls --repo acme/sandbox --json --limit 1" "happy path: the run is followed by its own slug"
+  expect_contains "$calls" "runs ls --repo acme/sandbox --json " "happy path: the run is followed by its own repository"
+  expect_absent "$calls" "--limit" "happy path: the listing is read whole, so the run's own row is in it"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "gs://fugaro-runs-${project}/runs/${slug}/${run_id}/result.json" "happy path: the record is read at the run's own key"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "runs/acme/sandbox/" "happy path: the key is the one-segment slug, not the owner/name the launch names"
   assert_no_cancel "$dir" "happy path"
@@ -600,17 +621,26 @@ test_a_coder_that_reads_images_itself_is_a_finding() {
   assert_no_cancel "$dir" "a coder that reads images itself"
 }
 
-test_a_set_vision_slot_is_a_finding() {
+test_a_set_vision_slot_stops_the_check_as_one_it_cannot_measure() {
   # The slot set is Check 520's state: the run would run the picture on that
-  # model rather than being refused, which is a different check's reading.
+  # model rather than being refused, which is a different check's reading — and
+  # nothing this check may run unsets the slot (`fugaro models use` only sets
+  # it, `fugaro settings unset` refuses the key, D853), so the row names the
+  # state it needs and the check ends as one that could not measure rather than
+  # pretending the owner's project is a finding about the release.
   local dir=$work/slotset
   prepare "$dir"
   write_doctor "$dir" slot-set
   run_check "$dir"
-  expect_status "$status" 1 "a set vision slot"
+  expect_status "$status" 2 "a set vision slot"
   expect_contains "$out" "FACT premise: FAIL" "a set vision slot: the row"
   expect_contains "$out" "agent.models.vision is SET" "a set vision slot: what it found"
   expect_contains "$out" "Check 520's state" "a set vision slot: whose state it is"
+  expect_contains "$out" "the run below would read the picture on that model" "a set vision slot: why it may not launch"
+  expect_contains "$out" "nothing this check may run unsets the slot" "a set vision slot: why it cannot set the state up itself"
+  expect_contains "$out" "fugaro config show" "a set vision slot: the file the operator edits"
+  expect_contains "$out" "fugaro config publish" "a set vision slot: how it is put back"
+  expect_contains "$err" "could NOT measure premise" "a set vision slot: the exit names the row"
   assert_no_run "$dir" "a set vision slot"
   assert_no_cancel "$dir" "a set vision slot"
 }
@@ -664,6 +694,40 @@ test_a_run_that_never_ends_is_cancelled() {
   expect_contains "$(cat "$dir/logs/cancel.calls")" "cancel $run_id --now --json" "a run that never ended: the command it ran"
   expect_contains "$err" "could NOT measure terminal" "a run that never ended: the exit names the row"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "storage" "a run that never ended: no record is read"
+}
+
+test_the_run_is_read_out_of_the_whole_listing() {
+  # The run's own row is what this check reads, and a listing cut to the newest
+  # row is not where a run that has just ended is: another run of the same
+  # repository lands above it, and the row then reads `status=unknown,
+  # stage=unknown` for a run that had ended (the owner's run 0650).
+  local dir=$work/endedbelow
+  prepare "$dir"
+  printf '{"project":"%s","runs":[{"run":"%s/run-20261113000000-9","repo":"acme/sandbox","run_id":"run-20261113000000-9","status":"running","stage":"implement","terminal":false},{"run":"%s/%s","repo":"acme/sandbox","run_id":"%s","status":"infra_error","stage":"bootstrap","terminal":true,"settled":true}],"totals":{"runs":2},"warnings":[]}\n' \
+    "$project" "$slug" "$slug" "$run_id" "$run_id" >"$dir/json/rows.json"
+  run_check "$dir"
+  expect_status "$status" 0 "a run under a newer row"
+  expect_contains "$out" "FACT terminal: PASS" "a run under a newer row: the row"
+  expect_contains "$out" "status=infra_error, stage=bootstrap" "a run under a newer row: the status and stage it read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--limit" "a run under a newer row: the listing is read whole"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "runs/${slug}/${run_id}/result.json" "a run under a newer row: the record is the run's own"
+}
+
+test_a_run_the_listing_never_carries_is_not_a_status() {
+  # A listing that never carried the run's own row is a reading this check
+  # cannot make, and it says so rather than reporting a status it never saw:
+  # the row reads FAIL either way, but the sentence is what tells the owner
+  # whether the run was still going or absent from the listing altogether.
+  local dir=$work/absentrow
+  prepare "$dir"
+  printf '{"project":"%s","runs":[{"run":"%s/run-20261113000000-9","repo":"acme/sandbox","run_id":"run-20261113000000-9","status":"running","stage":"implement","terminal":false}],"totals":{"runs":1},"warnings":[]}\n' \
+    "$project" "$slug" >"$dir/json/rows.json"
+  run_check "$dir" CHECK521_RUN_TIMEOUT_SECONDS=1
+  expect_status "$status" 2 "a run the listing never carried"
+  expect_contains "$out" "FACT terminal: FAIL" "a run the listing never carried: the row"
+  expect_contains "$out" "never appeared in" "a run the listing never carried: what it saw"
+  expect_contains "$out" "fugaro runs show ${run_id}" "a run the listing never carried: what to read by hand"
+  expect_contains "$(cat "$dir/logs/cancel.calls")" "cancel $run_id --now --json" "a run the listing never carried: it is still cancelled"
 }
 
 test_a_cancel_that_does_not_answer_is_a_finding() {
@@ -921,11 +985,13 @@ t test_a_build_without_the_slot_is_refused
 t test_a_dev_build_is_decided_by_the_feature_probe
 t test_a_doctor_without_the_vision_check_is_a_finding
 t test_a_coder_that_reads_images_itself_is_a_finding
-t test_a_set_vision_slot_is_a_finding
+t test_a_set_vision_slot_stops_the_check_as_one_it_cannot_measure
 t test_an_unrecognised_doctor_sentence_is_a_finding
 t test_a_launch_that_fails_is_a_finding
 t test_a_launch_that_names_no_run_is_a_finding
 t test_a_run_that_never_ends_is_cancelled
+t test_the_run_is_read_out_of_the_whole_listing
+t test_a_run_the_listing_never_carries_is_not_a_status
 t test_a_cancel_that_does_not_answer_is_a_finding
 t test_a_cancel_that_does_not_answer_in_time_is_a_finding
 t test_a_launch_that_does_not_answer_in_time_is_a_finding

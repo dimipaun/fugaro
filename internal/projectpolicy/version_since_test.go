@@ -52,10 +52,11 @@ func TestVersionSinceCoversEveryVersion(t *testing.T) {
 	// 4, and not 0.22.1, which writes no version 5), 6 the binaries block
 	// (0.24.0), 7 the two model grades (0.24.0, the release that change
 	// shipped in), 8 the project build identity the config states (0.26.0,
-	// AR1), 9 the one-path pool (0.26.0, MC21) and 10 the designated
-	// repository for committed reports (0.26.0, R14). An off-by-one table fails
-	// here.
-	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.23.0", 6: "0.24.0", 7: "0.24.0", 8: "0.26.0", 9: "0.26.0", 10: "0.26.0"} {
+	// AR1), 9 the one-path pool (0.26.0, MC21), 10 the designated
+	// repository for committed reports (0.26.0, R14) and 11 the version an
+	// identity-issuing installation publishes (0.30.0, LM21). An off-by-one
+	// table fails here.
+	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.23.0", 6: "0.24.0", 7: "0.24.0", 8: "0.26.0", 9: "0.26.0", 10: "0.26.0", 11: "0.30.0"} {
 		if got := VersionSince[v]; got != want {
 			t.Errorf("VersionSince[%d] = %q, want %q", v, got, want)
 		}

@@ -151,6 +151,13 @@ type SummaryRecord struct {
 	PushedHead    string `json:"pushed_head,omitempty"`
 	PR            *PRRef `json:"pr,omitempty"`
 	DraftFallback bool   `json:"draft_fallback,omitempty"`
+	// NeedsGuidance is the record's own needs_guidance (LV5.2, LD8): the run's
+	// agent asked a question it may not settle by itself, so the pull request is
+	// a draft whose status section opens with OPEN QUESTIONS. It travels with
+	// the summary because a row shows it, exactly as DraftFallback beside it
+	// does, and a summary that dropped it would build a row that says the run
+	// asked nothing.
+	NeedsGuidance bool `json:"needs_guidance,omitempty"`
 	// StartedAt and Deadline are the run's own two moments: the row's start
 	// (and, with the image's build time, its image age), and the bound a run
 	// with no execution left is judged against.
@@ -222,6 +229,7 @@ func NewSummary(rec *Record, spec *task.Spec, at time.Time) *Summary {
 			PushedHead:     rec.PushedHead,
 			PR:             rec.PR,
 			DraftFallback:  rec.DraftFallback,
+			NeedsGuidance:  rec.NeedsGuidance,
 			StartedAt:      rec.StartedAt,
 			Deadline:       rec.Deadline,
 			FollowUp:       rec.FollowUp,
@@ -317,6 +325,7 @@ func (s *Summary) AsRecord() *Record {
 		PushedHead:     s.Record.PushedHead,
 		PR:             s.Record.PR,
 		DraftFallback:  s.Record.DraftFallback,
+		NeedsGuidance:  s.Record.NeedsGuidance,
 		StartedAt:      s.Record.StartedAt,
 		Deadline:       s.Record.Deadline,
 		FollowUp:       s.Record.FollowUp,

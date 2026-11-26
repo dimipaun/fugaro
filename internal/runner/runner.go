@@ -205,6 +205,14 @@ type run struct {
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
+	// gateHandBack is the account the check gate wrote for a first run whose
+	// autofix took implement's place, as a reader of the file gets it back,
+	// and gateHandBackSHA the commit it was written on. Both are "" for every
+	// other run. refreshGateHandBack rewrites from them at finalize, where the
+	// account written before the review loop is stale whenever a fix round
+	// committed on top of the autofix (handback_part.go, LV5.1).
+	gateHandBack    string
+	gateHandBackSHA string
 	// digest is whether the resolved recipe's first step is the digest step
 	// (recipe.UsesDigest, T3.1): a report run, whose first step the runner
 	// executes itself -- the reports it writes are its own work, with no
@@ -4361,6 +4369,13 @@ func (r *run) agentLoop(ctx context.Context) {
 			// on top of the autofix commit the gate already made; only a
 			// first run (nothing else asked of it) skips straight to review.
 			if r.follow == nil {
+				// No coder stage will run, so the hand-back the run's level
+				// owes is the runner's to write: readiness asks for a file no
+				// agent on this path could have written (writeGateHandBack,
+				// the owner's ruling of 2026-11-26).
+				if err := r.writeGateHandBack(ctx); err != nil {
+					r.d.Log.Warn("writing the check gate's hand-back failed; the run will hand none back", "err", r.redact(err.Error()))
+				}
 				skipImplement = true
 			}
 		default:
@@ -5750,12 +5765,17 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		// Without this a run could spend maxCredentialResumes attempts a
 		// stage and have the ceiling count one.
 		r.countTokens(res)
+		// The action the service decided decides what the run does about this
+		// answer (R19): a halt ends the run here, and only the wait goes on to
+		// the bound below and the wait itself, which is the one a run could
+		// repeat.
+		if herr := r.haltOnExhaustedAnswer(*ex); herr != nil {
+			return res, false, herr
+		}
 		if resumes++; resumes > maxCredentialResumes {
-			h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(),
-				Detail: fmt.Sprintf("the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",
-					resumes, name, ex.Until.UTC().Format(time.RFC3339))}
-			r.haltNow(h)
-			return res, false, &HaltError{h}
+			return res, false, r.haltNoCredential(fmt.Sprintf(
+				"the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",
+				resumes, name, ex.Until.UTC().Format(time.RFC3339)))
 		}
 		// The session the ended stage ran in: what its result reported (the
 		// result event's ID, else its init event's, so a stage killed before
@@ -6904,11 +6924,24 @@ func (r *run) finalize(ctx context.Context) error {
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	decidedRound := r.decidingReview()
+	// The check gate's own account is refreshed before it is read: the commits
+	// are all made by now, and a fix round's (or the leftover commit's) landed
+	// on top of the autofix it was written on (LV5.1).
+	if err := r.refreshGateHandBack(ctx); err != nil {
+		r.d.Log.Warn("refreshing the check gate's hand-back failed; the account stays as the gate wrote it", "err", r.redact(err.Error()))
+	}
 	// What the level promised the reader and what the agent handed back, read
 	// here so readiness reads the agent's own file rather than a second parse
 	// of it (LV5.1).
 	hb, fromAgent := r.handBack()
 	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions, hb, fromAgent, r.owesHandBack())
+	// The run's own answer about the questions its agent asked (LV5.2): read off
+	// the decision rather than the hand-back again, and written here and not by
+	// the ending below, because it is a fact about what the run left open and
+	// not a second word for why it stopped — a run that asked a question and
+	// then failed for its own reason still asked it, and a follow-up can still
+	// answer.
+	r.rec.NeedsGuidance = dec.NeedsGuidance
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	// The cap's leftovers are filed beside them and before the body is built:
@@ -7318,10 +7351,7 @@ func (r *run) rawPRText() (string, string) {
 			return title, strings.TrimSpace(body)
 		}
 	}
-	first := r.spec.TitleLine()
-	if runes := []rune(first); len(runes) > 72 {
-		first = string(runes[:71]) + "…"
-	}
+	first := r.titleLine()
 	// The description names the run by its short ID (spec.md §1, D1701); the
 	// branch, which a follow-up continues, keeps the full ID.
 	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), r.spec.Task)
@@ -7329,6 +7359,19 @@ func (r *run) rawPRText() (string, string) {
 		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), first, r.spec.Task)
 	}
 	return first, body
+}
+
+// titleLine is the run's own title: the one place the fallback body's first
+// line and the title line of the hand-back the check gate writes (gateHandBackText)
+// are spelled, so the two cannot drift. The 72-rune cut and its ellipsis are the
+// fallback body's own: the title a person stored on the task, else the brief's
+// first line (task.Spec.TitleLine).
+func (r *run) titleLine() string {
+	first := r.spec.TitleLine()
+	if runes := []rune(first); len(runes) > 72 {
+		first = string(runes[:71]) + "…"
+	}
+	return first
 }
 
 // Pull request text bounds. They keep well under GitHub's limits (titles

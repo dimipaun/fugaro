@@ -38,10 +38,10 @@ const poolWithoutLauncherTableYAML = `model_routing:
 `
 
 // poolModelRepoYAML is the cascade checkout with the run's model written down:
-// the launcher reads the models a chain is judged against out of the file the
-// run will check out (launchRunModels), so a fixture that leaves agent.model to
-// the installation's default names a model this test cannot spell, and every
-// arm below would read an empty model set.
+// the launcher prices and judges a run by the models the file resolves to
+// (launchRunModels), so a fixture that leaves the model to the installation's
+// default names one this test cannot spell, and every arm below would read an
+// empty model set.
 //
 // agent.model is a lifted key (R1, D3237), and the arms therefore move the
 // fixture's base image to l8Since, the release that stops reading it: a

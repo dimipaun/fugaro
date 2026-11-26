@@ -201,6 +201,19 @@ type Inputs struct {
 	// nothing" is a different answer from "not read", and only the first one
 	// refuses a local entry that proxies a repository the node does not.
 	Policy *projectpolicy.Policy
+	// CopiedWorkflowSecrets names the workflow secrets whose value the
+	// installation holds in its own fugaro_p_<name> grammar — the project
+	// record the update wrote once the copy was made (IS5, D3325) — as the
+	// caller read it (internal/cli's workflowCopiesInGrammar).
+	//
+	// nil means the caller read no record at all, which is the same answer
+	// Policy's nil is: a command that does not read one (fugaro image, fugaro
+	// doctor, --print-vars) judges every eligible name copied, which is the
+	// spec every release before IS6 computed. Non-nil is a READ record, and an
+	// empty one is the installation that has copied nothing: a name it does not
+	// hold keeps its mount, its grants and its copy until a later update copies
+	// it (IS5's skipped name, the plan's acceptance).
+	CopiedWorkflowSecrets []string
 }
 
 // InstallationOutputs are the installation root's outputs, as `terraform
@@ -652,15 +665,16 @@ type WorkflowSpec struct {
 	// VaultSecretNames are the logical names of the workflow's OWN secrets
 	// whose values the credentials service fetches for this job (B3.8, S3,
 	// config.VaultFetchedSecretClasses): sorted, and empty while no class of
-	// secrets is fetched or while this repository is one the switch holds off.
+	// secrets is fetched, while this repository is one the installation hands
+	// the service no address, or while the project record marks none of the
+	// names it declares copied (IS6, Inputs.CopiedWorkflowSecrets).
 	//
 	// The names are here because the module needs them and cannot derive them:
 	// the job mounts none of them, so var.workflow.secret_env no longer names
-	// them, and the credentials service still has to be able to READ each one's
-	// container — it is the service, and not the job, that fetches the value now
-	// (D2074's grant, B3.4's fetch). The containers stay declared and the job's
-	// own accessors on them go (modules/workflow/sa.tf drops both through this
-	// list, and internal/infra's dropVaultMounts takes the mounts away here).
+	// them, and the job's own accessor on each has to go with its mount — a
+	// mount the account may not read is a job Cloud Run refuses to create
+	// (C2.3). modules/workflow/sa.tf reads the list for that one clause, and
+	// internal/infra's dropVaultMounts is what took the mounts away here.
 	VaultSecretNames []string `json:"vault_secret_names,omitempty"`
 
 	Name                string            `json:"-"`
@@ -1033,8 +1047,12 @@ type repoCtx struct {
 	// repository credentialsServiceOn is, and for a `vertex` one of an
 	// installation that has the service, whose runs fetch their workflow
 	// secrets through it and read no credential of theirs there (D3326, F17).
-	// credentialsServiceOn stays the narrower answer and is the one every drop
-	// reads; the two travel together into the tfvars.
+	// credentialsServiceOn stays the narrower answer, and which drop reads
+	// which is the line between them (IS6): the model, App-key and proxied-git
+	// drops read credentialsServiceOn, because those are the credentials the
+	// service's own bundle holds, and the FETCHED class reads this one, because
+	// the run's fetch is over the address. The two travel together into the
+	// tfvars.
 	credentialsServiceAddressed bool
 	// budgetMode is the mode the published node carries, read once by resolve
 	// from Inputs.Policy: the fact VertexGrantForJob reads to take a job's
@@ -1283,11 +1301,22 @@ var SharedJobBaked = false
 // buildServes is whether the credentials service serves the secrets of class
 // to this repository's BUILDS (B4.9, the S4 flip; D2076, D2077): the class
 // list says which classes are served at all (config.BuildServedSecretClasses)
-// and credentialsServiceOn says whether this repository is one the switch
-// serves — the same two halves every other flip here reads, and the same
-// answer modules/repo/build.tf's local.build_mounts_served and
+// and credentialsServiceAddressed says whether this repository is one the
+// ADDRESS reaches — the same two halves every other flip here reads, and the
+// same answer modules/repo/build.tf's local.build_mounts_served and
 // local.check_mount_served compute from the class list it spells out and the
 // per-repository block Go writes into the tfvars.
+//
+// The address and not c.credentialsServiceOn, which is IS6's widening and the
+// one place the two answers come apart: a `vertex` repository is handed the
+// address and served no credential of its own (D3326, F17), and its build
+// fetches at the service exactly as a served one's does — the build route is
+// the caller's own row and no switch (internal/credsvc's build.go) — while the
+// container the request would otherwise name is the installation's
+// fugaro_p_<name> copy, which this release no longer derives
+// (projectSecretContainers, D3324) and the next update retires (IS13). A
+// request that still mounted it is one Cloud Build refuses, which is the state
+// the address gate is here to prevent.
 //
 // Go's half of the flip is the tfvars: the build account's accessor list
 // (WorkflowSpec.BuildSecrets, which RepoSpec gathers) empties with the class
@@ -1297,7 +1326,7 @@ var SharedJobBaked = false
 // reads the same list for the request's own mounts, beside the service
 // address the build paths in internal/cli put on the spec.
 func (c *repoCtx) buildServes(class string) bool {
-	return c.credentialsServiceOn && config.BuildServesClass(class)
+	return c.credentialsServiceAddressed && config.BuildServesClass(class)
 }
 
 // buildMountsServed is buildServes for the one answer both of the build's own
@@ -1313,7 +1342,9 @@ func (c *repoCtx) buildMountsServed() bool { return c.buildServes(config.BuildSe
 // class "git"), and that credential's accessor is the build account's, so
 // either class takes the mount away (C2.3) — the job then fetches the
 // credential there instead, which is what the service's address in its
-// environment is for (B4.5, checkGitCredential).
+// environment is for (B4.5, checkGitCredential). It follows
+// buildMountsServed's gate, address and class list, because the accessor the
+// mount is read under is the one that gate empties.
 func (c *repoCtx) checkMountServed() bool {
 	return c.buildServes(config.BuildSecretClassGit) || c.buildServes(config.BuildSecretClassBuild)
 }
@@ -1505,33 +1536,46 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 	return c.lc.ImageCatalogEffective(published)
 }
 
-// effectiveImageMap is the repo-to-image map the repository's specs are
-// computed from: the local configuration's when it states one, the published
-// project node's otherwise (localcfg's keep rule, D1906), and nil when the
-// project maps none.
-func (c *repoCtx) effectiveImageMap() map[string]string {
-	var published map[string]string
-	if c.in.Policy != nil {
-		published = c.in.Policy.ImageMap
+// effectiveRepoImages is the repository-to-image map the repository's specs are
+// computed from, split into the two fields catalog.ImageRequest holds it in
+// (R2): exactly one of the answers is non-nil, and which one says which
+// keyspace the map is in — repo_images' provider-qualified keys, or the legacy
+// image_map's bare repository names.
+//
+// It is the project's effective map, this machine's configuration first and the
+// published node's otherwise (localcfg.RepoImagesEffective, D1906), and both
+// halves are nil when the project maps none.
+func (c *repoCtx) effectiveRepoImages() (byProvider, byName map[string]string) {
+	images, fromRepoImages := c.lc.RepoImagesEffective(c.in.Policy)
+	if fromRepoImages {
+		return images, nil
 	}
-	return c.lc.ImageMapEffective(published)
+	return nil, images
 }
 
 // imageRequest is the question this repository's workflows are resolved with:
-// the project's effective catalog and map, this repository, the workflow and
-// the installation's backend.
+// the project's effective catalog and map, this repository's provider, the
+// repository, the workflow and the installation's backend.
+//
+// The provider is the one this repository's jobs are planned on (repoCtx.
+// provider, from git.provider), and it is what the map is read under: a project
+// that holds a GitHub and a Bitbucket repository of one name gives each its own
+// key, so the lookup cannot be made without it (D3370).
 //
 // The backend is the installation's own, read from the config and not written
 // as a constant: the docker rule is a rule about the backend the job will run
 // on (D1149), and an installation that names cloud-batch is judged by the rule
 // for the backend it actually runs on rather than by Cloud Run's.
 func (c *repoCtx) imageRequest(w config.Workflow) catalog.ImageRequest {
+	byProvider, byName := c.effectiveRepoImages()
 	return catalog.ImageRequest{
-		Catalog:   c.effectiveCatalog(),
-		ImageMap:  c.effectiveImageMap(),
-		Canonical: c.in.Repo,
-		Workflow:  w,
-		Backend:   catalog.Backend(c.lc.Backend()),
+		Catalog:    c.effectiveCatalog(),
+		Provider:   c.provider,
+		RepoImages: byProvider,
+		LegacyMap:  byName,
+		Canonical:  c.in.Repo,
+		Workflow:   w,
+		Backend:    catalog.Backend(c.lc.Backend()),
 	}
 }
 
@@ -2092,12 +2136,24 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		dropModelMounts(&ws, served)
 	}
 	// And the workflow's OWN secrets go the same way for a repository the
-	// service serves once the class list names them (B3.8, S3): the runner
-	// fetches their values from the service at bootstrap (B3.4) instead of
-	// reading them from its own environment, so the job mounts none of them and
-	// the module drops the matching accessor — while the containers stay
-	// declared, because the service is what reads them now (D2074's grant,
-	// B3.1's record, dropVaultMounts).
+	// installation hands the service's address, once the class list names them
+	// (B3.8, S3, IS6): the runner fetches their values from the service at
+	// bootstrap (B3.4) instead of reading them from its own environment, so the
+	// job mounts none of them and the module drops the matching accessor — and
+	// the project copy no longer exists to hold one, since the value the fetch
+	// reads is the installation's fugaro_p_<name> copy (IS5/D3325). The gate is
+	// the ADDRESS and not c.credentialsServiceOn, which is IS6's one widening:
+	// a `vertex` repository is handed the address and served no credential of
+	// its own, so nothing of its job's goes to the service's bundle (D3326/F17)
+	// — and its workflow secrets do go, because the run fetches those over that
+	// same address. It is local.service_addressed in modules/workflow/sa.tf,
+	// which holds the same two gates.
+	//
+	// The names are the ones the project record marks copied, and only those: a
+	// name IS5 skipped keeps its mount, its accessors and its copy until a later
+	// update copies it, because a fetch of a name the grammar does not hold
+	// fails for the run that declares it (copiedWorkflowSecret below). A caller
+	// that read no record (in.CopiedWorkflowSecrets nil) gets the whole class.
 	//
 	// The class list is the switch (config.VaultFetchedSecretClasses, which has
 	// carried VaultSecretClassWorkflow since the flip's second commit; with it
@@ -2105,8 +2161,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// modules/workflow/sa.tf's own clause reads, held to it by that module's
 	// guard test. Read beside dropModelMounts because it is the same rule — a
 	// mount and an accessor are one answer — for a second class of secret.
-	if c.credentialsServiceOn {
-		dropVaultMounts(&ws, w, func(name string) bool {
+	if c.credentialsServiceAddressed {
+		dropVaultMounts(&ws, w, c.in.CopiedWorkflowSecrets, func(name string) bool {
 			// The repository's eligibility to use the name project-wide, which
 			// is ProjectSecretCandidates' own predicate for this name
 			// (ProjectSecretCandidateFromNode, with the two facts only this
@@ -2117,11 +2173,11 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 			return ok
 		})
 	}
-	// The build account's accessor list goes with the service (B4.9, D2076,
-	// D2077): a build of a served repository names none of these secrets — its
-	// credential step fetches the git credential and the workflow's own build
-	// secrets there instead (B4.5) — so the list is empty and
-	// modules/repo/build.tf drops the accessor with it. It is the same list
+	// The build account's accessor list goes with the address (B4.9, D2076,
+	// D2077, IS6's widening): a build of an addressed repository names none of
+	// these secrets — its credential step fetches the git credential and the
+	// workflow's own build secrets there instead (B4.5) — so the list is empty
+	// and modules/repo/build.tf drops the accessor with it. It is the same list
 	// modules/repo/build.tf reads through local.build_mounts_served, and
 	// internal/backend/gcp's BuildRequest reads the same class for the request.
 	if !c.buildMountsServed() {
@@ -2801,14 +2857,15 @@ func (rs RepoSpec) Addresses() []string {
 	add(root + `google_project_iam_member.build["build_submitter"]`)
 	add(root + "google_service_account_iam_member.build_self")
 	// The build account's own roles/run.invoker on the installation's
-	// credentials service (B4.4, modules/repo/build.tf), on the switch the
-	// installation's opt-in and the serves fact together are (D135): an
-	// installation that has not opted in plans no resource, and neither does a
-	// repository the service does not serve — the `vertex` one handed the
-	// address for its RUNS (D3326), whose builds read what they mount and
-	// fetch nothing from the service — so neither address is one this spec
-	// has.
-	if rs.credentialsServiceServes() {
+	// credentials service (B4.4, modules/repo/build.tf), on the address alone
+	// (D135, IS6's widening): an installation that has not opted in plans no
+	// resource, and every repository handed the block has one — the `vertex`
+	// one included, whose build fetches the git credential and its workflow
+	// secrets there exactly as a served repository's does, because that is
+	// where its accessors were taken away. The serves fact beside the block
+	// grants the SERVICE's own accessors on the job (D2074), which this
+	// resource is not.
+	if rs.Installation.CredentialsService != nil {
 		add(root + "google_cloud_run_v2_service_iam_member.build_credentials[0]")
 	}
 	for _, member := range operators {
@@ -2866,12 +2923,15 @@ func (rs RepoSpec) Addresses() []string {
 		// service may still be asked for (the module's set is the mounts), and
 		// a mount the job has given up is one the service is not granted.
 		//
-		// Plus the containers no job mounts any more and the service fetches
-		// for it instead (B3.8, WorkflowSpec.VaultSecretNames): the module's
-		// service_secret_names is its job_mounts together with that list, so
-		// the mirror reads both. Its job_secret_names half needs nothing here
-		// — the names left ws.SecretEnv when the drop took their mounts, so
-		// uniqueSecrets below no longer names them.
+		// The fetched class contributes nothing here any more (IS6): a name the
+		// job no longer mounts is no longer a container the service is granted,
+		// because the container a run's fetch reads is the installation's own
+		// fugaro_p_<name> copy and the service's prefix-wide grant on that
+		// grammar is D3323's, in modules/installation/credentials.tf. The
+		// module's service_secret_names is its job_mounts alone, and its
+		// job_secret_names half needs nothing here either — the names left
+		// ws.SecretEnv when the drop took their mounts, so uniqueSecrets below
+		// no longer names them.
 		//
 		// Empty for a repository the service does not SERVE, which the module's
 		// own gate says too (local.service_serves, B3.8/IS9): a `vertex`
@@ -2879,7 +2939,6 @@ func (rs RepoSpec) Addresses() []string {
 		// this account none of its containers (D3326, F17).
 		if rs.credentialsServiceServes() {
 			serviceNames := uniqueSecrets(ws)
-			serviceNames = append(serviceNames, ws.VaultSecretNames...)
 			slices.Sort(serviceNames)
 			for _, logical := range slices.Compact(serviceNames) {
 				if serviceReadsSecret(rs.Installation.CredentialsService, logical, rs.BitbucketProxied) {
@@ -2998,20 +3057,25 @@ func (rs RepoSpec) DropsBitbucketToken() bool {
 // decide from the finished spec rather than while building it — the guard's own
 // allowance for the flip's accessor deletes (BuildAccessorAllowDelete) — and it
 // is stated from the tfvars' side of the same switch: the block is absent for
-// every repository the switch holds off (repoCredentialsService) and the fact
-// beside it is false for the one repository handed the block without being
-// served — a `vertex` one (D3326, F17), whose builds read their own git
-// credential and their own build secrets and fetch nothing from the service.
-// Both are what modules/repo/build.tf's local.build_mounts_served reads out of
-// var.installation, so this answer and the module's for_each are one answer
-// about one plan.
+// every repository the address does not reach (repoCredentialsService) and its
+// presence is the address — the fact beside it, credentials_service_serves,
+// says nothing here, because a `vertex` repository is handed the address and
+// served no credential of its own (D3326, F17) while its build fetches the git
+// credential and its workflow secrets from the service exactly as any other
+// addressed repository's does (IS6). What the serves fact decides is the
+// SERVICE's own accessors on this job's containers (D2074), which the vertex
+// repository is granted none of.
+//
+// The block's presence and the class list are what modules/repo/build.tf's
+// local.build_mounts_served reads out of var.installation, so this answer and
+// the module's for_each are one answer about one plan.
 //
 // It is the class "build" alone and not either class: the check job's own mount
 // leaves with the class "git" as well (check.tf's local.check_mount_served), and
 // that mount is a container's secret_key_ref and no IAM member, so no plan
 // carries a delete of it for a guard to weigh.
 func (rs RepoSpec) BuildMountsServed() bool {
-	return rs.credentialsServiceServes() && config.BuildServesClass(config.BuildSecretClassBuild)
+	return rs.Installation.CredentialsService != nil && config.BuildServesClass(config.BuildSecretClassBuild)
 }
 
 // serviceReadsSecret reports whether the credentials service's own account is

@@ -274,8 +274,8 @@ func TestMigrateRefusesAMalformedNodeUntouched(t *testing.T) {
 // and not its own.
 func TestMigrateCurrentIsANoOp(t *testing.T) {
 	for _, raw := range [][]byte{
-		[]byte(`{"version":10,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
-		[]byte(`{"version":10,"allow_repos":["nope"]}`),
+		[]byte(`{"version":11,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
+		[]byte(`{"version":11,"allow_repos":["nope"]}`),
 	} {
 		migrated, changes, err := Migrate(raw)
 		if err != nil {
@@ -560,7 +560,7 @@ func TestMigrateWritesTheMarkerOnlyWhereItIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate = %v", err)
 	}
-	if len(changes) != 6 || changes[0].Changed != "the version field: 4 to 5" || changes[1].Changed != "the version field: 5 to 6" || changes[2].Changed != "the version field: 6 to 7" || changes[3].Changed != "the version field: 7 to 8" || changes[4].Changed != "the version field: 8 to 9" || changes[5].Changed != "the version field: 9 to 10" {
+	if len(changes) != 7 || changes[0].Changed != "the version field: 4 to 5" || changes[1].Changed != "the version field: 5 to 6" || changes[2].Changed != "the version field: 6 to 7" || changes[3].Changed != "the version field: 7 to 8" || changes[4].Changed != "the version field: 8 to 9" || changes[5].Changed != "the version field: 9 to 10" || changes[6].Changed != "the version field: 10 to 11" {
 		t.Fatalf("changes = %+v, want the step to report the version field alone: no pool of this node needed a marker, and none of them crosses the two halves", changes)
 	}
 	if !slices.Contains(changes[0].Kept, "craft_pools") {
@@ -619,5 +619,77 @@ func TestShapeFreeStepsOnlyMoveTheNumber(t *testing.T) {
 		if ch.Note != "" {
 			t.Errorf("the step from %d carries the note %q: a node whose migration needs a move after it is not one a reader can read without printing it", from, ch.Note)
 		}
+	}
+}
+
+// TestMigrateToTheIdentityVersionIsShapeFree: version 11 adds no member — what
+// it marks is the release an identity-issuing installation publishes (LM21,
+// D3124) — so the step from 10 must move the number and nothing else, and the
+// walk that carries an installation's published node across it must be what
+// `fugaro update`'s policy stage runs rather than a republish.
+//
+// Three things are pinned, and each is one the release's safety turns on:
+// the step's own bytes (a version-10 node carrying members of every kind comes
+// back with the number moved and no other byte touched, so nothing the owner
+// edited into the node is lost and no member a version-10 release wrote changes
+// meaning), the walk (Migrate carries a version-10 node all the way to this
+// release's Version, which is what the update's policy stage does in place),
+// and the tolerance the shape-free step buys (ReadsVersion(10): a reader of
+// this release reads a node one version behind as it stands, so the image
+// builds and the stages between them cannot leave a launcher reading a node it
+// refuses). The version-11 node also names its release, because the refusal an
+// older CLI prints quotes it: a bump with no row sends an operator to a release
+// they already run.
+func TestMigrateToTheIdentityVersionIsShapeFree(t *testing.T) {
+	if Version != 11 {
+		t.Fatalf("Version = %d, and this test is about version 11 (LM21): update both together, deliberately", Version)
+	}
+	if !shapeFreeSteps[10] {
+		t.Fatal("shapeFreeSteps has no row for version 10: version 11 adds no member, so the step from 10 moves the number and nothing else")
+	}
+	if !ReadsVersion(10) {
+		t.Error("ReadsVersion(10) = false: a version-10 node is a version-11 node in everything but the number, so a reader of this release reads it as it stands and the update's window is not a refusal")
+	}
+	if rel, ok := VersionRelease(11); !ok || rel != "0.30.0" {
+		t.Errorf("VersionRelease(11) = (%q, %v), want 0.30.0: an older CLI's refusal names the release that introduced the version on the node", rel, ok)
+	}
+
+	raw := []byte(`{"version": 10, "allow_repos": ["github/acme/app"], "budget": {"mode": "enforce", "per_run_usd": 5},
+		"craft_credentials": [{"name": "acme-main", "type": "openrouter"}],
+		"craft_pools": [{"name": "acme-pool", "members": ["acme-main"], "owner": "owner@example.com"}],
+		"crafts": {"coder": {"access": "acme-pool"}}, "reports_commit": {"repo": "acme/reports"},
+		"future_release_block": {"escaped": "a & b <c>"}}`)
+
+	out, ch, err := migrators[10](json.RawMessage(raw))
+	if err != nil {
+		t.Fatalf("the step from 10: %v", err)
+	}
+	if ch.From != 10 || ch.To != 11 || ch.Note != "" {
+		t.Errorf("the step from 10 reports %+v, want the version move alone and no note: nothing is left for the operator to republish for", ch)
+	}
+	want := []byte(strings.Replace(string(raw), `"version": 10`, `"version": 11`, 1))
+	if !bytes.Equal(out, want) {
+		t.Errorf("the step from 10 rewrote more than the version member:\n got %s\nwant %s", out, want)
+	}
+
+	migrated, changes, err := Migrate(raw)
+	if err != nil {
+		t.Fatalf("Migrate(a version-10 node) = %v, want the walk to carry it: the update's policy stage rewrites the node in place", err)
+	}
+	if len(changes) != 1 || changes[0].From != 10 || changes[0].To != 11 {
+		t.Fatalf("Migrate(a version-10 node) reported %+v, want the one step from 10 to 11", changes)
+	}
+	if !bytes.Equal(migrated, want) {
+		t.Errorf("Migrate(a version-10 node) = %s, want the node with its number moved", migrated)
+	}
+	p, found, err := Decode(migrated)
+	if err != nil || !found || p == nil {
+		t.Fatalf("the migrated node does not decode: (%v, %v, %v)", p, found, err)
+	}
+	if p.Version != Version {
+		t.Errorf("the migrated node is version %d, want %d", p.Version, Version)
+	}
+	if len(p.CraftPools) != 1 || p.CraftPools[0].Name != "acme-pool" || p.CraftPools[0].Owner == "" || len(p.CraftCredentials) != 1 {
+		t.Errorf("the migrated node lost a member: pools = %+v", p.CraftPools)
 	}
 }

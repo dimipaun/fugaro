@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -617,5 +620,117 @@ func TestAccountsSwitchRefusesAChoiceKeyWrittenAsAFlowMapping(t *testing.T) {
 	}
 	if after := switchFile(t); after != before {
 		t.Errorf("the refusal wrote the file anyway:\n%s", after)
+	}
+}
+
+// TestAccountsSwitchRefusesBeforeItWritesWhenAProjectJobIsRunning is issue
+// #3686's first half, and the reason the command plans before it writes: a
+// switch takes FROM out of every profiles.<profile>.claude_accounts that names
+// it, so the shared job of that profile's (from) triple stops being declared —
+// and when the converge then meets a job it cannot retire, the config is left
+// half-switched, which is what the issue records (nine keys written, a refusal
+// on two protected jobs, and the block put back by hand).
+//
+// The job here is the one thing that stops a retirement: an execution that has
+// not finished, which deleting the job would cancel. The refusal has to name
+// the profile the switch moves, and the file has to be byte-identical
+// afterwards — not "restored", never written at all.
+//
+// A cloud nobody can read is the same direction, and the second half of the
+// case: a job of a profile this switch moves cannot be promised a retirement
+// when its own installation cannot be listed.
+func TestAccountsSwitchRefusesBeforeItWritesWhenAProjectJobIsRunning(t *testing.T) {
+	r := newAddRigWith(t, switchRigLocal)
+	job := gcp.ProjectJobName("standard", "github", "team-a")
+	r.run.AddProjectJob(job, "standard", "github", "team-a", "2", "8Gi")
+	r.run.SetJob(job, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProfile: "standard",
+		"fugaro_provider": "github", "fugaro_account": "team-a",
+	}, "image")
+	r.run.Start(job)
+
+	before := switchFile(t)
+	out, errOut, err := execute(t, "accounts", "switch", "team-a", "team-b", "--yes")
+	if err == nil {
+		t.Fatalf("a switch of a profile whose job has a run on it was admitted:\n%s\n%s", out, errOut)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	for _, want := range []string{job, "profile standard", "nothing was written", "fugaro accounts switch team-a team-b"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if out != "" {
+		t.Errorf("the refusal printed the plan before it refused:\n%s", out)
+	}
+	if after := switchFile(t); after != before {
+		t.Errorf("the refusal wrote the file anyway, which is the half-switch the issue records:\n%s", after)
+	}
+}
+
+// TestAccountsSwitchRefusesWhenTheInstallationsJobsCannotBeRead: the read that
+// decides whether a switch may land is a fact of the installation, and a read
+// that could not be made is not the same answer as "no job of that profile is
+// running". A switch that took it for one would write the file and find out
+// afterwards, which is the failure this half exists to close.
+func TestAccountsSwitchRefusesWhenTheInstallationsJobsCannotBeRead(t *testing.T) {
+	r := newAddRigWith(t, switchRigLocal)
+	r.run.FailListWith = http.StatusForbidden
+
+	before := switchFile(t)
+	out, errOut, err := execute(t, "accounts", "switch", "team-a", "team-b", "--yes")
+	if err == nil {
+		t.Fatalf("a switch whose cloud could not be read was admitted:\n%s\n%s", out, errOut)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	for _, want := range []string{"could not be read", "gcloud run jobs list", "fugaro accounts switch team-a team-b", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if out != "" {
+		t.Errorf("the refusal printed the plan before it refused:\n%s", out)
+	}
+	if after := switchFile(t); after != before {
+		t.Errorf("the refusal wrote the file anyway:\n%s", after)
+	}
+}
+
+// TestAccountsSwitchAdmitsAJobItCanRetire: the other half of the rule — a job
+// of the profile this switch moves, with nothing running on it, is a job the
+// converge retires by itself, and the switch goes through. Without this case a
+// refusal that fired on every live job would read as the feature.
+//
+// The converge has to retire it and not merely tolerate it: the switch's own
+// run applies the installation root, and an instance the document no longer
+// declares is a plan that deletes a job the module protects — the refusal that
+// leaves the config half-written when it lands after the write. So the fixture
+// is the installation the issue is about (the state still manages the instance
+// of the triple the profile served, the cloud still runs its job) and the
+// assertion is on the delete.
+func TestAccountsSwitchAdmitsAJobItCanRetire(t *testing.T) {
+	r := newAddRigWith(t, switchRigLocal)
+	job := gcp.ProjectJobName("standard", "github", "team-a")
+	r.run.AddProjectJob(job, "standard", "github", "team-a", "2", "8Gi")
+	r.run.SetJob(job, projectJobStateLabels("standard", "github", "team-a"), "image")
+	done := r.run.Start(job)
+	r.run.SetState(done, backend.StateSucceeded)
+	r.script["show -json@installation"] = map[string]any{"stdout": projectJobStateDoc(t,
+		projectJobState{job, projectJobStateLabels("standard", "github", "team-a")})}
+	r.save(t)
+
+	out, errOut, err := execute(t, "accounts", "switch", "team-a", "team-b", "--yes")
+	if err != nil {
+		t.Fatalf("a switch of a quiet job was refused: %v\n%s\n%s", err, out, errOut)
+	}
+	if got := r.addLocal(t).Profiles["standard"].ClaudeAccounts; !slices.Equal(got, []string{"team-b"}) {
+		t.Errorf("profiles.standard.claude_accounts = %v, want [team-b]", got)
+	}
+	if d := r.run.JobDeletes(); !slices.Contains(d, job) {
+		t.Errorf("deleted jobs = %v; want %s: the switch's own converge retires the job of the account it moved off", d, job)
 	}
 }

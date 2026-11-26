@@ -29,7 +29,7 @@ const visionPinPath = "agent.models.vision"
 // pins pairs each of an Agent's pins with its path, for the loops that judge or
 // warn about all of them. The vision slot is left out while it names no model:
 // it is the one pin a run may do without (V1, D2007) — no stage runs it until a
-// stage's own model cannot read an image, while every other slot has a fallback
+// run names an image its own model cannot read, while every other slot has a fallback
 // (agent.model) or, for the background model, a rule of its own that requires
 // it — and judging the empty entry would refuse every run that never writes the
 // key.

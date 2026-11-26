@@ -106,6 +106,26 @@ type policyMigration struct {
 	// a plan that read them again afterwards would be comparing two states.
 	recorded string
 
+	// next is this machine's local config as this run writes it (U1b, R14): a
+	// copy whose legacy image_map the migration has turned into repo_images,
+	// set only when the map the project serves is still the old member. It is
+	// what the publisher's own member comes from and what the file is rewritten
+	// from, with userSave's backup, once the node's write has landed. It is nil
+	// for every other run, which leaves the file exactly as it is.
+	next *localcfg.Config
+	// dropped is the one line per name the map's migration dropped (R1): a name
+	// no enrolled repository has reaches no job before the migration either, so
+	// nothing is lost by leaving it out. It is printed with the diff, so a
+	// person reads what the write drops before confirming it.
+	dropped []string
+	// migratedMap is whether this run's file states the map in the new member
+	// because of the migration (U1b, R14), rather than because the operator wrote
+	// it there: its drift row is then this run's own upgrade of the member and
+	// not a difference between the file and the node, which is what the
+	// generation refusal has to read (migratesTheNodesOwnMap) and what a re-seed
+	// has no value of the node's to write for (reseedDrift).
+	migratedMap bool
+
 	// importCloneURLs is the published node's clone_urls block, when this
 	// machine's file states none of its own and there is a file to write it
 	// into (D842, D844). It is nil in the common case: an installation whose
@@ -277,6 +297,25 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 		return nil, true, policyMigrationRefusal(derr)
 	}
 	m.node = old
+	// The map `update` still has to migrate (U1b, R14): the effective one is the
+	// legacy member, so this run publishes repo_images and rewrites this
+	// machine's file into it. Everything below is planned from the migrated
+	// config, so the node the operator's diff shows and the node the write lands
+	// are one document, and the file the record is written into is the file the
+	// migration left.
+	if next, dropped, migrated := migratedImageMapConfig(ctx, lc, old); migrated {
+		// The node is written with the map in its new form AND in the old one
+		// (R14, D3376 as amended): repo_images is what a reader of this release
+		// looks a repository up by, and the legacy member is what the file
+		// states today, so a job image from before L11 — an in-flight run's,
+		// which nothing here may stop — keeps serving the image it serves.
+		// U1c is the step that takes the old member away once repo_images is on
+		// the node. The FILE drops it: this file no longer writes the old
+		// member, and the write below is the one that takes it out.
+		pub := *next
+		pub.ImageMap = lc.ImageMap
+		lc, m.lc, m.next, m.dropped, m.migratedMap = &pub, &pub, next, dropped, true
+	}
 	m.importCloneURLs = cloneURLsToImport(lc, old, configPath)
 	m.drift = policyConfigDrift(lc, old, identities)
 	if len(m.drift) > 0 {
@@ -320,6 +359,67 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	return m, true, nil
 }
 
+// migratedImageMapConfig is this machine's local config as an `update` writes
+// it when the map the project serves is still the legacy image_map (U1b, R14):
+// a copy that drops the old member and states the new one, and whether such a
+// copy is what this run writes at all.
+//
+// The map it migrates is the EFFECTIVE one (RepoImagesEffective), so a project
+// that already serves repo_images — from this file or from the node — is left
+// exactly as it is, and a second `update` rewrites nothing: that is what makes
+// the migration idempotent. A file that states repo_images AND still carries the
+// old member is the one exception, and it is a rewrite this function does: the
+// new member is what every reader serves (R2), so the old one is dropped rather
+// than read as a map of its own.
+//
+// The node handed in is the published one, nil for a project that has never
+// published a node, and the migrated map is the union of R1's sources
+// (migrateImageMap): a name enrolled at two providers becomes two keys, and a
+// name no enrolled repository has is dropped with its line.
+//
+// The node keeps the old member (D3376 as amended): what this function answers
+// is the local config and nothing else, and the publisher it feeds leaves a node
+// that carries image_map as it is. The step after the credentials service
+// (U1c) is what removes it.
+//
+// The file is only rewritten when there is something to migrate: a config that
+// predates either member, and one whose file writes an empty legacy map — which
+// is how a published map is taken away on purpose, and states no map to move —
+// keep the member they have and the readers read them as they do today (R2).
+func migratedImageMapConfig(ctx context.Context, lc *localcfg.Config, node *projectpolicy.Policy) (next *localcfg.Config, dropped []string, migrated bool) {
+	served, fromRepoImages := lc.RepoImagesEffective(node)
+	if fromRepoImages {
+		if lc.ImageMap == nil {
+			return lc, nil, false
+		}
+		// The file states both members, so the old one loses (R2) and is dropped
+		// here rather than published back onto the node: a writer of this
+		// release may have put a legacy key in the file beside the new map, and
+		// leaving it would take the publish half's own row back onto the node
+		// (R14).
+		out := *lc
+		out.ImageMap = nil
+		return &out, nil, true
+	}
+	if served == nil {
+		return lc, nil, false
+	}
+	images, dropped := migrateImageMap(ctx, lc, node)
+	if len(images) == 0 {
+		// Every name was dropped: no enrolled repository has one of them, so no
+		// job reached any of them before the migration either and there is
+		// nothing to move. The config is left as it is rather than rewritten
+		// into a member that maps nothing — the write would state an empty map
+		// to say what the absent member already says, and a name dropped is a
+		// name the file keeps spelling until the operator edits it out.
+		return lc, nil, false
+	}
+	out := *lc
+	out.ImageMap = nil
+	out.RepoImages = images
+	return &out, dropped, true
+}
+
 // firstPublishNodeOnlyMembers names the members only the node can carry that
 // the local config states, in the order the node's own text writes them, so a
 // line about a first publish names what this file holds and not the member it
@@ -351,7 +451,14 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.ImageCatalogEffective(nil) != nil {
 		out = append(out, "the image_catalog")
 	}
-	if lc.ImageMapEffective(nil) != nil {
+	// Both spellings of the map are asked here (R14, D3371): a file that states
+	// repo_images states a member only the node can carry just as the old
+	// spelling does — `image map set` writes it there and nothing else carries
+	// it — and one that still spells image_map is the member this run migrates
+	// and publishes. Asking the old field alone would leave a project that had
+	// never published a node told there was nothing to do, with its mapping
+	// reaching no run.
+	if lc.RepoImages != nil || lc.ImageMapEffective(nil) != nil {
 		out = append(out, "the repo-to-image map")
 	}
 	if lc.BakeReposEffective(nil) != nil {
@@ -511,13 +618,21 @@ func firstPublishCarriesANodeOnlyMember(lc *localcfg.Config) bool {
 // operator's diff is a diff OF. policyConfigDrift reads a nil node as "nothing
 // to differ from" and would print no diff at all.
 func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, etag, configPath string, identities map[string]string) (*policyMigration, bool, error) {
-	body, pol, sources, err := policyNodeForPublish(ctx, lc, nil, nil, false, false, false, identities)
+	// The project has never published a node, so there is no published half of
+	// the map to serve: a file that still spells the old member is migrated here
+	// too (U1b, R14), and the first node this run creates carries repo_images
+	// rather than the member L11 retires.
+	next, dropped, migrated := migratedImageMapConfig(ctx, lc, nil)
+	body, pol, sources, err := policyNodeForPublish(ctx, next, nil, nil, false, false, false, identities)
 	if err != nil {
 		return nil, false, err
 	}
-	m := &policyMigration{lc: lc, db: db, etag: etag, path: configPath,
+	m := &policyMigration{lc: next, db: db, etag: etag, path: configPath,
 		recorded: lc.PolicyGeneration, firstPublish: true, identities: identities}
-	m.drift = policyConfigDrift(lc, &projectpolicy.Policy{}, identities)
+	if migrated {
+		m.next, m.dropped = next, dropped
+	}
+	m.drift = policyConfigDrift(next, &projectpolicy.Policy{}, identities)
 	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
 		adopted: lc.PolicyGeneration == ""}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
@@ -534,6 +649,12 @@ func firstPolicyPublish(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 // The refusal is the answer to a drift that is not this run's own: the node was
 // moved by another machine (or by a hand edit) after this file was written from
 // it, so publishing would replace an operator's newer node with an older file.
+// The map's own migration is the exception, and the one this stage adds: a file
+// behind the node's generation whose map is the node's own, in the old member,
+// has nothing the refusal protects — the publish writes that same map back, with
+// the provider in every key (migratesTheNodesOwnMap) — and refusing it would
+// leave `fugaro update` stuck on the member L11 renames.
+//
 // It is a question and not a wall — the stage prints the three-way state and
 // asks for the re-seed, which writes the file and never the node — and it is
 // asked before the publish is built, so nothing of this run's own edit is
@@ -546,7 +667,7 @@ func publishPlanFor(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, m
 	if m.path == "" {
 		return nil
 	}
-	if lc.PolicyGeneration != "" && lc.PolicyGeneration != m.etag {
+	if lc.PolicyGeneration != "" && lc.PolicyGeneration != m.etag && !m.migratesTheNodesOwnMap() {
 		m.generations = &policyGenerationState{recorded: lc.PolicyGeneration, published: m.etag}
 		return nil
 	}
@@ -557,6 +678,48 @@ func publishPlanFor(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, m
 	m.pub = &policyPublish{body: body, pol: pol, drift: m.drift, sources: sources,
 		adopted: lc.PolicyGeneration == ""}
 	return nil
+}
+
+// migratesTheNodesOwnMap is whether the only thing this run has left to do is
+// the node's own repository-to-image map in its new form (U1b, R14): the map
+// this file serves is the block the node carries, and the member the migration
+// plans to write is that same map with the provider in every key (R1).
+//
+// It is what keeps the map's migration out of the generation refusal (D854),
+// which exists to stop an older file replacing a newer node: there is no such
+// file here — every member the file and the node share agrees, and the map's
+// own migration is this run's upgrade of the member rather than a value of the
+// file's — so the run publishes the map it was going to publish anyway, and
+// `fugaro update` converges instead of refusing this file on every later run.
+// Anything else the node and the file differ on leaves the refusal in place.
+//
+// The node must carry the map in the OLD member alone, and the file must state
+// no other block: a node that serves repo_images already decides that member
+// itself, and the file's map is then a value of the file's the generation
+// refusal is about.
+func (m *policyMigration) migratesTheNodesOwnMap() bool {
+	return m.migratedMap && len(m.drift) == 1 && m.drift[0].Member == "repo_images" &&
+		m.node != nil && m.node.ImageMap != nil && m.node.RepoImages == nil
+}
+
+// reseedDrift is m.drift without the row the map's own migration added (U1b,
+// R14): this run's file states the new member because the migration is about to
+// write it there, and a re-seed writes the published node's values into the file
+// — there is no value of the node's for this member, and the run that carries
+// the migration out is the one that publishes it. Naming it would send the
+// operator to a hand edit for a splice there is nothing to make.
+func (m *policyMigration) reseedDrift() []policyDrift {
+	if !m.migratedMap {
+		return m.drift
+	}
+	out := make([]policyDrift, 0, len(m.drift))
+	for _, d := range m.drift {
+		if d.Member == "repo_images" {
+			continue
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // policyMigrationRefusal is Migrate's own refusal with the remedy that fits
@@ -794,6 +957,12 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		}
 	}
 	if err := m.write(ctx); err != nil {
+		return err
+	}
+	// The file half of the map's migration, after the node's own write (U1b,
+	// R14): the map the project serves is repo_images from here on, and the
+	// local config is rewritten into the member the node now carries.
+	if err := m.writeLocalImageMap(cmd); err != nil {
 		return err
 	}
 	if err := m.recordGeneration(ctx, cmd); err != nil {
@@ -1049,7 +1218,7 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 			return err
 		}
 	}
-	written, err := applyPolicyReseed(cmd, m.path, m.lc, m.node, m.drift)
+	written, err := applyPolicyReseed(cmd, m.path, m.lc, m.node, m.reseedDrift())
 	if err != nil {
 		return err
 	}
@@ -1067,6 +1236,9 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 		return m.importPolicyNodeCloneURLs(w)
 	}
 	if err := m.write(ctx); err != nil {
+		return err
+	}
+	if err := m.writeLocalImageMap(cmd); err != nil {
 		return err
 	}
 	// The migration is the write that moved the generation: the one recorded is
@@ -1340,6 +1512,57 @@ func (m *policyMigration) print(w io.Writer) {
 		fmt.Fprintf(w, "%s carries what the local config states, so nothing is published; this run records its generation (%s) in %s, which is what the next edit of the config is read against\n",
 			projectpolicy.PathShared(), m.record, m.path)
 	}
+	// The names the map's migration dropped (R1) are printed with the diff, so
+	// the operator reads what the write leaves out before confirming it: each is
+	// a repository no enrolled repository of the project has, and no job reached
+	// its mapping before the migration either.
+	for _, line := range m.dropped {
+		fmt.Fprintln(w, line)
+	}
+}
+
+// writeLocalImageMap rewrites this machine's local config as the map's
+// migration leaves it (U1b, R14): the old member gone, the new one stated, and
+// the file backed up first (userSave, the rule every writer of this file
+// follows). It is the file half of the same run that published repo_images —
+// the node keeps image_map until the step after the credentials service removes
+// it (D3376 as amended), while nothing but this file reads the local member, so
+// the file drops it in the run that rewrote the node.
+//
+// The node's write lands first and this write is not conditional on it, which
+// is why it is called after it: a file rewritten while the node's write was
+// refused would leave the project serving the old map with no repo_images
+// anywhere, and the run's error would be about a write the operator can retry.
+func (m *policyMigration) writeLocalImageMap(cmd *cobra.Command) error {
+	if m.next == nil || m.path == "" {
+		return nil
+	}
+	old, err := os.ReadFile(m.path)
+	if err != nil {
+		return userErr("rewriting %s with the migrated repository-to-image map: %v", m.path, err)
+	}
+	// The file is re-read and re-parsed rather than written from the plan's own
+	// config: the stages this run has already run record their own work in it —
+	// the credentials service's switch and the key switches on a repository
+	// entry, the base images — and the parse the run started with would take
+	// those records away with the member this write removes.
+	cur, err := localcfg.Parse(old)
+	if err != nil {
+		return userErr("rewriting %s with the migrated repository-to-image map: %v", m.path, err)
+	}
+	if cur.ImageMap == nil && maps.Equal(cur.RepoImages, m.next.RepoImages) {
+		// A writer of this release put the member back while the run was going
+		// (repos add seeds the map it reads): what is left is the member this
+		// run published from, and a rewrite would only back the file up.
+		return nil
+	}
+	next := *cur
+	next.ImageMap, next.RepoImages = nil, m.next.RepoImages
+	if err := userSave(cmd.OutOrStdout(), m.path, old, &next); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "the repository-to-image map in %s is repo_images now: each key carries the provider its repository is at\n", m.path)
+	return nil
 }
 
 // policyMigrateStage is the stage itself. It is SelfConfirming, like the
@@ -1404,6 +1627,15 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, 
 		if sw != nil {
 			lc = sw.lc
 		}
+		// The routing migration reaches the node here and not through the
+		// config the run holds (update_routing_migrate.go's routingForPublish):
+		// the table the migration answers for this installation is published by
+		// this stage, RT4's publisher builds `model_routing` from the config it
+		// is given, and the config the run holds may not carry it — a local
+		// config that did would change the infra plan of the very update that
+		// migrates (ChainPlanFor reads it). The copy is built once per run and
+		// the run's own config is left as it is.
+		lc = s.e.r.routingForPublish(lc)
 		m, published, err := policyMigrationForIn(ctx, lc, s.e.path)
 		if sw != nil && err == nil && m != nil && m.generations != nil {
 			// The node has moved past the generation this machine's config was
@@ -2215,9 +2447,8 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 		return
 	}
 	var published *config.Catalog
-	var publishedMap map[string]string
 	if p != nil {
-		published, publishedMap = p.ImageCatalog, p.ImageMap
+		published = p.ImageCatalog
 	}
 	cat := e.lc.ImageCatalogEffective(published)
 	if cat != nil {
@@ -2252,7 +2483,7 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 				entry.Name, selfCommand()+" update"))
 		return
 	}
-	if line, why := e.defaultCatalogEntryRefusal(ctx, cat, e.lc.ImageMapEffective(publishedMap), entry, p); why != "" {
+	if line, why := e.defaultCatalogEntryRefusal(ctx, cat, entry, p); why != "" {
 		e.withholdDefaultCatalogEntry(line, why)
 		return
 	}
@@ -2402,10 +2633,17 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 // that would take it. What is left is the workflow the entry would be handed to
 // and the deployer would refuse, and the workflow whose own resolution the
 // entry would break: a project with no catalog has one the moment this entry is
-// written, and a workflow's image_name, its needs and the project's image_map
-// are read only against a catalog, so a job that runs the base image today can
-// be refused the moment the entry lands.
-func (e *initEngine) defaultCatalogEntryRefusal(ctx context.Context, cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) (line, why string) {
+// written, and a workflow's image_name, its needs and the repository-to-image
+// map are read only against a catalog, so a job that runs the base image today
+// can be refused the moment the entry lands.
+//
+// The image a workflow resolves to is read from the project's effective map, in
+// the member's own keyspace: repo_images by the provider of the repository this
+// run read (v.Provider, R1's source for it), and the legacy member by bare name
+// when the project still serves that one (R2). A repository whose provider this
+// machine does not know has no key in the new map, which is the same answer the
+// lookup gives it at the launch.
+func (e *initEngine) defaultCatalogEntryRefusal(ctx context.Context, cat *config.Catalog, entry config.Entry, node *projectpolicy.Policy) (line, why string) {
 	if repos := unadmittedRepos(e.lc, node); len(repos) > 0 {
 		return withheldLine("no default catalog entry written: this project does not admit ", repos, "; nothing to do"),
 			fmt.Sprintf("this project does not admit %s — a repository is admitted when the project's published allow_repos names it and a profile of its provider admits it — and a repository it does not admit runs on the per-repository job its own root deploys, so the entry would be the image of that job: a checkout: baked workflow of it that writes no image of its own is refused there (unbuiltOnBaked, D1191)",
@@ -2421,6 +2659,7 @@ func (e *initEngine) defaultCatalogEntryRefusal(ctx context.Context, cat *config
 				strings.Join(repos, ", "))
 	}
 	asked := config.Catalog{Entries: append(catalogEntries(cat), entry)}
+	images, fromRepoImages := e.lc.RepoImagesEffective(node)
 	for _, v := range views {
 		if !v.Read() {
 			// A view that could not be read carries its reason alone, nothing to
@@ -2428,12 +2667,17 @@ func (e *initEngine) defaultCatalogEntryRefusal(ctx context.Context, cat *config
 			continue
 		}
 		for _, name := range slices.Sorted(maps.Keys(v.Cfg.Workflows)) {
-			req := catalog.ImageRequest{ImageMap: imageMap, Canonical: v.Repo, Workflow: v.Cfg.Workflows[name], Backend: catalog.Backend(e.lc.Backend())}
+			req := catalog.ImageRequest{Canonical: v.Repo, Provider: v.Provider, Workflow: v.Cfg.Workflows[name], Backend: catalog.Backend(e.lc.Backend())}
+			if fromRepoImages {
+				req.RepoImages = images
+			} else {
+				req.LegacyMap = images
+			}
 			// The workflow's image is asked of the resolver twice, with the catalog
 			// this project has (nil for a project with none) and with the one the
 			// entry would give it, because the entry is what makes a catalog exist at
 			// all and the resolver reads a workflow's image_name, its needs and the
-			// project's image_map only against one: a pin naming an entry this project
+			// project's map only against one: a pin naming an entry this project
 			// does not have is inert today and a refusal the moment the entry is
 			// written, so the write is held back by it rather than turning a job that
 			// runs the base image into one the deployer refuses.
@@ -2448,7 +2692,7 @@ func (e *initEngine) defaultCatalogEntryRefusal(ctx context.Context, cat *config
 			sel, err := catalog.JobImage(req)
 			if err != nil {
 				return fmt.Sprintf("no default catalog entry written: workflow %s of %s would stop resolving; fix the image it names", name, v.Repo),
-					fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the project's image_map are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
+					fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the repository-to-image map (repo_images) are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
 						name, v.Repo, err)
 			}
 			if sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry.Name {

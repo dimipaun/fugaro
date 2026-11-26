@@ -61,18 +61,19 @@ variable "installation" {
       account = optional(string, "")
     }))
     # Whether that service serves THIS repository's credentials
-    # (infra.CredentialsServiceServes), which is the half every drop below is
-    # keyed on: the job's model-secret accessors and mounts and the build
-    # account's own accessor list go, and the service's own account is granted
-    # each container the jobs still mount. Optional and TRUE, so a tfvars
-    # written before this input existed — which carried credentials_service
-    # only for a repository the switch served — plans exactly what it planned,
-    # and FALSE is the one repository handed the address without being served:
-    # a `vertex` one (D3326 as amended by F17), whose runs fetch workflow
-    # secrets through the service and give up nothing. This module reads it for
-    # the build account's own invoker grant too (B4.4, build.tf): a build reads
-    # its credential at the service exactly where its accessors were taken
-    # away, so a root that dropped nothing grants its build account no call.
+    # (infra.CredentialsServiceServes), which is the fact the job's own drops
+    # are keyed on: the job's model-secret accessors and mounts go, and the
+    # service's own account is granted each container the jobs still mount.
+    # Optional and TRUE, so a tfvars written before this input existed — which
+    # carried credentials_service only for a repository the switch served —
+    # plans exactly what it planned, and FALSE is the one repository handed the
+    # address without being served: a `vertex` one (D3326 as amended by F17),
+    # whose runs fetch workflow secrets through the service and give up none of
+    # the service's own. The build account's own accessor list and its invoker
+    # grant read the address alone and not this fact (IS6, build.tf): Go stops
+    # deriving the fugaro_p_<name> container a `vertex` build's request would
+    # otherwise name (D3324), so that build fetches at the service exactly
+    # where a served one's does.
     credentials_service_serves = optional(bool, true)
     # The project's catalog check job account (D1148), its email, or "" on an
     # installation whose project publishes no catalog. It is what

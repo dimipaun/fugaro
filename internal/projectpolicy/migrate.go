@@ -43,13 +43,14 @@ type migrator func(raw json.RawMessage) (json.RawMessage, Change, error)
 // migrators is the chain, keyed by the version a step reads. A version that
 // bumps Version adds exactly one entry here, in the same change.
 var migrators = map[int]migrator{
-	3: migrateV3ToV4,
-	4: migrateV4ToV5,
-	5: migrateV5ToV6,
-	6: migrateV6ToV7,
-	7: migrateV7ToV8,
-	8: migrateV8ToV9,
-	9: migrateV9ToV10,
+	3:  migrateV3ToV4,
+	4:  migrateV4ToV5,
+	5:  migrateV5ToV6,
+	6:  migrateV6ToV7,
+	7:  migrateV7ToV8,
+	8:  migrateV8ToV9,
+	9:  migrateV9ToV10,
+	10: migrateV10ToV11,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -131,13 +132,22 @@ func Migratable(v int) bool {
 // ownerless pool legacy-open, so its node is not the one above it. Version 3's: that step's node needs a block (the Bitbucket
 // token's allow_repos) that only a publish derives, so its Change carries a
 // Note and a reader cannot read every version-3 node as a version-4 one.
+//
+// Version 10 is the fifth shape-free step (LM21, D3124): version 11 adds no
+// member at all — what it marks is the release in which the credentials service
+// issues a run's identity instead of the launcher's own grant (version.go's
+// paragraph on it) — so a version-10 node is a version-11 node in everything
+// but the number. The counter-examples above are why that has to be argued and
+// not assumed, and it is: no reader of this release enforces anything by
+// version 11, so there is nothing for the step to write beside the number.
 // TestShapeFreeStepsOnlyMoveTheNumber holds every entry here to the first
 // sentence, over a node carrying a member of every kind.
 var shapeFreeSteps = map[int]bool{
-	5: true,
-	6: true,
-	7: true,
-	9: true,
+	5:  true,
+	6:  true,
+	7:  true,
+	9:  true,
+	10: true,
 }
 
 // ReadsVersion reports whether a node written in version v is one this reader
@@ -979,6 +989,37 @@ func migrateV9ToV10(raw json.RawMessage) (json.RawMessage, Change, error) {
 		From:    9,
 		To:      10,
 		Changed: "the version field: 9 to 10",
+		Kept:    keptKeys(doc, "version"),
+	}, nil
+}
+
+// migrateV10ToV11 writes the version field version 11 reads, and nothing else.
+//
+// Version 11 adds no member to the node: what it marks is the release an
+// identity-issuing installation publishes (LM21, D3124) — the release in which
+// the credentials service issues a run's identity instead of the launcher's own
+// grant — and version.go's paragraph on it has the whole argument for why the
+// bump is a lockstep and not an enforcement. The step is shape-free for that
+// reason and for version 10's: a version-10 node is a version-11 node in
+// everything but the number, so this release's readers read it as it stands
+// and `fugaro update`'s own window — the policy stage behind the image builds
+// — cannot leave a launcher reading a node it refuses.
+//
+// It carries no Note: there is nothing for the operator to republish for, and
+// nothing to republish *with* that the node does not already hold.
+func migrateV10ToV11(raw json.RawMessage) (json.RawMessage, Change, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-10 node is not a JSON object: %w", err)
+	}
+	out, err := writeVersionField(raw, 10, 11)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	return out, Change{
+		From:    10,
+		To:      11,
+		Changed: "the version field: 10 to 11",
 		Kept:    keptKeys(doc, "version"),
 	}, nil
 }

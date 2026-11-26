@@ -37,7 +37,18 @@ export {
 
 export { SECRET_ITEMS, SECRET_VALUE_MAX, SECRET_CODES, Secret, isSecret, isSecretItem, secret } from './secret.js';
 
-export { SECRET_KEY_PREFIX, SECURE_STORE_CODES, MemorySecureStore, SecretStore, secretKey } from './secure-store.js';
+export {
+  IDENTITY_ID_MAX,
+  IDENTITY_SESSION_PREFIX,
+  SECRET_KEY_PREFIX,
+  SECURE_STORE_CODES,
+  IdentitySessionStore,
+  MemorySecureStore,
+  SecretStore,
+  identitySessionKey,
+  isIdentitySessionId,
+  secretKey,
+} from './secure-store.js';
 
 export {
   SETTINGS_KEY_PREFIX,

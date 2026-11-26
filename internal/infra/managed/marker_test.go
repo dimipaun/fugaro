@@ -1875,8 +1875,14 @@ var runAccountGrants = setOf(
 	// repository handed the ADDRESS without being served (a `vertex` one) keeps
 	// every accessor here. That narrows this account's reach and never widens
 	// it: the clause can only turn a drop off, and it does so exactly where the
-	// row below grants the service nothing.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if !local.service_serves || !local.is_service_held[env] && !contains(local.vault_secret_names, logical) ])] | perms=`,
+	// row below grants the service nothing. Reviewed again for IS6 (D3324,
+	// D3326): the two clauses carry two gates, because the flip is the
+	// address's and not the service's — local.service_addressed drops the
+	// workflow secrets the run fetches from the service even for the `vertex`
+	// repository the clause before it keeps everything of. The set this account
+	// holds shrinks by exactly the names var.workflow.vault_secret_names
+	// carries, which is what the row below stops granting too.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if !(local.service_serves && local.is_service_held[env]) && !(local.service_addressed && contains(local.vault_secret_names, logical)) ])] | perms=`,
 	// Reviewed for D2074 (B3.3): the SAME account the row above is about, the
 	// other way round — the credentials service's own account reads each
 	// container the workflow's job still mounts, so that the value a run asks
@@ -1913,7 +1919,14 @@ var runAccountGrants = setOf(
 	// local.service_serves reads the fact beside the block, so a vertex
 	// repository's containers are granted to no one here even though its root
 	// carries the block for its address. That narrows this account's reach.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])] | perms=`,
+	// Reviewed again for IS6 (D3324, D3326): the concat's second half is gone,
+	// because the job no longer mounts the class the run fetches — the set is
+	// the job's mounts, and D2074's rule (one accessor per container the job
+	// mounts) leaves the service nothing to hold on a container the job gave
+	// up. That narrows this account's reach: it reads exactly the containers
+	// the job's own account can read, and no container of the fetched class on
+	// any repository.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=local.service_serves && try(var.credentials_service.account, "") != "" ? toset(values(local.job_mounts)) : toset([])] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:
@@ -2370,18 +2383,19 @@ var runAccountGrants = setOf(
 	`google_artifact_registry_repository_iam_member | var.installation.role_ids.tag_mover | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=artifactregistry.tags.delete`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=`,
 	`google_project_iam_member | var.installation.role_ids.build_submitter | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
-	// Since B4.9 (the S4 flip) the list goes whole for a repository the
-	// credentials service serves: the build's credential and its workflow
-	// secrets come from the service, so the request names no secret and this
-	// accessor list is empty. A repository the service does not serve keeps
-	// every accessor — var.installation.credentials_service is null for it,
-	// which is what the gate read (G9). Reviewed again for IS9 (D3326 as
-	// amended by F17): the gate now also reads the fact beside the block
-	// (var.installation.credentials_service_serves), so a `vertex` repository —
-	// the one handed the address without being served — keeps every accessor
-	// here, and its builds read their own credentials exactly as they did
-	// before the address existed. That narrows this account's reach.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(local.build_mounts_served ? [] : var.repo.build_secrets) [local.build_mounts_served=var.installation.credentials_service != null && var.installation.credentials_service_serves && contains(local.build_served_secret_classes, "build")] | perms=`,
+	// Since B4.9 (the S4 flip) the list goes whole for a repository whose build
+	// carries the credentials service's address: the build's credential and its
+	// workflow secrets come from the service, so the request names no secret and
+	// this accessor list is empty. A repository with no block keeps every
+	// accessor — var.installation.credentials_service is null for it, which is
+	// what the gate reads (G9). Reviewed again for IS6's widening (D3326 as
+	// amended by F17): the gate reads the block alone, so a `vertex` repository —
+	// the one handed the address without being served — gives up every accessor
+	// too, because the container its request would otherwise name is the
+	// installation's fugaro_p_<name> copy, which this release stopped deriving
+	// (D3324) and the next update retires. That widens this account's reach on
+	// the address and narrows its accessors to nothing.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(local.build_mounts_served ? [] : var.repo.build_secrets) [local.build_mounts_served=var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")] | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id=google_service_account.build.name | google_service_account.build.member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
 	// Reviewed for PIC4, the project image catalog: the same account's

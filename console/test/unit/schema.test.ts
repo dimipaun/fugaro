@@ -490,6 +490,10 @@ const FULL_ROW: JSONDoc = Object.freeze({
   previous_run: '20261015-101500-aa02',
   follow_up: true,
   draft_fallback: false,
+  // The run its agent stopped on a question for (LV5.2, LD8), between
+  // `draft_fallback` and `pr_status_at` in the struct: a flag beside `outcome`
+  // and not a second ending, absent for every run that asked nothing.
+  needs_guidance: true,
   pr_status_at: '2026-10-15T11:30:00Z',
   stale_draft: false,
 })

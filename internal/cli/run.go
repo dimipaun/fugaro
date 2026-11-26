@@ -2787,6 +2787,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.vaultGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// And the same run's second half (IS6): the fetch that job depends on is
+	// version 2's, by name, from the project record — a runner that knows the
+	// version-1 way asks for the project copy this release stops deriving. Read
+	// after the gate above and on its own condition, so an image below vaultSince
+	// meets that sentence and one between the two meets this.
+	if err := env.vaultNameGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}
@@ -6206,15 +6214,23 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// catalog: this machine's own entry stands, exactly as it does on an
 	// installation that has published no policy.
 	var published *config.Catalog
-	var publishedMap map[string]string
 	var pol *projectpolicy.Policy
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
-		pol, published, publishedMap = p, p.ImageCatalog, p.ImageMap
+		pol, published = p, p.ImageCatalog
 	}
 	cat := env.lc.ImageCatalogEffective(published)
 	if cat == nil {
 		return config.Entry{}, false, false, nil
 	}
+	// The repository's provider, and the project's effective map: the two
+	// halves a repo_images key is read with (R2). The provider comes from the
+	// repository's local-config entry, else this checkout's own fugaro.yaml —
+	// the source the launch resolves every other per-repository fact from —
+	// and a launch that cannot name it is answered by no mapping rather than by
+	// the legacy map, which is the collision L11 ends.
+	co := checkoutConfig(ctx, spec.Repo)
+	provider := env.repoProvider(spec.Repo, co)
+	images, fromRepoImages := env.lc.RepoImagesEffective(pol)
 	// The workflow this launcher has a file for, if it has one at all, and
 	// whether the catalog speaks for it. The one resolver, asked the way the
 	// deploy-time arm asks it (F21): the project's images decide this job's
@@ -6230,17 +6246,27 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	var w config.Workflow
 	var sel catalog.Selection
 	var selErr error
-	if co := checkoutConfig(ctx, spec.Repo); co != nil {
+	if co != nil {
 		if wt, ok := co.Workflows[spec.Workflow]; ok {
 			hasWorkflowFile = true
 			w = wt
-			sel, selErr = catalog.JobImage(catalog.ImageRequest{
+			req := catalog.ImageRequest{
 				Catalog:   cat,
-				ImageMap:  env.lc.ImageMapEffective(publishedMap),
+				Provider:  provider,
 				Canonical: spec.Repo,
 				Workflow:  w,
 				Backend:   catalog.Backend(launchBackend(env.be)),
-			})
+			}
+			// Exactly one of the two keyspaces is filled, which is what tells
+			// the resolver which member the project's map is (R2): the keys of
+			// the effective map are provider-qualified when it came from
+			// repo_images and bare repository names otherwise.
+			if fromRepoImages {
+				req.RepoImages = images
+			} else {
+				req.LegacyMap = images
+			}
+			sel, selErr = catalog.JobImage(req)
 			// A resolver that refused the configuration is the catalog's own
 			// claim on the job (the deploy-time arm refuses it the same way),
 			// so it is not the answer that the catalog is silent.
@@ -6307,7 +6333,7 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// the map does not name keeps the image this project builds for it, and its
 	// own record with it.
 	if !hasWorkflowFile && !speaks {
-		if mapped, mappedOK := mappedEntryName(env.lc.ImageMapEffective(publishedMap), spec.Repo); mappedOK && mapped == entry.Name {
+		if mapped, mappedOK := mappedEntryName(provider, images, fromRepoImages, spec.Repo); mappedOK && mapped == entry.Name {
 			speaks = true
 		}
 	}
@@ -6385,22 +6411,36 @@ type jobImageReader interface {
 	JobImage(ctx context.Context, job string) (string, bool, error)
 }
 
-// mappedEntryName is the catalog entry the project's repo-to-image map gives
-// repo, and whether it gives it one. The map is read under repo's canonical
-// form, which is the form its keys are validated in and the form the resolver
-// looks a repository up by (catalog.ImageRequest.mappedEntry): a launcher with
-// no checkout has repository names as the person spelled them, and a lookup
-// that skipped the canonicalization would miss the map entry for every
-// repository written in another case.
-func mappedEntryName(imageMap map[string]string, repo string) (string, bool) {
-	if len(imageMap) == 0 {
-		return "", false
-	}
+// mappedEntryName is the catalog entry the project's repository-to-image map
+// gives repo at provider, and whether it gives it one. The map is read the way
+// the resolver reads it (catalog.ImageRequest.mappedEntry, R2): under
+// Canonical(provider, repo) when the project's effective map is repo_images,
+// and under repo's canonical form when it is the legacy image_map, whose keys
+// are bare repository names matched against every provider.
+//
+// The two keyspaces are told apart by fromRepoImages and never by the shape of
+// a key, so a provider this CLI cannot canonicalize a key with is no mapping
+// rather than a fallback to the legacy member. The canonicalization is the
+// resolver's own: a launcher with no checkout has repository names as the
+// person spelled them, and a lookup that skipped it would miss the map entry
+// for every repository written in another case.
+func mappedEntryName(provider string, images map[string]string, fromRepoImages bool, repo string) (string, bool) {
 	c, err := task.CanonicalRepo(repo)
 	if err != nil {
 		return "", false
 	}
-	name, ok := imageMap[c]
+	if fromRepoImages {
+		key, err := projectpolicy.Canonical(provider, c)
+		if err != nil {
+			return "", false
+		}
+		name, ok := images[key]
+		return name, ok && name != ""
+	}
+	if len(images) == 0 {
+		return "", false
+	}
+	name, ok := images[c]
 	return name, ok && name != ""
 }
 
@@ -6770,6 +6810,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.serviceConfig(), jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
+	// A launch on a shared project job writes no model environment: the job is
+	// shared by every repository of its profile, so the routes, the prices and
+	// the allow-list a run goes by are the owner's published policy node's, and
+	// the run reads them there (internal/runner's resolvePolicy). A launcher's
+	// own config is not the owner of any of the three — the node is the one
+	// object a launcher cannot write.
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it

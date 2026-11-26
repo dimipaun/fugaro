@@ -85,7 +85,7 @@ workflows:
 		t.Fatal(err)
 	}
 	cat := lc.ImageCatalogEffective(nil)
-	imap := lc.ImageMapEffective(nil)
+	mapping := configImageMap(lc, nil)
 	slug, err := task.Slug("github", "acme/app")
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ workflows:
 			}
 			// doctor's answer, asked of the same project: the check that names
 			// a workflow's image is the one that must not disagree.
-			e, ok := workflowCatalogEntry(cat, imap, false, "acme/app", cfg.Workflows[tt.workflow], catalog.Backend(lc.Backend()))
+			e, ok := workflowCatalogEntry(cat, mapping, "github", false, "acme/app", cfg.Workflows[tt.workflow], catalog.Backend(lc.Backend()))
 			if !ok || e.Name != tt.entry {
 				t.Fatalf("doctor reads the workflow as entry %q (judged=%v), want %q: the image-config and image-catalog checks are the ones that disagree", e.Name, ok, tt.entry)
 			}

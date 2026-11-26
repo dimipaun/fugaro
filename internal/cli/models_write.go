@@ -97,9 +97,9 @@ func modelsRefuseVariant(id string) error {
 const modelsRoleBackground = "background"
 
 // modelsRoleVision is the fourth key agent.models has, and a literal for the
-// background key's reason: no stage is the vision one either (a stage's own
-// model runs the slot only where it cannot read an image, D2000), so the slot
-// has no config.Role to be spelled with.
+// background key's reason: no stage is the vision one either (a run's coder
+// stages run the slot only where the task names an image their own model cannot
+// read, D2000, D2017), so the slot has no config.Role to be spelled with.
 const modelsRoleVision = "vision"
 
 // modelsRoleNames are the four keys agent.models has, in the order every
@@ -142,6 +142,35 @@ type modelsPin struct {
 // config alone, and all three report the second list rather than assuming the
 // unreadable repositories select nothing.
 func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []string) {
+	cfgs, _, unseen := projectCheckoutResolved(lc)
+	return cfgs, unseen
+}
+
+// projectCheckoutResolved is projectCheckoutConfigs with the resolution each
+// config resolved to: the source of every key a layer set, which the routing
+// migration reads for one question the resolved config cannot answer — whether
+// an `agent.auth` is the file's own answer or the default config.Resolve fills
+// in when nothing wrote one (MG2, F49).
+func projectCheckoutResolved(lc *localcfg.Config) (map[string]*config.Config, map[string]*config.Resolution, []string) {
+	out, resolved, _, unseen := readCheckoutConfigs(lc)
+	return out, resolved, unseen
+}
+
+// projectCheckoutWritten is the same read as projectCheckoutResolved with each
+// repository's file as it is written beside it: the routing migration is the one
+// caller that has to see a lifted key, because it is the step that moves those
+// keys into the project's table, and every resolved config drops them (R21).
+// The two maps are keyed alike and hold the same repositories — a file this
+// machine cannot read is in neither.
+func projectCheckoutWritten(lc *localcfg.Config) (map[string]*config.Config, map[string]*config.Resolution, map[string]*config.Config, []string) {
+	return readCheckoutConfigs(lc)
+}
+
+// readCheckoutConfigs is the one read behind the two above: each of the
+// project's repositories whose own fugaro.yaml this machine can read, resolved
+// over the project layer, as the file writes it, the resolution, and the
+// repositories it cannot read.
+func readCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, map[string]*config.Resolution, map[string]*config.Config, []string) {
 	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
 	if err != nil {
 		checkouts = localcfg.EmptyCheckouts()
@@ -152,6 +181,8 @@ func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []s
 	}
 	layer := modelsLayer(lc.Name)
 	out := map[string]*config.Config{}
+	resolved := map[string]*config.Resolution{}
+	written := map[string]*config.Config{}
 	var unseen []string
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		dir := remembered[checkoutKeyFor(name, remembered)]
@@ -164,14 +195,21 @@ func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []s
 			unseen = append(unseen, name)
 			continue
 		}
-		cfg, _, ps := config.Resolve(data, layer)
+		cfg, res, ps := config.Resolve(data, layer)
 		if len(ps) > 0 {
 			unseen = append(unseen, name)
 			continue
 		}
 		out[name] = cfg
+		resolved[name] = res
+		// The file as it is written, beside the resolved config: the strict
+		// decode a resolved config never is. A file this read refuses is one the
+		// read above refuses too, so the two maps hold the same repositories.
+		if asWritten, ok := config.RepoOf(data); ok {
+			written[name] = asWritten
+		}
 	}
-	return out, unseen
+	return out, resolved, written, unseen
 }
 
 // modelsModelPinned is the repositories whose fugaro.yaml pins id in one of the

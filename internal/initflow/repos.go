@@ -45,3 +45,16 @@ const (
 type RepoReporter interface {
 	RepoLines() []RepoLine
 }
+
+// StageNote is a stage that has one line of its own to add to the result the
+// loop settles about it, beside the lines it reported: what it did not run
+// here, and why. The lines the stage reports say how each repository was left
+// and never which step was dropped for one of them, so a stage whose step was
+// skipped for a repository has no other place to say it — and the loop puts
+// the note after the lines' summary, so the run's own line for the stage
+// carries both ("1 repository: 1 unread; skipped here: acme/app: cloud (…)").
+//
+// A stage with no such line does not implement it.
+type StageNote interface {
+	Note() string
+}

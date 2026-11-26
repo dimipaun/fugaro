@@ -157,6 +157,17 @@ func (r *run) capReached() bool {
 	return r.haltValue() != nil
 }
 
+// haltNoCredential records the halt a run that ran out of credential ends
+// with, and returns the error its caller ends the stage with. detail is the
+// runner's own account of what was answered or measured — a reset, the job's
+// own timeout, the action the service decided — and never task text; it is
+// what the report prints beside the reason.
+func (r *run) haltNoCredential(detail string) error {
+	h := runstore.Halt{Reason: runstore.HaltNoCredential, Scope: "run", At: r.d.Now().UTC(), Detail: detail}
+	r.haltNow(h)
+	return &HaltError{h}
+}
+
 // haltReasonText says in words why each kind of halt stopped a run.
 func haltReasonText(h runstore.Halt) string {
 	switch h.Reason {

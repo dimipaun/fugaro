@@ -259,12 +259,29 @@ elif what == "survey":
     setup = doc.get("setup") or {}
     print("bake_repos=%s" % yes(setup.get("bake_repos")))
     print("catalog=%d" % len(setup.get("catalog") or []))
-    mapping = setup.get("image_map") or {}
-    print("map_count=%d" % len(mapping))
-    # Sorted, so the entry this check picks is the same entry on every run of
-    # the same project rather than whichever order the document came in.
-    for repo in sorted(mapping):
-        print("map\t%s\t%s" % (repo, mapping[repo]))
+    # The map is two members and never one member under two meanings (R4): a
+    # project whose map an update has not migrated yet carries the bare-name
+    # legacy_image_map instead of repo_images, and this reads whichever the
+    # document holds — that member is what the entry below is picked from.
+    mapping = setup.get("repo_images") or {}
+    member = "repo_images"
+    if not mapping and setup.get("legacy_image_map") is not None:
+        mapping = setup.get("legacy_image_map") or {}
+        member = "legacy_image_map"
+    # A repo_images key is provider/owner/name (projectpolicy.Canonical) while
+    # the build's own note names a repository owner/name, so the provider is
+    # dropped here: the rows below are compared against that note, and the
+    # legacy member's key is already the bare name. One owner/name can be
+    # mapped at two providers (D3373), which is one repository and not two, so
+    # the pairs are a set and the order is fixed rather than the read's.
+    pairs = set()
+    for repo in mapping:
+        name = repo.split("/", 1)[1] if member == "repo_images" and repo.count("/") == 2 else repo
+        pairs.add((name, mapping[repo]))
+    print("member=%s" % member)
+    print("map_count=%d" % len({name for name, _ in pairs}))
+    for name, entry in sorted(pairs):
+        print("map\t%s\t%s" % (name, entry))
 elif what == "build":
     print("status=%s" % (doc.get("status") or ""))
     print("detail=%s" % (((doc.get("failureInfo") or {}).get("detail")) or ""))
@@ -325,7 +342,9 @@ build_digest() { # build_digest FILE...
 }
 
 # repos_on_entry FILE ENTRY — the repositories the project's map puts on one
-# entry, in the order the map was read, comma-separated.
+# entry, comma-separated. Each is a repository name and not a map key: the
+# reader has already dropped the provider, so one name mapped at two providers
+# is one entry here, which is what the build's own note names.
 repos_on_entry() { # repos_on_entry FILE ENTRY
   awk -F'\t' -v e="$2" '$1 == "map" && $3 == e { print $2 }' "$1" 2>/dev/null | paste -sd, - 2>/dev/null || true
 }
@@ -521,15 +540,16 @@ step_map() {
     unmeasured map "fugaro image survey --json printed a document this check could not read: what it printed is in $SCRATCH/survey.out"
     return 0
   fi
-  local bake picked count on_entry
+  local bake picked count on_entry member
   bake=$(field "$SCRATCH/survey.txt" bake_repos)
+  member=$(field "$SCRATCH/survey.txt" member)
   if [ "$bake" = false ]; then
     fact map FAIL "the project ${PROJECT} has bake_repos=false (setup.bake_repos): a build of any entry bakes nothing, so no image carries a checkout and there is no multi-repository bake to measure. Turn it on with 'fugaro settings set bake_repos true' and rebuild the entry with 'fugaro image build <entry>' — the switch is what the BUILD reads, so the images that exist keep what they were built with until they are rebuilt"
     return 0
   fi
   picked=$(pick_entry "$SCRATCH/survey.txt")
   if [ -z "$picked" ]; then
-    fact map FAIL "no catalog entry of ${PROJECT} is over two repositories: the map (setup.image_map) puts at most one repository on every entry, and this check's subject is the entry that serves two (D2301). Map a second repository onto an entry — 'fugaro image map <the repository> <the entry>' writes this machine's map, and 'fugaro update' publishes it — or name the entry with CHECK581_ENTRY once the map serves it two"
+    fact map FAIL "no catalog entry of ${PROJECT} is over two repositories: the map (setup.${member:-repo_images}) puts at most one repository on every entry, and this check's subject is the entry that serves two (D2301). Map a second repository onto an entry — 'fugaro image map <the repository> <the entry>' writes this machine's map, and 'fugaro update' publishes it — or name the entry with CHECK581_ENTRY once the map serves it two"
     return 0
   fi
   count=${picked%%$'\t'*}
@@ -541,7 +561,7 @@ step_map() {
     fi
     on_entry=$(repos_on_entry "$SCRATCH/survey.txt" "$named")
     if [ -z "$on_entry" ]; then
-      fact map FAIL "the map (setup.image_map) puts no repository on the entry ${named} (CHECK581_ENTRY), so a build of it bakes nothing: D2301's bake is the repositories the map puts on the entry being built, and the entry the project's map puts the most repositories on is ${picked} with ${count}. Name that one, or map a repository onto ${named} with 'fugaro image map <the repository> ${named}' and publish it with 'fugaro update'"
+      fact map FAIL "the map (setup.${member:-repo_images}) puts no repository on the entry ${named} (CHECK581_ENTRY), so a build of it bakes nothing: D2301's bake is the repositories the map puts on the entry being built, and the entry the project's map puts the most repositories on is ${picked} with ${count}. Name that one, or map a repository onto ${named} with 'fugaro image map <the repository> ${named}' and publish it with 'fugaro update'"
       return 0
     fi
     count=$(printf '%s' "$on_entry" | awk -F, '{print NF}')
@@ -562,7 +582,7 @@ step_map() {
     return 0
   fi
   MAP_REPOS=$ENTRY_REPOS
-  fact map PASS "the entry ${ENTRY} is over ${count} repositories — ${ENTRY_REPOS} — read from the project's own map (setup.image_map), and its definition is ${ENTRY_SOURCE}. bake_repos=${bake:-true}${ENTRY_CLI_SET:+, and CHECK581_ENTRY named this entry rather than the check picking the widest one}"
+  fact map PASS "the entry ${ENTRY} is over ${count} repositories — ${ENTRY_REPOS} — read from the project's own map (setup.${member:-repo_images}), and its definition is ${ENTRY_SOURCE}. bake_repos=${bake:-true}${ENTRY_CLI_SET:+, and CHECK581_ENTRY named this entry rather than the check picking the widest one}"
 }
 
 # guard_checkout_project: the checkout the billable build is submitted from has

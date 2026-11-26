@@ -7559,6 +7559,7 @@
         "docs/how-to/*.md",
         "docs/how-to/offboarding.md",
         "docs/how-to/orchestrator-cutover.md",
+        "docs/image-map-by-provider/**",
         "docs/image-refresh/**",
         "docs/image-refresh/spec.md",
         "docs/image-setup-skill/README.md",
@@ -9482,6 +9483,7 @@
       "reads": [
         "cmd/fugaro/**",
         "deploy/terraform/**",
+        "docs/gcp-live-checklist.md",
         "docs/plans/*",
         "docs/release-streams.yaml",
         "ee/ab/**",

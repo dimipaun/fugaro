@@ -48,13 +48,31 @@
 #     twenty or more decisive pairs cannot show that, and the row says so
 #     instead of passing.
 #
+# Where the project layer does not carry that state yet, the check sets it up
+# itself rather than reporting a premise it could have established, and the
+# first line it prints says so. The rate and the judge model go through the one
+# supported writer of an `ab:` member, `fugaro settings set layer.ab
+# --add-entry rate=... / judge_model=... --layer project`, which publishes the
+# layer in the same call; the challenger list has no command at all — the leaf
+# spelling is refused as the models family's and no `fugaro models` or `fugaro
+# ab` subcommand writes the layer — so it is written into the project's own
+# layer file and published with `fugaro config publish`. The challenger named is
+# a model of the project's own table that a provider route serves and that
+# admits this repository (the plan's premise for this check); a project with no
+# such route is the one state the check leaves to the owner, and its row names
+# the fix. The file is copied first and the Restore publishes those bytes back,
+# so the layer, the file and the project's sampling read what they read before.
+# A layer file that is not what the project published, or one that is not there
+# at all, is left alone and reported instead.
+#
 # It creates what the plan's sentence says it creates: up to thirty sandbox runs
 # (each billable, and each champion among them pushes its branch and opens its
 # pull request, as an ordinary sandbox run does), one judge run over the pair
 # that was sampled (billable, and it publishes nothing), and nothing else. Its
 # teardown is part of the check rather than a list of commands for you: a launch
 # that has not ended is cancelled, every pull request this check's launches
-# opened is closed and every branch they pushed is deleted, each read back.
+# opened is closed and every branch they pushed is deleted, each read back, and
+# the project layer is put back and published again.
 #
 # Usage:      bash scripts/live-checks/check212.sh --sandbox <a sandbox repository checkout> --yes
 #             bash scripts/live-checks/check212.sh --sandbox <path> --yes --max-launches 12
@@ -76,8 +94,13 @@
 #             runs is one you could type yourself.
 # Creates:    up to thirty sandbox runs, the pull requests their champions open
 #             and one judge run — every branch deleted and every pull request
-#             closed again by the Restore. On disk: one scratch directory,
-#             removed at the end, holding the commands' output.
+#             closed again by the Restore — and, where the project layer carries
+#             no rate, no challenger or no judge model, that `ab:` block: the
+#             rate and the judge model through `fugaro settings set layer.ab
+#             --add-entry`, the challenger list through the layer file and
+#             `fugaro config publish`, the file copied first and published back
+#             by the Restore. On disk: one scratch directory, removed at the
+#             end, holding the commands' output.
 # Costs:      up to THIRTY sandbox runs and what their tasks cost, plus ONE
 #             judge run's own model calls — the two passes it makes per pair
 #             through the gateway — on the sandbox's own budget. About ten
@@ -89,8 +112,10 @@
 #             their champions opened, closed and deleted by the Restore, which
 #             reads each one back; a launch or a judge run that has not ended,
 #             stopped with `fugaro cancel --now` and read back as ended, so that
-#             no run of this check's own outlives it; and the scratch directory,
-#             removed from the exit trap even on a failed assertion or a Ctrl-C.
+#             no run of this check's own outlives it; the project's own layer
+#             file, put back byte for byte and published again where this check
+#             set the premise up; and the scratch directory, removed from the
+#             exit trap even on a failed assertion or a Ctrl-C.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 212 RESULT,
 #             then CHECK 212 RESULT END (exit N). Exit 0: every criterion held.
 #             1: a criterion did not hold — the layer names no routed provider
@@ -98,9 +123,10 @@
 #             release promises, the judge skipped the pair, or the teardown
 #             could not close what it opened. 2: the check could not measure — a
 #             tool is missing, the checkout is not one, a `--json` document
-#             could not be read, an arm did not end, or the installation
-#             already carries twenty decisive pairs so `below-minimum` cannot be
-#             read. A key the run never reached reads `FAIL — not reached`.
+#             could not be read, an arm did not end, a command this check needs
+#             to set the premise up did not answer, or the installation already
+#             carries twenty decisive pairs so `below-minimum` cannot be read. A
+#             key the run never reached reads `FAIL — not reached`.
 #
 # A NOTE ON WHAT IS NEVER PRINTED: no credential value reaches this script's
 # stdout, its stderr, the block or the scratch directory. The rows carry run
@@ -109,8 +135,9 @@
 # Knobs (all CHECK212_*): DRY_RUN, KEEP_SCRATCH, SANDBOX (the checkout, when you
 # would rather set it in the environment), YES, TASK (what each launch is
 # launched with), MAX_LAUNCHES (30), RELEASE (0.24.0: the release the pair
-# launch and the judge ship in), SINCE (1d: the window `fugaro ab` is read
-# over), REGION (us-east5), RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15),
+# launch and the judge ship in), RATE (0.1: the rate the setup writes where the
+# layer carries none), SINCE (1d: the window `fugaro ab` is read over), REGION
+# (us-east5), RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15),
 # CLI_TIMEOUT_SECONDS (180), CANCEL_TIMEOUT_SECONDS (300),
 # LAUNCH_TIMEOUT_SECONDS (600), DOCTOR_TIMEOUT_SECONDS (300),
 # JUDGE_TIMEOUT_SECONDS (3600). --sandbox, --task and --max-launches are the
@@ -210,6 +237,16 @@ JUDGE_MODEL=""
 ROUTED_CHALLENGERS=""
 REASONS_FILE=""
 LAUNCHES_FILE=""
+# The setup: where the project layer carries no rate, no challenger or no judge
+# model, step_layer writes that `ab:` block the way the release tells the owner
+# to. The local layer file is copied into the scratch directory before the first
+# write, and the Restore publishes those bytes back.
+LAYER_FILE=""
+LAYER_SET=""
+LAYER_RESTORE=no
+LAYER_BACKUP=""
+LAYER_HEAD=""
+LAYER_NOTE=""
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk212.XXXXXXXX") || die "Check 212 cannot make a scratch directory"
@@ -528,6 +565,22 @@ def route_for(doc, model, repo):
     }
 
 
+def cand_line(model, info):
+    """One candidate as the `cand` row every reader of this table prints."""
+    if info is None:
+        return "cand\t%s\tno\t\t\t\tno\tno\t" % model
+    return "cand\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
+        info["model"],
+        yes(info["served"]),
+        info["route"],
+        info["kind"],
+        info["host"],
+        yes(info["provider"]),
+        yes(info["allowed"]),
+        info["allowed_to"],
+    )
+
+
 what = sys.argv[1]
 
 if what == "doctor":
@@ -569,20 +622,26 @@ elif what == "models":
     for model in [flat(m) for m in wanted.split(",")]:
         if not model:
             continue
-        info = route_for(doc, model, repo)
-        if info is None:
-            print("cand\t%s\tno\t\t\t\tno\tno\t" % model)
-            continue
-        print("cand\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
-            info["model"],
-            yes(info["served"]),
-            info["route"],
-            info["kind"],
-            info["host"],
-            yes(info["provider"]),
-            yes(info["allowed"]),
-            info["allowed_to"],
-        ))
+        print(cand_line(model, route_for(doc, model, repo)))
+elif what == "cands":
+    # Every model the table carries, as the same `cand` rows — what the setup
+    # below picks the challenger and the judge model it writes out of. It has to
+    # see the whole table rather than the layer's own list, because the list is
+    # what it is there to fill.
+    doc = load(sys.argv[2])
+    repo = sys.argv[3] if len(sys.argv) > 3 else ""
+    seen = []
+    for row in doc.get("models") or []:
+        seen.append(flat(row.get("id")))
+    for route in doc.get("routes") or []:
+        for model in route.get("models") or []:
+            seen.append(flat(model))
+    for model in dict.fromkeys(m for m in seen if m):
+        print(cand_line(model, route_for(doc, model, repo)))
+    # The model a repository runs as its own coder, for the pick below: a pair
+    # varies the champion's model, so naming that one is a launch Admit skips.
+    for row in doc.get("repositories") or []:
+        print("coder\t%s" % flat(row.get("coder")))
 elif what == "launch":
     doc = load(sys.argv[2])
     pair = doc.get("pair") or {}
@@ -957,11 +1016,273 @@ step_judge_recipe() {
   fact judge-recipe PASS "the catalog carries ab-judge (source $(printf '%s' "$row" | awk -F'\t' '{ print $3 }')) and it is launchable, so the judge run below is one this build can start"
 }
 
+# sha256_file FILE: the file's own sha256, in the one spelling the published
+# layer's `sha256` uses (config.LayerSum: the hex sha256 of the bytes). It is
+# how the setup tells a layer file the owner published from one they edited and
+# never published, which it must not publish over their head.
+sha256_file() { # sha256_file FILE
+  python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1" 2>/dev/null || true
+}
+
+# layer_file_of NAME: the project's own layer file, by the rule localcfg
+# .LayerFile applies (D830) — $XDG_CONFIG_HOME/fugaro/projects/<name>
+# .layer.yaml, else ~/.config/fugaro/projects/<name>.layer.yaml. No command
+# prints the path, and the file `fugaro config publish` publishes by default is
+# the same one by construction.
+layer_file_of() { # layer_file_of NAME
+  local home=${XDG_CONFIG_HOME:-}
+  if [ -z "$home" ]; then
+    home=${HOME:-}
+    [ -n "$home" ] || return 0
+    home="$home/.config"
+  fi
+  printf '%s/fugaro/projects/%s.layer.yaml\n' "$home" "$1"
+}
+
+# The one member of the project layer's `ab:` block this check writes itself.
+# `fugaro settings set layer.ab --add-entry` is the supported writer of a member
+# and it writes one scalar; the challenger list is a list, the leaf spelling is
+# refused as the models family's ("written by fugaro models"), and no `fugaro
+# models` or `fugaro ab` subcommand writes the layer at all. So the check edits
+# the file the owner edits — the member replaced in place, the block left
+# exactly as it was otherwise, flow style included — and publishes the file with
+# `fugaro config publish`, which is the command the release names for it.
+write_setab() {
+  cat >"$SCRATCH/set_ab.py" <<'PY'
+import re
+import sys
+
+
+def set_challengers(path, model):
+    """Replace the ab block's challengers member in place, or add one."""
+    with open(path, "r", encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^ab\s*:", line):
+            start = i
+            break
+    if start is None:
+        sys.stderr.write("set_ab.py: no top-level ab: block in %s\n" % path)
+        return 1
+    rest = lines[start].split(":", 1)[1].strip()
+    if rest.startswith("{") and rest.endswith("}"):
+        # A flow mapping is one line and stays one: the member is replaced
+        # inside it rather than the block rewritten in another style.
+        body = re.sub(r"challengers\s*:\s*\[[^\]]*\]\s*,?", "", rest[1:-1])
+        items = [p.strip() for p in body.split(",") if p.strip()]
+        items.append("challengers: [%s]" % model)
+        lines[start] = "ab: {%s}" % ", ".join(items)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines))
+        return 0
+    end = start + 1
+    while end < len(lines) and (not lines[end].strip() or lines[end][:1].isspace()):
+        end += 1
+    kept = []
+    drop = False
+    for line in lines[start + 1:end]:
+        if drop:
+            if re.match(r"^\s+-\s", line):
+                continue
+            drop = False
+        if re.match(r"^\s*challengers\s*:", line):
+            drop = True
+            continue
+        kept.append(line)
+    blanks = 0
+    while kept and not kept[-1].strip():
+        kept.pop()
+        blanks += 1
+    kept += ["  challengers:", "    - %s" % model]
+    # The blank lines the block ended with go back exactly as they were; a block
+    # that runs to the end of the file ends with the newline it had.
+    tail = [""] * blanks if end < len(lines) else [""]
+    out = lines[:start + 1] + kept + tail + lines[end:]
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(out))
+    return 0
+
+
+sys.exit(set_challengers(sys.argv[1], sys.argv[2]))
+PY
+  chmod 700 "$SCRATCH/set_ab.py"
+}
+
+# read_model_table: `fugaro models ls --json`, read offline into the `cand` rows
+# of every model the table carries. The two picks below are made out of it, so
+# it is read once and before either of them.
+read_model_table() {
+  say "reading this project's models: fugaro models ls --json (offline), in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" setup-models "$SANDBOX" "$FUGARO_BIN" models ls --json
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    unmeasured layer "fugaro models ls --json did not answer (exit ${BOUNDED_STATUS}), and it is the offline table the challenger and the judge model this check names are read from: a name nothing serves, nothing prices or nothing routes would leave the launches below spending the bound without a pair. Its output is in $SCRATCH/setup-models.out and $SCRATCH/setup-models.err; name the challenger and the judge model you allow in the layer's ab: block and publish it — the shape docs/releases/v0.24.0.md's For operators paragraph gives — then run this check again"
+    return 1
+  fi
+  if ! python3 "$SCRATCH/read.py" cands "$SCRATCH/setup-models.out" "${REPO_NAME:-}" >"$SCRATCH/setup-cands.txt" 2>"$SCRATCH/setup-cands.txt.err"; then
+    unmeasured layer "fugaro models ls --json printed a document this check could not read: what it printed is in $SCRATCH/setup-models.out"
+    return 1
+  fi
+  return 0
+}
+
+# pick_challenger: a model served by a provider route that admits this
+# repository, or nothing. That is the plan's own premise for this check — a pair
+# on the direct route is two runs on the champion's own route, which is not the
+# shared-rate-limit question U4 asks — and it is read offline before anything
+# billable starts. The model a repository runs as its own coder is left out —
+# both the project's own table and the checkout's `agent.models.coder` pin — a
+# pair varies the champion's model, and a challenger that IS it is skipped with
+# the closed reason 'champion-model', which would leave the loop below spending
+# its whole bound without a pair.
+pick_challenger() {
+  local coders
+  coders=$(awk -F'\t' '$1 == "coder" { printf " %s ", $2 }' "$SCRATCH/setup-cands.txt")
+  coders="${coders} $(awk -F: '/^[[:space:]]+coder[[:space:]]*:/ { gsub(/[[:space:]"'"'"']/, "", $2); print $2 }' "$SANDBOX/fugaro.yaml" 2>/dev/null || true) "
+  awk -F'\t' -v coders="$coders" '
+    $1 != "cand" { next }
+    $3 != "true" || $7 != "true" || $8 != "true" { next }
+    index(coders, " " $2 " ") > 0 { next }
+    { print $2; exit }
+  ' "$SCRATCH/setup-cands.txt"
+}
+
+# pick_judge_model: a model this repository may send its code to, or nothing —
+# the judge run is one more place a pair's diffs go, so it is held to the same
+# provider rule a challenger is (D556, O2). The direct route's models come
+# first: a judge call goes through no provider of the owner's, so a model it
+# serves is one the project can call whatever its budget mode is.
+pick_judge_model() {
+  awk -F'\t' '
+    $1 != "cand" { next }
+    $3 != "true" || $8 != "true" { next }
+    $4 == "direct" { print $2; found = 1; exit }
+    { rest = rest $2 "\n" }
+    END {
+      if (found || !rest) { exit }
+      split(rest, rows, "\n")
+      print rows[1]
+    }
+  ' "$SCRATCH/setup-cands.txt"
+}
+
+# setup_fail STATE WHY: the row the setup records when it does not write — the
+# state the published layer is in, and what stopped this check from settling it.
+# It is a FAIL rather than an unmeasured row: the premise the plan's sentence
+# names is missing and this check could not put it there, which is a finding
+# about the installation's own layer, and the why names the fix.
+setup_fail() { # setup_fail STATE WHY
+  fact layer FAIL "the published project layer leaves this check's premise off — ${1} — and this check did not set it up: ${2}"
+}
+
+# setup_ab NEED_RATE NEED_CHALLENGER NEED_JUDGE: put the state the plan's
+# sentence names into the project layer — a rate above zero, one challenger on a
+# provider route this repository may use, and a judge model — because the owner's
+# project carries none of them and this check can establish it rather than report
+# it. Every write goes the way the release tells the owner to: the rate and the
+# judge model through `fugaro settings set layer.ab --add-entry`, the supported
+# writer of a member of that block, which publishes the layer in the same call;
+# the challenger list into the layer file and out through `fugaro config
+# publish`, because no command writes that member. The file is copied first, so
+# the Restore publishes the bytes the project had. It records the row that says
+# why when it cannot, and writes nothing at all in that case. Returns non-zero
+# then.
+setup_ab() {
+  local need_rate=$1 need_challenger=$2 need_judge=$3 name sum published model state
+  # What the published layer reads today, in the words the row below carries: it
+  # is the same three states the setup is here for, so the row names the one it
+  # found rather than a shape it assumed.
+  if [ "$(field "$SCRATCH/layer.txt" has_ab)" != true ]; then
+    state="it carries no top-level ab: block (its top-level keys are $(field "$SCRATCH/layer.txt" top_keys))"
+  elif [ "$need_rate" = yes ]; then
+    state="its ab.rate is $(field "$SCRATCH/layer.txt" rate)"
+  elif [ "$need_challenger" = yes ]; then
+    state="its ab.challengers is empty"
+  else
+    state="its ab.judge_model is empty"
+  fi
+  name=$(field "$SCRATCH/doctor.txt" name)
+  if [ -z "$name" ]; then
+    setup_fail "$state" "fugaro doctor --json named no project, and a project's own name is what its layer file is called (D830). Add the block to the project's layer file yourself — ab.rate: ${RATE_WANTED}, the challengers you allow and a judge_model, the shape docs/releases/v0.24.0.md's For operators paragraph gives — publish it with 'fugaro config publish', and run this check again"
+    return 1
+  fi
+  LAYER_FILE=$(layer_file_of "$name")
+  if [ -z "$LAYER_FILE" ] || [ ! -f "$LAYER_FILE" ]; then
+    setup_fail "$state" "there is no ${LAYER_FILE:-local layer file} to write it in, and this check publishes no layer of its own making. Run 'fugaro update' at your terminal — it seeds the file from the published layer — and run this check again"
+    return 1
+  fi
+  published=$(field "$SCRATCH/layer.txt" sha256)
+  sum=$(sha256_file "$LAYER_FILE")
+  if [ -z "$sum" ]; then
+    unmeasured layer "the layer file ${LAYER_FILE} could not be read: this check copies it before it writes and puts the copy back afterwards, and it writes nothing it cannot read back"
+    return 1
+  fi
+  if [ "$sum" != "$published" ]; then
+    setup_fail "$state" "the local layer file ${LAYER_FILE} (sha256 ${sum}) is not the layer this project published (sha256 ${published:-none}), and publishing it would put every other edit the file carries live as well. Publish it with 'fugaro config publish' (or run 'fugaro update', which re-applies the installation) and run this check again"
+    return 1
+  fi
+  LAYER_BACKUP="$SCRATCH/layer.before"
+  if ! cp -p "$LAYER_FILE" "$LAYER_BACKUP"; then
+    unmeasured layer "the layer file ${LAYER_FILE} could not be copied into ${SCRATCH}: the copy is what the Restore publishes back, so without it this check writes nothing"
+    return 1
+  fi
+  LAYER_RESTORE=yes
+  LAYER_HEAD=$sum
+  if [ "$need_rate" = yes ]; then
+    say "setting the sampler up: fugaro settings set layer.ab --add-entry rate=${RATE_WANTED} --layer project (it publishes the layer itself), in ${SANDBOX}"
+    run_bounded "$CLI_TIMEOUT" setup-rate "$SANDBOX" "$FUGARO_BIN" settings set layer.ab --add-entry "rate=${RATE_WANTED}" --layer project
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+      unmeasured layer "'fugaro settings set layer.ab --add-entry rate=${RATE_WANTED} --layer project' did not answer (exit ${BOUNDED_STATUS}): a rate above zero is what turns the sampler on, and 'fugaro settings set' is the supported writer of a member of that block — it publishes the layer in the same call. Its output is in $SCRATCH/setup-rate.out and $SCRATCH/setup-rate.err; ${LAYER_FILE} is put back by the Restore"
+      return 1
+    fi
+    LAYER_SET="ab.rate ${RATE_WANTED}, set with 'fugaro settings set layer.ab --add-entry rate=${RATE_WANTED} --layer project'"
+  fi
+  if [ "$need_challenger" = yes ] || [ "$need_judge" = yes ]; then
+    read_model_table || return 1
+  fi
+  if [ "$need_challenger" = yes ]; then
+    model=$(pick_challenger)
+    if [ -z "$model" ]; then
+      setup_fail "$state" "no model of 'fugaro models ls --json' is served by a provider route that admits ${REPO_NAME:-this repository}, so this check has no challenger to name: a pair on the direct route is two runs on the champion's own, which is not the pair this check exists for (U4). Add a provider to this project and admit ${REPO_NAME:-this repository} to it — 'fugaro providers add', then its allow_data_to — or name the provider model you allow in the layer's challengers list and publish the layer again. The table it read is in $SCRATCH/setup-models.out"
+      return 1
+    fi
+    if ! python3 "$SCRATCH/set_ab.py" "$LAYER_FILE" "$model"; then
+      unmeasured layer "the challenger ${model} could not be written into ${LAYER_FILE}: no command writes ab.challengers (the leaf spelling is refused as the models family's, and no fugaro models or fugaro ab subcommand writes the layer), so this check edits the file the owner edits, and it did not. The file is put back by the Restore"
+      return 1
+    fi
+    say "publishing the layer: fugaro config publish ${LAYER_FILE}, in ${SANDBOX}"
+    run_bounded "$CLI_TIMEOUT" setup-publish "$SANDBOX" "$FUGARO_BIN" config publish "$LAYER_FILE"
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+      unmeasured layer "'fugaro config publish ${LAYER_FILE}' did not answer (exit ${BOUNDED_STATUS}): the challenger is written in the file and the layer is not published with it, so no launch below could sample. Its output is in $SCRATCH/setup-publish.out and $SCRATCH/setup-publish.err; the file is put back by the Restore"
+      return 1
+    fi
+    LAYER_SET="${LAYER_SET}${LAYER_SET:+ and }the challenger ${model}, written into ${LAYER_FILE} and published with 'fugaro config publish ${LAYER_FILE}'"
+  fi
+  if [ "$need_judge" = yes ]; then
+    model=$(pick_judge_model)
+    if [ -z "$model" ]; then
+      setup_fail "$state" "no model of 'fugaro models ls --json' is served by a route that admits ${REPO_NAME:-this repository}, so this check has no judge model to name and the judge run below would be refused. Name the model a judge run may call in the layer's ab.judge_model and publish the layer again — 'fugaro providers add' and its allow_data_to are what admit the repository. The table it read is in $SCRATCH/setup-models.out"
+      return 1
+    fi
+    say "setting the judge model up: fugaro settings set layer.ab --add-entry judge_model=${model} --layer project (it publishes the layer itself), in ${SANDBOX}"
+    run_bounded "$CLI_TIMEOUT" setup-judge "$SANDBOX" "$FUGARO_BIN" settings set layer.ab --add-entry "judge_model=${model}" --layer project
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+      unmeasured layer "'fugaro settings set layer.ab --add-entry judge_model=${model} --layer project' did not answer (exit ${BOUNDED_STATUS}): the judge run below is the ab-judge recipe, which calls ab.judge_model, and a project that publishes none is refused rather than judged on a model the owner did not name (D553). Its output is in $SCRATCH/setup-judge.out and $SCRATCH/setup-judge.err; ${LAYER_FILE} is put back by the Restore"
+      return 1
+    fi
+    LAYER_SET="${LAYER_SET}${LAYER_SET:+ and }the judge model ${model}, set with 'fugaro settings set layer.ab --add-entry judge_model=${model} --layer project'"
+  fi
+  return 0
+}
+
 # step_layer: the state every launch below is a reading of. The published
 # project layer is the only place ab.rate, the challenger list and judge_model
 # live (D550, D556): nothing in the release prints an effective ab.rate, so the
 # check reads the layer's own `ab:` block out of the text `fugaro config layer
-# --json` hands over, and says in the row that it is a text read.
+# --json` hands over, and says in the row that it is a text read. Where the block
+# is not there yet, or carries no challenger or no judge model, the check sets it
+# up (setup_ab) and reads the published layer again, so the rows below are about
+# what is published.
 step_layer() {
   if [ -z "$PROJECT" ]; then
     unmeasured layer "there is no project to read the layer for: the row above says why"
@@ -981,29 +1302,45 @@ step_layer() {
     unmeasured layer "fugaro config layer --json printed a document this check could not read: what it printed is in $SCRATCH/layer.out"
     return 0
   fi
-  local where rate challengers count keys
+  local where rate challengers count
   where=$(field "$SCRATCH/layer.txt" where)
   rate=$(field "$SCRATCH/layer.txt" rate)
   challengers=$(field "$SCRATCH/layer.txt" challengers)
   count=$(field "$SCRATCH/layer.txt" challenger_count)
-  keys=$(field "$SCRATCH/layer.txt" top_keys)
   JUDGE_MODEL=$(field "$SCRATCH/layer.txt" judge_model)
-  if [ "$(field "$SCRATCH/layer.txt" has_ab)" != true ]; then
-    fact layer FAIL "the published project layer carries no top-level ab: block (its where is ${where:-unknown}); its top-level keys are ${keys:-none}, and this check read the whole block out of the layer's own text. A project with no ab: block samples nothing at all (D550, D557), so no launch below could ever be the pair this check measures. Add the block to the project's layer file — a rate above zero, the provider challengers you allow and a judge_model, which is the shape docs/releases/v0.24.0.md's For operators paragraph gives — and publish it with 'fugaro config publish'"
-    return 0
+  # The premise the plan's sentence needs is not there: the sampler is off (no
+  # block at all, or a rate of zero), no challenger is named, or there is no
+  # judge model for the judge run below. This check sets that up rather than
+  # reporting it — the whole reason it exists is a judged pair, and the owner's
+  # project carrying none is not a finding about the release. The challenger it
+  # names has to be one on a provider route (the plan's own premise), so a
+  # project with no such route is a finding it cannot settle: setup_ab's own row
+  # names that, and its fix is the owner's to make.
+  local need_rate=no need_challenger=no need_judge=no
+  if [ "$(field "$SCRATCH/layer.txt" has_ab)" != true ]; then need_rate=yes; fi
+  if ! awk -v r="${rate:-}" 'BEGIN { exit (r + 0 > 0) ? 0 : 1 }'; then need_rate=yes; fi
+  if [ "${count:-0}" -lt 1 ]; then need_challenger=yes; fi
+  if [ -z "$JUDGE_MODEL" ]; then need_judge=yes; fi
+  if [ "$need_rate" = yes ] || [ "$need_challenger" = yes ] || [ "$need_judge" = yes ]; then
+    setup_ab "$need_rate" "$need_challenger" "$need_judge" || return 0
+    say "reading the published project layer again: fugaro config layer --json, in ${SANDBOX}"
+    run_bounded "$CLI_TIMEOUT" layer "$SANDBOX" "$FUGARO_BIN" config layer --json
+    if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] || ! read_json layer "$SCRATCH/layer.out" "$SCRATCH/layer.txt"; then
+      unmeasured layer "fugaro config layer --json did not answer after this check set the premise up (exit ${BOUNDED_STATUS}): the layer file it wrote is ${LAYER_FILE}, and the Restore publishes the bytes it started from back. Its output is in $SCRATCH/layer.out and $SCRATCH/layer.err"
+      return 0
+    fi
+    where=$(field "$SCRATCH/layer.txt" where)
+    rate=$(field "$SCRATCH/layer.txt" rate)
+    challengers=$(field "$SCRATCH/layer.txt" challengers)
+    count=$(field "$SCRATCH/layer.txt" challenger_count)
+    JUDGE_MODEL=$(field "$SCRATCH/layer.txt" judge_model)
   fi
-  if ! awk -v r="${rate:-}" 'BEGIN { exit (r + 0 > 0) ? 0 : 1 }'; then
-    fact layer FAIL "the published project layer sets ab.rate: ${rate:-unset} (where ${where:-unknown}); A/B is off, so no launch below is ever sampled and the loop would spend its whole bound without a pair — which is not a reading about the shadow but about a switch nobody turned on. Set ab.rate above zero in the project's layer file (0.10 is the figure the plan works at, and the sampler's ceiling, D557) and publish it with 'fugaro config publish'"
-    return 0
-  fi
-  if [ "${count:-0}" -lt 1 ]; then
-    fact layer FAIL "the published project layer sets ab.rate: ${rate} and names no challenger (ab.challengers is empty); a launch that samples then skips with the closed reason 'no-challenger' (D556), so no pair is ever started. Name the provider model you allow as a challenger in the layer's challengers list and publish the layer again"
-    return 0
-  fi
-  if [ -z "$JUDGE_MODEL" ]; then
-    fact layer FAIL "the published project layer names no ab.judge_model (where ${where:-unknown}): the judge run is the 'ab-judge' recipe, which calls ab.judge_model, and a project that publishes none has nothing to judge with — 'fugaro run --recipe ab-judge' is refused rather than judging on a model you did not name (D553, A5.2). Name the model in the layer's ab: block and publish the layer again"
-    return 0
-  fi
+  # The three states the setup above owns — no `ab:` block at all (D550, D557: a
+  # project without one samples nothing), a rate of zero (the switch is off) and
+  # no judge model (D553) — are not repeated here: the setup runs whenever any of
+  # them holds and either writes them or records the row that says why it did
+  # not. What is left below is the repository that lowered the rate, which this
+  # check does not overrule.
   if [ "$(field "$SCRATCH/repoab.txt" has_ab)" = true ]; then
     local repo_rate
     repo_rate=$(field "$SCRATCH/repoab.txt" rate)
@@ -1015,7 +1352,7 @@ step_layer() {
     fi
   fi
   LAYER_OK=yes
-  fact layer PASS "the published project layer (${where:-unknown}, generation $(field "$SCRATCH/layer.txt" generation), sha256 $(field "$SCRATCH/layer.txt" sha256)) sets ab.rate: ${rate}, names ${count} challenger(s) — ${challengers:-none} — and names the judge model ${JUDGE_MODEL}. This is a text read of the layer's own ab: block — no command in this release prints an effective ab.rate — and the sandbox repository's fugaro.yaml carries no opt-out"
+  fact layer PASS "the published project layer (${where:-unknown}, generation $(field "$SCRATCH/layer.txt" generation), sha256 $(field "$SCRATCH/layer.txt" sha256)) sets ab.rate: ${rate}, names ${count} challenger(s) — ${challengers:-none} — and names the judge model ${JUDGE_MODEL}. This is a text read of the layer's own ab: block — no command in this release prints an effective ab.rate — and the sandbox repository's fugaro.yaml carries no opt-out${LAYER_SET:+. This check SET IT UP first: ${LAYER_SET}. It copied ${LAYER_FILE} (sha256 ${LAYER_HEAD}) before it wrote, and the Restore puts those bytes back and publishes them again}"
 }
 
 # step_route: the plan's own words for this check are "a pair whose challenger
@@ -1619,8 +1956,58 @@ restore_wait_ended() {
 # list does not carry at all, IS one — the row names it, and names the commands
 # that settle it by run id, because this check's list of its own launches goes
 # with its scratch directory and running the check again does not reach them.
+# restore_layer: the project's own layer file, put back where the setup above
+# wrote it, and published again so the project reads what it read before. The
+# bytes are the copy the setup took before its first write, so the file is the
+# file the owner had, and the layer is the layer they published. It is read back
+# through `fugaro config layer --json`, because a copy that went back into the
+# file is not the same claim as the project serving it again.
+restore_layer() {
+  [ "$LAYER_RESTORE" = yes ] || return 0
+  if [ ! -f "$LAYER_BACKUP" ]; then
+    LAYER_NOTE="the copy of ${LAYER_FILE} is gone from $SCRATCH, so the bytes the project published before this check are not there to put back"
+    return 1
+  fi
+  if ! cp -p "$LAYER_BACKUP" "$LAYER_FILE"; then
+    LAYER_NOTE="the copy in $LAYER_BACKUP could not be put back at ${LAYER_FILE}"
+    return 1
+  fi
+  say "putting the project layer back: fugaro config publish ${LAYER_FILE}, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" restore-layer "$SANDBOX" "$FUGARO_BIN" config publish "$LAYER_FILE"
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    LAYER_NOTE="${LAYER_FILE} is back byte for byte (sha256 ${LAYER_HEAD}) and the project is still serving the layer this check set up: publish it again with 'fugaro config publish ${LAYER_FILE}' (its output is in $SCRATCH/restore-layer.out and $SCRATCH/restore-layer.err)"
+    return 1
+  fi
+  run_bounded "$CLI_TIMEOUT" restore-layer-read "$SANDBOX" "$FUGARO_BIN" config layer --json
+  local now=""
+  if [ "$BOUNDED_TIMED_OUT" != yes ] && [ "$BOUNDED_STATUS" = 0 ]; then
+    now=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])) or {}).get("sha256") or "")' "$SCRATCH/restore-layer-read.out" 2>/dev/null || true)
+  fi
+  if [ "$now" != "$LAYER_HEAD" ]; then
+    LAYER_NOTE="${LAYER_FILE} is back byte for byte (sha256 ${LAYER_HEAD}) and the project reads back sha256 ${now:-nothing} where it read ${LAYER_HEAD}: publish it again with 'fugaro config publish ${LAYER_FILE}'"
+    return 1
+  fi
+  return 0
+}
+
 restore() {
   RESTORE_VERDICT=PASS
+  local layer_note=""
+  if [ "$LAYER_RESTORE" = yes ]; then
+    if restore_layer; then
+      layer_note="The project layer was set up by this check, and ${LAYER_FILE} is back byte for byte (sha256 ${LAYER_HEAD}) and published again, so the project reads what it read before"
+    else
+      RESTORE_VERDICT=FAIL
+      layer_note="The project layer was set up by this check and could NOT be put back: ${LAYER_NOTE}"
+    fi
+  fi
+  restore_runs
+  if [ -n "$layer_note" ]; then
+    RESTORE_NOTE="${RESTORE_NOTE:+${RESTORE_NOTE}. }${layer_note}"
+  fi
+}
+
+restore_runs() {
   local ids="" id row branch pr close_failed="" deleted="" kept="" note=""
   local going="" absent="" cancelled="" cancel_status="" cancel_note="" why=""
   if [ ! -s "$LAUNCHES_FILE" ] || [ -z "$PROJECT" ]; then
@@ -1774,7 +2161,8 @@ plan() {
   say "  [network, read] fugaro doctor --json and git remote get-url origin in ${SANDBOX} — the project this checkout belongs to and its owner/name"
   say "  [network, read] fugaro recipes ls --json in ${SANDBOX} — the project's own catalog, which has to carry a launchable ab-judge recipe for the judge run below"
   say "  [network, read] fugaro config layer --json in ${SANDBOX} — the published project layer, whose ab: block must set a rate above zero, name challengers and name a judge_model (and ${SANDBOX}/fugaro.yaml must carry no opt-out)"
-  say "  [offline, read] fugaro models ls --json in ${SANDBOX} — each challenger must be a provider model (not the direct route) whose allow-list admits ${REPO_NAME:-<owner/name>}"
+  say "  [WRITE, only where that block is missing or off] the premise is set up the way the release tells you to: 'fugaro settings set layer.ab --add-entry rate=${RATE_WANTED} --layer project' for the rate and '--add-entry judge_model=<a model this repository may use>' for the judge (each publishes the layer itself), and the challenger list — which no command writes — into the project's layer file, published with 'fugaro config publish'. The file is copied first and the Restore publishes those bytes back. Where the layer already carries all three, nothing here is written at all"
+  say "  [offline, read] fugaro models ls --json in ${SANDBOX} — each challenger must be a provider model (not the direct route) whose allow-list admits ${REPO_NAME:-<owner/name>}, and the challenger and the judge model this check names where the layer has none are picked out of the same table"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX} --json \"${TASK}\" — up to ${MAX_LAUNCHES} sandbox runs, stopped at the first pair. About ten are expected at 0.10; nothing forces a sample"
   say "  [read] fugaro runs ls --repo ${SANDBOX} --batch <the pair's label> --json — the two arms, both ended"
   say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/runs/<the slug>/<run>/result.json for BOTH arms — the arm, the outcome, the branch, the pull request, both wall times and both costs against the per-run cap"
@@ -1900,6 +2288,11 @@ esac
 LS_LIMIT=$((MAX_LAUNCHES * 2 + 10))
 RELEASE=${CHECK212_RELEASE:-0.24.0}
 SINCE=${CHECK212_SINCE:-1d}
+# The rate the plan's own sentence works at ("about ten are expected at 0.10"),
+# and the one the setup writes where the project's layer carries no rate yet:
+# the sampler's ceiling is the same figure (D557), so a project cannot sample
+# harder, and a lower one needs more launches than the bound is sized for.
+RATE_WANTED=${CHECK212_RATE:-0.1}
 YES=${CHECK212_YES:-$YES_CLI}
 DRY_RUN=${CHECK212_DRY_RUN:-$DRY_RUN_CLI}
 KEEP_SCRATCH=${CHECK212_KEEP_SCRATCH:-}
@@ -1931,11 +2324,16 @@ case "$ACCOUNT" in
 esac
 
 main() {
+  # The first line the owner reads says what this check does to their own
+  # project before it says anything else: it sets the sampler up where their
+  # layer does not carry it yet, and it puts that layer back byte for byte.
+  say "the project layer's A/B state is read here and, where the rate, the challengers or the judge model are missing, set up — ab.rate ${RATE_WANTED}, one challenger on a provider route this repository may use, and a judge model — by the check itself, and put back byte for byte at the end"
   need_tools
   [ -n "$FUGARO_BIN" ] || die "Check 212 needs 'fugaro' on PATH: the check drives the build you have installed, and it is not there"
   scratch_up
   trap on_error ERR
   write_reader
+  write_setab
   guard_xtrace
   guard_agent_session
   guard_belong

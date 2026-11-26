@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/intake"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // vaultSecretName is the name the checkouts below declare in their workflow's
@@ -51,11 +57,47 @@ func vaultStateDoc(t *testing.T, addr string) string {
 // repository is not proxied, so the delete in the plan is the workflow secret's
 // accessor alone and nothing about the Bitbucket token or a model credential is
 // in play (the two flips are separate, G22).
+//
+// The record already marks the name copied and the grammar already holds its
+// value, which is what makes the accessor a delete fugaro itself decided: only
+// a copied name goes (IS6, D3325), so a fetch of one the grammar does not hold
+// yet — IS5's skipped name — keeps its mount, its accessors and its copy. IS5's
+// copy is a late step of a converge and this flip is a plan of the repository
+// root, so the update that copies a name is the one before the update that
+// drops it; this rig is that second update's world.
 func vaultFlipRig(t *testing.T, addr string) *initRig {
 	t.Helper()
 	r, db := proxiedDropRig(t)
 	publishProxiedNode(t, db, false, proxiedRepoCanonical(t))
 	putSwitchBundle(t, r, proxiedRepoBundle(t))
+	// The database the record is in is proven to be this installation's before
+	// the run reads it — the config's Firebase project beside its URL, and the
+	// mark that door writes (auroraMark) — which is what any installation with
+	// a record has, and the door the record's reader asks before it trusts one
+	// at all (budgetDBUnadopted). An installation whose database is unproven
+	// reads no record: it drops nothing and keeps every mount, the direction
+	// both halves of the migration fail in, and not a world this flip's own
+	// test can be run in.
+	rewriteConfigLine(t, "per_run_usd: 5", "per_run_usd: 5, firebase_project: "+initProject)
+	db.Set(budget.PathMark, auroraMark())
+	// The record's own entry for the name, and the value IS5's copy left in the
+	// grammar the intake writes and the service serves: the two facts
+	// copiedWorkflowSecrets reads, and both have to hold before any name goes.
+	copiedDB, err := newBudgetClient(context.Background(), db.URL, true)
+	if err != nil {
+		t.Fatalf("opening the installation's budget database: %v", err)
+	}
+	if err := creds.WriteProjectSecrets(context.Background(), copiedDB, func(creds.ProjectSecrets, bool) (creds.ProjectSecrets, error) {
+		return creds.ProjectSecrets{Version: creds.ProjectSecretsVersion}.
+			WithRule(vaultSecretName, creds.ProjectSecretRule{Repos: []string{"acme/*"}}), nil
+	}); err != nil {
+		t.Fatalf("writing the record entry that marks %s copied: %v", vaultSecretName, err)
+	}
+	id, err := secretname.Project(vaultSecretName)
+	if err != nil {
+		t.Fatalf("secretname.Project(%q): %v", vaultSecretName, err)
+	}
+	r.sm.Seed(id, map[string]string{intake.LabelWorkflowSecret: intake.WorkflowSecretMarker}, []byte("grammar-"+vaultSecretName))
 	// The repository root's two reads, scripted apart (the fake answers
 	// "show -json" with no plan file for the state and "show" for the plan):
 	// the state the release before the flip wrote holds the accessor, and this

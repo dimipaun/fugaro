@@ -1722,6 +1722,12 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if d.DraftNote != "" {
 		fmt.Fprintf(&b, "Draft:    %s\n", oneLine(d.DraftNote))
 	}
+	// The run stopped on a question its agent asked, and the record says so
+	// (LV5.2, LD8): the line names what a reader has to answer, beside the
+	// draft note it is the reason for.
+	if d.Row.NeedsGuidance {
+		fmt.Fprintf(&b, "Guidance: the agent's hand-back asks a question it may not settle; a follow-up answers it\n")
+	}
 	if d.FollowUp != nil {
 		fmt.Fprintf(&b, "%s\n", oneLine(followUpLine(d.FollowUp)))
 	}

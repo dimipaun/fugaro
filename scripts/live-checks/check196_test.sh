@@ -251,7 +251,11 @@ def build(repo, provider):
     that entry serves (`_CATALOG_REPOS`: the entry's SOURCE repository, which is
     the served repository only where the entry is sourced from it) and the
     checkout it bakes (`_REPO_URL`). No `_SLUG` and no `_WORKFLOW`: a catalog
-    request carries neither."""
+    request carries neither. It carries the record step every catalog request
+    carries (gcp.catalogRecordStep), whose KEY is the repository SLUG's own
+    record (gcp.CatalogRecordKey, `builds/<slug>/catalog/<entry>/image.json`) --
+    the slug of the repository whose credential the credential step asks for, so
+    a check that has no `_SLUG` to read reads that instead."""
     entry = CATALOG_ENTRY[provider]
     source_repo, source_provider = repo, provider
     if mode == "map-source-elsewhere" and provider == "github":
@@ -271,16 +275,27 @@ def build(repo, provider):
     subm = {"_REPO_URL": clone_url(source_repo, source_provider), "_IMAGE": CATALOG_IMAGE % entry,
             "_CATALOG_TAG": "9f2c" + provider, "_ENTRY": entry, "_CATALOG_REPOS": source_repo,
             "_WORKFLOW": "", "_SECRET_ENVS": "", "_CREDENTIALS_SERVICE_URL": SVC_URL}
+    record = {"name": "gcr.io/google.com/cloudsdktool/cloud-sdk:slim", "id": "record",
+              "env": ["BUCKET=gs://fugaro-dev-runs",
+                      "KEY=builds/%s/catalog/%s/image.json" % (slug(source_provider), entry),
+                      "ENTRY=" + entry, "IMAGE=" + (CATALOG_IMAGE % entry) + ":latest",
+                      "SHA256=9f2c" + provider, "BUILD_ID=$BUILD_ID"],
+              "args": ["-c", "recorded $$KEY"]}
+    if mode == "catalog-build-no-record-step" and provider == "github":
+        # The one shape that leaves the row nothing to read the slug from: no
+        # `_SLUG` substitution (no catalog build has one) and no record step
+        # either, which no request of this installation omits.
+        record = None
     b = {"id": "b-" + repo.split("/")[-1], "status": "SUCCESS",
          "startTime": "2026-11-20T10:00:00Z", "finishTime": "2026-11-20T10:05:00Z",
          "serviceAccount": "projects/fugaro-dev/serviceAccounts/" + BUILD_IDENTITY,
          "substitutions": subm,
-         "steps": [{"name": "gcr.io/cloud-builders/docker"},
+         "steps": [st for st in [{"name": "gcr.io/cloud-builders/docker"}, record,
                    {"name": "gcr.io/cloud-builders/gcloud", "id": "credential",
                     "env": ["PROVIDER=" + source_provider, "ENTRY=" + entry,
                             "CATALOG_REPOS=" + source_repo,
                             "FUGARO_CREDENTIALS_SERVICE_URL=" + SVC_URL, "BUILD_ID=$BUILD_ID"],
-                    "args": ["-c", "exec fugaro image git-credential --entry \"$$ENTRY\" --repos \"$$CATALOG_REPOS\""]}]}
+                    "args": ["-c", "exec fugaro image git-credential --entry \"$$ENTRY\" --repos \"$$CATALOG_REPOS\""]}] if st is not None]}
     if mode == "catalog-build-no-credential" and provider == "github":
         # No secret AND no address: the one shape that holds no credential at all
         # and could only fail.
@@ -984,28 +999,45 @@ test_a_refusal_line_is_reported_redacted() {
 # that has none, and the row reads that shape as INFO rather than as a row that
 # could not be measured — the same absence the flip mode's noaccessor row reads.
 #
-# The served row is the other half of that shape, and it is the one row the
-# missing job costs: a catalog build carries no `_SLUG` substitution, the job's
-# `fugaro_repo` label is where this repository's slug would have been read from,
-# and with neither there is nothing to look the service's own lines up by. The
-# row reads as one that could not be measured — never as an absence the check
-# measured, and never with a slug the reader invented (a `None` taken for a value
-# would filter Cloud Logging on a repository that cannot exist, and hand the
-# owner a command that matches nothing). The repository that does have a job,
-# with a catalog build of its own, is read and reads INFO.
+# The served row does NOT depend on that job, which is the defect the owner's run
+# of 2026-11-26 found: a catalog build carries no `_SLUG` substitution, and a
+# repository retired its daily check job (M2), so a row that read the slug off the
+# job's `fugaro_repo` label read none at all and could not look the service's own
+# lines up — the owner's `served-github` and `served-bitbucket` FAIL. The slug is
+# the build's own now (the record step's KEY, the repository whose credential the
+# build asks for), so a repository with no job still reads its served row. The
+# repository that does have a job is read the same way.
 test_a_missing_check_job_reads_info() {
   local dir=$work/nojob
   prepare "$dir"
   run196 "$dir" no-check-job
-  expect_status "$status" 2 "no check job: the served row could not be measured"
+  expect_status "$status" 0 "no check job: the served row is measured without it"
   expect_contains "$out" "FACT check-github: INFO" "no check job: the row"
   expect_contains "$out" "D1900" "no check job: the ruling the row reads"
   expect_absent "$out" "FACT check-github: FAIL" "no check job: not a failure"
   expect_contains "$out" "FACT check-bitbucket: PASS" "no check job: the other repository"
-  expect_contains "$out" "FACT served-github: FAIL" "no check job: the service's lines cannot be looked up"
-  expect_contains "$out" "the repository's slug could not be read" "no check job: the reason the row gives"
+  expect_contains "$out" "FACT served-github: INFO" "no check job: the service's own lines are read without the job"
+  expect_contains "$out" "slug acme-sandbox-0123456789abcdef" "no check job: the slug the build's own record step carries"
+  expect_absent "$out" "the repository's slug could not be read" "no check job: the row is not left unmeasured"
   expect_absent "$out" "repository=None" "no check job: no lookup on a repository named None"
   expect_contains "$out" "FACT served-bitbucket: INFO" "no check job: the repository that has one is still read"
+}
+
+# A build that carries neither a `_SLUG` substitution (no catalog build has one)
+# nor the record step every catalog request carries leaves the row nothing to read
+# the slug from, and it reads as one that could not be measured — never as an
+# absence the check measured, and never with a slug the reader invented (a `None`
+# taken for a value would filter Cloud Logging on a repository that cannot exist,
+# and hand the owner a command that matches nothing).
+test_a_build_with_no_slug_and_no_record_step_is_unmeasured() {
+  local dir=$work/norecord
+  prepare "$dir"
+  run196 "$dir" catalog-build-no-record-step
+  expect_status "$status" 2 "no record step: the served row could not be measured"
+  expect_contains "$out" "FACT served-github: FAIL" "no record step: the row"
+  expect_contains "$out" "the repository's slug could not be read" "no record step: the reason the row gives"
+  expect_absent "$out" "repository=None" "no record step: no lookup on a repository named None"
+  expect_contains "$out" "FACT build-github: PASS" "no record step: the build row is still read"
 }
 
 # Before the flip the check job keeps its own mount and carries NO service
@@ -1337,6 +1369,7 @@ t test_an_audit_line_for_another_caller_is_a_failure
 t test_the_other_providers_credential_is_a_failure
 t test_a_refusal_line_is_reported_redacted
 t test_a_missing_check_job_reads_info
+t test_a_build_with_no_slug_and_no_record_step_is_unmeasured
 t test_a_check_job_that_holds_no_credential_is_a_failure
 t test_a_check_job_that_already_names_the_service_reads_info
 t test_a_check_job_that_mounts_beside_the_address_is_a_failure

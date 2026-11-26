@@ -599,9 +599,14 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// update prints before it changes anything (R8, doctorBudgetStopsChecks).
 	o.Checks = append(o.Checks, doctorBudgetStopsChecks(ctx, sel, lc)...)
 	// The two dead values an older release left on a repository's default
-	// branch (U6b, R15): the plugin pin and budget.mode: off, read off every
-	// enrolled repository through the same list the update's stages read.
-	o.Checks = append(o.Checks, doctorRepoNoticeChecks(ctx, lc)...)
+	// branch (U6b, R15) and what this release's credentials service stops, a
+	// Claude model a repository pins through a provider key (KS20, D3000,
+	// D3013), are all read off C1's enrolled list -- and one read answers all
+	// three: the list is a read of every enrolled repository, and a second one
+	// would read each of them twice for the same facts.
+	repoViews, _ := enrolledRepos(theUpdateLeavesTheRemoval(ctx), enrolledIn{LC: lc, ExtraPaths: repoNoticeExtra})
+	o.Checks = append(o.Checks, doctorRepoNoticeChecks(repoViews)...)
+	o.Checks = append(o.Checks, doctorClaudeGateChecks(lc, repoViews)...)
 	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
@@ -2838,8 +2843,11 @@ func repoNoticeSkips() []doctorCheck {
 // unread — with no file to judge — in exactly the state this check exists to
 // report; reading through the word is what leaves the file's bytes in the
 // view, and the bytes are what the notice is read from (repoNotices).
-func doctorRepoNoticeChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
-	views, _ := enrolledRepos(theUpdateLeavesTheRemoval(ctx), enrolledIn{LC: lc, ExtraPaths: repoNoticeExtra})
+//
+// It reads the views the caller already took rather than the list again: the
+// gate's own check reads the same repositories, and doctor asking for them
+// twice would read every one of them twice (KS20).
+func doctorRepoNoticeChecks(views []repoView) []doctorCheck {
 	byFile := map[string][]string{}
 	for _, v := range views {
 		for _, n := range repoNotices(v) {

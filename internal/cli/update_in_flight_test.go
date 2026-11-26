@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -485,6 +486,11 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		// (bitbucketProxyFlip).
 		extra   string
 		release string
+		// live is the shared project jobs the installation RUNS, as the Cloud
+		// Run fake answers a listing: the triples the retirement of issue #3686
+		// reads out of the jobs' own labels. A row with none gets no cloud at
+		// all, which is the engine every other row's door speaks to.
+		live    []liveProjectJob
 		want    []string
 		notWant []string
 	}{
@@ -558,6 +564,33 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			want:    []string{"1 run in flight", "bitbucket proxy switch", "the address is set", "mount drops next update"},
 			notWant: []string{"budget mode", "policy:", "retirement"},
 		},
+		{
+			// The shared project jobs issue #3686 retires: the installation
+			// stage deletes the job of a (profile, provider, account) this
+			// machine's config declares no more, and the delete takes the
+			// executions running on it with it. The fixture's config declares
+			// no profile at all — the same fact from the other side — and the
+			// job the cloud runs wears the labels modules/project/job.tf
+			// writes, so the clause reads it out of the CLOUD rather than out
+			// of the document this run is about to write.
+			name: "the shared project job a profile no longer names", mode: budget.ModeEnforce,
+			live:    []liveProjectJob{{profile: "standard", provider: "github", account: "team-a"}},
+			want:    []string{"1 run in flight", "shared jobs:", "no profile names", "a run's job is kept"},
+			notWant: []string{"budget mode", "policy:", "retirement"},
+		},
+		{
+			// The other direction, and the one a clause that fired on every
+			// live job would get wrong: the profile is declared and it names
+			// the job's own triple, so this installation owes no retirement at
+			// all. Without this row a line printed over every live job would
+			// read as the feature.
+			name: "the shared project job a profile still names", mode: budget.ModeEnforce,
+			extra: "claude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n" +
+				"profiles:\n  standard: { provider: github, allow_repos: [github/acme/app], claude_accounts: [team-a] }\n",
+			live:    []liveProjectJob{{profile: "standard", provider: "github", account: "team-a"}},
+			want:    []string{"1 run in flight", "no step reaches them"},
+			notWant: []string{"shared jobs", "budget mode", "policy:", "retirement"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newProjectFixture(t, tc.extra)
@@ -575,6 +608,9 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			h := newMigrationRig(t, f, &initOptions{retire: tc.retire})
 			if tc.managed {
 				h.managedGate()
+			}
+			if len(tc.live) > 0 {
+				h.s.e.c = inFlightCloud(t, liveProjectJobs(t, tc.live...))
 			}
 			h.s.e.announceRunsInFlight(context.Background())
 
@@ -618,6 +654,60 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			}
 		})
 	}
+}
+
+// liveProjectJob is one shared project job an installation runs, as the
+// retirement reads it out of the job's own labels: the triple the name is
+// derived from and the labels carry, and nothing about whether the config
+// declares it.
+type liveProjectJob struct{ profile, provider, account string }
+
+// liveProjectJobs is the Cloud Run fake holding those jobs, labelled the way
+// modules/project/job.tf labels them — the managed mark, the profile, and the
+// provider and account beside it — and with the triple registered as the
+// shared job a launcher selects (AddProjectJob).
+func liveProjectJobs(t *testing.T, jobs ...liveProjectJob) *gcpfake.Run {
+	t.Helper()
+	run := gcpfake.NewRun(t)
+	run.Project, run.Region = "proj-1234", "us-east5"
+	for _, j := range jobs {
+		name := gcp.ProjectJobName(j.profile, j.provider, j.account)
+		run.AddProjectJob(name, j.profile, j.provider, j.account, "2", "8Gi")
+		run.SetJob(name, map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProfile: j.profile,
+			"fugaro_provider": j.provider, "fugaro_account": jobAccountLabel(j.account),
+		}, "image")
+	}
+	return run
+}
+
+// jobAccountLabel is what a job's account label says for an axis account: the
+// label of a job that runs as none is "none" (a label cannot be empty), and
+// every other account is its own name. It is the writing side of
+// projectJobAxisAccount.
+func jobAccountLabel(account string) string {
+	if account == "" {
+		return "none"
+	}
+	return account
+}
+
+// inFlightCloud is that fake wrapped in the clients the door's own read of the
+// installation's jobs is made through (infra.LiveProjectJobs). The rig builds
+// none of its own — the migration stage reaches no cloud — so a row that turns
+// the shared-jobs clause on hands the engine one, and every endpoint
+// infra.NewClients insists on with no_auth has to be here: one left empty
+// would send a call to Google itself.
+func inFlightCloud(t *testing.T, jobs *gcpfake.Run) *infra.Clients {
+	t.Helper()
+	c, err := infra.NewClients(t.Context(), gcp.Options{GCPProject: "proj-1234",
+		Endpoints: gcp.Endpoints{Run: jobs.URL + "/", SecretManager: gcpfake.NewSecrets(t).URL + "/", Logging: gcpfake.NewLogging(t).URL + "/", NoAuth: true}},
+		infra.Endpoints{IAM: gcpfake.NewIAM(t).URL + "/", ArtifactRegistry: gcpfake.NewArtifactRegistry(t).URL + "/",
+			Storage: gcpfake.NewGCS(t).URL + "/storage/v1/", ResourceManager: gcpfake.NewCRM(t).URL + "/", Scheduler: gcpfake.NewScheduler(t).URL + "/"})
+	if err != nil {
+		t.Fatalf("the row's cloud could not be built: %v", err)
+	}
+	return c
 }
 
 // TestUpdateInFlightLineCountsTheRunsOnTheOldRecord is MG3's own line under the

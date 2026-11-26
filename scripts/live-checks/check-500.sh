@@ -21,7 +21,8 @@
 #     entries is a finding, because four is where the skill stopped grouping;
 #   * `fugaro image survey --json`: the second half of the skill's own loop, and
 #     the three values it compares a rerun against (`setup.catalog`,
-#     `setup.image_map`, `setup.bake_repos`);
+#     `setup.repo_images` — or `setup.legacy_image_map` while the map is still
+#     the bare-name one an update has not migrated — and `setup.bake_repos`);
 #   * one **Cloud Build** per entry, through `fugaro image build <entry>`, which
 #     is the only build that counts: a local Docker build proves nothing about
 #     the entry's runtime contract or the job account it is built as. **Each
@@ -245,7 +246,23 @@ elif what == "survey":
     setup = doc.get("setup") or {}
     print("bake_repos=%s" % yes(setup.get("bake_repos")))
     print("catalog=%d" % len(setup.get("catalog") or []))
-    print("image_map=%d" % len(setup.get("image_map") or {}))
+    # The map is two members and never one member under two meanings (R4): a
+    # project whose map an update has not migrated yet carries the bare-name
+    # legacy_image_map instead of repo_images, and this reads whichever the
+    # document holds, as `image survey`'s own text form does.
+    mapping = setup.get("repo_images") or {}
+    member = "repo_images"
+    if not mapping and setup.get("legacy_image_map") is not None:
+        mapping = setup.get("legacy_image_map") or {}
+        member = "legacy_image_map"
+    # A repo_images key is provider/owner/name (projectpolicy.Canonical), and
+    # one owner/name can be mapped at two providers (D3373), so the
+    # repositories the map covers are counted by name rather than by key.
+    names = set()
+    for repo in mapping:
+        names.add(repo.split("/", 1)[1] if member == "repo_images" and repo.count("/") == 2 else repo)
+    print("member=%s" % member)
+    print("map_count=%d" % len(names))
     for repo in doc.get("repos") or []:
         print("repo\t%s\t%d\t%s" % (
             repo.get("repo") or "",
@@ -485,10 +502,11 @@ step_survey() {
     return 0
   fi
   BAKE_REPOS=$(field "$SCRATCH/survey.txt" bake_repos)
-  local repos mapped
+  local repos mapped member
   repos=$(awk -F'\t' '$1 == "repo" { print $2 }' "$SCRATCH/survey.txt" | paste -sd, - 2>/dev/null || true)
-  mapped=$(field "$SCRATCH/survey.txt" image_map)
-  fact survey PASS "the survey answered for ${repos:-no repository} with $(field "$SCRATCH/survey.txt" catalog) catalog entries, ${mapped:-0} mapped repositories and bake_repos=${BAKE_REPOS:-false} — the three values a rerun compares against, read without a clone"
+  mapped=$(field "$SCRATCH/survey.txt" map_count)
+  member=$(field "$SCRATCH/survey.txt" member)
+  fact survey PASS "the survey answered for ${repos:-no repository} with $(field "$SCRATCH/survey.txt" catalog) catalog entries, ${mapped:-0} mapped repositories (setup.${member:-repo_images}) and bake_repos=${BAKE_REPOS:-false} — the three values a rerun compares against, read without a clone"
 }
 
 # step_builds: the build that counts. One Cloud Build per entry, from the
@@ -707,7 +725,7 @@ step_baked() {
     return 0
   fi
   if [ -z "$baked" ]; then
-    fact baked FAIL "the run ${RUN_ID} started on an image with no baked checkout (image.baked_commit is empty) while this project bakes (setup.bake_repos=${BAKE_REPOS:-true}): the sandbox repository's image was built without its checkout, so its jobs clone at start — the thing IS8b's stage exists to stop. Check that the project's image_map puts the sandbox on the entry the build composed, and that the build was run after the mapping was published"
+    fact baked FAIL "the run ${RUN_ID} started on an image with no baked checkout (image.baked_commit is empty) while this project bakes (setup.bake_repos=${BAKE_REPOS:-true}): the sandbox repository's image was built without its checkout, so its jobs clone at start — the thing IS8b's stage exists to stop. Check that the project's repo_images puts the sandbox on the entry the build composed, and that the build was run after the mapping was published"
     return 0
   fi
   fact baked PASS "the run ${RUN_ID} started on an image whose baked checkout was at ${baked} (image.baked_commit): the image carried the repository, which is the reading no build log and no local Docker build can give"

@@ -44,6 +44,7 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 - D3270: `fugaro budget kill`, in every form, `--workspace` included, is exempt from the fence.
 - D3271: `update`'s door read keeps the 2-second timeout every command has; Check 900 measures a
   cold read (U1), and a follow-up raises the timeout only if the read does not fit (closes O7).
+  Check 900 ran on 2026-11-26: the cold read fit (284 ms), so 2 seconds stands.
 
 **Findings that changed the design:**
 - The stage cannot sit right after `policy`, because that slot is taken by contract. It goes after
@@ -73,7 +74,8 @@ repo-coupling audit's block (D3230–D3259), and the highest check was 892.
 
 **What waits on something external:**
 - the owner's go for each task;
-- Check 900, which the owner runs after the release that carries L1;
+- a project with a member, for Check 900 run as that member (U2): the owner ran it on `fugaro` on
+  2026-11-26 and it PASSes, settling U1, but `fugaro` has no member;
 - the workspace work's own spec, for which stamp a workspace write checks (O5);
 - the console's owner, for U3 (O6).
 

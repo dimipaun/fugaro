@@ -586,9 +586,12 @@ func TestJoinStaleDraft(t *testing.T) {
 	}
 	r := withPR(runstore.StatusRunning, at(5*time.Hour))
 	r.DraftFallback = true
+	// The agent's own stop travels beside the draft (LV5.2, LD8): the console
+	// draws the flag off the row, so the row has to carry it.
+	r.NeedsGuidance = true
 	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateRunning)}, prices, now)
-	if !row.DraftFallback || row.PRStatusAt == nil || !row.PRStatusAt.Equal(*r.PR.StatusAt) {
-		t.Errorf("fallback/status_at not carried: %+v", row)
+	if !row.DraftFallback || !row.NeedsGuidance || row.PRStatusAt == nil || !row.PRStatusAt.Equal(*r.PR.StatusAt) {
+		t.Errorf("fallback/guidance/status_at not carried: %+v", row)
 	}
 	// A follow-up's PR may be ready: never called a draft.
 	fr := withPR(runstore.StatusRunning, at(2*time.Hour))
