@@ -135,9 +135,10 @@ const (
 	SourceChain = "chain"
 )
 
-// Budget modes, loosest to strictest.
+// Budget modes, loosest to strictest. There are two: the word that was the
+// loosest of three is not a mode any more, and what is left of it is
+// Mode.Removed and ModeOffRefusal (mode.go, D3009).
 const (
-	ModeOff     = "off"
 	ModeObserve = "observe"
 	ModeEnforce = "enforce"
 )

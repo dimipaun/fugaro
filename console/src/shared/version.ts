@@ -727,6 +727,60 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
 export const SETUP_CLI_FLOOR: string | null = null
 
 /**
+ * SETUP_BUDGET_CLI_FLOOR is the oldest CLI that **accepts a lone `budget` in the
+ * answers file** the first-run wizard writes: the monthly budget alert the
+ * wizard's own question answers (D2210), which `setupAnswerQuestions`
+ * (`internal/cli/setup_answers.go`) reads as an optional member of 1 to
+ * 10,000,000, and which the console sends **without `budget_currency`** (D2211
+ * leaves the currency to the CLI's USD default).
+ *
+ * **`0.29.0` is the release that carries that**, and the member alone is not
+ * enough to be sent: `budget` has been in the file since 0.28.0
+ * (`setup_answers.go:82` at `v0.28.0`, and still at `v0.28.2`), and no release
+ * refuses it by name. What 0.28.x does with it is stop: nothing writes the
+ * currency the document left out, so the amount reaches the run's own trio rule
+ * (`init.go`'s `check`, "a budget needs --budget (more than 0) and
+ * --budget-currency together") and the whole setup -- the plan the wizard holds
+ * as much as the apply -- ends there. 0.29.0 is the first release whose reading
+ * writes the member the document left out back with the default it was checked
+ * against (`setup_answers.go:206`), which is what makes an amount on its own an
+ * answer. So this floor is about a **half-answered pair**, not about a member an
+ * older CLI cannot decode: dropping it to the release that first carried
+ * `budget` would refuse every 0.28.x setup this console would otherwise plan.
+ *
+ * Below the floor the console asks the question and sends nothing, and the
+ * CLI's own default records the amount -- which is what the field says it will
+ * do. The release that first carries a **retyped or removed** member would be a
+ * new constant, not a moved one: this one answers for the amount without its
+ * currency only.
+ */
+export const SETUP_BUDGET_CLI_FLOOR: string | null = '0.29.0'
+
+/**
+ * setupBudgetSupported answers whether one version line may be sent the
+ * wizard's `budget` answer, by comparing the line against
+ * `SETUP_BUDGET_CLI_FLOOR` at the patch level.
+ *
+ * **Its caller is the wizard's own plan** (`src/main/wizardrun.ts`,
+ * `createSetupWizard`): the answers are gated **before** they are serialised,
+ * so the bytes the child reads, the bytes the digest is taken of and the
+ * answers the confirmation window shows are one document -- a `budget` a CLI
+ * below the floor would stop on is dropped from all three rather than from the
+ * wire alone.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * later release takes can be tested; a `null` floor refuses every version, the
+ * idiom `licenceKeySupported` and `noApplySupported` follow.
+ */
+export function setupBudgetSupported(
+  version: string,
+  floor: string | null = SETUP_BUDGET_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * IMAGE_CATALOG_CLI_FLOOR and RECIPES_CLI_FLOOR are the oldest CLIs that carry
  * `image ls --json` and `recipes ls --json`: the Code tab's two reads (the
  * console improvements plan's AL).

@@ -217,6 +217,7 @@ func TestPRBodyHasNoHandBackWithoutTheFile(t *testing.T) {
 	for _, level := range levels {
 		t.Run(level, func(t *testing.T) {
 			h := newHarness(t, modeCfg(t, level, 2, ""), nil)
+			h.noHandBack = true
 			h.setTask(t, task)
 			// commitOnly writes no pr.md: the agent left no account at all.
 			if _, err := h.run(t, commitOnly("feature"), review("ship", 0), review("ship", 0)); err != nil {

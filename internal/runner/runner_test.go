@@ -80,7 +80,9 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 
 type harness struct {
 	files map[string]string
-	deps  runner.Deps
+	// noHandBack leaves the agent's hand-back as the step wrote it.
+	noHandBack bool
+	deps       runner.Deps
 	// budget is the fake budget database this run's job carries: the address
 	// and the key its environment names, the harness's own unless a test asked
 	// for none (noBudget). Deps.Backend stays zero here and is a test's own
@@ -413,8 +415,70 @@ func filterEnv(env []string, key string) []string {
 // reaches (below).
 func (h *harness) run(t *testing.T, steps ...step) (*runstore.Record, error) {
 	t.Helper()
-	h.agent.steps = append(slices.Clone(steps), h.escalationRound())
+	steps = slices.Clone(steps)
+	if len(steps) > 0 {
+		steps[0] = h.owingHandBack(steps[0])
+	}
+	h.agent.steps = append(steps, h.escalationRound())
 	return runner.Run(context.Background(), h.deps)
+}
+
+// owingHandBack gives a run's first step the hand-back its level owes
+// (LV5.1): a fixture about something else than the account writes none, or
+// none with the sections a level stands on, and a run without them is not
+// ready. A section a step wrote itself is kept, and so is a hand-back left
+// out by a harness that says so (h.noHandBack).
+func (h *harness) owingHandBack(s step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := s(t, ctx, req)
+		if h.noHandBack {
+			return res, err
+		}
+		name, title := "pr.md", "Add feature"
+		if spec, rerr := h.store.ReadTask(ctx); rerr == nil {
+			if spec.PreviousRun != "" {
+				name = "followup.md"
+			}
+			if line, _, _ := strings.Cut(strings.TrimSpace(spec.Task), "\n"); line != "" {
+				title = line
+			}
+		}
+		p := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), name)
+		body, rerr := os.ReadFile(p)
+		if rerr != nil && !os.IsNotExist(rerr) {
+			t.Fatal(rerr)
+		}
+		text := string(body)
+		if text == "" && name == "pr.md" {
+			text = "# " + title + "\n"
+		}
+		if text == "" {
+			text = "Done.\n"
+		}
+		text = withOwedSections(text)
+		if werr := os.WriteFile(p, []byte(text), 0o644); werr != nil {
+			t.Fatal(werr)
+		}
+		return res, err
+	}
+}
+
+// withOwedSections adds, to a hand-back text, each section a level stands on
+// that it lacks: what a test whose pull request body it compares exactly
+// expects after owingHandBack wrote the file.
+func withOwedSections(text string) string {
+	for _, sec := range []string{"Verification", "Open risks", "Revert plan", "Morning note"} {
+		if !strings.Contains(text, "## "+sec) {
+			text += "\n## " + sec + "\n\n- Nothing to add.\n"
+		}
+	}
+	return text
+}
+
+// owedBody is the pull request description a run publishes from a hand-back
+// text: the sections added, the trailing whitespace trimmed.
+func owedBody(text string) string {
+	return strings.TrimSpace(withOwedSections(text))
 }
 
 // escalationRound is the step every fixture's script ends with: the review
@@ -536,7 +600,7 @@ func TestReadyPR(t *testing.T) {
 		t.Fatalf("record = %+v", rec)
 	}
 	pr := onlyPR(t, h.provider)
-	if pr.Draft || pr.Title != "Add feature" || gitprov.StripStatus(pr.Body) != "Adds feature.txt." || pr.Spec.Base != "main" || pr.Spec.Branch != "fugaro/"+runID {
+	if pr.Draft || pr.Title != "Add feature" || gitprov.StripStatus(pr.Body) != owedBody("Adds feature.txt.") || pr.Spec.Base != "main" || pr.Spec.Branch != "fugaro/"+runID {
 		t.Fatalf("PR = %+v", pr)
 	}
 	if len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "ready for review") {
@@ -1220,7 +1284,7 @@ func TestPRTextIsRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr := onlyPR(t, h.provider)
-	if pr.Title != "Add feature [REDACTED]" || gitprov.StripStatus(pr.Body) != "The key is [REDACTED]." {
+	if pr.Title != "Add feature [REDACTED]" || gitprov.StripStatus(pr.Body) != owedBody("The key is [REDACTED].") {
 		t.Fatalf("PR text is not redacted: title %q, body %q", pr.Title, pr.Body)
 	}
 }

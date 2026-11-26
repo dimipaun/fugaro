@@ -205,7 +205,7 @@ func TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository(t *testing.T) {
 		"an api-key repository where the budget is enforced":          {apiKeyLaunchYAML, config.BudgetEnforce, true, true, true},
 		"an oauth repository where the budget is observed":            {oauthLaunchYAML, config.BudgetObserve, true, true, true},
 		"an oauth repository where the budget is enforced":            {oauthLaunchYAML, config.BudgetEnforce, true, true, true},
-		"an api-key repository where the budget says the word":        {apiKeyLaunchYAML, config.BudgetOff, true, true, true},
+		"an api-key repository where the budget says the word":        {apiKeyLaunchYAML, "off", true, true, true},
 		"an api-key repository on a project that published no policy": {apiKeyLaunchYAML, "", false, true, true},
 		"an api-key repository whose root no apply switched on":       {apiKeyLaunchYAML, config.BudgetEnforce, true, false, false},
 	} {
@@ -373,7 +373,7 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 	// observe is (AB15, D3009). A cascade repository was the only one of the
 	// three served before B2.3.
 	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
-		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce, config.BudgetOff, ""} {
+		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce, "off", ""} {
 			got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", auth, mode, false, false)
 			if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
 				t.Errorf("credentialsServiceLaunchEnv(auth %s, mode %s) = %v, want [%s=%s]: this release switches such a repository on, whatever its job mounts and whatever its node says (config.ServiceServedAuths keys the mounts, not the address, and the mode is no condition of the switch any more)", auth, mode, got, envCredentialsServiceURL, launchCredsURL)

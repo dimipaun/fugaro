@@ -53,12 +53,12 @@ const (
 	doctorClassAudit = "audit"
 	// doctorClassSecurity is the one class the default view both prints and
 	// counts: an item with its fix, and a count in the "N security findings"
-	// pointer the screen ends with. The owner's ruling of 2026-11-01 put the
-	// model key in the agent's reach there — a credential in a workflow's own
-	// environment is a fact the reader acts on now, not an audit line to
-	// review later — while keeping it a security finding, so the pointer line
-	// still says the sweep has something. Every other check lands in exactly
-	// one bucket; this one is deliberately in two.
+	// pointer the screen ends with. It is for a security finding the reader
+	// acts on now rather than reviews later (the owner's ruling of 2026-11-01),
+	// and no check is in it today: its one member was the model key in the
+	// agent's reach, which RT7 removed with the auth mode it was about. Every
+	// other check lands in exactly one bucket; a check of this class is
+	// deliberately in two.
 	doctorClassSecurity = "security"
 )
 
@@ -68,9 +68,13 @@ const (
 // the line now: the sweep's other findings — a grant doctor could not derive,
 // a provider setting nobody can read from here — are the ones the pointer line
 // exists for.
-var doctorShownSecurityIDs = map[string]bool{
-	"model-key-in-agent": true,
-}
+//
+// It holds no ID today: its one member was "model-key-in-agent", a model
+// credential in a workflow's agent, and RT7 removed that check with the auth
+// mode it reported — which model a call is served by is the routing table's
+// answer now, and the bundle's own line (routing-bundle-source) is what says
+// whether a source's secret is there.
+var doctorShownSecurityIDs = map[string]bool{}
 
 // doctorUpdatePrefixes are the checks whose remedy is `fugaro update` itself
 // (CLAUDE.md's hard rule: the one documented command brings the installation,
@@ -130,7 +134,6 @@ var doctorShownSecurityIDs = map[string]bool{
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"cli-below-required",
-	"plugin-pin",
 	"plugin-install",
 	"orchestrator-unit",
 	"base-image",
@@ -165,14 +168,6 @@ var doctorSecurityPrefixes = []string{
 	// line, so today it reaches the default view either way; naming it here is
 	// what keeps it in the sweep if it ever gains a measurement.
 	"batch-launcher-iam",
-	// model-key-in-agent is the owner's ruling: a model credential that reaches
-	// a workflow's agent (budget off, or no credentials service) is a security
-	// finding, not a measurement. It is the sweep's only info half that the
-	// default view prints as an item as well as counts (doctorClassSecurity,
-	// the owner's correction of 2026-11-01): the installation that runs without
-	// the budget is a legitimate choice, but a credential in the agent's own
-	// reach is a fact the reader acts on now rather than reviews later.
-	"model-key-in-agent",
 	// security-list is D1513's line: the security list in force for a
 	// checkout — the floor, the project layer's rows and the repository's own —
 	// which is only measured: the default view does not print it and --security
@@ -235,14 +230,6 @@ var doctorMeasureIDs = map[string]bool{
 	// docs/plugin-user-scope/implementation-plan.md), and the class of both is
 	// update — the plugin on this machine is what `fugaro update` installs.
 	"plugin-install": true,
-	// pluginwire's "not wired": a checkout nothing pins, because the merge
-	// that writes a pin is gone (D949, U5). It is the normal state of every
-	// repository now, and information rather than a finding — filed as audit
-	// it was counted by the pointer line, so the one screen said "1 more
-	// finding" over a repository with nothing wrong with it. The states that
-	// ARE wrong (a pin this binary does not match, a foreign wiring) are
-	// warnings, and the update arm above keeps them in the default view.
-	"plugin-pin": true,
 	// The standing note the wiring always prints beside its per-notice lines:
 	// a fixed sentence about what wiring the plugin blesses, not a finding of
 	// this checkout's.
@@ -769,9 +756,6 @@ var doctorUpdateFixes = map[string]string{
 	// version (CLAUDE.md's hard rule: those two commands are the whole upgrade).
 	"cli-version":        cliBelowRequiredFix,
 	"cli-below-required": cliBelowRequiredFix,
-	// A check that cannot even be read outside a checkout says so in its own
-	// text: update is the whole upgrade, and it runs in the repository.
-	"plugin-pin": "run `fugaro update` in the repository's checkout",
 	// plugin-install's class is new (D942), and the check's own line was
 	// already the right one (#1500 re-pointed it at `fugaro update`): it keeps
 	// Claude Code's by-hand move beside the command, which is what a machine
@@ -911,7 +895,11 @@ var doctorShorts = map[string]doctorShort{
 	// line is the whole fix (the upgrade, then `fugaro update`), which is why this
 	// entry carries none.
 	"cli-below-required": {"this project requires a newer Fugaro release than this binary.", ""},
-	"plugin-pin":         {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
+	// The two dead values U6b reads off every repository's default branch
+	// (R15): each line's own fix is the edit that takes the value out, so the
+	// entry names the file rather than carrying a fix of its own.
+	"repo-plugin-pin":  {"an older Fugaro's plugin pin is still in a repository's .claude/settings.json.", ""},
+	"repo-budget-mode": {"a repository's fugaro.yaml still says budget.mode: off, which is not a budget mode any more.", ""},
 	// The login unit the daemon runs under was written from an older template,
 	// and `fugaro update` re-renders it in place (init_stages.go's unit stage),
 	// so the entry carries no fix of its own: the class's command is the whole
@@ -1025,7 +1013,6 @@ var doctorShorts = map[string]doctorShort{
 	"bitbucket-token-broken":      {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
 	"bitbucket-token-expiry":      {"a stored Bitbucket token's recorded expiry is near or past.", ""},
 	"bitbucket-direct":            {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
-	"model-key-in-agent":          {"a model credential reaches a workflow's agent's own environment.", ""},
 	"launcher-jobs":               {"which Cloud Run jobs a launcher can start could not be checked.", ""},
 	"launcher-jobs-public":        {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
 	"launcher-jobs-unread":        {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},

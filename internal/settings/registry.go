@@ -1283,6 +1283,26 @@ var localRows = []Row{
 	locLocal("model_routing.*.chain.*.provider", "none: only a source of kind provider names a provider key", "update", docRouting),
 	locLocal("model_routing.*.chain.*.model", "the model the call asked for: a source names a model only for a written downgrade", "update", docRouting),
 	locLocal("model_routing.*.chain.*.admit", "nobody: an absent list and an empty one both admit no repository, and a pool's admission is its members' own allow_data_to", "update", docRouting),
+	// The pause block (R11 of docs/model-credentials-routing, D3184, D3187,
+	// D3190): the in-job floor, the shortest a pause may be and the longest one
+	// chain may stay paused in total. It is one new top-level key of the policy
+	// node — `pause`, beside `credentials` and never inside it, or a
+	// release-behind runner would refuse the whole node (F49) — and the local
+	// config's own block of the same name, which is what `fugaro settings set`
+	// writes and what the publish copies to the node. The credentials service
+	// is the reader that decides between waiting, pausing and halting by them
+	// (PR3); nothing else acts on one.
+	//
+	// The rows are local-only, the cascade's carriers' reason one step out: a
+	// launcher who could write them into the runs bucket's shared file would be
+	// deciding how long every teammate's run holds a job open before it
+	// suspends, and how long their chains may sit paused. Each default sentence
+	// names the publisher's own constant rather than restating the figure:
+	// projectpolicy holds the three defaults once, its decode reads a member
+	// written beside them, and a second answer here is how the two drift.
+	locLocal("pause.wait_in_job", "5m: a reset nearer than this is waited out inside the job and a farther one suspends the run (projectpolicy.DefaultWaitInJob, D3184)", "settings set", docRouting),
+	locLocal("pause.min_pause", "30m: a pause is never shorter than this (projectpolicy.DefaultMinPause, D3190 as amended)", "settings set", docRouting),
+	locLocal("pause.max_pause", "6h: the longest one chain may stay paused in total, and a reset beyond it halts the run at once (projectpolicy.DefaultMaxPause, D3187)", "settings set", docRouting),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none: an entry that says nothing about the switch is the state `fugaro update` turns on, and a written false is a hold it never lifts", "secrets", docSetup),
@@ -1378,6 +1398,15 @@ var localRows = []Row{
 	// path writes no image policy, and a person reading the row is sent to the
 	// command that does.
 	loc("image_map", "none: no repository is mapped, and the catalog's default entry decides the image", "image map", docImages),
+	// The repository-to-image map is the map above in the form L11 gives it
+	// (D3370, D3371): the same entry per repository, keyed by
+	// provider/owner/name, so one name at two providers is two entries rather
+	// than one. It sits beside the old map's row while both fields exist (R15,
+	// D3372): whichever member the file holds, the key is one the read answers
+	// and the write refuses against, and `fugaro image map set` is the command
+	// that writes it — the owner names that family for the reason the row above
+	// states.
+	loc("repo_images", "none: no repository is mapped, and the catalog's default entry decides the image", "image map", docImages),
 	// The bake switch is the setup wizard's question (D1901), answered yes when
 	// it is asked with nothing else, so an installation that never answers it is
 	// told how the absent key reads rather than what a value would be. IS7 asks

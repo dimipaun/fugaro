@@ -880,7 +880,7 @@ button.installation-add-project-cancel {
 
 /* ---- The first-run wizard (the console-improvements plan, task SW3b) --------
  *
- * The five questions and the run's own feed, drawn by
+ * The six questions and the run's own feed, drawn by
  * `console/src/renderer/wizard/wizard.ts` in place of the command line above
  * (SW3c mounts the same screen for "Add project"). The rules sit here, beside the
  * view they replace, because that view is this file's and a second stylesheet for

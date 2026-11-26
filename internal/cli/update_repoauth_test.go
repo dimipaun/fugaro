@@ -120,7 +120,7 @@ func TestUpdateWritesTheRepoAuthRecordThroughTheConverge(t *testing.T) {
 		t.Fatalf("the fixture carries a record at %s already (%v): the state this test is about is an installation that has not run the release that writes one", creds.PathRepoAuth(slug), v)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	db, err := newBudgetClient(context.Background(), r.db.URL, true)
 	if err != nil {
