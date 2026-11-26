@@ -13,9 +13,11 @@ package runner_test
 // job run (Local false, the platform's own execution of this repository's job,
 // the project's policy and the budget backend's fakes) whose job carries the
 // credentials service's URL, so its model path is the service and its declared
-// secrets are fetched from it. The service itself is a stand-in: the
-// workflow-secrets route answered from a table, and every other path relayed to
-// the model upstream's own stand-in, exactly as the real service carries both.
+// secrets are fetched from it. The workflow-secrets route is the SERVICE'S OWN
+// -- credsvc's handler over the records and containers credsvcfake wires, which
+// is where the runner's call and the route it will meet are held to each other
+// (I1) -- and every other path is relayed to the model upstream's own stand-in,
+// exactly as the real service carries both.
 
 import (
 	"bytes"
@@ -35,6 +37,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/credsvcfake"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -89,6 +92,14 @@ const shortSecretValue = "abc"
 // from outside the package.
 const minFetchedSecretLen = 4
 
+// fixtureRepoPath and fixtureWorkflow are the fixture repository's own two
+// names: the one the service's job account is bound to and the workflow its
+// job belongs to, which is the key `fugaro update`'s record is read under.
+const (
+	fixtureRepoPath = "acme/app"
+	fixtureWorkflow = "app"
+)
+
 // secretsCall is one call the stand-in service received, kept whole: what the
 // call asked for -- the variable (version 1) or the logical name (version 2) --
 // and what it presented, which is what a test asserts the fetch is signed by.
@@ -100,23 +111,29 @@ type secretsCall struct {
 	body    string
 }
 
-// secretsService is the credentials service's stand-in: the workflow-secrets
-// route (B3.2's contract) answered from names, version 2 by logical name and
-// version 1 by variable, and every other path relayed to upstream, the model
-// upstream's own stand-in -- the real service carries a run's model calls too,
-// and a stand-in that refused them would turn a stray call into a mystery.
+// secretsService is the credentials service as a run reaches it: the workflow
+// secrets route is the SERVICE'S OWN (credsvc's handler and every reader it
+// holds, over the fakes credsvcfake wires, so the runner's call is answered by
+// the implementation it will meet rather than by a second reader of the same
+// contract), and every other path is relayed to upstream, the model upstream's
+// own stand-in -- the real service carries a run's model calls too, and a
+// service that refused them would turn a stray call into a mystery.
 //
-// The two served cases are C1's own stub (credsvc.WorkflowSecretsStub), so the
-// shape, the echo and version 2's "not in the record" refusal are held to one
-// implementation rather than to two readers agreeing with a comment (the
-// plan's stub, which I1 deletes when the route itself lands).
+// names and envs are the world prepare builds before the run starts: names maps
+// a LOGICAL name to the value the project's own container holds, which is what
+// `fugaro secrets shared set` and the migration's copy leave, and envs maps a
+// variable to the value the repository's own record puts it in, which is what
+// `fugaro update` writes for a repository whose job still mounts its secrets.
+// The two are separate because the route's two versions read them separately,
+// and a test that means "the name is not in the project record YET" seeds envs
+// alone (TestFallsBackToV1WhenNotInRecord).
 //
-// status, body and malformed are the three ways a call is not served: a typed
-// refusal with status, a 200 whose body is not this contract's, and (with no
-// value under what the call asked for) the refusal the stub writes for a
-// record that holds nothing there. answerAs is the fourth, the one the contract
-// itself forbids: a 200 that names some other secret than the one the call
-// asked for.
+// status, body and malformed are the three ways a call is answered by something
+// that is NOT the service: a typed refusal with status, a 200 whose body is not
+// this contract's, and a body carrying more than one document. answerAs is the
+// fourth, the one the contract itself forbids: a 200 that names some other
+// secret than the one the call asked for. They stay hand-written because no
+// service writes them -- they are what a run must refuse to read (D143).
 type secretsService struct {
 	mu        sync.Mutex
 	names     map[string]string
@@ -127,7 +144,38 @@ type secretsService struct {
 	malformed string
 	answerAs  string
 	upstream  string
+	// real is the workflow-secrets route itself, set by prepare.
+	real http.Handler
 }
+
+// prepare builds the installation the served calls are answered from -- the
+// records, the containers and the service over them -- out of the world the
+// test declared. It is called once per run, before the run starts, so that a
+// call either meets the real route or is one of the hand-written answers above.
+func (s *secretsService) prepare(t *testing.T) {
+	t.Helper()
+	inst := credsvcfake.New(t, credsvcfake.Options{Repo: fixtureRepoPath, Workflow: fixtureWorkflow})
+	s.mu.Lock()
+	names, envs := s.names, s.envs
+	s.mu.Unlock()
+	for name, value := range names {
+		// The owner's allow, then the value in the grammar's container: the two
+		// acts that make a name version 2 serves (IS3, IS5).
+		inst.Allow(t, name)
+		inst.SetShared(t, name, value)
+	}
+	for env, value := range envs {
+		// B3.1's record, read by version 1: the variable and the container the
+		// repository's own secret lives in.
+		inst.RecordWorkflowSecret(t, env, repoSecretContainer(env), value)
+	}
+	s.real = inst.Handler
+}
+
+// repoSecretContainer is the container a repository's own secret is recorded
+// in: built from the variable, so the fixture holds one container per declared
+// variable, and a valid Secret Manager ID either way.
+func repoSecretContainer(env string) string { return "fixture-secret-" + strings.ToLower(env) }
 
 func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 	raw, _ := io.ReadAll(r.Body)
@@ -140,8 +188,7 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 	s.calls = append(s.calls, secretsCall{
 		env: req.Env, name: req.Name, version: req.VersionOf(), header: r.Header.Clone(), body: string(raw),
 	})
-	status, refusal, malformed, answerAs := s.status, s.body, s.malformed, s.answerAs
-	stub := credsvc.WorkflowSecretsStub{Values: s.names, Envs: s.envs}
+	status, refusal, malformed, answerAs, real := s.status, s.body, s.malformed, s.answerAs, s.real
 	s.mu.Unlock()
 	switch {
 	case malformed != "":
@@ -161,10 +208,10 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	default:
-		// The stub reads the body it is handed, and the call above has already
-		// read it: it is handed the same bytes again.
+		// The service reads the body it is handed, and the call above has
+		// already read it: it is handed the same bytes again.
 		r.Body = io.NopCloser(bytes.NewReader(raw))
-		stub.ServeHTTP(w, r)
+		real.ServeHTTP(w, r)
 	}
 }
 
@@ -323,6 +370,10 @@ func secretsRun(t *testing.T, extra string, spec *task.Spec, svc *secretsService
 func secretsRunConfig(t *testing.T, cfg string, spec *task.Spec, svc *secretsService) *bk {
 	t.Helper()
 	h := newHarnessFiles(t, cfg, spec, nil)
+	// The world the service answers from, built before the run starts: the
+	// records `fugaro update` and `fugaro secrets allow` write, and the
+	// containers they name.
+	svc.prepare(t)
 	fake, up := anthropicfake.New(t)
 	fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
 		rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 3})
