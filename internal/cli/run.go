@@ -3350,7 +3350,6 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// reply is built from it in finishLaunch. Every attempt of a batch carries
 	// the plan's own pair, which is one account for all of them.
 	o.account = launchAccount{Name: account, Alias: alias}
-	root := checkoutRoot(ctx, repo)
 	rcp, mode, err := chooseRecipe(ctx, env, repo, ref, o.recipe, checkout, warn, forAttempts)
 	if err != nil {
 		return nil, err
@@ -3362,7 +3361,7 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// refused without launching anything. A batch never reaches this with a
 	// report recipe (chooseRecipe refuses --attempts for one), so no
 	// attempt reads another's stored task as a report run still going.
-	digestRuns, err := digestManifest(ctx, env, slug, root, rcp, time.Now(), warn)
+	digestRuns, err := digestManifest(ctx, env, slug, rcp, time.Now(), warn)
 	if err != nil {
 		return nil, err
 	}
@@ -5698,9 +5697,10 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	// have moved on; the launcher of a fresh report run lists them again.
 	// The task says it is one two ways: the manifest itself (digest_runs is
 	// accepted under no other recipe, task.Validate), which is the only one
-	// that speaks for a repository recipe, and the recipe's text or file,
-	// for a report run whose manifest came out empty.
-	if spec.Recipe != nil && (len(spec.DigestRuns) > 0 || digestRecipe(checkoutRoot(ctx, spec.Repo), spec.Recipe)) {
+	// that speaks for a task an older release's launcher wrote naming a
+	// repository recipe, and the recipe's text, for a report run whose
+	// manifest came out empty.
+	if spec.Recipe != nil && (len(spec.DigestRuns) > 0 || digestRecipe(spec.Recipe)) {
 		return "", nil, userErr("run %s/%s is a report run, and --retry launches the task of its first launch as it stands: its manifest is stale by now, and a repository has one report run at a time, because both would write the same reports — launch a new report run with fugaro run --recipe %s", slug, runID, spec.Recipe.Name)
 	}
 	return slug, spec, nil
