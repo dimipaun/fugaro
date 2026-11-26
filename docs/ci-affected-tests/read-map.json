@@ -8189,6 +8189,7 @@
         "internal/runner/budget_session.go",
         "internal/runner/checkpoint.go",
         "internal/runner/cost.go",
+        "internal/runner/findings.go",
         "internal/runner/followup.go",
         "internal/runner/gate.go",
         "internal/runner/gateway.go",
