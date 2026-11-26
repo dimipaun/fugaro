@@ -1076,7 +1076,6 @@ flag	review	value		--pr
 flag	review	value		--project
 flag	review	value		--region
 flag	review	value		--spec
-flag	review	value		--token
 flag	review show	bool		--json
 flag	review show	bool	-h	--help
 flag	review show	value		--config

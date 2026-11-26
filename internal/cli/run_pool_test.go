@@ -154,8 +154,11 @@ func TestReviewRecipeLaunchRefusesTheTokenFlag(t *testing.T) {
 	f := newReviewFixture(t)
 	f.appendConfig(t, poolEveryModelTableYAML)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
+	// The recipe is spelled out rather than taken from reviewOnlyRecipe: the
+	// runid guard reads a review-mode launch out of the literal name
+	// (runid_test.go's reviewModePR), and this launch reads no recency window.
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261126-090004-c512",
-		"--recipe", reviewOnlyRecipe, "--pr", "7", "--token", "acme-personal")
+		"--recipe", "review-only", "--pr", "7", "--token", "acme-personal")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("a review-mode launch naming an account where the table names the launcher's pool: err = %v, want the retirement of the flag", err)
 	}
