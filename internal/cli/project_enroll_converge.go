@@ -165,7 +165,7 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}
-	plan, err := reposEnrolmentRead(ctx, o, lc, db, arg)
+	plan, err := reposEnrolmentRead(ctx, cmd.OutOrStdout(), o, lc, db, arg)
 	if err != nil {
 		return err
 	}
@@ -192,7 +192,11 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 // reposEnrolmentRead reads everything the plan is built from. It writes
 // nothing, and that is the order it exists for: every refusal lands before the
 // operator is shown a plan and asked about it.
-func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, arg string) (reposEnrolment, error) {
+//
+// out is the command's own standard output, and the one thing that reaches it
+// from here is the line the starter's Bitbucket token read prints before it
+// reads (enrolOpenStarter); the plan and the report are printed by the caller.
+func reposEnrolmentRead(ctx context.Context, out io.Writer, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, arg string) (reposEnrolment, error) {
 	var plan reposEnrolment
 	ownerName, err := reposEnrolmentName(arg)
 	if err != nil {
@@ -213,7 +217,7 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 		return plan, userErr("cannot read %s here: this command enrols a repository from its own checkout — its fugaro.yaml is where its workflows and its base branch come from, and its job set is deployed from there too. Run it from a checkout of %s, or write the allow-list entry alone with `fugaro project repos add %s --allow-list-only`",
 			pluginwire.Printable(ownerName), pluginwire.Printable(ownerName), ownerName)
 	}
-	if plan.starterPR, err = enrolOpenStarter(ctx, lc, ownerName, plan.checkout, plan.entryNow, plan.entryKnown); err != nil {
+	if plan.starterPR, err = enrolOpenStarter(ctx, out, lc, ownerName, plan.checkout, plan.entryNow, plan.entryKnown); err != nil {
 		return plan, err
 	}
 	if plan.starterPR != "" {

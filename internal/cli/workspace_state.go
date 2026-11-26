@@ -297,6 +297,13 @@ type stateHost interface {
 	// a public repository taken for private is the leak D2824 is about.
 	Visibility(ctx context.Context, repo string) (stateVisibility, error)
 
+	// OpenPR answers the open pull request branch already has, and "" when it
+	// has none. It is a read of its own and not a side effect of Publish
+	// because the caller that needs it must know BEFORE anything is pushed:
+	// a branch whose pull request is still open is not pushed again, and the
+	// person is pointed at the pull request they have (enrolOpenStarter).
+	OpenPR(ctx context.Context, repo, branch string) (string, error)
+
 	// Publish clones, commits, pushes and opens the pull request, and answers
 	// its URL.
 	Publish(ctx context.Context, p statePublish) (string, error)
@@ -716,6 +723,22 @@ func (h stateGitHubHost) Visibility(ctx context.Context, repo string) (stateVisi
 		stateGH, pluginwire.Printable(repo), pluginwire.Printable(answer.Visibility))
 }
 
+// OpenPR implements stateHost with gh's own list. A branch with no pull request
+// is an empty list and exit 0, which is an answer and not a failure.
+func (h stateGitHubHost) OpenPR(ctx context.Context, repo, branch string) (string, error) {
+	var found []struct {
+		URL string `json:"url"`
+	}
+	if err := stateRunJSON(ctx, issues.GHEnv(os.Environ()), "", &found, stateGH, "pr", "list",
+		"--repo", stateGitHubRepo(repo), "--head", branch, "--state", "open", "--json", "url"); err != nil {
+		return "", err
+	}
+	if len(found) == 0 {
+		return "", nil
+	}
+	return found[0].URL, nil
+}
+
 // Publish implements stateHost: clone, write, commit to a new branch, push, and
 // open the pull request with gh.
 //
@@ -771,7 +794,7 @@ type stateBitbucketHost struct {
 }
 
 // provider opens the adapter for one repository.
-func (h stateBitbucketHost) provider(repo string) (gitprov.Provider, error) {
+func (h stateBitbucketHost) provider(repo string) (*bitbucket.Provider, error) {
 	owner, name, ok := gitprov.SplitRepo(repo)
 	if !ok {
 		return nil, userErr("%s is not owner/name, so there is no Bitbucket repository to open", pluginwire.Printable(repo))
@@ -793,6 +816,21 @@ func (h stateBitbucketHost) Visibility(ctx context.Context, repo string) (stateV
 		return stateVisibilityPrivate, nil
 	}
 	return stateVisibilityPublic, nil
+}
+
+// OpenPR implements stateHost with the adapter's own find, which is also the
+// first half of EnsurePR: Bitbucket has no CLI to ask, and the query language it
+// is asked in is the adapter's.
+func (h stateBitbucketHost) OpenPR(ctx context.Context, repo, branch string) (string, error) {
+	p, err := h.provider(repo)
+	if err != nil {
+		return "", err
+	}
+	pr, found, err := p.FindPR(ctx, branch)
+	if err != nil || !found {
+		return "", err
+	}
+	return pr.URL, nil
 }
 
 // Publish implements stateHost: clone, write, commit to a new branch, push with

@@ -7405,7 +7405,7 @@ from the project's other repositories. It prints the whole list of what it
 will change, asks once for the project's name, and then does each step as
 far as it can:
 
-  1. the repository's own fugaro.yaml: read (a repository with none gets a pull request for the starter; merge it, run again)
+  1. the repository's own fugaro.yaml: read (a repository with none gets a pull request for the starter on a branch of its own; merge it, run again — until it is merged a second run finds that pull request and writes nothing)
   2. this machine's project config: the repository's repos: entry (and, when
      its fugaro.yaml names a Claude account by agent.oauth_token, the
      repository in that one account's allow_data_to, which the next
@@ -7429,6 +7429,12 @@ is mapped and never built — the first image build is billable and it is
 map the published node holds, so enrolling one repository cannot take
 another's mapping away. Nothing here asks a run to finish, and nothing
 rewrites what a run in flight holds.
+
+On Bitbucket the starter's pull request is opened with the installation's own
+bitbucket-token secret — the repository's own container, or the project-wide
+copy an owner stored and allow-listed — read with your credentials and never
+printed or logged; a machine that holds neither is refused with the command
+that stores one.
 
 --allow-list-only writes the published allow-list entry and nothing else,
 as this command did before the enrolment converged: it is what * needs, and

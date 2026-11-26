@@ -96,6 +96,11 @@ func (h *wu15Host) Visibility(_ context.Context, repo string) (stateVisibility, 
 	return h.visibility, nil
 }
 
+// OpenPR is what a save never asks: a save pushes its snapshot and opens the
+// pull request for it, while reusing a pull request already open on a branch is
+// the starter's own path (enrolOpenStarter).
+func (h *wu15Host) OpenPR(context.Context, string, string) (string, error) { return "", nil }
+
 func (h *wu15Host) Publish(_ context.Context, p statePublish) (string, error) {
 	if h.mark != nil {
 		h.atPush = h.mark()
