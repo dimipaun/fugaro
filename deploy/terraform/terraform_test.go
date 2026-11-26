@@ -5170,8 +5170,10 @@ func TestProjectJobSecretGrantFollowsTheMount(t *testing.T) {
 // TestProjectJobAccountGetsTheInvokerGrant is B5.2's Terraform half, and it is
 // the same grant modules/workflow/sa.tf makes for a repository's own job: the
 // job account's roles/run.invoker on the installation's credentials service,
-// one member, no condition, and the resource behind the job's own switch
-// (var.job.credentials_service, null for a profile the service does not serve).
+// one member, no condition, and the resource behind local.credentials_grant —
+// the profile's own switch, or the object a shared or review job carries so it
+// reaches the service for its clone whether the switch is on (a9925a2) — null
+// for a job the service does not serve.
 // The grant alone moves nothing else about the job — the mounts a profile the
 // switch holds off keeps are pinned by the tftest's own run and by
 // internal/infra's TestEmptySharedJobListChangesNothing — and the model mounts
@@ -5201,13 +5203,13 @@ func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
 	}
 	body := blocks[0].body
 	for _, want := range []string{
-		// Null is the switch's own answer on this side, and the whole of it.
-		"count = var.job.credentials_service == null ? 0 : 1",
+		// Null is the grant's own answer on this side, and the whole of it.
+		"count = local.credentials_grant == null ? 0 : 1",
 		// The service's own name and the region it runs in: the two values
 		// internal/infra writes (infra.CredentialsServiceName and the
 		// installation's region), and never a URL.
-		"location = var.job.credentials_service.region",
-		"name     = var.job.credentials_service.name",
+		"location = local.credentials_grant.region",
+		"name     = local.credentials_grant.name",
 		`role     = "roles/run.invoker"`,
 		// The job's own account and no other member, ever.
 		"member   = google_service_account.job.member",
