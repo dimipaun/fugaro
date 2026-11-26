@@ -1036,3 +1036,408 @@ func scanGoFile(rel, src string) []string {
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// The mount rule: no run job mounts a workflow or build secret (IS7, D3331, T3)
+// ---------------------------------------------------------------------------
+//
+// The guard above audits who may READ a secret: a grant, a project role, an
+// availableSecrets, the API. This one audits what a RUN JOB MOUNTS, because a
+// mount is the one place a class of secret reaches a job's container without a
+// per-secret grant of its own — and D3331 rules that after the flip no run job
+// mounts a workflow secret or a build secret, in Terraform or in the Go that
+// writes the tfvars it is planned from. T3 scopes it to those two classes:
+// every other class keeps its secret-readers.md row and the plan that ends it
+// (vertex repositories keep their git and model mounts, the image-check job
+// and unserved builds keep the git credential, per-repository provider keys
+// still mount).
+
+// runJobModules are the module directories a RUN JOB is defined in (D3321): a
+// repository's workflow job, a shared project job, and the repository's own
+// build and check jobs. An installation SERVICE — the coordinator, the licence
+// renewal, the orchestrator, the voice hop — is not a run job: it is long-lived
+// infrastructure of the installation's own, and the classes it reads are its
+// own rows in secret-readers.md.
+var runJobModules = []string{
+	"deploy/terraform/gcp/modules/workflow",
+	"deploy/terraform/gcp/modules/project",
+	"deploy/terraform/gcp/modules/repo",
+}
+
+// runJobMountClassTokens are T3's two classes in the tree's own spelling. The
+// workflow-secret class is the one IS6's flip took off every job spec, which
+// modules/workflow/sa.tf reads as local.vault_secret_names; the build-secret
+// class is the one modules/repo/build.tf drops as local.build_mounts_served
+// over var.repo.build_secrets (D2077). A mount may reach either only to EXCLUDE
+// it — every drop in this tree is written as `!( ... )`, see ungatedClassRef —
+// so a reference outside an exclusion is a mount that admits the class.
+var runJobMountClassTokens = []string{"vault_secret_names", "build_secrets"}
+
+// runJobMountUntilRows are T1's two until-rows, and the whole of what this
+// rule allows: the classes a shared job still mounts and this plan's flip does
+// not end, each with the task whose pull request deletes its row. T3 scopes the
+// rule to the workflow-secret and build-secret classes, so neither row is a hit
+// today — they are held here, and checked below, because a rule that never
+// names the two debts is a rule a later reader cannot see them in. Nothing else
+// may be added: a class that mounts is either one of these two, with the plan
+// that ends it, or a hit.
+var runJobMountUntilRows = []struct {
+	id    string
+	class string
+	key   string
+	task  string
+}{
+	{
+		id:    "U1",
+		class: "the shared jobs' GitHub App key",
+		key:   "deploy/terraform/gcp/modules/project/job.tf google_cloud_run_v2_job.this",
+		task:  "C2.3",
+	},
+	{
+		id:    "U2",
+		class: "the shared jobs' provider keys",
+		key:   "deploy/terraform/gcp/modules/project/job.tf google_cloud_run_v2_job.this",
+		task:  "KS16",
+	},
+}
+
+// goRunJobBuilders are the Go files that write a run job's or a build's spec —
+// the per-repository job and its build request, the shared project job, and the
+// catalog entry's build. They are scanned by what they DO: a delivery name
+// derived here is one a run job would mount, and a mount written from the
+// workflow's own secrets is the defect the Terraform half refuses.
+var goRunJobBuilders = []string{
+	"internal/infra/spec.go",
+	"internal/infra/projectjobs.go",
+	"internal/backend/gcp/build.go",
+	"internal/backend/gcp/catalog.go",
+}
+
+// goMountFields are the fields a spec mounts a secret IN. VaultSecretNames is
+// deliberately not one: it is the record of a mount IS6 took AWAY, written
+// where the drop happens, and a guard that read it as a mount would fail on the
+// flip itself.
+var goMountFields = []string{"SecretEnv", "AvailableSecrets", "SecretVariables", "BuildSecrets"}
+
+// goMountClassRefs are where the workflow's OWN secrets are read in these
+// builders: config.Workflow.Secrets, and the build's BuildSpec.WorkflowSecrets.
+// ".Secrets" and not "Secrets" — ".BuildSecrets" is the list the job already
+// gates, and a substring match on it would read every one of its writes as the
+// class itself.
+var goMountClassRefs = []string{".Secrets", "WorkflowSecrets"}
+
+// goServeGateWords are the words the flip's gates are written with in these
+// builders: `served` (buildMountsServed, s.served(), projectJobMounts' served),
+// `serves` (CredentialsServiceServes, projectJobServesTheCredentialsService)
+// and `addressed` (credentialsServiceAddressed, the one class whose drop is the
+// address's and not the service's). A statement that mounts the class under one
+// of them is the flip; the same statement without one is a hit.
+var goServeGateWords = []string{"served", "serves", "addressed"}
+
+// runJobMountHits is every way the tree mounts a workflow or build secret in a
+// run job: the modules' own text, and the Go that writes their tfvars.
+func runJobMountHits(t *testing.T) []string {
+	t.Helper()
+	var files []tfFile
+	for _, dir := range runJobModules {
+		files = append(files, moduleFiles(t, dir)...)
+	}
+	hits := runJobMountHitsInFiles(files)
+	for _, rel := range goRunJobBuilders {
+		src, err := os.ReadFile(filepath.Join("..", "..", rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		hits = append(hits, goMountHits(t, rel, string(src))...)
+	}
+	sort.Strings(hits)
+	return hits
+}
+
+func TestRunJobsMountNoWorkflowSecret(t *testing.T) {
+	hits := runJobMountHits(t)
+	if len(hits) > 0 {
+		t.Errorf("a run job mounts a class D3331's rule takes off every job spec (T3, IS6, IS8):\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	// T1: exactly two until-rows, each naming a class the shared jobs really
+	// mount and the task whose pull request deletes it. A third row is the
+	// widening T1 refuses, and a row whose class this rule claims is the
+	// contradiction T3 refuses.
+	if len(runJobMountUntilRows) != 2 {
+		t.Fatalf("the guard allows exactly two until-rows (T1), and this table has %d", len(runJobMountUntilRows))
+	}
+	var files []tfFile
+	for _, dir := range runJobModules {
+		files = append(files, moduleFiles(t, dir)...)
+	}
+	mounting := map[string]bool{}
+	for _, site := range runJobSecretSites(files) {
+		mounting[site.key] = true
+	}
+	for _, row := range runJobMountUntilRows {
+		if !mounting[row.key] {
+			t.Errorf("until-row %s names %s, which mounts no secret at all: the class left that job, so delete the row in the task that ended it (%s)", row.id, row.key, row.task)
+		}
+		if row.task == "" {
+			t.Errorf("until-row %s names no task: the row is the debt, and the task that ends it is what a reader has to find (T1)", row.id)
+		}
+		if strings.Contains(row.class, "workflow secret") || strings.Contains(row.class, "build secret") {
+			t.Errorf("until-row %s holds %q, and T3 scopes the rule to the workflow-secret and build-secret classes: the rule must catch that mount, not allow it", row.id, row.class)
+		}
+	}
+}
+
+// TestCatalogIdentityHoldsNoSecretAccessor is the installation half of the
+// same rule (D3330, IS8): the one account a catalog entry's build runs as reads
+// its credentials from the credentials service, so it holds no accessor on any
+// secret — the git credential's grant is the one IS8 removed, and a new one
+// would hand a build the container the flip took away.
+func TestCatalogIdentityHoldsNoSecretAccessor(t *testing.T) {
+	files := moduleFiles(t, "deploy/terraform/gcp/modules/installation")
+	mod := newTFModule(files)
+	for _, f := range files {
+		if strings.Contains(f.src, "build_identity_git_secret") {
+			t.Errorf("%s names google_secret_manager_secret_iam_member.build_identity_git_secret: IS8 removed that grant, and the build identity reads the git credential at the credentials service's /v1/build/token (D3330)", f.rel)
+		}
+	}
+	for _, b := range mod.blocks {
+		if b.mode != "resource" || !strings.Contains(b.body, "google_service_account.build_identity") {
+			continue
+		}
+		if catalogIdentitySecretGrant(b) {
+			t.Errorf("%s %s.%s grants the catalog build identity a secret: the identity reads every credential it needs from the credentials service (D3330, IS8), and a secretmanager accessor here is one no run asks for", b.file, b.typ, b.name)
+		}
+	}
+}
+
+// catalogIdentitySecretGrant reports whether a block whose member is the build
+// identity hands it a secret: a secretmanager grant of any shape, or a
+// project-level role whose role string is a secretmanager one.
+func catalogIdentitySecretGrant(b tfBlock) bool {
+	switch b.typ {
+	case "google_secret_manager_secret_iam_member", "google_secret_manager_secret_iam_binding", "google_secret_manager_secret_iam_policy":
+		return true
+	case "google_project_iam_member", "google_project_iam_binding":
+		return projectRoleReadsSecrets(terraformAttrExpr(b.body, "role"))
+	}
+	return false
+}
+
+// TestMountRuleCatchesAFixture is the rule's own red step (spec §6): the
+// scanner is handed a fixture that mounts a workflow secret, one that mounts a
+// delivery name, and one Go builder that does each, and each has to be caught;
+// the shape IS6 and IS8 leave has to pass. A rule nobody has seen fail is a
+// rule nobody knows the shape of.
+func TestMountRuleCatchesAFixture(t *testing.T) {
+	fixtures := []struct {
+		name string
+		why  string
+		file tfFile
+	}{
+		{
+			name: "the workflow-secret class mounted whole",
+			why:  "for_each over the fetched class mounts every workflow secret the flip took off the job (IS6, D3324)",
+			file: tfFile{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureWorkflowClassMounted},
+		},
+		{
+			name: "the installation's fugaro_p_ copy mounted",
+			why:  "the container IS13 retires: a job naming it mounts a secret the run reads from the service (D3323, D3324)",
+			file: tfFile{rel: "deploy/terraform/gcp/modules/repo/check.tf", src: fixtureDeliveryNameMounted},
+		},
+	}
+	for _, f := range fixtures {
+		if hits := runJobMountHitsInFiles([]tfFile{f.file}); len(hits) == 0 {
+			t.Errorf("the mount rule passes the fixture %q, and it must fail it: %s", f.name, f.why)
+		}
+	}
+
+	good := []tfFile{
+		{rel: "deploy/terraform/gcp/modules/workflow/sa.tf", src: fixtureServeGatedDrop},
+		{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureGatedMount},
+	}
+	if hits := runJobMountHitsInFiles(good); len(hits) > 0 {
+		t.Errorf("the mount rule fails the shape IS6 leaves, and that shape is the rule's own subject:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	goFixtures := []struct {
+		name string
+		src  string
+	}{
+		{"a builder mounting the workflow's own secrets with no serve gate", fixtureGoMountsTheClass},
+		{"a builder deriving the installation's fugaro_p_ copy", fixtureGoDerivesDeliveryName},
+	}
+	for _, f := range goFixtures {
+		if hits := goMountHits(t, f.name, f.src); len(hits) == 0 {
+			t.Errorf("the mount rule passes a fixture that must fail it: %s", f.name)
+		}
+	}
+	if hits := goMountHits(t, "the gated shape", fixtureGoServeGatedMount); len(hits) > 0 {
+		t.Errorf("the mount rule fails the gated shape IS6 leaves:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+}
+
+func moduleFiles(t *testing.T, dir string) []tfFile {
+	t.Helper()
+	const root = "../.."
+	abs := filepath.Join(root, dir)
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	var files []tfFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		p := filepath.Join(abs, e.Name())
+		src, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		rel, err := repoRel(root, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, tfFile{rel: rel, src: string(src)})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
+	return files
+}
+
+// runJobSecretSite is one place a run-job module mounts a secret value: the
+// resource it is declared in, by the key the reader table uses too, and the
+// expressions that decide which secrets reach it.
+type runJobSecretSite struct {
+	key         string
+	expressions []string
+	body        string
+}
+
+func runJobMountHitsInFiles(files []tfFile) []string { return nil }
+
+func runJobSecretSites(files []tfFile) []runJobSecretSite { return nil }
+
+func goMountHits(t *testing.T, rel, src string) []string { return nil }
+
+// The fixtures the rule is shown to fail on (spec §6). The first two are the
+// shapes the flip removed: the fetched class mounted whole, and the
+// installation's own fugaro_p_ copy named by a job. The last three are the
+// shape IS6 and IS8 leave, which the rule must pass.
+const fixtureWorkflowClassMounted = `
+locals {
+  vault_secret_names = var.workflow.vault_secret_names
+}
+
+resource "google_cloud_run_v2_job" "this" {
+  template {
+    template {
+      containers {
+        dynamic "env" {
+          for_each = toset(local.vault_secret_names)
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = var.secrets[env.key]
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const fixtureDeliveryNameMounted = `
+resource "google_cloud_run_v2_job" "this" {
+  template {
+    template {
+      containers {
+        dynamic "env" {
+          for_each = var.repo.check.secret_env
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = "fugaro_p_${env.value}"
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const fixtureServeGatedDrop = `
+locals {
+  service_addressed  = var.credentials_service != null
+  vault_secret_names = var.workflow.vault_secret_names
+  job_mounts = {
+    for env, logical in var.workflow.secret_env :
+    env => logical if !(local.service_addressed && contains(local.vault_secret_names, logical))
+  }
+}
+`
+
+const fixtureGatedMount = `
+resource "google_cloud_run_v2_job" "this" {
+  template {
+    template {
+      containers {
+        dynamic "env" {
+          for_each = local.job_mounts
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = var.secrets[env.value]
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const fixtureGoMountsTheClass = `
+package gcp
+
+func mount(ws *WorkflowSpec, w config.Workflow) {
+	for _, s := range w.Secrets {
+		ws.SecretEnv[s.Env] = s.Name
+	}
+}
+`
+
+const fixtureGoDerivesDeliveryName = `
+package gcp
+
+func mount(ws *WorkflowSpec, name string) {
+	id, err := secretname.Project(name)
+	if err != nil {
+		return
+	}
+	ws.SecretEnv["BUILD_TOKEN"] = id
+}
+`
+
+const fixtureGoServeGatedMount = `
+package gcp
+
+func mount(ws *WorkflowSpec, w config.Workflow, c *ctx) {
+	if !c.buildMountsServed() {
+		for _, s := range w.Secrets {
+			ws.SecretEnv[s.Env] = s.Name
+		}
+	}
+}
+`
