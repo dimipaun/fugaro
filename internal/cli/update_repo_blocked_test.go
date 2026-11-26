@@ -147,10 +147,12 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	// The run's own account of what it ran for the project: its one step, the
 	// cloud build, dropped for a repository this run did not onboard — its job
 	// images are that repository's, and a build from a config no cloud run of
-	// the project reads is the half the tolerance is not for. The line names
-	// the repository the step was dropped for (U4).
-	if row := rows[initflow.Checkout].line; !strings.Contains(row, "1 skipped") || !strings.Contains(out, "acme/app: needs you: ") {
-		t.Errorf("the checkout stage's line is %q, want the cloud step dropped for a repository the repository stage did not onboard\n%s", row, out)
+	// the project reads is the half the tolerance is not for. The stage's line
+	// carries the lines' summary (U13: "1 repository: 1 skipped") and the
+	// stage's own sentence about the step it did not run: the summary counts the
+	// repository and never names the step that was dropped for it (U4).
+	if row := rows[initflow.Checkout].line; !strings.Contains(row, "1 skipped") || !strings.Contains(row, "skipped here: acme/app: cloud (") {
+		t.Errorf("the checkout stage's line is %q, want the repository's line counted in it and the cloud step dropped for a repository the repository stage did not onboard\n%s", row, out)
 	}
 	if n := len(r.builder.specs); n != 0 {
 		t.Errorf("%d job image(s) reached Cloud Build from a fugaro.yaml the repository stage did not onboard: %+v\n%s", n, r.builder.specs, out)
