@@ -809,6 +809,12 @@ func TestSettingsSetGateYesTermReadsNoMark(t *testing.T) {
 // control reads the sentence naming the change and nothing about a verdict, and
 // files no record, because no rule read this edit's document.
 //
+// The step the control's edit owes is one that project cannot run: the
+// after-write fence refuses to publish a project layer for a project that is
+// not managed (D1541, T7c), so the control's write lands and the command ends
+// on the sentence that says so (D2614) — the write's own sentence, which claims
+// no verdict either.
+//
 // The mutation caught: Managed.Removes answering true for every project, which
 // hands the control the managed run's sentence and files it a record of a
 // verdict that was never taken.
@@ -832,8 +838,12 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			after := readFileString(t, path)
 			recs := r.audits(t)
 			if !tc.managed {
-				if err != nil {
-					t.Fatalf("a project the marks do not prove is managed was refused: %v\n%s", err, out)
+				want := ErrorText(afterWriteNotLive(afterWriteChange{Key: settingsManagedLayerKey}))
+				if err == nil {
+					t.Fatalf("a project the marks do not prove is managed was left live:\n%s", out)
+				}
+				if got := ErrorText(err); got != want {
+					t.Errorf("the unproven project's command ended on %q, want the one sentence %q", got, want)
 				}
 				assertNoPrompt(t, out)
 				if !strings.Contains(after, "review_rounds: 6") {

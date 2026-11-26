@@ -41,11 +41,18 @@ type userPairLists struct {
 // terraform block, which is the state a test wants when the lists are not the
 // point — the node is present, so nothing is judged against them but the
 // implicit admins, and there are none.
+//
+// The project is a managed one: a write of a key the project layer or the
+// policy node serves publishes it through the after-write hook, which refuses
+// a project that is not managed (D1541, T7c) — so a world that answered "not
+// managed" would leave every such write saved and not live rather than judged
+// by the roles this rig is here for.
 func userPairRig(t *testing.T, lists userPairLists, grants ...accesslib.Grant) (*initRig, *gcpfake.RTDB) {
 	t.Helper()
 	noAgentSession(t)
 	noTerminal(t)
 	r, db := updateBudgetRig(t)
+	r.managedRuns(t, initProjectName, initProject)
 	if len(lists.operators)+len(lists.admins)+len(lists.budgetAdmins) > 0 {
 		r.appendConfig(t, "terraform:\n  launchers: "+yamlList(lists.operators)+"\n  operators: "+yamlList(lists.admins)+"\n  budget_admins: "+yamlList(lists.budgetAdmins)+"\n")
 	}

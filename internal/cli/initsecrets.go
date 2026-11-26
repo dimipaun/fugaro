@@ -285,8 +285,18 @@ func (s *secretsStage) Name() string { return initflow.Secrets }
 // neither --non-interactive nor --yes (which never supplies a secret, and is
 // the flag of an unattended run) nor --json (the output of a caller that reads
 // it: a hard rule, --json never prompts) is set.
+//
+// The update door adds one condition, and only it (D3347, R18): a value is
+// asked for there only under --ask, on any project, so without the flag the
+// stage leaves its one line per missing name and never prompts — which is what
+// makes `fugaro update` ask nothing by default. `setup` keeps the rule above
+// whole: its own steps are confirmed by the person at the terminal already, so
+// its value entry is not behind the flag.
 func (s *secretsStage) canPrompt() bool {
 	o, cmd := s.e.r.o, s.e.r.cmd
+	if s.listDoor() && !o.ask {
+		return false
+	}
 	return !o.nonInteractive && !o.yes && !o.asJSON && agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) == "" &&
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
@@ -372,11 +382,12 @@ func (s *secretsStage) listTargets() []*secretTarget {
 // (D2313, D3347).
 //
 // C1's stand-in answers the update door with the checkout the run was started
-// in, so this is every `update` in a checkout and nothing else (R21). It is a
-// stopgap in one direction only: once I1 connects the real reader the list is
-// the project's enrolled repositories, and a list of many is left with the
-// command that stores each name -- asking there is `--ask`'s, which is U3b's
-// (R18).
+// in, so this is every `update` in a checkout and nothing else for now (R21).
+// It is a stopgap in one direction only: once I1 connects the real reader the
+// list is the project's enrolled repositories, and a list of many is left with
+// the command that stores each name -- asking there is `--ask`'s, which U3b
+// gave the door (R18): canPrompt above turns it on, and a list of many is the
+// reader work I1 still owes.
 func (s *secretsStage) singleCheckout(ctx context.Context, f *os.File) bool {
 	if len(s.list) != 1 || !s.tg.read() || !s.canPrompt() || f == nil {
 		return false
@@ -1299,11 +1310,12 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 	}
 	f := s.terminal()
 	if s.list != nil && !s.singleCheckout(ctx, f) {
-		// The update door asks for no value for a list: a name it cannot read
-		// or store is left with the command that does (D3347), and --ask's
-		// value entry is U3b's. Apply therefore re-reads the list and answers
-		// the loop with it -- nothing to do where every name is stored, and
-		// the lines otherwise.
+		// The update door asks for no value here: singleCheckout is false
+		// without --ask (canPrompt gates it, D3347/R18), where a name it
+		// cannot read or store is left with the command that does, and false
+		// for a list of many even under the flag until I1's reader lands.
+		// Apply therefore re-reads the list and answers the loop with it --
+		// nothing to do where every name is stored, and the lines otherwise.
 		st, err := s.checkList(ctx)
 		if err != nil {
 			return initflow.Outcome{}, err

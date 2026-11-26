@@ -173,6 +173,7 @@ func bitbucketRun(t *testing.T, early bool) {
 		pr = "{ labels: [fugaro], reviewers: [\"{11111111-2222-3333-4444-555555555555}\"] }"
 	}
 	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "provider: github", "provider: bitbucket\n  pr: "+pr, 1)
+	files, layer := liftPins(files)
 	remote := testutil.NewHTTPRemote(t, files, testutil.Token("x-token-auth", token))
 	api := &bitbucketAPI{t: t, token: token}
 	apiSrv := httptest.NewServer(api)
@@ -187,7 +188,7 @@ func bitbucketRun(t *testing.T, early bool) {
 		t.Fatal(err)
 	}
 	taskFile := filepath.Join(tmp, "task.json")
-	if err := os.WriteFile(taskFile, []byte(`{"version":1,"run_id":"`+runID+`","repo":"acme/app","ref":"main","task":"Add a feature"}`), 0o644); err != nil {
+	if err := os.WriteFile(taskFile, taskJSON(t, layer), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

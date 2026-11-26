@@ -3,7 +3,7 @@ The status page the feature matrix's builder is tested against
 (website/test/feature-matrix.mjs; docs/feature-matrix/implementation-plan.md, task T1).
 
 It is **not** `docs/status.md`, and nothing in `npm run check` reads that file (R2). It carries
-the four tables in the real page's own words, and every name in it is one the test's own mapping
+the five tables in the real page's own words, and every name in it is one the test's own mapping
 gives a feature or excludes, so a case that changes one name, one heading or one row has
 something to disagree with.
 
@@ -13,8 +13,14 @@ repository's matrix may not show into the test output (R1).
 
 # A status page, for the builder's tests
 
-As of whenever, read from `main`. This paragraph, the comment above and the rules the four
+As of whenever, read from `main`. This paragraph, the comment above and the rules the five
 tables follow are prose: the builder reads the headings and the rows, and nothing else.
+
+## UAT
+
+| Spec | Merged | Left |
+| --- | --- | --- |
+| uat-spec | 6/6 | the owner's check |
 
 ## Nearly There (NT)
 
