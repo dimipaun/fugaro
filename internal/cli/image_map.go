@@ -55,9 +55,11 @@ func newImageMapSetCmd() *cobra.Command {
 			"owner/name for one the project's local config lists (fugaro update --repo\n" +
 			"onboards one), or as a path inside its checkout; the entry is one this\n" +
 			"machine's catalog names (fugaro image add writes one). Setting a repository\n" +
-			"that is already mapped replaces its entry; the file's map is the project's\n" +
-			"whole map, so a map published from another machine is replaced by this\n" +
-			"file's rather than added to.\n\n" +
+			"that is already mapped replaces its entry. The file's map is the project's\n" +
+			"whole map, and it is what fugaro update publishes: a file that holds none\n" +
+			"of its own takes the map the project publishes into it first — a name the\n" +
+			"migration cannot place is dropped with its line — so a mapping written\n" +
+			"here adds to the project's map rather than replacing it.\n\n" +
 			"This write is a person's own: fugaro update publishes it, and a coding\n" +
 			"agent's session is refused it, in a managed project by that project's gate.",
 		Args: cobra.ExactArgs(2),
@@ -145,13 +147,16 @@ func runImageMapSet(cmd *cobra.Command, o cloudOptions, repo, entry string) erro
 		}
 		return imageMapSession(marker, key, entry)
 	}
-	// A file with no map of its own states the whole map when one entry is
-	// written: under the keep rule (D1906) the publisher takes this file's map
-	// over the published one, so the first mapping written here replaces a map
-	// the node holds rather than adding to it. The note is printed before the
-	// write, because that is when the operator can still change their mind.
+	// A file with no map of its own states the project's map from here on: under
+	// the keep rule (D1906) the publisher takes this file's member over the
+	// published one, so a file that stayed silent would take a map the project
+	// already holds with it. The write meets that map first for exactly this
+	// reason (imageMapWith, R13): what the project serves today is carried into
+	// the file and the mapping is added to it, a name the migration cannot place
+	// excepted. The note is printed before the write, because that is when the
+	// operator can still change their mind.
 	if onDisk.RepoImages == nil && onDisk.ImageMap == nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "note: this machine's project config names no repo-to-image map, so this mapping is written as the project's whole map: if the project already has one published, it is replaced by this file's rather than added to")
+		fmt.Fprintln(cmd.ErrOrStderr(), "note: this machine's project config names no repo-to-image map of its own, so this file states the project's map from here on: the map the project serves today is carried into it, and this mapping is added to that")
 	}
 	// A name the migration could not place is answered with its line: the write
 	// carries the map the project serves today (R13), and a key nothing enrolled

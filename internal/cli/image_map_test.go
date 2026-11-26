@@ -278,6 +278,34 @@ func TestImageMapSetMigratesALegacyMapFirst(t *testing.T) {
 	}
 }
 
+// TestImageMapSetCarriesThePublishedMapIn: the note a file with no map of its
+// own gets is true because this write meets the project's map first (R13), not
+// because the file states a map that replaces the published one. A node holding
+// a map and a file holding none write the node's mappings into the file beside
+// the new one — the node's repo_images is what the write reads (R2) — and the
+// line says what the file becomes rather than what it replaces.
+func TestImageMapSetCarriesThePublishedMapIn(t *testing.T) {
+	f := catalogFixture(t)
+	f.budget.DB.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.budget.DB.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":11,"repo_images":{"bitbucket/acme/sandbox":"base"}}`))
+
+	_, errOut, err := execute(t, "image", "map", "set", "acme/app", "tools")
+	if err != nil {
+		t.Fatalf("image map set: %v\n%s", err, errOut)
+	}
+	_, got := imageMapFile(t)
+	want := map[string]string{"bitbucket/acme/sandbox": "base", "github/acme/app": "tools"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("repo_images = %v, want the published map carried in beside the new mapping: %v", got, want)
+	}
+	if !strings.Contains(errOut, "carried into it") {
+		t.Errorf("stderr = %q, want the note saying the project's map is carried into the file", errOut)
+	}
+	if strings.Contains(errOut, "replaced by this file's") {
+		t.Errorf("stderr = %q, want no claim that the project's map was replaced", errOut)
+	}
+}
+
 // TestImageMapSetTakesACheckoutPath: the repository argument is read the way
 // every --repo is — a path becomes the owner/name of its checkout's origin —
 // and the key written is provider/owner/name, which is the spelling a run looks

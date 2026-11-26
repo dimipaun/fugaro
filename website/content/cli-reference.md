@@ -4350,9 +4350,11 @@ The repository is named as provider/owner/name (github/acme/app), or as
 owner/name for one the project's local config lists (fugaro update --repo
 onboards one), or as a path inside its checkout; the entry is one this
 machine's catalog names (fugaro image add writes one). Setting a repository
-that is already mapped replaces its entry; the file's map is the project's
-whole map, so a map published from another machine is replaced by this
-file's rather than added to.
+that is already mapped replaces its entry. The file's map is the project's
+whole map, and it is what fugaro update publishes: a file that holds none
+of its own takes the map the project publishes into it first — a name the
+migration cannot place is dropped with its line — so a mapping written
+here adds to the project's map rather than replacing it.
 
 This write is a person's own: fugaro update publishes it, and a coding
 agent's session is refused it, in a managed project by that project's gate.
