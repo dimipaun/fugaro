@@ -174,7 +174,8 @@ owner's `fugaro update` (R5, D2971); the reach does not change, since a person a
 served **their own** token and nothing of another's (D2962, D2976). The half is the member's own
 switch (`personal_workspace_tokens`, off when absent, D2972), and a member whose model route is its
 own service shadows it (D3141). §4 of [spec.md](spec.md) still says no member's person is admitted:
-that design's threat model §8 is where the amendment is recorded.
+[../workspace-credentials/threat-model.md](../workspace-credentials/threat-model.md) §8 is where
+the amendment is recorded.
 
 ## The owner's spec, and what was not recovered
 
