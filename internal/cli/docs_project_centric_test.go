@@ -1644,7 +1644,7 @@ func TestChecklistHasCheck50(t *testing.T) {
 		}},
 		{"### 6.", []string{
 			"**FACT:** which route each of the two runs took",
-			"**FACT:** that the `anthropic-api-key` version",
+			"**FACT:** that the version of `$KEY`",
 		}},
 		{"### 7.", []string{
 			"**FACT:** the restore is complete",

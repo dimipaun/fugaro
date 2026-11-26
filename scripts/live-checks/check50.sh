@@ -23,9 +23,11 @@
 #     own routing member and the one word its absence/presence makes
 #     (`no-policy`, `policy-no-routing`, `policy-routing`), the sandbox
 #     checkout's pins at HEAD, the repository's job environment NAMES, the
-#     `anthropic-api-key` version's NUMBER and state, and which route of the
-#     project claims the route's own spelling of the senior — never a value of
-#     any of them;
+#     container that job is fed `ANTHROPIC_API_KEY` from (the key's secret is
+#     derived per scope, `fugaro-<slug>-anthropic-api-key-<hash>`: the check
+#     resolves it from the mount rather than guessing the logical name) and that
+#     version's NUMBER and state, and which route of the project claims the
+#     route's own spelling of the senior — never a value of any of them;
 #   * the refusal (step 2): with the switch written nowhere, a pin naming the
 #     route's own spelling `anthropic/claude-sonnet-5.5`, priced but claimed by
 #     no route entry, must be refused by `fugaro validate` and by the launch —
@@ -110,8 +112,9 @@
 # PRICE_IN, PRICE_OUT, TASK and TASK50 (what the runs carry), RUN_TIMEOUT_SECONDS
 # (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS (180), LAUNCH_TIMEOUT_SECONDS
 # (600), REGION (us-east5), CLAIM_ID (anthropic/claude-sonnet-5.5), PIN_ID
-# (claude-sonnet-5-5), ANTHROPIC_SECRET (anthropic-api-key) and LOG_VIEW (the
-# Cloud Logging scope the calls are read with).
+# (claude-sonnet-5-5), ANTHROPIC_SECRET (resolved: the container the job mounts
+# ANTHROPIC_API_KEY from, read off the job itself; CHECK50_ANTHROPIC_SECRET names
+# one by hand) and LOG_VIEW (the Cloud Logging scope the calls are read with).
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: this check reads log
@@ -486,9 +489,17 @@ elif what == "jobs":
     if chosen is None:
         print("job=")
         print("envs=")
+        print("anthropic_secret=")
     else:
+        env = env_of(container_env(chosen))
         print("job=%s" % text((chosen.get("metadata") or {}).get("name")))
-        print("envs=%s" % ",".join(sorted(env_of(container_env(chosen)).keys())))
+        print("envs=%s" % ",".join(sorted(env.keys())))
+        # The secret the job is actually fed the Anthropic key from: the
+        # container is derived per scope (gcp.SecretID), so the logical name
+        # `anthropic-api-key` names no container at all. A reference may be a
+        # full resource path, so only its last segment is a secret ID.
+        ref = env.get("ANTHROPIC_API_KEY", "")
+        print("anthropic_secret=%s" % (ref.split("/")[-1] if ref else ""))
 elif what == "versions":
     rows = doc if isinstance(doc, list) else []
     newest = ""
@@ -874,10 +885,27 @@ step_state_before() {
   if [ "$BOUNDED_STATUS" = 0 ] && read_json rows "$SCRATCH/rows-all.out" "$SCRATCH/rows-all.txt"; then
     running=$(awk -F'\t' '$1 == "row" && $4 == "false" { n++ } END { print n + 0 }' "$SCRATCH/rows-all.txt")
   fi
-  say "reading the sandbox checkout's pins at HEAD, the job's environment names and the anthropic key's versions"
+  say "reading the sandbox checkout's pins at HEAD, the job's environment (its names, and the key container it mounts) and the anthropic key's versions"
   run_bounded "$CLI_TIMEOUT" yamlhead "$SANDBOX" git show HEAD:fugaro.yaml
   read_jobs jobs
   local job=$JOB_NAME envs=${JOB_ENVS:-unread}
+  # The key's container is derived per scope (`fugaro-<slug>-anthropic-api-key-<hash>`),
+  # so the logical name resolves to nothing: the secret this check moves a
+  # version of is the one the job is actually fed from, and
+  # CHECK50_ANTHROPIC_SECRET names one by hand when the job carries no such
+  # mount (a cascade job is served its key by the credentials service, and none
+  # of the runs below would need this one).
+  ANTHROPIC_SECRET=${ANTHROPIC_SECRET:-$JOB_ANTHROPIC_SECRET}
+  if [ -z "$job" ]; then
+    unmeasured state-before "no job of ${REPO} is in 'gcloud run jobs list' for ${GCP_PROJECT}: the job's environment is one of the things step 7 compares, and a repository with no job has none to read. Run 'fugaro update --repo .' in ${SANDBOX} once, then run this check"
+    PREMISES=no
+    return 0
+  fi
+  if [ -z "$ANTHROPIC_SECRET" ]; then
+    unmeasured state-before "the job ${job} mounts no ANTHROPIC_API_KEY, so this check cannot name the secret whose version it disables and re-enables, and the direct runs need that key. Name it with CHECK50_ANTHROPIC_SECRET=<the secret> and run the check again. The names the job's environment carries are ${envs:-unread}"
+    PREMISES=no
+    return 0
+  fi
   run_bounded "$CLI_TIMEOUT" versions "$SANDBOX" gcloud secrets versions list "$ANTHROPIC_SECRET" \
     --project="${GCP_PROJECT:?}" --format=json
   local version="none" vstate="none"
@@ -885,12 +913,11 @@ step_state_before() {
     version=$(field "$SCRATCH/versions.txt" newest)
     vstate=$(awk -F'\t' -v v="$version" '$1 == "version" && $2 == v { print $3 }' "$SCRATCH/versions.txt")
   fi
+  # A container that exists with no version at all answers with an empty list
+  # and exit 0, which is the fresh installation terraform leaves: it reads as
+  # "no version" and not as the versionless one the row below would name.
+  [ -n "$version" ] || version=none
   VERSION="$version"
-  if [ -z "$job" ]; then
-    unmeasured state-before "no job of ${REPO} is in 'gcloud run jobs list' for ${GCP_PROJECT}: the job's environment is one of the things step 7 compares, and a repository with no job has none to read. Run 'fugaro update --repo .' in ${SANDBOX} once, then run this check"
-    PREMISES=no
-    return 0
-  fi
   if [ "$version" = none ]; then
     unmeasured state-before "the installation ${GCP_PROJECT} lists no version of the secret ${ANTHROPIC_SECRET}: the direct runs need that key and the safeguard and the auto case disable and re-enable one of its versions — never a destroy — so this check cannot measure either half. What gcloud printed is in $SCRATCH/versions.err"
     PREMISES=no
@@ -1473,7 +1500,7 @@ step_restore() {
     fi
   elif [ "$VERSION_DISABLED" = yes ]; then
     notes="$notes version ${VERSION} of ${ANTHROPIC_SECRET} was disabled by this check and this run never read the project's name, so it cannot enable it again — enable it by hand: 'gcloud secrets versions enable ${VERSION} --secret=${ANTHROPIC_SECRET} --project=<the project> --quiet', and read the state back;"
-  elif [ -n "$GCP_PROJECT" ]; then
+  elif [ -n "$GCP_PROJECT" ] && [ -n "$ANTHROPIC_SECRET" ]; then
     notes="$notes version ${VERSION:-none} of ${ANTHROPIC_SECRET} reads ENABLED (the state step 1 recorded), and no probe version was left behind;"
   else
     notes="$notes no secret version was moved: this run stopped before it read the key's versions;"
@@ -1644,7 +1671,7 @@ finish() {
 plan() {
   say "CHECK 50 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [read] fugaro doctor --json in ${SANDBOX} — the installation, and the repository from the checkout's origin"
-  say "  [read] fugaro project show --json, fugaro models ls --json, fugaro runs ls --all, the config's routing: block, the pins at HEAD, the job's environment names, the anthropic key's versions"
+  say "  [read] fugaro project show --json, fugaro models ls --json, fugaro runs ls --all, the config's routing: block, the pins at HEAD, the job's environment names and the key container it mounts, the anthropic key's versions"
   say "  [WRITES, no cloud] the sandbox checkout's fugaro.yaml pin, priced: fugaro models price set ${CLAIM_ID}"
   say "  [network] fugaro validate and one launch of a PRICED but unclaimed pin — both must refuse, and the run must not start"
   say "  [WRITES] gcloud secrets versions disable/enable of the anthropic key (reversible), and the note fugaro validate prints with no key"
@@ -1710,20 +1737,24 @@ models_only_route() {
   printf '%s' "$routes"
 }
 
-# read_jobs KEY: the repository's job and its environment NAMES, from the job
-# list the installation writes — the job is matched by the repository's own
-# FUGARO_REMOTE and by the fugaro_repo label, and only the environment's NAMES
-# are ever read (FUGARO_FIREBASE_API_KEY is a credential; FUGARO_MODEL_PRICES is
-# the price table the switch's ID is charged from). Sets JOB_NAME and JOB_ENVS;
-# both are empty when the list did not answer or holds no job.
+# read_jobs KEY: the repository's job, its environment NAMES and the container
+# it is fed the Anthropic key from, out of the job list the installation writes —
+# the job is matched by the repository's own FUGARO_REMOTE and by the fugaro_repo
+# label, and only the environment's NAMES are ever read (FUGARO_FIREBASE_API_KEY
+# is a credential; FUGARO_MODEL_PRICES is the price table the switch's ID is
+# charged from) plus the ANTHROPIC_API_KEY mount's own secret ID, which is a name
+# and not a value. Sets JOB_NAME, JOB_ENVS and JOB_ANTHROPIC_SECRET; all three are
+# empty when the list did not answer or holds no job.
 read_jobs() { # read_jobs KEY
   JOB_NAME=""
   JOB_ENVS=""
+  JOB_ANTHROPIC_SECRET=""
   run_bounded "$CLI_TIMEOUT" "$1" "$SANDBOX" gcloud run jobs list \
     --project="${GCP_PROJECT:?}" --region="${REGION_USED:-$REGION}" --format=json
   if [ "$BOUNDED_STATUS" = 0 ] && read_json jobs "$SCRATCH/$1.out" "$SCRATCH/$1.txt" "$REPO"; then
     JOB_NAME=$(field "$SCRATCH/$1.txt" job)
     JOB_ENVS=$(field "$SCRATCH/$1.txt" envs)
+    JOB_ANTHROPIC_SECRET=$(field "$SCRATCH/$1.txt" anthropic_secret)
   fi
 }
 
@@ -1909,7 +1940,9 @@ REGION=${CHECK50_REGION:-us-east5}
 GCP_PROJECT_WANT=${CHECK50_GCP_PROJECT:-$GCP_PROJECT_WANT}
 CLAIM_ID=${CHECK50_CLAIM_ID:-anthropic/claude-sonnet-5.5}
 PIN_ID=${CHECK50_PIN_ID:-claude-sonnet-5-5}
-ANTHROPIC_SECRET=${CHECK50_ANTHROPIC_SECRET:-anthropic-api-key}
+# Empty means "not named yet": step 1 resolves it from the job's own
+# ANTHROPIC_API_KEY mount, and CHECK50_ANTHROPIC_SECRET is the override.
+ANTHROPIC_SECRET=${CHECK50_ANTHROPIC_SECRET:-}
 LOG_VIEW=${CHECK50_LOG_VIEW:-}
 RUN_TIMEOUT=${CHECK50_RUN_TIMEOUT_SECONDS:-3600}
 POLL_SECONDS=${CHECK50_POLL_SECONDS:-15}
