@@ -566,7 +566,8 @@ func TestUpgradeCheckLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	if err := os.WriteFile(record, []byte(plugins), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, _ := executeStdin(t, "", "update", "--check", root)
+	t.Chdir(root)
+	out, _, _ := executeStdin(t, "", "update", "--check")
 	if !strings.Contains(out, "plugin: current: installed 0.5.2") || strings.Contains(out, "plugin: stale") {
 		t.Fatalf("%s", out)
 	}
@@ -592,7 +593,8 @@ func TestUpgradeCheckSeesNoUserScopeInstallBesideThisCheckoutsProjectInstall(t *
 	if err := os.WriteFile(record, []byte(plugins), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, _ := executeStdin(t, "", "update", "--check", root)
+	t.Chdir(root)
+	out, _, _ := executeStdin(t, "", "update", "--check")
 	if strings.Contains(out, "plugin: current") {
 		t.Fatalf("the checkout's own install was read as the machine's:\n%s", out)
 	}
@@ -622,7 +624,8 @@ func TestUpgradeCheckReadsTheMachineOnACheckoutWithNoSettings(t *testing.T) {
 	if err := os.WriteFile(record, []byte(plugins), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := executeStdin(t, "", "update", "--check", root)
+	t.Chdir(root)
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, want 1 for a plugin a release behind\n%s", ExitCode(err), out)
 	}
@@ -686,7 +689,8 @@ func TestUpgradeCheckRunsNoClaude(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	out, _, err := executeStdin(t, "", "update", "--check", root)
+	t.Chdir(root)
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError || len(f.Calls(t)) != 0 || !strings.Contains(out, "plugin: stale: installed 0.5.1, this fugaro is 0.5.2") {
 		t.Fatalf("exit %d, calls %+v\n%s", ExitCode(err), f.Calls(t), out)
 	}
@@ -772,7 +776,8 @@ func TestUpgradeCheckPluginNewerThanFugaro(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	out, _, err := executeStdin(t, "", "update", "--check", root)
+	t.Chdir(root)
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if !strings.Contains(out, "plugin: current: installed 0.6.0, newer than this fugaro 0.5.2 (brew upgrade dimipaun/tap/fugaro)") || strings.Contains(out, "plugin: stale") {
 		t.Fatalf("%v\n%s", err, out)
 	}

@@ -134,9 +134,10 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 		"**`--local` is gone**",
 		// The usage block is this door's, not the retired command's under a new
 		// name: `--repo` is a switch and PATH is its argument, `--check` takes
-		// PATH too, and there is no `--workflow` (init.go's flag set, and its
-		// own Use is "update [--repo [PATH]]").
-		"fugaro update [--check [PATH]]",
+		// none (it reads the project's own repositories, U10), and there is no
+		// `--workflow` (init.go's flag set, and its own Use is
+		// "update [--repo [PATH]]").
+		"fugaro update [--check]",
 		"[--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...",
 	} {
 		if !strings.Contains(doc, want) {
