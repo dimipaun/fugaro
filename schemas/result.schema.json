@@ -41,6 +41,7 @@
       }
     },
     "draft_fallback": { "type": "boolean", "description": "The host refused draft pull requests; the PR is a normal one with a [DRAFT] title prefix." },
+    "needs_guidance": { "type": "boolean", "description": "The run's agent asked a question it may not settle by itself (docs/rigor-modes/levels-implementation-plan.md LV5.2, levels-reconciliation.md LD8, LF11): a scope, cost or data-model call the agent stopped on rather than make. The run ends a draft whose status section opens with OPEN QUESTIONS, and a follow-up (or the orchestrator) answers it. A flag beside `outcome` and not a second ending: `outcome` stays draft and `reason` keeps the sentence that says why. Absent for a run that asked nothing, which is every record written before the field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21)." },
     "reviews": {
       "type": "array",
       "items": {

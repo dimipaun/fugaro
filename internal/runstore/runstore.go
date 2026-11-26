@@ -1711,7 +1711,18 @@ type Record struct {
 	Status          Status  `json:"status"`
 	Stage           string  `json:"stage"`
 	Outcome         Outcome `json:"outcome"`
-	Reason          string  `json:"reason,omitempty"`
+	// NeedsGuidance is set on a run whose own hand-back file asked a question
+	// the run may not settle by itself (docs/rigor-modes/levels-implementation-plan.md
+	// LV5.2, levels-reconciliation.md LD8, LF11): a scope, cost or data-model
+	// call the agent stopped on rather than make. The run ends a draft whose
+	// status section opens with OPEN QUESTIONS, and a follow-up — or the
+	// orchestrator — answers it. It is a flag beside Outcome and not a second
+	// ending: Outcome stays draft, Reason keeps the sentence that says why, and
+	// a run that asked nothing carries the field absent. Additive, so an old
+	// reader sees the record it always saw and the format's version stays 1
+	// (F21).
+	NeedsGuidance bool   `json:"needs_guidance,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 	// FailureClass is why the run did not end succeeded, in the closed
 	// vocabulary of internal/failure (docs/failure-classes/design.md §3). It
 	// is additive beside Reason, which keeps its text and its meaning: the

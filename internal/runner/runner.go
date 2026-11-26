@@ -6935,6 +6935,13 @@ func (r *run) finalize(ctx context.Context) error {
 	// of it (LV5.1).
 	hb, fromAgent := r.handBack()
 	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions, hb, fromAgent, r.owesHandBack())
+	// The run's own answer about the questions its agent asked (LV5.2): read off
+	// the decision rather than the hand-back again, and written here and not by
+	// the ending below, because it is a fact about what the run left open and
+	// not a second word for why it stopped — a run that asked a question and
+	// then failed for its own reason still asked it, and a follow-up can still
+	// answer.
+	r.rec.NeedsGuidance = dec.NeedsGuidance
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	// The cap's leftovers are filed beside them and before the body is built:
