@@ -922,11 +922,11 @@ func TestPublishingTheOldWordIsRefused(t *testing.T) {
 		repo    string
 		refused bool
 	}{
-		{name: "the word, on a switched api-key repository", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
-		{name: "the word, on a switched oauth repository", auth: config.AuthOAuth, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
-		{name: "the word, on a repository whose root was applied without the service", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc, repo: plain, refused: true},
-		{name: "the word, on a repository whose record says cascade", auth: config.AuthCascade, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
-		{name: "the word, on an installation with no credentials service", auth: config.AuthAPIKey, mode: config.BudgetOff, repo: switched, refused: true},
+		{name: "the word, on a switched api-key repository", auth: config.AuthAPIKey, mode: "off", svc: svc, repo: switched, refused: true},
+		{name: "the word, on a switched oauth repository", auth: config.AuthOAuth, mode: "off", svc: svc, repo: switched, refused: true},
+		{name: "the word, on a repository whose root was applied without the service", auth: config.AuthAPIKey, mode: "off", svc: svc, repo: plain, refused: true},
+		{name: "the word, on a repository whose record says cascade", auth: config.AuthCascade, mode: "off", svc: svc, repo: switched, refused: true},
+		{name: "the word, on an installation with no credentials service", auth: config.AuthAPIKey, mode: "off", repo: switched, refused: true},
 		{name: "observe", auth: config.AuthAPIKey, mode: config.BudgetObserve, svc: svc, repo: switched},
 		{name: "enforce", auth: config.AuthAPIKey, mode: config.BudgetEnforce, svc: svc, repo: switched},
 	} {

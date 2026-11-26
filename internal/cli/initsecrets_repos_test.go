@@ -81,7 +81,7 @@ func TestSecretsStageNamesEveryRepository(t *testing.T) {
 	}
 
 	var repos []string
-	for _, l := range r.e.reposState.reported {
+	for _, l := range r.e.reposState.stages {
 		for _, line := range l.lines {
 			repos = append(repos, line.Repo)
 		}
@@ -143,7 +143,7 @@ func TestSecretsStageReportsEveryRepositoryLine(t *testing.T) {
 		t.Fatalf("acme/app is %q, want done: every name its jobs mount is stored (detail %q)", got, r.stage.list[0].detail)
 	}
 	var lines []initflow.RepoLine
-	for _, l := range r.e.reposState.reported {
+	for _, l := range r.e.reposState.stages {
 		lines = append(lines, l.lines...)
 	}
 	want := map[string]initflow.RepoState{"acme/app": initflow.RepoDone, "acme/lib": initflow.RepoNeedsYou}

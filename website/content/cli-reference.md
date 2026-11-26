@@ -3710,14 +3710,14 @@ so, and a bucket read that does not answer leaves its image line out instead
 of failing the command.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
-CI. --strict makes a stale, unpinned or foreign plugin fail the command. A
-checkout that never opted in to the pin is informational rather than a
-failure, because nothing in the tree writes a pin any more and that checkout is
-the normal one; "cannot compare" — a development build, an unreadable install
-record — is informational too. "not installed" is a warning, because the
-plugin on this machine is what carries the skills. A repository's CI runs
-fugaro doctor --plugin --strict; with --strict the install on the machine is
-not evaluated at all, because a runner has no Claude Code.
+CI. "cannot compare" — a development build, an unreadable install record — is
+informational. "not installed" is a warning, because the plugin on this
+machine is what carries the skills, and --strict is what fails on it. A
+runner has no Claude Code, so with --strict no install is evaluated at all.
+What a repository's own tree still pins, or still says budget.mode: off, is
+no longer this mode's to report: repo-plugin-pin and repo-budget-mode read
+every enrolled repository's default branch, and this mode reports both as not
+read.
 
 --offline checks the update class and nothing else, and it makes no cloud call,
 no network call and no secret read: the plugin's wiring and the install on this
@@ -3769,7 +3769,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
-| `--strict` | bool | `false` | no | fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure |
+| `--strict` | bool | `false` | no | fail the command on a warning, not only an error: the plugin this machine does not have, a run that launched without the project layer (CI mode) |
 
 Subcommands:
 
@@ -7405,7 +7405,11 @@ from the project's other repositories. It prints the whole list of what it
 will change, asks once for the project's name, and then does each step as
 far as it can:
 
-  1. the repository's own fugaro.yaml: read (a repository with none gets a pull request for the starter; merge it, run again)
+  1. the repository's own fugaro.yaml: read for its workflows and its
+     base branch, and written only for the anchor line, through the gate,
+     in that repository's own checkout (a repository with none gets a pull
+     request for the starter on a branch of its own; merge it, run again:
+     until it is merged a second run finds that pull request, writes nothing)
   2. this machine's project config: the repository's repos: entry (and, when
      its fugaro.yaml names a Claude account by agent.oauth_token, the
      repository in that one account's allow_data_to, which the next
@@ -7429,6 +7433,12 @@ is mapped and never built — the first image build is billable and it is
 map the published node holds, so enrolling one repository cannot take
 another's mapping away. Nothing here asks a run to finish, and nothing
 rewrites what a run in flight holds.
+
+On Bitbucket the starter's pull request is opened with the installation's own
+bitbucket-token secret — the repository's own container, or the project-wide
+copy an owner stored and allow-listed — read with your credentials and never
+printed or logged; a machine that holds neither is refused with the command
+that stores one.
 
 --allow-list-only writes the published allow-list entry and nothing else,
 as this command did before the enrolment converged: it is what * needs, and
@@ -8882,6 +8892,7 @@ Flags:
 | `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
 | `--path` | stringArray | `[]` | no | declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule |
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |
+| `--pool` | string | "" | no | the pool "the launcher's pool" resolves to for this run, from a pool you own or are allowed on (`fugaro accounts pool ls` lists them): the run's grant carries the name and the credentials service holds it to the pools you are entitled to. Refused where no chain of the run's models names the launcher's pool; a follow-up (--pr) names its own pool, and only a resume keeps the pool its launch named |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--promote` | bool | `false` | no | raise the area named as this launch's one argument to the mode given with --mode, instead of running a task of your own: the run reads that area's backlog items and its code, works at the mode asked for, and closes the items it pays down (the ones whose code its own diff changes, and no others). The area is a rule this repository's own fugaro.yaml declares (rigor.areas), and its paths are the launch's declared paths, so --path is refused with it; a mode below the level the area already resolves to is refused, and equal is allowed; hotfix is never a target. Needs --mode and a checkout of the repository in the working directory |
@@ -8897,7 +8908,7 @@ Flags:
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
 | `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and one whose chain names nothing and which has no task of its own is refused, naming --title |
-| `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
+| `--token` | string | "" | no | retired: name the pool this run should draw on with --pool. It still names the Claude account a workflow whose agent.auth is oauth runs as where no chain of the run's models names the launcher's pool — the account pools an oauth chain is made of — and is refused where one does; default: agent.oauth_token in fugaro.yaml, else the repository's default account, and a follow-up (--pr) keeps its previous run's account unless this is given explicitly |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--used-review-rounds` | string | "" | no | state that the chain has already spent N review rounds, such as 2: tighten-only like --used-usd |
 | `--used-time` | string | "" | no | state that the chain has already used this much wall time, as a duration such as 45m: tighten-only like --used-usd |

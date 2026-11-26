@@ -195,9 +195,9 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 		{name: "api-key under enforce", auth: "api-key", mode: BudgetEnforce, coder: coder, def: "acme-overflow", stages: mixed},
 		{name: "api-key under observe", auth: "api-key", mode: BudgetObserve, coder: coder, def: "acme-overflow", stages: mixed,
 			want: []string{"budget.mode", "enforce", "observe", "default_claude_account", "stages.review.claude_account", "openrouter"}},
-		{name: "api-key under off, the project default alone", auth: "api-key", mode: BudgetOff, coder: coder, def: "acme-overflow",
+		{name: "api-key under off, the project default alone", auth: "api-key", mode: "off", coder: coder, def: "acme-overflow",
 			want: []string{"budget.mode", "default_claude_account"}},
-		{name: "api-key under off, a stage key alone", auth: "api-key", mode: BudgetOff, coder: coder, stages: mixed,
+		{name: "api-key under off, a stage key alone", auth: "api-key", mode: "off", coder: coder, stages: mixed,
 			want: []string{"budget.mode", "stages.adversarial.claude_account"}},
 		// The sentinel is not an account: a local config may spell the project
 		// default "default" (localcfg's choiceRefProblem admits it), which names
@@ -208,7 +208,7 @@ func TestCheckMixBudgetIsTheModeClause(t *testing.T) {
 		// nothing, and on the launch's side it would invent the second
 		// credential mixedStageAccount refuses.
 		{name: "api-key under observe, the project default is the sentinel", auth: "api-key", mode: BudgetObserve, coder: coder, def: DefaultClaudeAccount},
-		{name: "api-key under off, the sentinel beside a real stage key", auth: "api-key", mode: BudgetOff, coder: coder, def: DefaultClaudeAccount,
+		{name: "api-key under off, the sentinel beside a real stage key", auth: "api-key", mode: "off", coder: coder, def: DefaultClaudeAccount,
 			stages: map[string]string{"review": "acme-overflow"},
 			want:   []string{"budget.mode", "stages.review.claude_account"}, notWant: []string{"default_claude_account"}},
 		// The clause is judged only where the run has the shape that could mix:

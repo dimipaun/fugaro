@@ -99,7 +99,7 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	// test's own claim is read over.
 	stampReleaseAnswers(t, http.StatusOK)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"})
 
 	// One note, one fact per line: the runs are in flight and the update leaves
 	// them running. No refusal, and never a request to wait — the owner's ruling
@@ -248,7 +248,7 @@ func TestUpdateCountsPausedRuns(t *testing.T) {
 		if paused {
 			startPausedRunInFlight(t, r, cancelled)
 		}
-		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 	}
 	t.Run("a standing pause is counted", func(t *testing.T) {
 		got := line(t, true, false)
@@ -274,7 +274,7 @@ func TestUpdateCountsPausedRuns(t *testing.T) {
 		// The node is there and nothing cancelled it: what is missing is the run
 		// that ended `paused`, which is the half a resume reads.
 		startPausedRunWith(t, r, false, runstore.StatusSucceeded)
-		got := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		got := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 		if !strings.Contains(got, "1 run in flight") || strings.Contains(got, "paused") {
 			t.Errorf("the note counts a node whose run did not end paused as a paused run in flight, and nothing will resume it: %q", got)
 		}
@@ -307,7 +307,7 @@ func TestRunInFlightSurvivesPolicyBump(t *testing.T) {
 	r := newConvergeRig(t, v7Node())
 	run := startRunInFlight(t, r)
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
 		t.Errorf("after the update the published node is version %d, want this binary's %d: the policy stage did not carry a version-7 node forward, and a run that re-reads the policy mid-run meets a node the release that left it cannot explain", got, projectpolicy.Version)
@@ -379,7 +379,7 @@ func TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch(t *testing.T) {
 	putSwitchBundle(t, r.initRig, []byte(config.BitbucketSecret+": "+credsValue(t, "bb")+"\n"))
 	run := startRunInFlight(t, r)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// The switch turned, in this run and in this file, and the node carries the
 	// block derived from the same entry: the pair resolveBitbucketProxied reads.
@@ -422,7 +422,7 @@ func TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch(t *testing.T) {
 func TestUpdateSaysNothingWhenNothingRuns(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"})
 
 	if strings.Contains(out, "update waits for none") {
 		t.Errorf("the update said runs are in flight over an empty registry:\n%s", out)
@@ -652,7 +652,7 @@ func TestUpdateInFlightLineCountsTheRunsOnTheOldRecord(t *testing.T) {
 		// itself, so the record it reads is the one standing here — which is the
 		// record the runner of that run left, image and all.
 		seedRunRecordImage(t, run.slug, inFlightRunID, image)
-		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 	}
 	t.Run("an image built before the table is counted", func(t *testing.T) {
 		built := chainIntroduced.Add(-time.Hour)
@@ -730,7 +730,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		})}
 		r.save(t)
 		startRunInFlight(t, r)
-		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 	}
 	t.Run("the node's version rises and the service moves", func(t *testing.T) {
 		got := line(t, v7Node())
@@ -795,7 +795,7 @@ func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
 		}
 		startRunInFlight(t, r)
-		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"}))
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"}))
 	}
 	t.Run("a version-3 fact is rewritten", func(t *testing.T) {
 		got := line(t, markerBuildsFact, true)

@@ -152,7 +152,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro project repos add acme/app in the repository's checkout, before you merge a change that adds gcp_project"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -266,7 +266,7 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 	}
 	want := wantFail("app", "base", r.cfg, true, reasonConfigBaseCustom(ref, "base"))
 	for _, s := range []string{"the local config's base image " + ref + " for kind base is not a release >= 0.4.0", "is never replaced by fugaro update --base or fugaro image refresh",
-		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro update --anchor"} {
+		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro project repos add acme/app in the repository's checkout, before you merge a change that adds gcp_project"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -730,10 +730,10 @@ func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
 }
 
 // With no base kind known, fugaro image refresh cannot be named (it needs a
-// kind), so the fix is fugaro image build for the workflow, then --anchor.
+// kind), so the fix is fugaro image build for the workflow, then repos add.
 func TestAnchorProblemTextKindUnknownNamesImageBuild(t *testing.T) {
 	got := anchorProblemText("acme/app", "app", "", "", []string{"x"}, false)
-	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro update --anchor, before you merge"
+	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro project repos add acme/app in the repository's checkout, before you merge"
 	if !strings.Contains(got, want) || strings.Contains(got, "image refresh") {
 		t.Errorf("%s\nwant it to contain %q and no image refresh", got, want)
 	}

@@ -91,7 +91,7 @@ func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) 
 	if n := len(r.builder.specs); n != 0 {
 		t.Errorf("%d job image(s) reached Cloud Build from a fugaro.yaml the repository stage did not onboard: %+v\n%s", n, r.builder.specs, out)
 	}
-	if !strings.Contains(out+errOut, "skipped here: acme/app: cloud (") {
-		t.Errorf("the cloud step was not parked by name:\n%s\n%s", out, errOut)
+	if got := res.state(initflow.Checkout); got == "done" || !strings.Contains(out+errOut, `"repo": "acme/app"`) {
+		t.Errorf("the checkout stage did not park the cloud step for acme/app:\n%s\n%s", out, errOut)
 	}
 }

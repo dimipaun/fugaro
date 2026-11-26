@@ -233,7 +233,7 @@ release, so what it measures is the only evidence the claim stands on (R4 as re-
   `TestTheJobIsRegisteredAfterTheCreateWithItsId`, `TestASealedBatchLaunchIsRefused`,
   `TestABatchLaunchWithoutTheOptInIsRefusedWithItsFix`, `TestTheLaunchNamesTheServicesReason`,
   `TestTheTicketIsRedactedAndNotRecorded`, `TestAFailedTicketCreatesNothing`.
-- Command: `go test ./internal/backend/batch/ -run 'BatchLaunchCarriesTheTicket|TicketNamesTheJob|JobIsRegisteredAfter|SealedBatchLaunchIsRefused|WithoutTheOptInIsRefused|TicketIsRedacted|FailedTicketCreatesNothing' -count=1 && go test ./internal/cli/ -run 'LaunchBatch|NamesTheServicesReason|Docs' -count=1`.
+- Command: `go test ./internal/backend/batch/ -run 'BatchLaunchCarriesTheTicket|TicketNamesTheJob|JobIsRegisteredAfter|SealedBatchLaunchIsRefused|WithoutTheOptInIsRefused|TicketIsRedacted|FailedTicketCreatesNothing' -count=1 && go test ./internal/cli/ -run 'BatchLaunchCarriesTheTicket|TicketNamesTheJob|JobIsRegisteredAfter|SealedBatchLaunchIsRefused|WithoutTheOptInIsRefused|TicketIsRedacted|FailedTicketCreatesNothing|NamesTheServicesReason|Docs' -count=1`.
 - Red step: the plain marker appears among the job's variables, or the ticket is set without the
   job's name.
 - Depends on: C1 (the ticket's job field and the registration's route); BRS (kept: one file,

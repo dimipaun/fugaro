@@ -93,7 +93,7 @@ func TestTheSwitchRecordIsUnchangedForObserveAndEnforce(t *testing.T) {
 		{name: "an oauth repository on a node that says enforce", yaml: oauthLaunchYAML, mode: config.BudgetEnforce, published: true},
 		{name: "an api-key repository on a node that says observe", yaml: apiKeyLaunchYAML, mode: config.BudgetObserve, published: true},
 		{name: "an api-key repository on a node that says enforce", yaml: apiKeyLaunchYAML, mode: config.BudgetEnforce, published: true},
-		{name: "an api-key repository on a node that says the word", yaml: apiKeyLaunchYAML, mode: config.BudgetOff, published: true},
+		{name: "an api-key repository on a node that says the word", yaml: apiKeyLaunchYAML, mode: "off", published: true},
 		{name: "an oauth repository on a project that published no policy", yaml: oauthLaunchYAML, published: false},
 	} {
 		plain, _ := launchWithCredentialsServiceMode(t, tc.yaml, launchCredsURL, true, tc.mode, tc.published)

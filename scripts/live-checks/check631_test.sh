@@ -340,8 +340,10 @@ project)
       printf 'fugaro: the node could not be read back\n' >&2
       exit 1
     fi
+    node_access=$(cat "$state/access")
+    if [ "$mode" = craft-no-access ]; then node_access=""; fi
     printf '{"project":"%s","policy":{"version":10,"craft_credentials":[{"name":"%s","type":"anthropic"}],"craft_pools":[{"name":"%s","strategy":"failover","members":["%s"]}],"crafts":{"%s":{"model":"deepseek/deepseek-v4","access":"%s"}}}}\n' \
-      "$installation" "$anthropic" "$pool" "$anthropic" "$craft" "$pool"
+      "$installation" "$anthropic" "$pool" "$anthropic" "$craft" "$node_access"
     ;;
   *) printf 'fugaro: unexpected policy subcommand\n' >&2; exit 1 ;;
   esac
