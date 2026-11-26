@@ -275,6 +275,11 @@ test_the_happy_path() {
   # order, and the premise says where the tree came from.
   expect_contains "$out" "origin/main" "the premise names the ref it copied"
   expect_contains "$out" "ab.rate" "the premise names the key it judges"
+  # The copy carries the checkout's own origin remote and the block never prints
+  # its URL: an origin can carry a token, and this block is what the owner copies
+  # back out of their terminal.
+  expect_not_contains "$out" "app-origin.git" "the premise does not print the origin URL"
+  expect_not_contains "$err" "app-origin.git" "nothing else prints the origin URL"
   # The three reads really happened, on the copy, and only these three.
   local calls
   calls=$(cat "$CALLS")

@@ -27403,7 +27403,7 @@ back, and its last line is the verdict and the exit status:
 - **INCOMPLETE** (exit 2): the run stopped before it could judge — a guard refused it, a tool is missing, the
   project's local config or the checkout is not there, or the checkout names no default branch.
 - **INCOMPLETE** (exit 3): it judged, and a read it needed did not answer (**UNVERIFIED**) — a refusal that names
-  neither the key nor its fix, so what it refused is something else, or a plan that stopped for a reason of its own.
+  the key not at all, so what it refused is something else, or a plan that stopped for a reason of its own.
 
 **OWNER-RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check-912-lift-refusal_test.sh`, which drives it against a fake `fugaro` on `PATH` (a release

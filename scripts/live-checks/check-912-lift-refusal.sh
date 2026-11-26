@@ -591,7 +591,7 @@ ORIGIN_URL=$(git -C "$CHECKOUT" remote get-url origin 2>/dev/null || true)
 if [ -z "$ORIGIN_URL" ]; then
   ORIGIN_URL_NOTE="and this checkout names no origin remote, so the copy's reads resolve no repository of their own"
 else
-  ORIGIN_URL_NOTE="with the checkout's own origin URL ($ORIGIN_URL)"
+  ORIGIN_URL_NOTE="with the checkout's own origin remote, whose URL this block never prints (an origin can carry a token, and this block is what you copy back)"
   git -C "$CLONE" remote add origin "$ORIGIN_URL"
 fi
 
