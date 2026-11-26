@@ -124,8 +124,8 @@ case "${1:-} ${2:-}" in
     # the check's own throwaway job is absent unless a case puts one there (a
     # file probe-exists). WHICH words the absence is answered with is the case's
     # to choose, through probe-absent.err: the real gcloud says
-    # `Cannot find job [NAME].` and older/accepted spellings say NOT_FOUND, and
-    # the guard has to read both as the same answer.
+    # `Cannot find job [NAME].`, and `NOT_FOUND: job ... not found` is the other
+    # spelling the guard accepts.
     if [ "${4:-}" = "$FAKE840_PROBE" ]; then
       if [ -f "$FAKE840_DIR/probe-exists" ]; then
         cat "$FAKE840_DIR/probe.json"
