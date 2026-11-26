@@ -13,6 +13,16 @@ measures, and the command an owner runs it with, is in
 check and a row in its register. Running a check for real is owner-run; nothing
 here needs an account.
 
+The repo-override-rulings plan's three checks are here too, all owner-run:
+`check-910-lift-snapshot.sh` (Check 910, the lifted values of every enrolled
+repository, read before release A's `fugaro update`), `check-911-lift-compare.sh`
+(Check 911, the same read after it, compared with that snapshot) and
+`check-912-lift-refusal.sh` (Check 912, release B refusing a lifted key on the
+default branch and naming it on a follow-up ref). What each measures and the
+command to run it with is in
+[`docs/gcp-live-checklist.md`](../../docs/gcp-live-checklist.md), as the paragraph
+above says of every script here.
+
 `go test ./scripts` runs every `_test.sh` through `TestLiveCheckScripts`
 (`scripts/live_checks_test.go`, which lists them). One script's own test can also
 be run by hand:
