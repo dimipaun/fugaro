@@ -13,13 +13,16 @@ measures, and the command an owner runs it with, is in
 check and a row in its register. Running a check for real is owner-run; nothing
 here needs an account.
 
-The repo-override-rulings plan's three checks are here too, all owner-run:
+The repo-override-rulings plan's four checks are here too, all owner-run:
 `check-910-lift-snapshot.sh` (Check 910, the lifted values of every enrolled
 repository, read before release A's `fugaro update`), `check-911-lift-compare.sh`
-(Check 911, the same read after it, compared with that snapshot) and
+(Check 911, the same read after it, compared with that snapshot),
 `check-912-lift-refusal.sh` (Check 912, release B refusing a lifted key on the
 default branch, naming it on a follow-up ref and naming it, with its fix, in
-`fugaro update --plan-only`'s plan). What each measures and the
+`fugaro update --plan-only`'s plan) and `check-913-retry-image.sh` (Check 913,
+every still-running execution's own image against its job's after release A's
+update, which settles the plan's U1: whether a retried execution boots on the
+rebuilt image). What each measures and the
 command to run it with is in
 [`docs/gcp-live-checklist.md`](../../docs/gcp-live-checklist.md), as the paragraph
 above says of every script here.

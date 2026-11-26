@@ -7,16 +7,22 @@
 #
 # The fakes are a small model of one sandbox machine: the fake `fugaro` answers
 # version, `ab --help`, `doctor --json`, `config layer --json`, the launches (each
-# one a counter, so the run IDs are the case's) and the runs list; the fake
-# `gcloud` serves a record per run ID out of the case's own directory and lists
-# an object unless the case says it is missing; the fake `git` holds a branch
-# list the case writes and really deletes from it, and the fake `gh` holds pull
-# request states it really moves from OPEN to CLOSED — so the teardown's own
-# read-backs are readings of state that changed, not of a log.
+# one a counter, so the run IDs are the case's) and the runs list, and it really
+# writes the project's layer file — `settings set layer.ab --add-entry` edits it
+# and `config publish` makes it the layer the project serves, sha256 and all —
+# because the check sets the sampler up itself and reads the layer back after the
+# write; the fake `gcloud` serves a record per run ID out of the case's own
+# directory and lists an object unless the case says it is missing; the fake
+# `git` holds a branch list the case writes and really deletes from it, and the
+# fake `gh` holds pull request states it really moves from OPEN to CLOSED — so
+# the teardown's own read-backs are readings of state that changed, not of a log.
 #
 # The cases that matter are the ones where that model is bent: a build older than
-# the release, a build without the `ab` command, a layer with no `ab:` block, a
-# rate that is not the premise's, no challenger, a repository that opted out, a
+# the release, a build without the `ab` command, a layer with no `ab:` block, one
+# whose rate is zero, one with no challenger — the three states the check sets up
+# — a layer file it cannot write in or one that is not what the project
+# published, a write or a publish that fails, a Restore that cannot publish the
+# bytes back, a rate that is not the premise's, a repository that opted out, a
 # layer whose `ab:` block is written in flow style, no pair in the bound, a
 # challenger that did not start, an arm that never ends, a batch with a third
 # row, a challenger whose record carries a branch, a publish mode or an outcome,
@@ -90,6 +96,10 @@ bounded() { # bounded CMD...
 }
 
 project=fugaro-chk210-test
+# The project's own name, as `fugaro doctor --json` carries it: it is what the
+# project's layer file is called (D830), so the setup's own guess at the path is
+# the file a case plants.
+project_name=chk210
 # The repository's slug, as `fugaro runs ls --json` carries it in a row's `run`
 # ref: ONE path segment, where the launch names the repository as `owner/name`.
 # The record's object name is built from this one, so a case that reads the key
@@ -257,6 +267,59 @@ rows_doc() {
   printf '],"totals":{},"warnings":[]}\n'
 }
 
+# layer_file: the project's own layer file, by the rule localcfg.LayerFile
+# applies (D830) — the same path the check's setup writes and the Restore puts
+# back, read here from the project the doctor document names.
+layer_file() {
+  local name
+  name=$(python3 -c 'import json,sys; print((json.load(open(sys.argv[1])).get("project") or {}).get("name") or "")' \
+    "$FAKE_JSON_DIR/doctor.json" 2>/dev/null || true)
+  printf '%s/fugaro/projects/%s.layer.yaml\n' "${XDG_CONFIG_HOME:-$HOME/.config}" "$name"
+}
+
+# publish_layer FILE: `fugaro config publish`. The fake really publishes the
+# file it is handed: the layer the project serves becomes that file's bytes,
+# sha256 and all, so the check's own read after its write is a reading of state
+# that changed.
+publish_layer() { # publish_layer FILE
+  local file=$1
+  if [ ! -f "$file" ]; then
+    printf 'fugaro: no layer file at %s\n' "$file" >&2
+    return 1
+  fi
+  local n
+  n=$(cat "$FAKE_JSON_DIR/publish-count" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  printf '%s\n' "$n" >"$FAKE_JSON_DIR/publish-count"
+  # A publish that fails while the layer stays where it was: every publish is
+  # numbered, so a case can fail the setup's own (the first) or the Restore's
+  # (the last) and leave the rest answering.
+  if [ -f "$FAKE_JSON_DIR/publish-fail-at" ] && grep -qx "$n" "$FAKE_JSON_DIR/publish-fail-at"; then
+    printf 'fugaro: the layer could not be published\n' >&2
+    return 1
+  fi
+  python3 - "$file" "$FAKE_JSON_DIR/layer.json" "$FAKE_PROJECT" <<'PY'
+import hashlib
+import json
+import sys
+
+path, out, project = sys.argv[1], sys.argv[2], sys.argv[3]
+raw = open(path, "rb").read()
+generation = 7
+try:
+    generation = int(json.load(open(out)).get("generation") or 7) + 1
+except Exception:
+    pass
+doc = {
+    "where": "gs://fugaro-config-%s/projects/%s/layer.yaml" % (project, project),
+    "generation": generation,
+    "sha256": hashlib.sha256(raw).hexdigest(),
+    "yaml": raw.decode("utf-8"),
+}
+json.dump(doc, open(out, "w"))
+PY
+}
+
 case "${1:-}" in
 version)
   case "$mode" in
@@ -296,7 +359,8 @@ doctor)
   [ ! -f "$FAKE_JSON_DIR/doctor.exit" ] || exit "$(cat "$FAKE_JSON_DIR/doctor.exit")"
   ;;
 config)
-  if [ "${2:-}" = "layer" ]; then
+  case "${2:-}" in
+  layer)
     case "$mode" in
     layer-missing)
       printf 'fugaro: no project layer applies to this checkout (its fugaro.yaml needs gcp_project:, and the project must publish one with fugaro config publish)\n' >&2
@@ -308,10 +372,115 @@ config)
       ;;
     esac
     cat "$FAKE_JSON_DIR/layer.json"
-  else
+    ;;
+  publish)
+    # The publish the check ends its own write on. The fake really publishes:
+    # the file it is given becomes the layer the project serves, which is what
+    # makes the check's own re-read a reading of state that changed.
+    [ -n "${3:-}" ] || {
+      printf 'fugaro: config publish needs a file\n' >&2
+      exit 1
+    }
+    publish_layer "${3}"
+    ;;
+  *)
     echo "fugaro: unexpected config subcommand ${2:-}" >&2
     exit 1
+    ;;
+  esac
+  ;;
+models)
+  # `fugaro models ls --json`: the offline table the check reads the challenger
+  # it names out of.
+  if [ "${2:-}" = "ls" ]; then
+    cat "$FAKE_JSON_DIR/models.json"
+  else
+    echo "fugaro: unexpected models subcommand ${2:-}" >&2
+    exit 1
   fi
+  ;;
+settings)
+  # `settings set layer.ab --add-entry rate=... --layer project`: the one
+  # supported writer of a member of the layer's `ab` block. The fake writes the
+  # member into the layer file — creating the block where the file has none, as
+  # the real command does — and publishes the file in the same call, because the
+  # write's whole point is that the layer stage runs behind it.
+  [ "${2:-}" = "set" ] || {
+    echo "fugaro: unexpected settings subcommand ${2:-}" >&2
+    exit 1
+  }
+  [ "${3:-}" = "layer.ab" ] || {
+    echo "fugaro: unexpected settings key ${3:-}" >&2
+    exit 1
+  }
+  entry=""
+  layer=""
+  prev=""
+  for a in "$@"; do
+    case "$prev" in
+    --add-entry) entry=$a ;;
+    --layer) layer=$a ;;
+    esac
+    prev=$a
+  done
+  case "$entry" in
+  rate=*) ;;
+  *)
+    echo "fugaro: settings set layer.ab takes --add-entry rate=<a rate>" >&2
+    exit 1
+    ;;
+  esac
+  [ "$layer" = "project" ] || {
+    echo "fugaro: settings set layer.ab needs --layer project" >&2
+    exit 1
+  }
+  case "$mode" in
+  settings-fails)
+    printf 'fugaro: the layer was not written\n' >&2
+    exit 1
+    ;;
+  esac
+  file=$(layer_file)
+  [ -f "$file" ] || {
+    printf 'fugaro: no local project layer file at %s\n' "$file" >&2
+    exit 1
+  }
+  python3 - "$file" "${entry#rate=}" <<'PY'
+import re
+import sys
+
+path, value = sys.argv[1], sys.argv[2]
+lines = open(path, encoding="utf-8").read().split("\n")
+start = None
+for i, line in enumerate(lines):
+    if re.match(r"^ab\s*:", line):
+        start = i
+        break
+if start is None:
+    end = len(lines)
+    while end and not lines[end - 1].strip():
+        end -= 1
+    lines[end:end] = ["ab:", "  rate: %s" % value]
+    open(path, "w", encoding="utf-8").write("\n".join(lines))
+    sys.exit(0)
+rest = lines[start].split(":", 1)[1].strip()
+if rest.startswith("{") and rest.endswith("}"):
+    body = re.sub(r"rate\s*:\s*[^,}]*", "", rest[1:-1])
+    items = [p.strip() for p in body.split(",") if p.strip()]
+    lines[start] = "ab: {%s}" % ", ".join(["rate: %s" % value] + items)
+    open(path, "w", encoding="utf-8").write("\n".join(lines))
+    sys.exit(0)
+i = start + 1
+while i < len(lines) and (not lines[i].strip() or lines[i][:1].isspace()):
+    if re.match(r"^\s*rate\s*:", lines[i]):
+        lines[i] = "  rate: %s" % value
+        open(path, "w", encoding="utf-8").write("\n".join(lines))
+        sys.exit(0)
+    i += 1
+lines[i:i] = ["  rate: %s" % value]
+open(path, "w", encoding="utf-8").write("\n".join(lines))
+PY
+  publish_layer "$file"
   ;;
 run)
   case "$mode" in
@@ -505,45 +674,114 @@ write_docs() { # dir
   write_doctor "$dir"
   write_layer "$dir" "block" 0.1 "$challenger_model"
   write_ab "$dir" "$challenger_model" 1
-  cat >"$json/layer.json" <<JSON
-{"where":"gs://fugaro-config-${project}/projects/${project}/layer.yaml","generation":7,"sha256":"3f2a1b0c","yaml":"$(layer_yaml block 0.1 "$challenger_model" 5)"}
-JSON
+  write_models "$dir"
 }
 
-# layer_yaml STYLE RATE CHALLENGERS [MAX_PAIRS]: the `ab:` block as the project
-# layer's file writes it, JSON-escaped for the layer document. STYLE is `block`
-# or `flow` (the two shapes a YAML reader here has to read).
-layer_yaml() { # layer_yaml STYLE RATE CHALLENGERS MAX
+# layer_text STYLE RATE CHALLENGERS [MAX_PAIRS]: the project layer's own file,
+# without the newline a file ends with. STYLE is `block` or `flow` (the two
+# shapes a YAML reader here has to read).
+layer_text() { # layer_text STYLE RATE CHALLENGERS MAX
   local style=$1 rate=$2 challengers=$3 max=${4:-5}
   if [ "$style" = "flow" ]; then
-    printf 'agent:\\n  models:\\n    coder: %s\\nab: {rate: %s, challengers: [%s], max_pairs_per_day: %s}\\nworkflow: agent\\n' \
+    printf 'agent:\n  models:\n    coder: %s\nab: {rate: %s, challengers: [%s], max_pairs_per_day: %s}\nworkflow: agent' \
       "$champion_model" "$rate" "$challengers" "$max"
     return 0
   fi
-  printf 'agent:\\n  models:\\n    coder: %s\\nab:\\n  rate: %s\\n  challengers:\\n    - %s\\n  max_pairs_per_day: %s\\nworkflow: agent\\n' \
+  printf 'agent:\n  models:\n    coder: %s\nab:\n  rate: %s\n  challengers:\n    - %s\n  max_pairs_per_day: %s\nworkflow: agent' \
     "$champion_model" "$rate" "$challengers" "$max"
 }
 
-# write_layer DIR STYLE RATE CHALLENGERS [MAX]: the project layer as
-# `fugaro config layer --json` hands it over. CHALLENGERS "" is a block with an
-# empty list; RATE "none" drops the key.
+# layer_text_without_ab: a layer whose top level carries no `ab:` block at all —
+# the state the owner's project is in, and the state the check establishes
+# rather than reports.
+layer_text_without_ab() {
+  printf 'agent:\n  models:\n    coder: %s\nworkflow: agent' "$champion_model"
+}
+
+# layer_file_path DIR: the project's own layer file, at the path localcfg
+# .LayerFile names (D830) for the project the doctor document names.
+layer_file_path() { # layer_file_path DIR
+  printf '%s/home/.config/fugaro/projects/%s.layer.yaml\n' "$1" "$project_name"
+}
+
+# layer_json DIR TEXT: the document `fugaro config layer --json` answers with
+# for a layer file holding TEXT — its `yaml` the file's own bytes and its
+# `sha256` the file's own sum, which is what config.LayerSum is and what the
+# setup compares the file against before it writes. The generation moves with
+# every publish, as the real one does.
+layer_json() { # layer_json DIR TEXT
+  python3 - "$1/json/layer.json" "$project" "$2" <<'PY'
+import hashlib
+import json
+import sys
+
+out, project, text = sys.argv[1], sys.argv[2], sys.argv[3] + "\n"
+generation = 7
+try:
+    generation = int(json.load(open(out)).get("generation") or 7) + 1
+except Exception:
+    pass
+doc = {
+    "where": "gs://fugaro-config-%s/projects/%s/layer.yaml" % (project, project),
+    "generation": generation,
+    "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    "yaml": text,
+}
+json.dump(doc, open(out, "w"))
+PY
+}
+
+# write_layer_file DIR TEXT: the project's own layer file, holding TEXT plus the
+# newline a file ends with.
+write_layer_file() { # write_layer_file DIR TEXT
+  mkdir -p "$1/home/.config/fugaro/projects"
+  printf '%s\n' "$2" >"$(layer_file_path "$1")"
+}
+
+# write_layer DIR STYLE RATE CHALLENGERS [MAX]: the published project layer and
+# the layer file it was published from, byte for byte — the document `fugaro
+# config layer --json` hands over and the file the setup writes and the Restore
+# puts back. CHALLENGERS "" is a block with an empty list; RATE "none" drops the
+# key.
 write_layer() { # write_layer DIR STYLE RATE CHALLENGERS [MAX]
-  local dir=$1 style=$2 rate=$3 challengers=$4 max=${5:-5} yaml
+  local dir=$1 style=$2 rate=$3 challengers=$4 max=${5:-5} text
   if [ "$rate" = "none" ]; then
-    yaml=$(printf 'ab:\\n  max_pairs_per_day: %s\\n' "$max")
+    text=$(printf 'ab:\n  max_pairs_per_day: %s' "$max")
   elif [ -z "$challengers" ]; then
-    yaml=$(printf 'ab:\\n  rate: %s\\n  challengers: []\\n  max_pairs_per_day: %s\\n' "$rate" "$max")
+    text=$(printf 'ab:\n  rate: %s\n  challengers: []\n  max_pairs_per_day: %s' "$rate" "$max")
   else
-    yaml=$(layer_yaml "$style" "$rate" "$challengers" "$max")
+    text=$(layer_text "$style" "$rate" "$challengers" "$max")
   fi
-  cat >"$dir/json/layer.json" <<JSON
-{"where":"gs://fugaro-config-${project}/projects/${project}/layer.yaml","generation":7,"sha256":"3f2a1b0c","yaml":"$yaml"}
+  write_layer_file "$dir" "$text"
+  layer_json "$dir" "$text"
+}
+
+# write_layer_without_ab DIR: a project whose layer carries no `ab:` block, file
+# and document alike — the shape the check sets the sampler up in.
+write_layer_without_ab() { # write_layer_without_ab DIR
+  local text
+  text=$(layer_text_without_ab)
+  write_layer_file "$1" "$text"
+  layer_json "$1" "$text"
+}
+
+# write_models DIR: `fugaro models ls --json`, the offline table the check picks
+# the challenger it names out of. The repository's own coder is the champion, so
+# the model left to pick is the one the plan's challenger is.
+write_models() { # write_models DIR
+  cat >"$1/json/models.json" <<JSON
+{"version":1,"project":"$project_name","routes":[{"name":"direct","host":"api.anthropic.com","models":["$champion_model","$challenger_model"]}],"models":[
+{"id":"$champion_model","route":"direct","source":"embedded","input_per_m":15,"output_per_m":75,"allowed_to":["*"]},
+{"id":"$challenger_model","route":"direct","source":"embedded","input_per_m":3,"output_per_m":15,"allowed_to":["*"]},
+{"id":"unpriced/model","route":"direct","source":"none","allowed_to":["*"],"refused":"no price: add it under model_prices in the project config"},
+{"id":"unallowed/model","route":"direct","source":"embedded","input_per_m":1,"output_per_m":1,"allowed_to":["acme/other"]}
+],"repositories":[{"name":"acme/sandbox","state":"managed","coder":"$champion_model"}],"warnings":[]}
 JSON
 }
 
 write_doctor() { # write_doctor DIR
   cat >"$1/json/doctor.json" <<JSON
-{"version":1,"ok":true,"checks":[],"project":{"name":"chk210","gcp_project":"$project","region":"us-east5"}}
+{"version":1,"ok":true,"checks":[],"project":{"name":"$project_name","gcp_project":"$project","region":"us-east5"}}
 JSON
 }
 
@@ -682,6 +920,7 @@ run_one() { # run_one DIR SCRIPT ENV... [-- ARGS...]
   # marker again, and a variable given as an argument wins over `env -u`.
   bounded env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
     PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    XDG_CONFIG_HOME="$dir/home/.config" \
     FAKE_LOG_DIR="$dir/logs" FAKE_MODE="${FAKE_MODE:-default}" \
     FAKE_JSON_DIR="$dir/json" FAKE_PROJECT="$project" FAKE_SLUG="$slug" \
     FAKE_PAIR_AFTER="${FAKE_PAIR_AFTER:-0}" \
@@ -702,6 +941,36 @@ run_one() { # run_one DIR SCRIPT ENV... [-- ARGS...]
 }
 
 # ------------------------------------------------------------------ assertions
+# expect_first_line OUT NEEDLE WHAT: the first line of what the check printed.
+# What it is about to do to the owner's own project is the one thing that has to
+# be readable before anything else.
+expect_first_line() { # expect_first_line OUT NEEDLE WHAT
+  expect_contains "$(printf '%s\n' "$1" | head -n 1)" "$2" "$3"
+}
+
+calls_count() { # calls_count NEEDLE: how many `fugaro` calls carry it
+  printf '%s\n' "$calls" | grep -c -- "$1" || true
+}
+
+sha256_file() { # sha256_file FILE
+  python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"
+}
+
+published_sha() { # published_sha DIR: the sum `fugaro config layer --json` reads
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("sha256") or "")' "$1/json/layer.json"
+}
+
+# assert_layer_restored DIR SUM WHAT: the two halves of the Restore's own claim
+# about the layer — the file back byte for byte, and the project serving those
+# bytes again.
+assert_layer_restored() { # assert_layer_restored DIR SUM WHAT
+  local got
+  got=$(sha256_file "$(layer_file_path "$1")")
+  [ "$got" = "$2" ] || fail "$3: the layer file is not back byte for byte: sha256 $got, want $2"
+  got=$(published_sha "$1")
+  [ "$got" = "$2" ] || fail "$3: the project reads back sha256 $got, not the layer it served before ($2)"
+}
+
 assert_scratch_removed() { # dir what
   [ -n "$scratch" ] || {
     fail "$2: the check named no scratch directory"
@@ -767,6 +1036,9 @@ test_happy_path() {
   expect_contains "$out" "belongs to ${project}" "happy path: the project it read"
   expect_contains "$out" "FACT layer: PASS" "happy path: the premise"
   expect_contains "$out" "sets ab.rate: 0.1 and names 1 challenger(s): ${challenger_model}" "happy path: what the premise read"
+  # The layer already carries the premise, so this run wrote nothing into it and
+  # the row may not claim otherwise.
+  expect_absent "$out" "SET IT UP" "happy path: the layer row claims no write this run did not make"
   expect_contains "$out" "FACT pair: PASS" "happy path: the launch that sampled"
   expect_contains "$out" "pair pair-$(run_of 1) on batch ab-pair-$(run_of 1)" "happy path: the pair it sampled"
   expect_contains "$out" "FACT arms: PASS" "happy path: the two arms"
@@ -942,29 +1214,178 @@ test_a_dev_build_is_decided_by_the_feature_probe() {
   expect_contains "$out" "not a release number" "a dev build: why the probe decides"
 }
 
-test_a_layer_without_an_ab_block_is_a_finding() {
-  local dir=$work/noab
+test_a_layer_without_an_ab_block_is_set_up_by_the_check() {
+  # The owner's project carries no `ab:` block at all, which is the state the
+  # check is here to establish rather than report: it writes the rate through the
+  # command that owns that member and the challenger into the layer file, and the
+  # Restore puts the file back byte for byte and publishes it again.
+  local dir=$work/noab before
   prepare "$dir"
-  cat >"$dir/json/layer.json" <<JSON
-{"where":"gs://fugaro-config-${project}/projects/${project}/layer.yaml","generation":7,"sha256":"3f2a1b0c","yaml":"agent:\\n  models:\\n    coder: ${champion_model}\\nworkflow: agent\\n"}
-JSON
+  write_layer_without_ab "$dir"
+  before=$(sha256_file "$(layer_file_path "$dir")")
   run_check "$dir"
-  expect_status "$status" 1 "a layer with no ab block"
-  expect_contains "$out" "FACT layer: FAIL" "a layer with no ab block: the row"
-  expect_contains "$out" "carries no top-level ab: block" "a layer with no ab block: what it found"
-  expect_contains "$out" "its top-level keys are agent,workflow" "a layer with no ab block: what it does carry"
-  assert_no_run "$dir" "a layer with no ab block"
+  expect_status "$status" 0 "a layer with no ab block"
+  expect_first_line "$err" "the project layer's A/B state is read here and, where the sampler is off or no challenger is named, set up" \
+    "a layer with no ab block: the first line says what it does to the layer"
+  expect_first_line "$err" "ab.rate 0.1 and one challenger this project prices" "a layer with no ab block: the first line names what it sets"
+  expect_first_line "$err" "put back byte for byte at the end" "a layer with no ab block: the first line says it restores"
+  expect_contains "$out" "FACT layer: PASS" "a layer with no ab block: the row"
+  expect_contains "$out" "sets ab.rate: 0.1 and names 1 challenger(s): ${challenger_model}" "a layer with no ab block: the state it read after writing"
+  expect_contains "$out" "This check SET IT UP first: ab.rate 0.1, set with 'fugaro settings set layer.ab --add-entry rate=0.1 --layer project' and the challenger ${challenger_model}, written into $(layer_file_path "$dir") and published with 'fugaro config publish $(layer_file_path "$dir")'" \
+    "a layer with no ab block: the row names every write it made"
+  expect_contains "$calls" "settings set layer.ab --add-entry rate=0.1 --layer project" "a layer with no ab block: the rate's own writer"
+  expect_contains "$calls" "config publish $(layer_file_path "$dir")" "a layer with no ab block: the publish behind the list"
+  # The launches happen after the write, on the state it established, which is
+  # the whole point of setting it up instead of stopping at the layer row.
+  expect_contains "$out" "FACT pair: PASS" "a layer with no ab block: the launches ran after the setup"
+  expect_contains "$out" "FACT restore: PASS" "a layer with no ab block: the teardown"
+  expect_contains "$out" "The project layer was set up by this check, and $(layer_file_path "$dir") is back byte for byte (sha256 ${before})" \
+    "a layer with no ab block: the Restore says the layer is back"
+  assert_layer_restored "$dir" "$before" "a layer with no ab block"
 }
 
-test_a_layer_that_switched_ab_off_is_a_finding() {
-  local dir=$work/rate0
+test_a_layer_that_switched_ab_off_is_set_up_by_the_check() {
+  # A rate of zero is the sampler switched off. The challenger is already named,
+  # so the one write is the rate's — and it goes through `fugaro settings set`,
+  # which publishes the layer itself, so nothing here publishes by hand.
+  local dir=$work/rate0 before
   prepare "$dir"
   write_layer "$dir" block 0 "$challenger_model"
+  before=$(sha256_file "$(layer_file_path "$dir")")
   run_check "$dir"
-  expect_status "$status" 1 "a layer at rate 0"
-  expect_contains "$out" "FACT layer: FAIL" "a layer at rate 0: the row"
-  expect_contains "$out" "sets ab.rate: 0" "a layer at rate 0: what it found"
-  assert_no_run "$dir" "a layer at rate 0"
+  expect_status "$status" 0 "a layer at rate 0"
+  expect_contains "$out" "FACT layer: PASS" "a layer at rate 0: the row"
+  expect_contains "$out" "sets ab.rate: 0.1 and names 1 challenger(s): ${challenger_model}" "a layer at rate 0: the rate it wrote"
+  expect_contains "$out" "This check SET IT UP first: ab.rate 0.1, set with 'fugaro settings set layer.ab --add-entry rate=0.1 --layer project'. It copied" \
+    "a layer at rate 0: the one write it names"
+  # The one publish is the Restore's own: the challenger is already named, so
+  # nothing writes the list and nothing publishes by hand.
+  expect_absent "$calls" "models ls" "a layer at rate 0: no model is picked, because none has to be"
+  [ "$(calls_count "config publish")" = 1 ] || fail "a layer at rate 0: expected 1 publish (the Restore's), got $(calls_count "config publish")"
+  assert_layer_restored "$dir" "$before" "a layer at rate 0"
+}
+
+test_a_layer_with_no_challenger_is_set_up_by_the_check() {
+  # The rate is the premise's and the list is empty: no launch of it could ever
+  # sample — Admit skips with 'no-challenger' — so the check names the model.
+  local dir=$work/nochallenger before
+  prepare "$dir"
+  write_layer "$dir" block 0.1 ""
+  before=$(sha256_file "$(layer_file_path "$dir")")
+  run_check "$dir"
+  expect_status "$status" 0 "a layer with no challenger"
+  expect_contains "$out" "FACT layer: PASS" "a layer with no challenger: the row"
+  expect_contains "$out" "names 1 challenger(s): ${challenger_model}" "a layer with no challenger: the challenger it named"
+  expect_contains "$out" "This check SET IT UP first: the challenger ${challenger_model}, written into $(layer_file_path "$dir") and published with 'fugaro config publish $(layer_file_path "$dir")'" \
+    "a layer with no challenger: the write it names"
+  expect_absent "$calls" "settings set" "a layer with no challenger: the rate is already the premise's, so it is left alone"
+  expect_contains "$calls" "models ls --json" "a layer with no challenger: the table the challenger is picked out of"
+  assert_layer_restored "$dir" "$before" "a layer with no challenger"
+}
+
+test_the_challenger_is_a_model_nothing_refuses_and_no_repository_runs() {
+  # The model the check names is picked out of the offline table, and a model a
+  # launch would skip — unpriced, refused, unallowed for this repository, or the
+  # repository's own coder ('champion-model') — would spend the whole bound
+  # without a pair: the row names the one it picked, and the launches answer.
+  local dir=$work/pick
+  prepare "$dir"
+  write_layer_without_ab "$dir"
+  run_check "$dir"
+  expect_status "$status" 0 "the model it picks"
+  expect_contains "$out" "names 1 challenger(s): ${challenger_model}" "the model it picks: not the unpriced one, the unallowed one or the repository's coder"
+  expect_contains "$calls" "models ls --json" "the model it picks: read offline"
+  expect_absent "$out" "unpriced/model" "the model it picks: an unpriced model is never named"
+}
+
+test_a_layer_without_a_file_to_write_it_in_is_a_finding() {
+  # The write lands in this machine's own layer file (D830) and nowhere else:
+  # there is no command that publishes a layer this check made up, so a project
+  # with no layer file here is one this check cannot set up.
+  local dir=$work/nolocalfile
+  prepare "$dir"
+  write_layer_without_ab "$dir"
+  rm -f "$(layer_file_path "$dir")"
+  run_check "$dir"
+  expect_status "$status" 1 "no layer file to write in"
+  expect_contains "$out" "FACT layer: FAIL" "no layer file to write in: the row"
+  expect_contains "$out" "carries no top-level ab: block" "no layer file to write in: the state the layer is in"
+  expect_contains "$out" "there is no $(layer_file_path "$dir") to write it in" "no layer file to write in: the path it looked for"
+  expect_contains "$out" "Run 'fugaro update' at your terminal" "no layer file to write in: the fix"
+  expect_absent "$calls" "settings set" "no layer file to write in: nothing is written"
+  assert_no_run "$dir" "no layer file to write in"
+}
+
+test_a_layer_file_that_is_not_what_is_published_is_a_finding() {
+  # Publishing a local file the project does not serve would put every other
+  # edit it carries live as well, so the setup reads the file back before it
+  # writes and stops when the two are not the same layer.
+  local dir=$work/stalefile
+  prepare "$dir"
+  write_layer_without_ab "$dir"
+  printf '# an edit this project never published\n' >>"$(layer_file_path "$dir")"
+  run_check "$dir"
+  expect_status "$status" 1 "a layer file that is not what is published"
+  expect_contains "$out" "FACT layer: FAIL" "a layer file that is not what is published: the row"
+  expect_contains "$out" "is not the layer this project published" "a layer file that is not what is published: what it found"
+  expect_contains "$out" "Publish it with 'fugaro config publish'" "a layer file that is not what is published: the fix"
+  expect_absent "$calls" "settings set" "a layer file that is not what is published: nothing is written"
+  expect_absent "$calls" "config publish" "a layer file that is not what is published: nothing is published"
+  assert_no_run "$dir" "a layer file that is not what is published"
+}
+
+test_a_setup_write_that_fails_is_not_measured() {
+  local dir=$work/setupfails
+  prepare "$dir"
+  write_layer_without_ab "$dir"
+  before=$(sha256_file "$(layer_file_path "$dir")")
+  run_check "$dir" FAKE_MODE=settings-fails
+  expect_status "$status" 2 "a write that fails"
+  expect_contains "$out" "FACT layer: FAIL" "a write that fails: the row"
+  expect_contains "$err" "could NOT measure layer" "a write that fails: the exit names the row"
+  expect_contains "$out" "did not answer (exit 1): ab.rate is what turns the sampler on" "a write that fails: what it says about the rate"
+  assert_no_run "$dir" "a write that fails"
+  assert_layer_restored "$dir" "$before" "a write that fails"
+}
+
+test_a_publish_that_fails_is_not_measured() {
+  local dir=$work/publishfails
+  prepare "$dir"
+  write_layer "$dir" block 0.1 ""
+  before=$(sha256_file "$(layer_file_path "$dir")")
+  printf '1\n' >"$dir/json/publish-fail-at"
+  run_check "$dir"
+  expect_status "$status" 2 "a publish that fails"
+  expect_contains "$out" "FACT layer: FAIL" "a publish that fails: the row"
+  expect_contains "$err" "could NOT measure layer" "a publish that fails: the exit names the row"
+  expect_contains "$out" "the challenger is written in the file and the layer is not published with it" "a publish that fails: what it says"
+  assert_no_run "$dir" "a publish that fails"
+  assert_layer_restored "$dir" "$before" "a publish that fails"
+}
+
+test_a_restore_that_cannot_publish_the_layer_back_is_a_finding() {
+  # The Restore's own claim has two halves: the file back byte for byte, and the
+  # project serving those bytes again. The setup's own publish is the first, so
+  # the second — the Restore's — is the one that answers while the layer stays
+  # where it was, and the row says which half is unmet.
+  local dir=$work/restorefails before
+  prepare "$dir"
+  write_layer "$dir" block 0.1 ""
+  before=$(sha256_file "$(layer_file_path "$dir")")
+  printf '2\n' >"$dir/json/publish-fail-at"
+  run_check "$dir"
+  expect_status "$status" 1 "a Restore that cannot publish"
+  expect_contains "$out" "FACT restore: FAIL" "a Restore that cannot publish: the row"
+  expect_contains "$out" "The project layer was set up by this check and could NOT be put back" "a Restore that cannot publish: what it says"
+  expect_contains "$out" "the project is still serving the layer this check set up" "a Restore that cannot publish: the half that is unmet"
+  expect_contains "$out" "$(layer_file_path "$dir") is back byte for byte" "a Restore that cannot publish: the half that is met"
+  local got
+  got=$(sha256_file "$(layer_file_path "$dir")")
+  [ "$got" = "$before" ] || fail "a Restore that cannot publish: the layer file is not back byte for byte"
+  # The bend is the point of the case: the bytes are the owner's and the project
+  # is NOT serving them, which is the reading the row reports.
+  got=$(published_sha "$dir")
+  [ "$got" != "$before" ] || fail "a Restore that cannot publish: the project already reads the old layer, so the bend did not bite"
 }
 
 test_a_layer_rate_that_is_not_the_premise_is_a_finding() {
@@ -1538,12 +1959,18 @@ t test_yes_is_required
 t test_a_build_older_than_the_release_is_refused
 t test_a_build_without_the_ab_command_is_refused
 t test_a_dev_build_is_decided_by_the_feature_probe
-t test_a_layer_without_an_ab_block_is_a_finding
-t test_a_layer_that_switched_ab_off_is_a_finding
+t test_a_layer_without_an_ab_block_is_set_up_by_the_check
+t test_a_layer_that_switched_ab_off_is_set_up_by_the_check
+t test_a_layer_with_no_challenger_is_set_up_by_the_check
+t test_the_challenger_is_a_model_nothing_refuses_and_no_repository_runs
+t test_a_layer_without_a_file_to_write_it_in_is_a_finding
+t test_a_layer_file_that_is_not_what_is_published_is_a_finding
+t test_a_setup_write_that_fails_is_not_measured
+t test_a_publish_that_fails_is_not_measured
+t test_a_restore_that_cannot_publish_the_layer_back_is_a_finding
 t test_a_layer_rate_that_is_not_the_premise_is_a_finding
 t test_a_layer_whose_rate_is_written_as_0_10_holds
 t test_a_flow_style_ab_block_is_read
-t test_a_layer_with_no_challenger_is_a_finding
 t test_a_repository_that_opted_out_is_a_finding
 t test_a_layer_that_cannot_be_read_is_not_measured
 t test_a_layer_document_that_cannot_be_read_is_not_measured
