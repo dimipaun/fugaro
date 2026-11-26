@@ -66,19 +66,20 @@ type ProjectJob struct {
 	// projectJobServesTheCredentialsService for what "served" means here.
 	CredentialsService *CredentialsService `json:"credentials_service,omitempty"`
 	// CredentialsServiceGrant is the same service for a job that reaches it
-	// for git alone: a shared Bitbucket job holds no git credential and clones
-	// through the service whatever the model switch says, so its account needs
-	// the invoker grant while it keeps every model mount. The module grants on
+	// for every shared job, switched or not: a Bitbucket job clones through it, and
+	// a GitHub job's grant must not vanish when a readiness record flips off.
+	// Its account keeps every model mount. The module grants on
 	// either field and drops mounts on CredentialsService only.
 	CredentialsServiceGrant *CredentialsService `json:"credentials_service_grant,omitempty"`
 }
 
-// projectJobGitGrant is the service a shared job's account is granted the
-// invoker role on although the model switch is off: the proxied providers'.
-func projectJobGitGrant(lc *localcfg.Config, provider string) *CredentialsService {
-	if provider == githubProvider {
-		return nil
-	}
+// projectJobGitGrant is the service every shared job's account is granted the
+// invoker role on whatever the model switch says: the grant follows the
+// installation having the service, never a repository's readiness record, which
+// a failed bundle read can flip to false and a plan would then delete a grant
+// the job still needs. Inert without the switch: the service refuses a caller
+// it does not admit (Q6).
+func projectJobGitGrant(lc *localcfg.Config) *CredentialsService {
 	return installationCredentialsService(lc)
 }
 
@@ -502,7 +503,7 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 				},
 				Vertex:                  vertex,
 				CredentialsService:      credentials,
-				CredentialsServiceGrant: projectJobGitGrant(lc, pr.Provider),
+				CredentialsServiceGrant: projectJobGitGrant(lc),
 			}); err != nil {
 				return nil, err
 			}
@@ -1243,7 +1244,7 @@ func RefreshProjectJobCredentialsService(jobs map[string]ProjectJob, lc *localcf
 		pr, declared := lc.Profiles[job.Profile]
 		served := declared && projectJobServesTheCredentialsService(lc, pr)
 		job.CredentialsService = repoCredentialsService(installationCredentialsService(lc), served)
-		job.CredentialsServiceGrant = projectJobGitGrant(lc, job.Provider)
+		job.CredentialsServiceGrant = projectJobGitGrant(lc)
 		if declared {
 			job = refreshProjectJobMounts(job, pr, lc, served)
 		}

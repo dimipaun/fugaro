@@ -471,7 +471,7 @@ variable "project_jobs" {
       name   = string
       region = string
     }))
-    # Git-only reach (shared Bitbucket job): the invoker grant, no mount drop.
+    # Every shared job, switched or not: the invoker grant, no mount drop.
     credentials_service_grant = optional(object({
       name   = string
       region = string
