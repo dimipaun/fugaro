@@ -1170,7 +1170,7 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 // deletes a container.
 func DeployedSecretIDs(ctx context.Context, c *Clients, spec InstallationSpec) (ids map[string]bool, warning string) {
 	if c == nil || c.Run == nil {
-		return nil, ""
+		return nil, jobsReadFailed(ctx, errors.New("no Cloud Run client"), spec)
 	}
 	parent := "projects/" + spec.Project + "/locations/" + spec.Region
 	out := map[string]bool{}
