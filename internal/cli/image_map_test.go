@@ -19,8 +19,8 @@ import (
 
 // image_map.go's tests: `fugaro image map set`, the one command that writes the
 // project's repo-to-image map (D1906). What it writes is this machine's project
-// config — the file `fugaro update` then publishes as the node's image_map — so
-// the assertions here are made on the file a person and the publisher read.
+// config — the file `fugaro update` then publishes as the node's repo_images —
+// so the assertions here are made on the file a person and the publisher read.
 //
 // The command is in the managed plan's §3.1 set as a refusal (image_map_managed.go):
 // its row is not "a session may write this under rules" but "no session writes
@@ -36,7 +36,7 @@ func imageMapFile(t *testing.T) (string, map[string]string) {
 	if err != nil {
 		t.Fatalf("the config after the write: %v", err)
 	}
-	return path, lc.ImageMap
+	return path, lc.RepoImages
 }
 
 // writeCatalogCopy puts def at builds/catalog/<entry>/Dockerfile in the
@@ -104,8 +104,8 @@ func TestImageMapSetNotesABakedCopyItsNewJobsCouldRead(t *testing.T) {
 	}
 	// And the mapping is written: the note names what the operator does next,
 	// not a step this command refused to take.
-	if _, got := imageMapFile(t); got["acme/sandbox"] != "tools" {
-		t.Errorf("ImageMap = %v, want the mapping written", got)
+	if _, got := imageMapFile(t); got["bitbucket/acme/sandbox"] != "tools" {
+		t.Errorf("repo_images = %v, want the mapping written", got)
 	}
 }
 
@@ -161,8 +161,8 @@ func TestImageMapSetWritesTheMapping(t *testing.T) {
 		t.Errorf("the first write says nothing about replacing the project's published map: %q", errOut)
 	}
 	_, got := imageMapFile(t)
-	if want := map[string]string{"acme/app": "tools"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("ImageMap = %v, want %v", got, want)
+	if want := map[string]string{"github/acme/app": "tools"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("repo_images = %v, want %v", got, want)
 	}
 	// The blocks the file already carried survive the write — userSave
 	// marshals the whole config back out, so what a lost block looks like here
@@ -184,8 +184,8 @@ func TestImageMapSetWritesTheMapping(t *testing.T) {
 		t.Errorf("a file that already holds a map is reported as holding none: %q", errOut)
 	}
 	_, got = imageMapFile(t)
-	if want := map[string]string{"acme/app": "base"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("ImageMap = %v, want the one mapping replaced by %v", got, want)
+	if want := map[string]string{"github/acme/app": "base"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("repo_images = %v, want the one mapping replaced by %v", got, want)
 	}
 
 	// A second repository is added beside the first.
@@ -193,14 +193,94 @@ func TestImageMapSetWritesTheMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, got = imageMapFile(t)
-	if want := map[string]string{"acme/app": "base", "acme/sandbox": "tools"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("ImageMap = %v, want %v", got, want)
+	if want := map[string]string{"github/acme/app": "base", "bitbucket/acme/sandbox": "tools"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("repo_images = %v, want %v", got, want)
+	}
+}
+
+// TestImageMapSetWritesProviderKey: the key `image map set` writes is
+// provider/owner/name (R6, D3370) — the name a job's own repository is looked
+// up by — and a bare owner/name takes its provider from the project, so the
+// bare name the old member was keyed by is never what lands in the file.
+func TestImageMapSetWritesProviderKey(t *testing.T) {
+	catalogFixture(t)
+	path := os.Getenv("FUGARO_CONFIG")
+
+	out, _, err := execute(t, "image", "map", "set", "acme/app", "tools")
+	if err != nil {
+		t.Fatalf("image map set: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "github/acme/app") {
+		t.Errorf("image map set printed %q, want the key it wrote", out)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lc.RepoImages["github/acme/app"]; got != "tools" {
+		t.Errorf("repo_images = %v, want github/acme/app on tools", lc.RepoImages)
+	}
+	if _, bare := lc.RepoImages["acme/app"]; bare {
+		t.Errorf("repo_images = %v, want no bare-name key", lc.RepoImages)
+	}
+	if lc.ImageMap != nil {
+		t.Errorf("image_map = %v, want the old member left out", lc.ImageMap)
+	}
+}
+
+// TestImageMapSetTakesAnAdmittedOtherProvider: a key written as
+// provider/owner/name is taken as written, and it is written when the project's
+// allow-list admits it (R6). One repository name may be a repository at two
+// providers (D3373), and each of the two is mapped on its own: the key is what
+// says which of them runs the entry.
+func TestImageMapSetTakesAnAdmittedOtherProvider(t *testing.T) {
+	f := catalogFixture(t)
+	f.budget.DB.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.budget.DB.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":9,"allow_repos":["bitbucket/acme/app"]}`))
+
+	if _, _, err := execute(t, "image", "map", "set", "bitbucket/acme/app", "tools"); err != nil {
+		t.Fatalf("image map set bitbucket/acme/app: %v", err)
+	}
+	_, got := imageMapFile(t)
+	if want := map[string]string{"bitbucket/acme/app": "tools"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("repo_images = %v, want the admitted key written as %v", got, want)
+	}
+}
+
+// TestImageMapSetMigratesALegacyMapFirst: a file still holding the old member
+// is migrated into the new one before the mapping is added (R13). Without it
+// the write would state the whole map from the file's own new member, and every
+// mapping the file held under the old one would be gone — the keep rule takes
+// the file's member over the node's (R2). A name the migration cannot place is
+// dropped with its line, which is what a person reads to notice it.
+func TestImageMapSetMigratesALegacyMapFirst(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "  acme/sandbox: { provider: bitbucket, workflows: [web] }\n")
+	f.appendConfig(t, catalogYAML)
+	f.appendConfig(t, "image_map:\n  acme/sandbox: base\n  acme/ghost: base\n")
+	path := os.Getenv("FUGARO_CONFIG")
+
+	_, errOut, err := execute(t, "image", "map", "set", "acme/app", "tools")
+	if err != nil {
+		t.Fatalf("image map set: %v\n%s", err, errOut)
+	}
+	_, got := imageMapFile(t)
+	want := map[string]string{"bitbucket/acme/sandbox": "base", "github/acme/app": "tools"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("repo_images = %v, want the old map migrated in first: %v", got, want)
+	}
+	if !strings.Contains(errOut, "acme/ghost") || !strings.Contains(errOut, "dropped") {
+		t.Errorf("stderr = %q, want the line about the name nothing carries over", errOut)
+	}
+	after := readFileString(t, path)
+	if strings.Contains(after, "image_map:") {
+		t.Errorf("the file still holds the old member:\n%s", after)
 	}
 }
 
 // TestImageMapSetTakesACheckoutPath: the repository argument is read the way
 // every --repo is — a path becomes the owner/name of its checkout's origin —
-// and the key written is the canonical name, which is the spelling a run looks
+// and the key written is provider/owner/name, which is the spelling a run looks
 // its own repository up by. A path outside the project's repository is refused
 // before the file is touched, because a mapping nothing looks up is a line the
 // operator would never see fail.
@@ -211,8 +291,8 @@ func TestImageMapSetTakesACheckoutPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("image map set against a checkout: %v\n%s", err, out)
 	}
-	if _, got := imageMapFile(t); !reflect.DeepEqual(got, map[string]string{"acme/app": "tools"}) {
-		t.Errorf("ImageMap = %v, want the checkout's own repository mapped", got)
+	if _, got := imageMapFile(t); !reflect.DeepEqual(got, map[string]string{"github/acme/app": "tools"}) {
+		t.Errorf("repo_images = %v, want the checkout's own repository mapped", got)
 	}
 
 	// A name that is not one of the project's repositories: refused, and the
@@ -220,11 +300,39 @@ func TestImageMapSetTakesACheckoutPath(t *testing.T) {
 	path := os.Getenv("FUGARO_CONFIG")
 	before := readFileString(t, path)
 	_, _, err = execute(t, "image", "map", "set", "acme/other", "tools")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not one of project") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro project repos add") {
 		t.Fatalf("mapping a repository the project does not run: exit %d, err %v", ExitCode(err), err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("a refused mapping still wrote the config")
+	}
+}
+
+// TestImageMapSetRefusesUnenrolled: a key no job of the project reaches is
+// refused before the file is touched (R6) — a name the project does not run, a
+// repository at a provider this installation does not serve, and a name the
+// project runs at ANOTHER provider, which is a key nothing looks up. The three
+// are one mistake to the reader, so they are one sentence: the form a key takes,
+// and the command that enrols a repository.
+func TestImageMapSetRefusesUnenrolled(t *testing.T) {
+	catalogFixture(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+	for _, arg := range []string{"acme/other", "gitlab/acme/app", "bitbucket/acme/app"} {
+		t.Run(arg, func(t *testing.T) {
+			_, _, err := execute(t, "image", "map", "set", arg, "tools")
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("exit %d, err %v", ExitCode(err), err)
+			}
+			for _, want := range []string{"provider/owner/name", "fugaro project repos add"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal = %v, want it to name %q", err, want)
+				}
+			}
+			if readFileString(t, path) != before {
+				t.Error("a refused mapping still wrote the config")
+			}
+		})
 	}
 }
 
@@ -286,7 +394,7 @@ func TestImageMapSetRefusesACodingAgentsSession(t *testing.T) {
 	if !strings.Contains(err.Error(), "own terminal window") {
 		t.Errorf("the refusal does not say where the write belongs: %v", err)
 	}
-	if !strings.Contains(err.Error(), "fugaro image map set acme/app tools") {
+	if !strings.Contains(err.Error(), "fugaro image map set github/acme/app tools") {
 		t.Errorf("the refusal does not name the command to run instead: %v", err)
 	}
 	if readFileString(t, path) != before {
