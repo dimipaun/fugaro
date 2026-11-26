@@ -521,15 +521,16 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		if !strings.Contains(cs[0].Fix, "update --repo") {
 			t.Errorf("the fix does not name the command that grants it: %q", cs[0].Fix)
 		}
-		// The command carries the repository itself: the default view prints
-		// this fix under an ID-keyed sentence that names no repository, so a
-		// placeholder here is a command nobody can run (the fix the branch
-		// first shipped, "<each repository named above>").
-		if !strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
+		// The repository is named in the words around the command: the default
+		// view prints this fix under an ID-keyed sentence that names no
+		// repository, so a placeholder here is a line nobody can act on. It is
+		// not named as --repo's argument, which the CLI refuses: that flag takes
+		// the checkout's PATH, not owner/name.
+		if !strings.Contains(cs[0].Fix, "update --repo in the checkout of workspace-a/repo-a") {
 			t.Errorf("the fix does not name the repository the command is for: %q", cs[0].Fix)
 		}
-		if strings.Contains(cs[0].Fix, "<each repository named above>") {
-			t.Errorf("the fix still carries a placeholder where the repository's name goes: %q", cs[0].Fix)
+		if strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
+			t.Errorf("the fix passes the repository as --repo's argument, which takes a checkout's PATH: %q", cs[0].Fix)
 		}
 	})
 
@@ -640,8 +641,11 @@ func TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants(t *testing.T)
 		if got := strings.Count(cs[0].Fix, "update --repo"); got != 1 {
 			t.Errorf("the fix carries the repository's command %d times for its two workflows, want one: %q", got, cs[0].Fix)
 		}
-		if !strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
+		if !strings.Contains(cs[0].Fix, "update --repo in the checkout of workspace-a/repo-a") {
 			t.Errorf("the fix does not name the repository the command is for: %q", cs[0].Fix)
+		}
+		if strings.Contains(cs[0].Fix, "update --repo workspace-a/repo-a") {
+			t.Errorf("the fix passes the repository as --repo's argument, which takes a checkout's PATH: %q", cs[0].Fix)
 		}
 	})
 
@@ -2510,8 +2514,9 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 
 	// The one warning state whose fix is a repository's own apply: the sentence
 	// above it is the ID's, and names no repository, so the fix is where the
-	// repository has to be — a reader who meets this line has to know which one
-	// `fugaro update --repo` is for.
+	// repository has to be — a reader who meets this line has to know which
+	// checkout `fugaro update --repo` is for, and the name goes in the words
+	// around the command because --repo takes a PATH and refuses owner/name.
 	t.Run("the credentials service does not admit a job account", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.svcs.AddService(infra.CredentialsServiceName)
@@ -2520,7 +2525,10 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def, sentence, "update --repo workspace-a/repo-a")
+		wants(t, def, sentence, "update --repo in the checkout of workspace-a/repo-a")
+		if strings.Contains(def, "update --repo workspace-a/repo-a") {
+			t.Errorf("the default view passes the repository as --repo's argument, which takes a checkout's PATH:\n%s", def)
+		}
 	})
 
 	t.Run("the credentials service is deployed and its bundle holds no version", func(t *testing.T) {
