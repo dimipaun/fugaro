@@ -94,7 +94,7 @@ func TestUpdateWritesTheWorkflowSecretsTheJobMounts(t *testing.T) {
 		t.Fatalf("the fixture carries a record at %s already (%v): the state this test is about is an installation that has not run the release that writes one", creds.PathWorkflowSecrets(slug), v)
 	}
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	rec, found := workflowSecretsOf(t, r, slug)
 	if !found {
@@ -144,7 +144,7 @@ func TestUpdateWorkflowSecretsFollowTheAllowList(t *testing.T) {
 	// a name no workflow_secrets entry covers.
 	r.seedProjectKey(t, "npm-token")
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	rec, found := workflowSecretsOf(t, r, slug)
 	if !found {
@@ -313,7 +313,7 @@ func TestUpdateCopiesProjectCopiesToGrammar(t *testing.T) {
 	src := gcp.ProjectSecretID(initProjectName, "deploy-token")
 	wantValue := string(r.sm.Latest(src))
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	dst := grammarID(t, "deploy-token")
 	info, found := fakeContainer(t, r.sm, dst)
@@ -383,7 +383,7 @@ func TestUpdateSkipsAnUnmarkedContainer(t *testing.T) {
 	dst := grammarID(t, "deploy-token")
 	r.sm.Seed(dst, map[string]string{intake.LabelScope: string(intake.ScopeShared)}, []byte("hand-made"))
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := string(r.sm.Latest(dst)); got != "hand-made" {
 		t.Errorf("%s holds %q after the update; the copy must write no version into a container it did not make", dst, got)
@@ -425,7 +425,7 @@ func TestUpdateRefusesAForeignShape(t *testing.T) {
 	stray["team"] = "infra"
 	r.sm.SeedShape(grammarID(t, "api-token"), maps.Clone(marked), stray, []byte("pre-created"))
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	for _, name := range []string{"deploy-token", "api-token"} {
 		id := grammarID(t, name)
@@ -466,7 +466,7 @@ func TestUpdateSeedsListOnlyFromAllowDataTo(t *testing.T) {
 	r.seedProjectKey(t, "deploy-token")
 	r.seedProjectKey(t, "npm-token")
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	ps, found := projectSecretsOf(t, r.db)
 	if !found {
@@ -500,7 +500,7 @@ func TestUpdateNeverWidensAnExistingEntry(t *testing.T) {
 	r, _ := workflowSecretsRig(t)
 	putProjectRule(t, r, "deploy-token", creds.ProjectSecretRule{Repos: []string{"acme/app"}})
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	ps, found := projectSecretsOf(t, r.db)
 	if !found {
@@ -534,7 +534,7 @@ func TestUpdateNeverOverwritesANewerValue(t *testing.T) {
 		map[string]string{intake.LabelScope: string(intake.ScopeShared), intake.LabelWorkflowSecret: intake.WorkflowSecretMarker},
 		map[string]string{intake.AnnotationCreatedBy: copyWho}, []byte("set-by-the-owner"))
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := string(r.sm.Latest(dst)); got != "set-by-the-owner" {
 		t.Errorf("%s holds %q after the update, want the value the owner stored: a `secrets set` since the project copy is newer than it", dst, got)
@@ -560,7 +560,7 @@ func TestUpdateNeverOverwritesANewerValue(t *testing.T) {
 func TestIntakeAcceptsAContainerUpdateMade(t *testing.T) {
 	operatorIdentity(t)
 	r, _ := workflowSecretsRig(t)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	dst := grammarID(t, "deploy-token")
 	info, found := fakeContainer(t, r.sm, dst)
@@ -594,7 +594,7 @@ func TestUpdateStopsANonOwnerWithTheFix(t *testing.T) {
 	// The roles an operator holds: no read of a value, on the project copy.
 	r.sm.SetHeldPermissions(src)
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if !strings.Contains(out, "secretmanager.versions.access") || !strings.Contains(out, "as the project's Owner") {
 		t.Errorf("the run does not name the permission and the one thing that grants it:\n%s", out)
@@ -805,7 +805,7 @@ func TestUpdateFromPreviousReleaseConvergesSecrets(t *testing.T) {
 		t.Fatalf("the fixture carries %s already: the grammar is new with this release", grammarID(t, "deploy-token"))
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if _, found := fakeContainer(t, r.sm, grammarID(t, "deploy-token")); !found {
 		t.Errorf("%s is not there after `fugaro update` alone: an installation one release behind would need a second command to be served this workflow secret", grammarID(t, "deploy-token"))

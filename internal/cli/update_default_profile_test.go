@@ -205,7 +205,7 @@ func TestUpdateDefaultProfileIsIdempotent(t *testing.T) {
 // the profiles this same run wrote and deployed.
 func TestUpdatePreviousVersionConverges(t *testing.T) {
 	r := newConvergeRig(t, staleNode(t))
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
 		t.Fatalf("the published node is version %d after one update, want this binary's %d", got, projectpolicy.Version)

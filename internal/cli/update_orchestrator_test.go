@@ -332,7 +332,7 @@ func TestUpdateConvergesAnInstallationAtThePreviousVersionWithAndWithoutTheBlock
 			t.Fatalf("the fixture's block is not the release behind's: %v", before)
 		}
 
-		convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		after := orchestratorBlockIn(t, r.imagesRig)
 		if after == nil {
@@ -379,7 +379,7 @@ func TestUpdateConvergesAnInstallationAtThePreviousVersionWithAndWithoutTheBlock
 
 		run := startRunInFlight(t, r)
 
-		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 		if !strings.Contains(line, "1 run in flight") || !strings.Contains(line, "waits for none") || !strings.Contains(line, "resident orchestrator") {
 			t.Errorf("the update does not say, beside the run in flight, that the orchestrator's revision reaches the credentials service it calls:\n%s", line)
 		}

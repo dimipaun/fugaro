@@ -25,7 +25,9 @@ import (
 // about fifteen informational lines, several of them sentences of six hundred
 // characters. The IDs, severities and Problems here are the ones the checks
 // themselves emit for that state, so a rendering change is measured against
-// what a person actually saw.
+// what a person actually saw — except plugin-pin, which U6b retired with the
+// checkout it read (R15): its row is left as the owner pasted it, so the screen
+// this measures is the one that was actually on their terminal.
 //
 // The sweep's lines are built by the checks that emit them — selfCheck and
 // tokenGrantUnchecked for the bucket, doctorTokenSigners for the signers —

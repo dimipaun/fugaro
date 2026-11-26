@@ -400,10 +400,9 @@ func TestDoctorOpenProvidersIsInformational(t *testing.T) {
 		}
 		return o
 	}
-	// The rig has failures of its own (no checkout for plugin-pin, no base
-	// image), so strictness is compared rather than expected to pass: the
-	// set of checks that fail under --strict must be the same one as before
-	// the provider existed.
+	// The rig has failures of its own (no base image recorded), so strictness
+	// is compared rather than expected to pass: the set of checks that fail
+	// under --strict must be the same one as before the provider existed.
 	failing := func(t *testing.T) map[string]string {
 		t.Helper()
 		out, _, _ := execute(t, "doctor", "--strict", "--json", "--dir", t.TempDir())
@@ -456,10 +455,9 @@ func TestDoctorOpenProvidersIsInformational(t *testing.T) {
 // all.
 func TestDoctorProviderSecretNameIsInformational(t *testing.T) {
 	r := newDoctorRig(t)
-	// The rig has failures of its own (no checkout for plugin-pin, no base
-	// image), so strictness is compared rather than expected to pass: the set
-	// of checks that fail under --strict must be the same one as before the
-	// provider existed.
+	// The rig has failures of its own (no base image recorded), so strictness
+	// is compared rather than expected to pass: the set of checks that fail
+	// under --strict must be the same one as before the provider existed.
 	failing := func(t *testing.T) map[string]string {
 		t.Helper()
 		out, _, _ := execute(t, "doctor", "--strict", "--json", "--dir", t.TempDir())
