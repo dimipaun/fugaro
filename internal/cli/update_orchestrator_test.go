@@ -276,7 +276,7 @@ func orchestratorConvergeRig(t *testing.T, withBlock bool) *convergeRig {
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	changes := installationCredentialsPlan("update", r.credentialsRef())
 	if withBlock {
-		changes = append(changes, change("module.installation.google_cloud_run_v2_service.orchestrator", "update"))
+		changes = append(changes, installationServicePlan(orchestratorServiceShape(), "update", r.credentialsRef())...)
 	} else {
 		changes = append(changes,
 			change("module.installation.google_service_account.orchestrator[0]", "create"),

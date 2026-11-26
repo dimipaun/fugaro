@@ -103,7 +103,7 @@ func publishCredentialsImage(t *testing.T, r *imagesRig, version string) {
 
 // credentialsDigest is the digest the fake source published the credentials
 // image under: what the resolve-and-verify step returns.
-func (r *imagesRig) credentialsDigest() string { return r.credentialsDigestAt("1.2.3") }
+func (r *imagesRig) credentialsDigest() string { return r.credentialsDigestAt(r.version) }
 
 // credentialsDigestAt is credentialsDigest for another release.
 func (r *imagesRig) credentialsDigestAt(version string) string {
@@ -112,8 +112,12 @@ func (r *imagesRig) credentialsDigestAt(version string) string {
 
 // credentialsRef is the reference the deploy must write for
 // credentials_service.image: the remote repository's path, the version as a
-// tag, and the verified digest.
-func (r *imagesRig) credentialsRef() string { return r.credentialsRefAt("1.2.3") }
+// tag, and the verified digest. It is the rig's OWN release, which is what the
+// run under test resolves and the cover reads a plan's image against: a rig
+// built at another version publishes the credentials image under that one, so a
+// ref taken at 1.2.3 there names a digest the source never served (and the
+// cover refuses the plan an installation that moves its service is judged on).
+func (r *imagesRig) credentialsRef() string { return r.credentialsRefAt(r.version) }
 
 // credentialsRefAt is credentialsRef for another release of the same source.
 func (r *imagesRig) credentialsRefAt(version string) string {
@@ -1025,7 +1029,7 @@ func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
 	// decodes it as an installation that manages nothing.
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
+	r.setPlanAt(t, "installation", installationServicePlan(intakeServiceShape(), "create", r.credentialsRef())...)
 	// The table the deploy left: a repository this machine's config no longer
 	// describes, which is what stands in for "the config has moved on since".
 	setCredentialsJobTable(t, r, []any{map[string]any{
@@ -1766,7 +1770,7 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 // assertion is the intake's image and not the service's.
 func TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
+	r.setPlanAt(t, "installation", installationServicePlan(intakeServiceShape(), "create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	// The installation's record: the service, on a release that predates the
 	// intake, and no intake block at all.
@@ -1861,7 +1865,10 @@ func TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun(t *testing.T)
 // evidence about the judge rather than about the rig.
 func TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate(t *testing.T) {
 	r := credentialsRigAt(t, reviewAdmissionSince)
-	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
+	// The ref this release serves: the rig published the credentials image
+	// under its own version, so the plan carries the pin the resolve answers
+	// with, which is what the cover reads it against (credentialsImageOK).
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRefAt(reviewAdmissionSince))...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("0.20.3"))
 	// The base pin the last in-checkout update left, at a release this one

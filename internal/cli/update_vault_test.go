@@ -54,6 +54,11 @@ func vaultStateDoc(t *testing.T, addr string) string {
 func vaultFlipRig(t *testing.T, addr string) *initRig {
 	t.Helper()
 	r, db := proxiedDropRig(t)
+	// The rows below are about the path an installation that is NOT managed
+	// takes: the guard's own refusal is the one that names --allow-delete, and in
+	// a managed project the gate answers first with its own sentence and no flag
+	// (D1012).
+	r.unmarkedInstallation(t)
 	publishProxiedNode(t, db, false, proxiedRepoCanonical(t))
 	putSwitchBundle(t, r, proxiedRepoBundle(t))
 	// The repository root's two reads, scripted apart (the fake answers

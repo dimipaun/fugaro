@@ -83,17 +83,17 @@ func TestUpdateConvergesFromPreviousInstallation(t *testing.T) {
 	// answers the state too) would let this stage's plan be read as the
 	// installation's state, which manages nothing.
 	//
-	// What this door does NOT do is judge the plan's content: it is the owner's
-	// own terminal on an installation the run does not gate, so no cover reads
-	// this plan and a change planted in it would pass whatever it said. That
-	// the module's intake IS admitted by the cover — the rule that makes the
-	// apply deploy it on a managed installation — is pinned where it is judged:
-	// internal/infra/tf's TestCoverRefusesAnIntakeServiceThatIsNotTheModules,
-	// over the same fixture intake.tf writes.
+	// Both changes are planted in the shape the module really writes, because
+	// this run's installation stage IS the gate's (the rig's project is a
+	// managed one, newInitRig's marks) and a bare change carries no attributes
+	// for the cover to judge: installationServicePlan and
+	// installationCredentialsPlan are the two documents, and what the cover
+	// refuses of a document that is not them is pinned where it is judged
+	// (internal/infra/tf's TestCoverRefusesAnIntakeServiceThatIsNotTheModules).
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	r.setPlanAt(t, "installation",
-		append([]planChange{change("module.installation.google_cloud_run_v2_service.intake", "create")},
+		append(installationServicePlan(intakeServiceShape(), "create", r.credentialsRef()),
 			installationCredentialsPlan("update", r.credentialsRef())...)...)
 	// The roster the installation root reports, which is the one the class is
 	// derived from: a launcher and an operator (who launches too). A group is

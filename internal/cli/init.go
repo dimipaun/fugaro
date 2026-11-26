@@ -4763,7 +4763,20 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	}
 	fmt.Fprintf(diff, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
 	if !confirmed {
-		if err := r.confirmOrdinary("writes the local config "+path+" as shown", "the local config was not changed", ""); err != nil {
+		// The gate stands in for this write where the session is a coding
+		// agent's: the file is this machine's own record of what the run
+		// converged and not a cloud write, so the session the gate opened the
+		// run for writes it and reads the sentence for that reader
+		// (initflow.AgentProceeded) — the refusal askOrdinary gives a marked
+		// session is for the cloud writes beside this one. Every other session
+		// keeps the confirmation it has always had: the person at their own
+		// terminal, and the pipe or --json run nobody is at, which the gate
+		// never answers for.
+		what := "writes the local config " + path + " as shown"
+		if c := r.conditions(); r.gateStandsIn() && c.Agent != "" {
+			r.willDo(what)
+			fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.AgentProceeded(c.Agent))
+		} else if err := r.confirmOrdinary(what, "the local config was not changed", ""); err != nil {
 			return err
 		}
 	}

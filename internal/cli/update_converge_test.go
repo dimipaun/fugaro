@@ -204,6 +204,113 @@ func credentialsAccountEmail() string {
 	return credentialsAccount + "@" + initProject + ".iam.gserviceaccount.com"
 }
 
+// The installation module's other Cloud Run services and the accounts they run
+// as (intake.tf, voice.tf, orchestrator.tf). Each names its service and its
+// account the same word, which is what the cover dispatches on.
+const (
+	intakeServiceAddr       = "module.installation.google_cloud_run_v2_service.intake[0]"
+	intakeAccountAddr       = "module.installation.google_service_account.intake[0]"
+	intakeAccount           = "fugaro-intake"
+	voiceServiceAddr        = "module.installation.google_cloud_run_v2_service.voice[0]"
+	voiceAccountAddr        = "module.installation.google_service_account.voice[0]"
+	voiceAccount            = "fugaro-voice"
+	orchestratorServiceAddr = "module.installation.google_cloud_run_v2_service.orchestrator"
+	orchestratorAccountAddr = "module.installation.google_service_account.orchestrator[0]"
+	orchestratorAccount     = "fugaro-orchestrator"
+)
+
+// installationServiceShape is one of those services as the module hardcodes it:
+// the addresses of the service and of the account it runs as, the account's ID,
+// the argv the module writes (which is what tells the module's five services
+// apart, since they share one image) and whether the service writes the two
+// zero-minimum scaling blocks (the hop's, voice.tf).
+type installationServiceShape struct {
+	service, accountAddr, account string
+	args                          []string
+	scaling                       bool
+}
+
+func intakeServiceShape() installationServiceShape {
+	return installationServiceShape{service: intakeServiceAddr, accountAddr: intakeAccountAddr, account: intakeAccount, args: []string{"intake", "serve"}}
+}
+
+func voiceServiceShape() installationServiceShape {
+	return installationServiceShape{service: voiceServiceAddr, accountAddr: voiceAccountAddr, account: voiceAccount, args: []string{"voice", "serve"}, scaling: true}
+}
+
+func orchestratorServiceShape() installationServiceShape {
+	return installationServiceShape{service: orchestratorServiceAddr, accountAddr: orchestratorAccountAddr, account: orchestratorAccount, args: []string{"orchestrator", "serve"}}
+}
+
+// installationServicePlan is that service's plan as the module really writes it:
+// the container on the released pin, IAM required, the account the module
+// creates for it, the argv it hardcodes and one of its own environment names.
+//
+// A rig whose installation stage moves one of these services plants this rather
+// than the bare change(), and for the reason installationCredentialsPlan states:
+// the bare one carries no attributes at all, and a managed installation puts
+// that plan in front of the gate (D1016), whose cover refuses it — "a service
+// that does not require IAM" or "no container" — over a document terraform
+// never writes. action is the action the caller's own plan carried for the
+// service: the account is created where the service is and merely held where it
+// is already there, and the cover reads the account a template names out of the
+// plan's own google_service_account.<name>[0] either way (tf.Cover.accountFrom).
+func installationServicePlan(s installationServiceShape, action, image string) []planChange {
+	accountAction := "no-op"
+	if action == "create" {
+		accountAction = "create"
+	}
+	account := planChange{"account_id": s.account, "email": s.account + "@" + initProject + ".iam.gserviceaccount.com"}
+	args := make([]any, 0, len(s.args))
+	for _, a := range s.args {
+		args = append(args, a)
+	}
+	container := planChange{
+		"image": image, "args": args,
+		"env": []any{planChange{"name": "FUGARO_GCP_PROJECT", "value": initProject, "value_source": []any{}}},
+	}
+	template := planChange{"service_account": account["email"], "containers": []any{container}}
+	if s.scaling {
+		// Both levels, as voice.tf writes them: the count a managed gate prices
+		// and the one Cloud Run keeps warm.
+		container["scaling"] = []any{planChange{"min_instance_count": 0}}
+		template["scaling"] = []any{planChange{"min_instance_count": 0}}
+	}
+	after := planChange{"invoker_iam_disabled": false, "template": []any{template}}
+	if s.scaling {
+		after["scaling"] = []any{planChange{"min_instance_count": 0}}
+	}
+	return []planChange{
+		{
+			"address": s.service, "type": "google_cloud_run_v2_service",
+			"change": planChange{"actions": []string{action}, "before": planChange{"invoker_iam_disabled": false}, "after": after},
+		},
+		{
+			"address": s.accountAddr, "type": "google_service_account",
+			"change": planChange{"actions": []string{accountAction}, "before": account, "after": account},
+		},
+	}
+}
+
+// installationJobPlan is the installation root's plan for one of its scheduled
+// jobs as the module writes it: a base-image container running one of the CLI's
+// own job subcommands (tf.Cover.knownCommands). The bare change() carries no
+// container at all and is refused by the same cover, so a rig whose plan
+// deploys a job plants this instead.
+func installationJobPlan(addr, image string, argv ...string) []planChange {
+	cmd := make([]any, 0, len(argv))
+	for _, a := range argv {
+		cmd = append(cmd, a)
+	}
+	return []planChange{{
+		"address": addr, "type": "google_cloud_run_v2_job",
+		"change": planChange{"actions": []string{"create"}, "before": planChange{},
+			"after": planChange{"template": []any{planChange{"template": []any{planChange{
+				"containers": []any{planChange{"image": image, "command": []any{"fugaro"}, "args": cmd}},
+			}}}}}},
+	}}
+}
+
 func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 	t.Helper()
 	return newConvergeRigYAML(t, node, refreshYAML)
@@ -214,6 +321,11 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 // where the file the repository stage reads is the thing that is wrong.
 func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *convergeRig {
 	t.Helper()
+	// The rig is a managed installation (the shared fixture's default), so the
+	// steps this door admits write an audit record, and a record has to name the
+	// account the run went as (D1014): a hermetic world has no credentials to
+	// answer that with, so this rig answers it.
+	isolateGateCredentials(t)
 	fakeTerraform(t) // built with go, which convergeEnv takes off PATH
 	convergeEnv(t, convergeRelease)
 	// The checkout stage's cloud step builds the stale workflows, and a build
@@ -554,18 +666,21 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 		"intake":              intakeServiceOutput(),
 	})}
 	// The installation root's plan is NOT empty here, and the fixture says so
-	// rather than leaving it to the rig's default: this release's run writes the
-	// secrets intake's block into an installation that has none (DS4.1), the
-	// module's whole intake file is gated on that variable, so the apply that
-	// follows it creates the service — and an installation stage whose plan
-	// reports no changes while its tfvars gained a service is the shape the
+	// rather than leaving it to the rig's default: an installation stage whose
+	// plan reports no changes while its tfvars gained a service is the shape the
 	// audience fill refuses (TF.Plan's exit code is what says a plan has
-	// something to apply). The plan's own content is not what this test is
-	// about; where the run STOPS is, and a stage that plans nothing never
-	// reaches the policy stage's precondition.
+	// something to apply), and a stage that plans nothing never reaches the
+	// policy stage's precondition. The plan's own content is not what this test
+	// is about; where the run STOPS is.
+	//
+	// It is an account of the module's own and nothing that carries an image:
+	// this is the world in which the release has published no credentials image
+	// at all, so the intake service itself is not deployable here and a plan
+	// proposing one would be refused by the cover before the resolve this test
+	// is about — correctly, over a document terraform would never write.
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
+	r.setPlanAt(t, "installation", change(intakeAccountAddr, "create"))
 	r.save(t)
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
