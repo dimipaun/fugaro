@@ -257,6 +257,12 @@ func TestEachStageKeepsItsAgentRefusalAndAuditRecord(t *testing.T) {
 	t.Run("nothing is applied and nothing is recorded", func(t *testing.T) {
 		const marker = "CLAUDECODE"
 		r, _ := updateBudgetRig(t)
+		// The project this arm is about is not managed: the gate stands in for
+		// a managed one's confirmations, which is the arm below, and a stage
+		// crossed with the gate's admission is refused in the gate's sentence
+		// and leaves its record. The stage's own agent refusal is what a
+		// project nothing flags keeps.
+		r.unmarkedInstallation(t)
 		t.Setenv(marker, "1")
 		updating(t, r)
 		r.setPlan(t, change("module.installation.google_service_account.scheduler", "create"))

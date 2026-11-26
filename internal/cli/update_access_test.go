@@ -976,7 +976,7 @@ func TestAGrantTheInstallationNeverHeldNamesItself(t *testing.T) {
 		updating(t, r)
 		r.setPlanAt(t, "installation", grantChange("runs_launcher", extra, "roles/storage.objectUser", "create"))
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, "", "update")
+		out, errOut, err := executeStdin(t, askYes, "update", "--ask")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan granting a member the review did not announce failed at a person's own terminal: %v\n%s", err, all)
@@ -1054,7 +1054,7 @@ func TestAPromotionInTheNodeNamesItself(t *testing.T) {
 		updating(t, r)
 		r.setPlanAt(t, "installation", grantChange("runs_object_admin", ops, "roles/storage.objectAdmin", "create"))
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, "", "update")
+		out, errOut, err := executeStdin(t, askYes, "update", "--ask")
 		all := accessOut(out, errOut, err)
 		if err != nil {
 			t.Fatalf("a plan granting the role the node raised a member to failed at a person's own terminal: %v\n%s", err, all)
@@ -1158,7 +1158,7 @@ func TestAPromotionLandedAfterTheRolesStepNamesItself(t *testing.T) {
 	var err error
 	go func() {
 		defer close(done)
-		out, errOut, err = executeStdin(t, "", "update")
+		out, errOut, err = executeStdin(t, askYes, "update", "--ask")
 	}()
 	<-stampedStep
 	releaseStep()

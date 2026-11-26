@@ -488,16 +488,18 @@ func TestInitRefusesDeletePlan(t *testing.T) {
 		!strings.Contains(err.Error(), "--budget, --budget-currency and --billing-account") {
 		t.Fatalf("budget delete: exit %d, err %v", ExitCode(err), err)
 	}
-	// Back to the first rig's own world: the preview above was run in the rig
-	// that was built last, and FUGARO_CONFIG is the last rig's until it is
-	// named again.
-	t.Setenv("FUGARO_CONFIG", r.cfg)
-	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
-	// Naming the address lets it through.
+	// Naming the address lets it through. It is a rig of its own, like the
+	// preview above: the world of a rig is the one built last — FUGARO_CONFIG
+	// and PATH both name it — so an arm that means to run the first rig's plan
+	// builds its own.
+	q := newInitRig(t)
+	q.stateBucket()
+	fakeTerminal(t)
+	q.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
 	if _, _, err := executeStdin(t, "", "setup", "--allow-delete", "module.installation.google_storage_bucket.runs"); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.ran(t, "apply")) != 1 {
+	if len(q.ran(t, "apply")) != 1 {
 		t.Fatal("the allowed delete was not applied")
 	}
 }
@@ -615,6 +617,13 @@ func fakeTerminal(t *testing.T) {
 	stdinIsTerminal = func(io.Reader) bool { return true }
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
+
+// askYes is what a run with --ask reads at a rig's fake terminal: a yes for
+// every question it puts, and one more than any run asks, because the input a
+// run leaves unread is nothing. --ask is the flag that puts back the
+// confirmations a managed project's gate stands in for (U3b), so a test whose
+// subject is one of those confirmations runs the command with it.
+const askYes = "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"
 
 // noTerminal is the other half: a run with no terminal on stdin, whatever the
 // test binary's own stdin is. A test that has to be sure of it says so rather
@@ -1247,7 +1256,10 @@ func TestInitJSON(t *testing.T) {
 
 // createOnApply makes the fake terraform's apply create the runs bucket
 // in the GCS fake, as the real apply does on a fresh project: with GCS's
-// convenience bindings, the project Viewers' included.
+// convenience bindings, the project Viewers' included. An apply in a world
+// where the bucket is already there (the default rig's installation) is not a
+// failure of the apply — Google answers the create 409 and terraform goes on
+// with the bucket it has — so that code is the apply standing.
 func (r *initRig) createOnApply(t *testing.T) {
 	t.Helper()
 	curl, err := exec.LookPath("curl")
@@ -1260,8 +1272,8 @@ func (r *initRig) createOnApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"` + initRunsBucket + `","labels":{"fugaro":"managed"}}`
-	create := `if [ "$1" = apply ]; then '` + curl + `' -sf -o /dev/null -X POST -H 'Content-Type: application/json' -d '` + body + `' '` +
-		r.gcs.URL + `/storage/v1/b?project=` + initProject + `' || exit 9; fi` + "\n"
+	create := `if [ "$1" = apply ]; then code=$('` + curl + `' -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '` + body + `' '` +
+		r.gcs.URL + `/storage/v1/b?project=` + initProject + `'); case "$code" in 200|409) ;; *) exit 9 ;; esac; fi` + "\n"
 	lines := strings.SplitN(string(old), "\n", 2)
 	if err := os.WriteFile(path, []byte(lines[0]+"\n"+create+lines[1]), 0o755); err != nil {
 		t.Fatal(err)
@@ -1329,6 +1341,9 @@ func capturedApplies(t *testing.T, dir, root string) []map[string]any {
 func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	// The bucket this test is about carries the convenience bindings a create
+	// adds, which the run is to take away.
+	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
 	r.createOnApply(t)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")

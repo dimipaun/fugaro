@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -81,6 +82,14 @@ func (e *initEngine) requireManagedInstallation() error {
 	// must not put the marks' read on the wire for a run the check is about to
 	// end, which is what a read in front of it would do.
 	if err := e.environment(); err != nil {
+		return nil
+	}
+	// And the terraform this machine has, which the environment's own check
+	// does not read: the version is probed where the installation's setup
+	// probes it (tf.New), and probing it here as well is what keeps the marks'
+	// read off the wire for a run that probe is about to end. The stage that
+	// probe belongs to refuses the run with the sentence it has always used.
+	if _, err := tf.ProbeVersion(e.bin); err != nil {
 		return nil
 	}
 	g := readUpdateGate(e, r)

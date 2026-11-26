@@ -610,8 +610,12 @@ func (r *initRig) managedInstallation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// No policy on the bucket: the installation this release's own creation
+	// writes removes the convenience bindings the create added (the step that
+	// says so is the bucket's own), so a rig that seeded them would be the
+	// older world, and every run in it would ask its owner about a removal it
+	// has already made. A test whose subject IS that removal seeds them itself.
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
-	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
 	labelled(r.crm, initProject)
 	// Seeded without a request (Put): the fixture's own object is not something
 	// the run did, and a test that counts what a run sent to the runs bucket

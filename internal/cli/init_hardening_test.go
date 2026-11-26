@@ -189,7 +189,11 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 			r.script["plan@installation"] = map[string]any{"exit": 2}
 			r.script["show@installation"] = map[string]any{"stdout": planJSON(t, launcherReplaceChange(bucket, a, tc.title, tc.expr))}
 			r.save(t)
-			out, errOut, err := executeStdin(t, "", "update")
+			// --ask puts back the confirmation a managed project's gate
+			// stands in for (U3b): the replace this test is about is a
+			// change the gate admits, and the banner naming the launcher
+			// whose grant is replaced is printed by the confirmation.
+			out, errOut, err := executeStdin(t, askYes, "update", "--ask")
 			if err != nil {
 				t.Fatalf("fugaro update left an installation at the previous version behind: %v\n%s%s", err, out, errOut)
 			}

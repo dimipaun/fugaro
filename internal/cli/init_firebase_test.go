@@ -1101,6 +1101,16 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 		t.Errorf("applied: %v", r.applies(t))
 	}
 
+	// Naming the address lets it through, on the same rig: --allow-delete is
+	// the answer to the refusal above, and this rig is the one whose plan it
+	// names.
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--allow-delete", addr); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.applies(t); !slices.Equal(got, []string{"firebase"}) {
+		t.Errorf("applies = %v", got)
+	}
+
 	// The hints on why a grant is removed, in the words a project nothing
 	// flags is refused with. A run that converges an installation is a managed
 	// project's own, so they are read off the preview of one that is not —
@@ -1110,19 +1120,15 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	fakeTerminal(t)
 	p.setPlan(t, planChange{"address": addr, "type": "google_project_iam_member",
 		"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{}, "after": nil}})
+	// Every root reports the change: the installation root is planned first,
+	// as the firebase backend's own first step, and a preview that found no
+	// changes there would end the run at that root and never plan the one the
+	// grant is in.
 	p.script["plan"] = map[string]any{"exit": 2}
-	p.script["plan@installation"] = map[string]any{"exit": 0}
-	p.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 	p.save(t)
 	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--plan-only"); ExitCode(err) != ExitUserError ||
 		!strings.Contains(err.Error(), "owners and editors") || !strings.Contains(err.Error(), "--budget-admin") {
 		t.Fatalf("no hint on why a grant is removed: exit %d, err %v", ExitCode(err), err)
-	}
-	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--allow-delete", addr); err != nil {
-		t.Fatal(err)
-	}
-	if got := r.applies(t); !slices.Equal(got, []string{"firebase"}) {
-		t.Errorf("applies = %v", got)
 	}
 }
 
