@@ -137,10 +137,12 @@ func TestTheVectorsDirectionPairsReplay(t *testing.T) {
 
 // TestTheCoveredFieldSetIsEveryFieldButMacAndAcked pins the covered set the way
 // a field added or dropped would be caught: every field of the schema changes
-// the tag when its value changes, except the two that are deliberately outside
-// it. `mac` is out because a tag cannot cover itself; `acked` is out because the
-// phone writes the receipt after the tag was made, so a receipt cannot
-// invalidate the message it acknowledges.
+// the tag when its value changes, except the three that are deliberately
+// outside it. `mac` and `sig` are out because a tag cannot cover itself —
+// whichever of the two schemes the record carries, and both are dropped so the
+// bytes do not depend on which one it is; `acked` is out because the phone
+// writes the receipt after the tag was made, so a receipt cannot invalidate the
+// message it acknowledges.
 //
 // The field set is read from Fields — the schema's own list, which
 // TestBoundsMatchTheSharedModule holds to the module — so a field the schema
@@ -159,6 +161,7 @@ func TestTheCoveredFieldSetIsEveryFieldButMacAndAcked(t *testing.T) {
 		"the answer with reply_to": vectorCase(t, "answer"),
 		"the merge action":         vectorCase(t, "action: merge a pull request"),
 		"the registration":         vectorCase(t, "registration"),
+		"the signed message":       signedMessage(t),
 	}
 	seen := map[string]bool{}
 	for what, record := range records {
@@ -174,7 +177,7 @@ func TestTheCoveredFieldSetIsEveryFieldButMacAndAcked(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MacOf(%s, %s changed): %v", what, field, err)
 			}
-			covered := field != "mac" && field != "acked"
+			covered := field != "mac" && field != "sig" && field != "acked"
 			switch {
 			case covered && got == base:
 				t.Errorf("changing %s in %s left the tag alone, so the field is not covered", field, what)

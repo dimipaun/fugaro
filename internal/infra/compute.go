@@ -433,16 +433,28 @@ func DecodeComputeOutputs(raw map[string]json.RawMessage) (ComputeOutputs, error
 	return o, nil
 }
 
-// jobMarkers are the display names a Fugaro job account carries: the current
-// one and the M4 bootstrap's. A display name is a service account's ownership
-// mark (gcp.JobSADisplayName; discovery compares it exactly and reports any
-// other value as foreign), so a listing can tell the installation's run-class
-// accounts from every other account in the project without reading a state.
+// jobMarkers are the display names a PER-REPOSITORY Fugaro job account
+// carries: the current one and the M4 bootstrap's. A display name is a service
+// account's ownership mark (gcp.JobSADisplayName; discovery compares it exactly
+// and reports any other value as foreign), so a listing can tell the
+// installation's run-class accounts from every other account in the project
+// without reading a state.
+//
+// A shared project job's accounts are NOT among them: their mark is
+// gcp.ProjectSADisplayName's, they are listed by their own function
+// (ProjectJobRunAccounts), and the two are kept apart because the block's
+// single account is picked from the per-repository ones alone
+// (internal/cli's batchBlockAccount).
 var jobMarkers = []string{"Fugaro job ", "Fugaro M4 job "}
 
-// JobRunAccounts lists the project's Fugaro job accounts, as IAM members
-// (serviceAccount:<email>): the run-class identities a Batch job's VM runs as
-// (§3.2). They are the accounts the repository roots created for the
+// projectJobMarker is the display name a shared project job's account carries
+// (gcp.ProjectSADisplayName's prefix), which no per-repository job account
+// names.
+var projectJobMarker = "Fugaro project job "
+
+// JobRunAccounts lists the project's per-repository Fugaro job accounts, as IAM
+// members (serviceAccount:<email>): the run-class identities a Batch job's VM
+// runs as (§3.2). They are the accounts the repository roots created for the
 // installation's workflows, which is why they are listed rather than derived:
 // the local config records workflow names, not the token variants' accounts,
 // and an account left out here is a run whose VM cannot report its state.
@@ -450,13 +462,52 @@ var jobMarkers = []string{"Fugaro job ", "Fugaro M4 job "}
 // An empty answer is not an error here but is refused by ComputeVars: with no
 // run account the provisioning could only produce jobs that never report.
 func JobRunAccounts(ctx context.Context, c *Clients, project string) ([]string, error) {
+	return accountsMarked(ctx, c, project, jobMarkers, "the project's job accounts")
+}
+
+// ProjectJobRunAccounts lists the project's SHARED project job accounts, as IAM
+// members: the accounts a project job's workflow runs as on Batch
+// (internal/backend/batch's jobAccount, D3103). They are listed rather than
+// derived for JobRunAccounts' reason -- a project job's name is written, never
+// parsed, so no reader can recover the (profile, provider, account) triple it
+// hashes -- and they are listed HERE, apart from the per-repository ones,
+// because what they are for is what the compute root must be fed rather than
+// what the block carries: RunAccounts puts them beside the per-repository
+// accounts (D3105).
+//
+// An empty answer is ordinary: an installation whose policy shares no project
+// job has none.
+func ProjectJobRunAccounts(ctx context.Context, c *Clients, project string) ([]string, error) {
+	return accountsMarked(ctx, c, project, []string{projectJobMarker}, "the project's shared project job accounts")
+}
+
+// RunAccounts is what the compute root is fed as its run_accounts: the
+// per-repository job accounts the repository roots created, and beside them the
+// shared project job accounts a project job's workflow runs as (D3105).
+//
+// The second half is not a nicety. A launcher may create a Batch job naming an
+// account only where the root gave it actAs on that account, and it gives it on
+// every member of var.run_accounts (modules/compute/iam.tf) -- so a root fed the
+// per-repository accounts alone refuses every launch of a project job's
+// workflow, which is the identity its Cloud Run run has (D3103). The accounts
+// are also what a job's VM holds the Batch and logging roles as, and what the
+// network's target accounts name.
+func RunAccounts(perRepository, projectJobs []string) []string {
+	out := slices.Concat(perRepository, projectJobs)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// accountsMarked lists the project's service accounts whose display name starts
+// with one of markers, as IAM members, sorted.
+func accountsMarked(ctx context.Context, c *Clients, project string, markers []string, what string) ([]string, error) {
 	if c.IAM == nil {
 		return nil, errors.New("no IAM client")
 	}
 	var out []string
 	err := c.IAM.Projects.ServiceAccounts.List("projects/"+project).PageSize(100).Pages(ctx, func(r *iam.ListServiceAccountsResponse) error {
 		for _, sa := range r.Accounts {
-			if sa.Email == "" || !slices.ContainsFunc(jobMarkers, func(m string) bool { return strings.HasPrefix(sa.DisplayName, m) }) {
+			if sa.Email == "" || !slices.ContainsFunc(markers, func(m string) bool { return strings.HasPrefix(sa.DisplayName, m) }) {
 				continue
 			}
 			out = append(out, "serviceAccount:"+sa.Email)
@@ -464,7 +515,7 @@ func JobRunAccounts(ctx context.Context, c *Clients, project string) ([]string, 
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing the project's job accounts: %w", err)
+		return nil, fmt.Errorf("listing %s: %w", what, err)
 	}
 	slices.Sort(out)
 	return slices.Compact(out), nil

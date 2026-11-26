@@ -333,7 +333,11 @@ plus `unknown-kind` below. P5.2.1 added the `registration` kind, and with it
 three more, for twelve in all: `unknown-platform` (a platform that is not one
 of the two the node shape in §3.4 names), `bad-zone` (a quiet-hours zone that
 is not an IANA-shaped name) and `bad-window` (a quiet-hours minute outside the
-day, or a window whose two ends are the same minute). A delivery's refusal set is the schema's whole table
+day, or a window whose two ends are the same minute). O6 replaced the
+per-pairing MAC with a per-message device signature, so the table grew two
+more: `bad-sig` (a tag that is not a 64-byte Ed25519 signature in unpadded
+base64url) and `bad-tag` (a record carrying both tags, where one record has
+exactly one scheme). A delivery's refusal set is the schema's whole table
 (`Object.values(REFUSALS)`), so a code added there reaches here without an edit
 in this module.
 `unknown-kind` is spelled the same in both modules and means a different
@@ -341,8 +345,9 @@ thing in each: the schema's is a message's `kind`, this module's is a
 delivery's. They are told apart by the field, exactly as the three shared
 codes above are.
 
-A `mac` is checkable only with the key, and this module has none: it validates
-the tag's SHAPE, never its value, and `verifyMac` is the consumer's question
+A tag is checkable only with the key — the pairing's MAC, or the device's
+public key for a signature — and this module has neither: it validates the
+tag's SHAPE, never its value, and `verifyMac` is the consumer's question
 (P4.1, D171). A delivery whose tag does not verify is one the consumer must
 refuse before it calls this module at all — see `shared/mailbox-schema`'s
 vectors for what "verifies" means byte for byte.

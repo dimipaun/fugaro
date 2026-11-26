@@ -87,8 +87,8 @@ func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
 // name — a task.Recipe with no text — since that file is read at the run's
 // own base, and for one that inherits no recipe at all, which resolves to
 // the repository's .fugaro/recipes/default.yaml (agent.recipe is a first-run
-// key only). refuseFollowUpRepoRecipe reads the ones this checkout has, so
-// most of those are refused here too.
+// key only). A follow-up that inherits a name judges the project's copy of it
+// (followUpRecipeOfName, followup.go), so most of those are refused here too.
 func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 	if rcp.Mode == recipe.ModeArtifact {
 		return userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; it takes no --pr, and there is no pull request for it to continue", name)
@@ -121,51 +121,11 @@ func refuseFollowUpReportMode(rcp *recipe.Recipe, name string) error {
 
 // refuseReportFollowUp is refuseFollowUpReportMode's refusal for a caller
 // that knows the recipe's name but has no text to parse: a repository recipe
-// inherited by name, whose steps the launcher judges from this checkout's
-// copy of the file when it has one (refuseFollowUpRepoRecipe) and from the
-// previous run's manifest when it has not (prChain.PrevReport).
+// inherited by name, whose steps the launcher judges from the project's copy
+// of the file when the store holds one (followUpRecipeOfName, followup.go)
+// and from the previous run's manifest when it has not (prChain.PrevReport).
 func refuseReportFollowUp(name string) error {
 	return userErr("recipe %s writes this repository's run reports, and a repository has one report run at a time; a follow-up carries no manifest of the records it may read and skips the in-flight check a fresh launch makes, so it cannot use it — schedule a report run of its own with fugaro run --recipe %s", name, name)
-}
-
-// refuseFollowUpRepoRecipe refuses the same mismatches for a follow-up
-// that INHERITS a repository recipe by name — the previous task's
-// task.Recipe{Name, Source: repo}, and the chosen recipe carryChosenRecipe
-// keeps the same way — which carries no text for the refusals above to
-// read. What it judges is the project's COPY of that name (D3303): the
-// checkout's .fugaro/recipes/ is not read, and the recipe the previous run
-// ran is the copy, so a same-named project or catalog recipe is not the one
-// this follow-up inherits. A copy the project does not hold, or one that
-// does not parse, is left alone, because the runner reads the name at THIS
-// task's base (readRepoRecipe, internal/runner/recipe.go) and refuses a bad,
-// artifact or report one there itself. The report mismatch is refused here
-// without the copy too: a launcher with no copy of it still knows whether
-// the previous run's task carried a manifest, and so whether the recipe this
-// follow-up inherits is a report recipe (newFollowUpSpec, prChain.PrevReport).
-func refuseFollowUpRepoRecipe(ctx context.Context, env *cloudEnv, repo, name string) error {
-	if env.bucket == nil {
-		return nil
-	}
-	copy := recipe.CopyName(name, repoProviderFor(ctx, env, repo), repo)
-	if copy == "" {
-		return nil
-	}
-	data, _, err := fetchProjectRecipe(ctx, env, time.Now(), copy, false)
-	if err != nil || data == nil {
-		return nil
-	}
-	where := "gs://fugaro-runs-" + env.lc.GCPProject + "/" + recipe.ObjectKey(copy)
-	rcp, err := parseRecipeAt(data, copy, where)
-	if err != nil {
-		return nil
-	}
-	if err := refuseFollowUpReviewMode(rcp, copy); err != nil {
-		return err
-	}
-	if err := refuseFollowUpArtifactMode(rcp, copy); err != nil {
-		return err
-	}
-	return refuseFollowUpReportMode(rcp, copy)
 }
 
 // projectRecipesNote is why lc's project recipes are not read, or "": as
@@ -217,10 +177,21 @@ func fetchProjectRecipe(ctx context.Context, env *cloudEnv, now time.Time, name 
 // written (D3308, refuseUnmigratedFolderRecipe). Anything malformed is an error
 // naming where it is.
 func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now time.Time, refresh bool) (*resolvedRecipe, error) {
+	repo, provider := recipeLookupKeys(ctx, env, root)
+	return resolveRecipeFor(ctx, env, repo, provider, root, name, now, refresh)
+}
+
+// resolveRecipeFor is resolveRecipe for a repository named rather than read off
+// a checkout: repo and provider are the two recipe.LookupOrder is keyed by
+// (D3303), and root is the checkout to refuse an unmigrated folder recipe by,
+// "" when there is none. A launch knows the repository it launches — --repo,
+// the pull request's chain — even where the directory it runs in is not a
+// checkout of it, which is why the two are arguments here (resolveLaunchRecipe,
+// run.go) and derived in resolveRecipe.
+func resolveRecipeFor(ctx context.Context, env *cloudEnv, repo, provider, root, name string, now time.Time, refresh bool) (*resolvedRecipe, error) {
 	if !recipe.IsNameOrCopy(name) {
 		return nil, userErr("%q is not a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit, or the name of the project's copy of one (that name, a dot, the repository's slug and 8 hex)", pluginwire.Printable(name))
 	}
-	repo, provider := recipeLookupKeys(ctx, env, root)
 	order := recipe.LookupOrder(name, provider, repo)
 	note := projectRecipesNote(env.lc)
 	if note == "" {

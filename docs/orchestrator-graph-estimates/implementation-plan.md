@@ -126,11 +126,11 @@ What it builds: [`spec.md`](spec.md) as amended by [`reconciliation.md`](reconci
 - Reviewer tier: standard.
 
 ### R7: the update skill and Checks 301–302 say update installs the unit (daemon-release)
-- Acceptance: the update skill and `docs/gcp-live-checklist.md`'s Checks 301–302 say `update` installs a missing unit (D2700); their pinned tests follow.
-- Files: `plugin/skills/update/SKILL.md`, `plugin/update_skill_test.go`, `internal/cli/docs_check301_302_test.go`, `docs/gcp-live-checklist.md`.
-- Tests: `TestUpdateSkill*` (existing, amended), `TestDocsCheck301*` and `TestDocsCheck302*` (existing, amended).
-- Command: `go test ./plugin/ -run TestUpdateSkill -count=1 && go test ./internal/cli/ -run Docs -count=1`
-- Red step: the amended skill test fails on today's sentence.
+- Acceptance: the update skill and `docs/gcp-live-checklist.md`'s Checks 301–302 say `update` installs a missing unit (D2700), and so does the owner-run Check 301's own text: `scripts/live-checks/check301.sh`'s `upgrade` phase reads D2700's boundary on a machine with no unit (an agent-marked run leaves it without one, the person's own installs the first unit and loads it, and either run is started on the check's own standard input rather than the `/dev/null` a background job gets), and its `start` phase names `fugaro update` beside `fugaro orchestrator install` as the door that writes the first one; their pinned tests follow.
+- Files: `plugin/skills/update/SKILL.md`, `plugin/update_skill_test.go`, `internal/cli/docs_check301_302_test.go`, `docs/gcp-live-checklist.md`, `scripts/live-checks/check301.sh`, `scripts/live-checks/check301_test.sh`.
+- Tests: `TestUpdateSkill*` (existing, amended), `TestDocsCheck301*` and `TestDocsCheck302*` (existing, amended), `scripts/live-checks/check301_test.sh` (existing, amended: the `case_upgrade_boundary*` and `case_start_no_unit` cases).
+- Command: `go test ./plugin/ -run TestUpdateSkill -count=1 && go test ./internal/cli/ -run Docs -count=1 && go test ./scripts/ -run TestLiveCheckScripts -count=1`
+- Red step: the amended skill test fails on today's sentence, and the amended boundary case fails against the script that reads the boundary T7 kept.
 - Depends on: R2 (the docs say what its code does).
 - Commit: `docs: update installs the orchestrator unit (R7, D2700)`
 - Reviewer tier: opus (a plugin skill).

@@ -3622,7 +3622,7 @@ func TestServesAPIKeyAndOAuthInEveryMode(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, mode := range []string{"", config.BudgetOff, config.BudgetObserve, config.BudgetEnforce} {
+			for _, mode := range []string{"", "off", config.BudgetObserve, config.BudgetEnforce} {
 				on := repoRootServed(t, tc.agent, tc.lc, mode)
 
 				if on.Installation.CredentialsService == nil {
@@ -3944,7 +3944,7 @@ func TestModelAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 	}
 	// And the cascade, the other arm: its job mounts no model credential at all,
 	// so no accessor of its account is one this flip took away.
-	cascade := repoRootServed(t, repoRootCascadeAgent, repoRootLC, config.BudgetOff)
+	cascade := repoRootServed(t, repoRootCascadeAgent, repoRootLC, "off")
 	if cascade.ModelSecretsServed != config.ModelSecretServedAll {
 		t.Fatalf("the cascade fixture plans model_secrets_served = %q, want %q", cascade.ModelSecretsServed, config.ModelSecretServedAll)
 	}

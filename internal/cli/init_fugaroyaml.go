@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"path/filepath"
 	"regexp"
@@ -199,8 +200,29 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 	return &anchorEdit{path: path, id: lc.GCPProject, old: old, out: out, changed: changed}, nil
 }
 
-// writeAnchor is the one write of the line, after the plugin stage's pattern:
-// the diff, then --yes writes, a person at the terminal writes having read the
+// anchorGate is the gate the gcp_project edit is offered through, as the facts
+// a door holds (F38, R8): the run that writes the line in a checkout has an
+// initRun, and `fugaro project repos add` — which offers the same edit in the
+// same checkout — has none, so the arms below read these and not a run.
+type anchorGate struct {
+	// w is where the diff, the gate's own sentence and the line to add go.
+	w io.Writer
+	// planOnly prints what it would do and writes nothing.
+	planOnly bool
+	// managed is the run's own gate (initRun.gateStandsIn) and person is
+	// initflow.PersonAtTheTerminal of the same run's conditions: together they
+	// are the arm that prints the sentence saying why nothing is asked.
+	managed, person bool
+	// yes is --yes, and interactive whether a person is at the terminal: a
+	// session with neither is handed the line to add.
+	yes, interactive bool
+	// confirm is the door's own confirmation, asked where the arms above did
+	// not answer and refusing a coding agent's session.
+	confirm func(string) (bool, error)
+}
+
+// write is the one write of the line, after the plugin stage's pattern: the
+// diff, then --yes writes, a person at the terminal writes having read the
 // diff, and anything else leaves the file alone and prints the line to add.
 // Nothing is typed for it (T7, docs/no-prompt-policy: the [y/N] this used to
 // ask for is gone, and --ask is the flag that puts the question back).
@@ -216,41 +238,57 @@ func prepareAnchor(lc *localcfg.Config, root string) (*anchorEdit, error) {
 // answered for. Nothing else moves: a project that is not managed, a mark that
 // did not answer and a coding agent's session keep the arms below exactly as
 // they were.
-func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
+func (g anchorGate) write(a *anchorEdit) (bool, error) {
 	if !a.changed {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
+	fmt.Fprintf(g.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
 	addLine := fmt.Sprintf("to let teammates use this installation without setup, add this line to %s: %s (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n", a.path, a.line())
 	switch {
-	case planOnly:
-		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
+	case g.planOnly:
+		fmt.Fprintln(g.w, "  (plan only: fugaro.yaml is not written)")
 		return false, nil
-	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
-		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
-	case env.Yes:
-		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
-	case !env.Interactive:
-		fmt.Fprint(r.w, addLine)
+	case g.managed && g.person:
+		fmt.Fprintf(g.w, "  %s\n", initflow.OwnerProceeded())
+	case g.yes:
+		fmt.Fprintln(g.w, "  confirmed by this run's own answer")
+	case !g.interactive:
+		fmt.Fprint(g.w, addLine)
 		return false, nil
 	default:
 		// A person at the terminal is asked nothing (T7): the y/N they used
 		// to type is gone, --ask is the flag that puts the question back, and
 		// the diff above is what they read.
-		ok, err := r.confirmNow("write this to " + a.path + "?")
+		ok, err := g.confirm("write this to " + a.path + "?")
 		if err != nil {
 			return false, err
 		}
 		if !ok {
-			fmt.Fprint(r.w, addLine)
+			fmt.Fprint(g.w, addLine)
 			return false, nil
 		}
 	}
 	if err := writeFileAtomic(a.path, a.out); err != nil {
 		return false, err
 	}
-	fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
+	fmt.Fprintf(g.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
 	return true, nil
+}
+
+// writeAnchor is anchorGate.write with this run's own facts: the arms every
+// door of the edit shares, and the one thing a run adds to them — the marks
+// (gateStandsIn) and the confirmation that refuses a coding agent's session
+// (confirmNow).
+func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (bool, error) {
+	return anchorGate{
+		w:           r.w,
+		planOnly:    planOnly,
+		managed:     r.gateStandsIn(),
+		person:      initflow.PersonAtTheTerminal(r.conditions()),
+		yes:         env.Yes,
+		interactive: env.Interactive,
+		confirm:     r.confirmNow,
+	}.write(a)
 }
 
 // fugaroYAMLWithoutRemovedMode is a checkout's fugaro.yaml with the word that
@@ -386,7 +424,9 @@ func reasonRegistryHost(kind string, err error) string {
 // kind, "" when none is known): its reasons, then one ordered fix: the
 // local config's base entry removed first when it is a custom image
 // (customBase), then fugaro image refresh (or fugaro image build when the
-// kind is unknown, since refresh needs one), then --anchor. lcPath is the
+// kind is unknown, since refresh needs one), then the command that writes
+// the gcp_project line — fugaro project repos add, run in that repository's
+// own checkout, which is where the line is offered (R14). lcPath is the
 // local config's file.
 func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBase bool) string {
 	var steps []string
@@ -402,7 +442,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 	} else {
 		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}
-	steps = append(steps, "fugaro update --anchor")
+	steps = append(steps, "fugaro project repos add "+repo+" in the repository's checkout")
 	for i, s := range steps {
 		steps[i] = fmt.Sprintf("(%d) %s", i+1, s)
 	}

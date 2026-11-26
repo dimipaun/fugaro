@@ -162,7 +162,7 @@ func TestUpdateConvergesADaemonInstallationInOneCommand(t *testing.T) {
 	holdOrchestratorBlock(t, r)
 	run := startRunInFlight(t, r)
 
-	line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+	line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 	if !strings.Contains(line, "1 run in flight") || !strings.Contains(line, "waits for none") {
 		t.Errorf("the update over a daemon installation does not name the run in flight and that it waits for none:\n%s", line)
 	}

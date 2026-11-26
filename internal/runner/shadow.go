@@ -467,7 +467,11 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// records, and a status the other arm's record does not carry would read as
 	// two runs of different work.
 	decidedRound := r.decidingReview()
-	dec := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
+	// The champion's own read of the agent's hand-back (LV5.1): the arm's
+	// ending is chosen the way the champion's is, so a level's promise is
+	// answered the same way on both sides of the pair.
+	hb, fromAgent := r.handBack()
+	dec := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions, hb, fromAgent, r.owesHandBack())
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	r.recordCapDeferrals()
