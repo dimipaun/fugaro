@@ -276,14 +276,13 @@ func anchorAddLine(a *anchorEdit) string {
 // nothing. The arms are anchorGateWrite, which every door offering this edit
 // shares.
 //
-// A managed project's own terminal is asked nothing here either (the owner's
-// ruling of 2026-11-06): the diff above is the whole of what the owner reads,
-// the line to add is not needed because the write is made, and the sentence
-// says why. It is read before --yes, so an owner who passed the flag reads the
-// managed sentence rather than a line about a flag the project's marks already
-// answered for. Nothing else moves: a project that is not managed, a mark that
-// did not answer and a coding agent's session keep the arms exactly as they
-// were.
+// One of those arms is the managed project's own terminal (the owner's ruling
+// of 2026-11-06): the diff above is the whole of what the owner reads, the line
+// to add is not needed because the write is made, and the sentence says why. It
+// is read before --yes, so an owner who passed the flag reads the managed
+// sentence rather than a line about a flag the project's marks already answered
+// for. The order of the arms is anchorGateWrite's, and this function reads none
+// of the facts behind them.
 func writeAnchorEdit(w io.Writer, a *anchorEdit, g anchorGate) (bool, error) {
 	if !a.changed {
 		return false, nil

@@ -362,14 +362,19 @@ func reposEnrolmentAnchorRead(ctx context.Context, lc *localcfg.Config, plan *re
 // offering the line shares (anchorGateWrite), and what the report says of it.
 //
 // The gate's facts are this door's, and the command asks nothing new for the
-// line (R8): the one typed confirmation covered the whole enrolment — and a run
-// with no terminal was refused at that confirmation, so there is always a person
-// behind this — and the gate's answer is a nil ask, the write. A run whose
-// stdin is not a terminal is handed the line to add instead, as `fugaro update
-// --anchor` hands it one. A coding agent's session never reaches here: the
-// command refuses one before it reads anything. The gate's other arms (--yes,
-// the managed project's own sentence, --plan-only) are the update door's, which
-// this command has no flag for.
+// line (R8): the one typed confirmation covered the whole enrolment, so the ask
+// this door hands the gate is nil — the arm that writes without asking — and
+// the gate's other arms are the update door's, which this command has no flag
+// for (--yes, --plan-only) or no business in (the managed project's sentence,
+// which the enrolment's own confirmation does not stand in for). A coding
+// agent's session never reaches here: the command refuses one before it reads
+// anything.
+//
+// The non-interactive fact is the same one the confirmation above read, and it
+// refused a run whose stdin is not a terminal, so this door never lands on the
+// gate's print-the-line arm. It is passed because it is the truth about the
+// session, and a door that grew a way past the confirmation would then get the
+// line rather than a file written for nobody.
 func reposEnrolmentAnchorStep(out io.Writer, cmd *cobra.Command, plan *reposEnrolment) error {
 	if plan.anchor == nil {
 		return nil
