@@ -82,7 +82,7 @@ func backlogView(repo string, files map[string][]byte) repoView {
 // after the stage loop hands its per-repository lines to the output members.
 func reportedOf(e *initEngine, name string) []initflow.RepoLine {
 	var out []initflow.RepoLine
-	for _, r := range e.reposState.reported {
+	for _, r := range e.reposState.stages {
 		if r.name == name {
 			out = append(out, r.lines...)
 		}

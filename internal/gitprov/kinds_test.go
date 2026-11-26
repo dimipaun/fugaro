@@ -69,6 +69,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
 	"internal/cli/run.go":                      "the kind a launch resolves for the slug it runs on, refused for a read-only context repository the credentials service cannot fetch",
 	"internal/cli/update_proxy_switch.go":      "the project's own repositories the update's Bitbucket proxy switch has to reach, and the workspace they are all in (D2306, D2314)",
+	"internal/cli/update_repos_read.go":        "the enrolled list's read: the one kind whose App ID a repository's own entry may lack and the project's may lend it (F43); the other kind's read needs none",
 	"internal/cli/workspace_state.go":          "the host a state save is published through, per provider: GitHub through the owner's gh, Bitbucket through internal/gitprov, which is the half that has no CLI (WU15, D2807)",
 	"internal/cli/update_route.go":             "the credential route a member publishes (WS9, D2973): which of a repository's git credentials is the workspace's to serve and which is the project's own, read against the repository's own provider kind — a second forge's kind reaches no repository of an installation that is not on it",
 	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",

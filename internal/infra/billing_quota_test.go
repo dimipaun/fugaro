@@ -140,3 +140,25 @@ func mustPKCS8(t *testing.T, k *rsa.PrivateKey) []byte {
 	}
 	return b
 }
+
+// A caller that names a quota project gets it on every project call, whatever
+// quota project the credentials carry.
+func TestProjectClientsNameTheQuotaProjectExplicitly(t *testing.T) {
+	adcWithQuota(t, "adc-quota")
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("X-Goog-User-Project"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "projects/p/billingInfo", "billingEnabled": true})
+	}))
+	t.Cleanup(srv.Close)
+	pc, err := NewProjectClients(context.Background(), ProjectEndpoints{ResourceManager: srv.URL, Firebase: srv.URL, Billing: srv.URL, QuotaProject: "inst-proj"}, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pc.Billing.Projects.GetBillingInfo("projects/p").Context(context.Background()).Do(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "inst-proj" {
+		t.Fatalf("X-Goog-User-Project = %q, want inst-proj and not adc-quota", got)
+	}
+}

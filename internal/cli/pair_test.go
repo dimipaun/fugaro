@@ -511,7 +511,7 @@ func TestPairRefusesRepoScopedOnlyUser(t *testing.T) {
 	// The door the sentence names writes a role's WHOLE project-scope list, so
 	// the sentence says so: an admin who ran it as printed would otherwise hand
 	// the caller a grant and take it from every other operator (foldProjectGrants).
-	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com", "project scope", "whole list", "named beside you")
+	pairAssertUnplaced(t, f, out, err, "user:person-4@example.com", "project scope", "--operator", "name every operator")
 
 	// The same answer for a caller the installation's IAM lists still name: the
 	// node places a caller now, and the lists are only the migration's source.
@@ -533,7 +533,7 @@ func TestPairRefusesInstallationWithoutGrantsNode(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	f.db.Set(accesslib.PathNode, nil)
 	out, _, err := pairRun(t, "--json")
-	reason := pairAssertUnplaced(t, f, out, err, accesslib.PathNode, selfCommand()+" update", "user: member")
+	reason := pairAssertUnplaced(t, f, out, err, accesslib.PathNode, selfCommand()+" update", "write it")
 	if strings.Contains(reason, "update --operator") {
 		t.Fatalf("an absent node reads as a missing grant: %q", reason)
 	}
@@ -1299,7 +1299,7 @@ func TestPairWaitEndingsAreToldApart(t *testing.T) {
 			timeout:   "5s",
 			interrupt: true,
 			code:      pairRefusedInterrupted,
-			reason:    "abandoned by the operator",
+			reason:    "interrupted while waiting",
 		},
 	}
 	for _, tc := range cases {
