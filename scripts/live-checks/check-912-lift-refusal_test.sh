@@ -4,16 +4,17 @@
 # builds a REAL local git checkout with a bare origin of its own in a temporary
 # directory and drives the check against a fake `fugaro` on PATH whose answers
 # the case owns — a validate that refuses on the default branch and names on
-# another ref, and an update --plan-only that refuses a file still writing a
-# lifted key.
+# another ref, and an update --plan-only that names a file still writing a
+# lifted key, with its fix, and converges everything else.
 #
 # The readings are the point. Check 912 says release B refuses a lifted key on
-# the default branch with its fix, names it on a follow-up ref, and refuses it in
+# the default branch with its fix, names it on a follow-up ref, and names it in
 # the plan, so the cases that matter are the ones where a reading is bent: a
 # refusal that names no fix, a validate that accepts the file, a follow-up that
-# is refused where it must only be named, a plan that accepts it, a refusal for
-# some other reason, and — the one that would make the whole check a lie — a
-# checkout the check must not switch and a file it must not write.
+# is refused where it must only be named, a plan that never names it, a plan
+# that names it and stops, a refusal for some other reason, and — the one that
+# would make the whole check a lie — a checkout the check must not switch and a
+# file it must not write.
 #
 # Usage: bash scripts/live-checks/check-912-lift-refusal_test.sh
 set -euo pipefail
@@ -62,8 +63,8 @@ cat >"$fakebin/fugaro" <<'FAKE'
 # The release-B binary this check reads, as far as a case needs it: it reads the
 # lifted key a repository's own fugaro.yaml writes, refuses it on the default
 # branch with the sentence config.LiftedKey.Why carries, names it on any other
-# ref, and refuses it in the plan. Each of those is bendable by a marker file in
-# the case's answers directory.
+# ref, and names it in the plan with the same fix. Each of those is bendable by a
+# marker file in the case's answers directory.
 set -euo pipefail
 printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"${FAKE912_LOG:?}"
 dir=${FAKE912_DIR:?}
@@ -150,11 +151,11 @@ update)
     printf 'fake fugaro: refused: this check runs the update only with --plan-only\n' >&2
     exit 64
   }
-  if [ -f "$dir/plan-status" ]; then
+  if [ -f "$dir/plan-other" ]; then
     cat "$dir/plan.err" >&2 2>/dev/null || true
     exit "$(cat "$dir/plan-status")"
   fi
-  if [ -f "$dir/plan-accepts" ]; then
+  if [ -f "$dir/plan-silent" ]; then
     printf 'fugaro update --plan-only: the plan is written\n'
     exit 0
   fi
@@ -171,9 +172,17 @@ update)
     git -C "$url" show "$branch:fugaro.yaml" >"$served" 2>/dev/null || rm -f "$served"
   fi
   key=$(key_of "$served")
-  [ -n "$key" ] || { printf 'fugaro update --plan-only: the plan is written\n'; exit 0; }
-  printf 'fugaro update: refused: %s\n' "$(sentence_of "$key" yes)" >&2
-  exit 1
+  # Release B names the key with its fix and converges everything else, so this
+  # is a plan, not a refusal: exit 0.
+  if [ -n "$key" ]; then
+    fix=yes
+    [ -f "$dir/plan-no-fix" ] && fix=no
+    printf 'fugaro update: %s\n' "$(sentence_of "$key" "$fix")" >&2
+  else
+    printf 'fugaro update --plan-only: the plan is written\n' >&2
+  fi
+  [ -f "$dir/plan-stop-over-key" ] && exit "$(cat "$dir/plan-status")"
+  exit 0
   ;;
 *)
   printf 'fake fugaro: unexpected verb %s\n' "${1:-<none>}" >&2
@@ -380,13 +389,34 @@ test_a_follow_up_that_is_refused_is_a_fail() {
   expect_row "$out" refuse PASS "the default branch is unaffected"
 }
 
-test_a_plan_that_accepts_the_file_is_a_fail() {
-  case_dir plan_accepts
-  printf yes >"$answers/plan-accepts"
+test_a_plan_that_never_names_the_key_is_a_fail() {
+  case_dir plan_silent
+  printf yes >"$answers/plan-silent"
   run912
-  expect_status "$status" 1 "a plan that accepts"
-  expect_row "$out" plan FAIL "a plan that accepts"
-  expect_contains "$out" "ACCEPTED a repository file" "the row says what it saw"
+  expect_status "$status" 1 "a plan that never names the key"
+  expect_row "$out" plan FAIL "a plan that never names the key"
+  expect_contains "$out" "planned without naming" "the row says what it saw"
+}
+
+test_a_plan_that_names_the_key_without_a_fix_is_a_fail() {
+  case_dir plan_no_fix
+  printf yes >"$answers/plan-no-fix"
+  run912
+  expect_status "$status" 1 "a plan with no fix"
+  expect_row "$out" plan FAIL "a plan with no fix"
+  expect_contains "$out" "but no fix for it" "the row says what is missing"
+}
+
+test_a_plan_that_stops_over_the_key_is_a_fail() {
+  # What release B must never do: stop the whole update over a key it was to
+  # name. The answer names the key and carries the fix, and the exit is not 0.
+  case_dir plan_stops_over_key
+  printf 1 >"$answers/plan-status"
+  printf yes >"$answers/plan-stop-over-key"
+  run912
+  expect_status "$status" 1 "a plan that stops over the key"
+  expect_row "$out" plan FAIL "a plan that stops over the key"
+  expect_contains "$out" "never as a stop of the whole update" "the row says what release B must not do"
 }
 
 test_a_refusal_for_another_reason_leaves_the_row_unverified() {
@@ -401,6 +431,7 @@ test_a_refusal_for_another_reason_leaves_the_row_unverified() {
 
 test_a_plan_that_stops_for_another_reason_leaves_the_row_unverified() {
   case_dir plan_other
+  printf yes >"$answers/plan-other"
   printf 1 >"$answers/plan-status"
   printf 'fugaro update: terraform state lock is held\n' >"$answers/plan.err"
   run912
@@ -563,7 +594,9 @@ t test_the_owner_s_checkout_is_never_switched_or_written
 t test_a_refusal_that_names_no_fix_is_a_fail
 t test_a_validate_that_only_notes_the_key_is_a_fail
 t test_a_follow_up_that_is_refused_is_a_fail
-t test_a_plan_that_accepts_the_file_is_a_fail
+t test_a_plan_that_never_names_the_key_is_a_fail
+t test_a_plan_that_names_the_key_without_a_fix_is_a_fail
+t test_a_plan_that_stops_over_the_key_is_a_fail
 t test_a_refusal_for_another_reason_leaves_the_row_unverified
 t test_a_plan_that_stops_for_another_reason_leaves_the_row_unverified
 t test_a_file_that_writes_no_lifted_key_gets_one_in_the_copy

@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Check 912 — after release B, `fugaro validate` refuses a lifted key on the
 # default branch with its fix, names the same key on a follow-up ref instead of
-# refusing it, and `fugaro update --plan-only` refuses it too. Run by YOU, with
-# the release-B binary installed.
+# refusing it, and `fugaro update --plan-only` names it too, with the same fix,
+# and converges everything else. Run by YOU, with the release-B binary installed.
 #
 # L8 (docs/repo-override-rulings) moves a repository's model choice, its A/B
 # rate, its rigor level and areas and its model grades into the project layer.
 # Release A drops those keys in the resolver and names them (its acceptance 3);
 # release B is the release that refuses them on the default branch — at
-# `validate`, at `update` and at a launch (its acceptance 4, XB1/XB2/XB6) — and
-# that only names them on an older ref, where a follow-up still carries them.
+# `validate` and at a launch (its acceptance 4, XB1/XB2/XB6) — and that names
+# them, with the fix, at `update` (XB5's own arm, the whole update converging)
+# and on an older ref, where a follow-up still carries them.
 # The sentence is `config.LiftedKey.Why`, one per key, and it names the command
 # that states the key in its new home; release A's own reads still pass, so this
 # check tells release B from release A by what the refusal does.
@@ -29,10 +30,14 @@
 #   name     the same tree on a non-default ref, the shape of a follow-up's
 #            branch, is NOT refused (exit 0) and the key is named anyway: a
 #            follow-up cut before the cleanup must not be stopped by it.
-#   plan     `fugaro update --plan-only --project <project>` refuses the key with
-#            the same sentence, before any write (acceptance 4's update arm). No
-#            launch is made, and no other update form is run. `update` reads the
-#            repositories a project enrolls at their default branches through the
+#   plan     `fugaro update --plan-only --project <project>` NAMES the key with
+#            the same sentence, before any write, and converges everything else:
+#            acceptance 4's update arm is read under the HARD RULE as named,
+#            never as a stop of the whole update. A plan that never names the key
+#            is a FAIL, one that names it without a fix is a FAIL, and one that
+#            stops over it is a FAIL. No launch is made, and no other update form
+#            is run. `update` reads the repositories a project enrolls at their
+#            default branches through the
 #            git provider and never a working directory (internal/repofiles), so
 #            this row is measured only where the repository's own default branch
 #            writes the key; where the check had to write one into its copy, the
@@ -133,7 +138,8 @@ guard_xtrace() {
 usage() {
   cat <<'USAGE'
 Check 912 — release B refuses a lifted key on the default branch with its fix,
-and names it on a follow-up ref instead of refusing it.
+names it on a follow-up ref instead of refusing it, and names it, with the same
+fix, in the plan `fugaro update --plan-only` prints, converging everything else.
 
 Usage:
   bash scripts/live-checks/check-912-lift-refusal.sh <project> <checkout> [--dry-run]
@@ -143,11 +149,11 @@ Run it after release B is installed, with a checkout of any repository the
 project enrolls: `fugaro validate` is run twice on a copy of that checkout's
 default branch — once on the default branch, where the key must be REFUSED with
 the fix, and once on a non-default ref, where it must be NAMED and not refused —
-and `fugaro update --plan-only` must refuse it too. The block's last line is the
-verdict and the exit status:
+and `fugaro update --plan-only` must name it with the same fix. The block's last
+line is the verdict and the exit status:
 
   PASS (exit 0)        the key is refused with its fix, named on the other ref
-                       and refused by the plan
+                       and named by the plan
   FAIL (exit 1)        one of the three did not hold — on a release-A binary
                        the `refuse` row is the one that fails
   INCOMPLETE (exit 2)  the run stopped before it could judge
@@ -214,7 +220,8 @@ Check 912 plan (nothing is called: no fugaro, no git, no read)
      fugaro validate <copy>/fugaro.yaml   on $FOLLOWUP
                                           -> must be NAMED, not refused
      fugaro update --plan-only --project $PROJECT
-                                          -> must be REFUSED
+                                          -> must NAME the lifted key with the
+                                             fix, and converge the rest
    and judge each answer's own text: the key's path and a fix for it. validate
    takes the fugaro.yaml and not its directory. update reads the default branches
    of the repositories the project enrolls through the git provider and never a
@@ -525,13 +532,15 @@ def judge(args, kind):
         if named:
             return "PASS", "on the ref %s fugaro validate exited 0 and named the key anyway, which is what a follow-up of a repository that has not cleaned its file must get: %s" % (args[3] if len(args) > 3 else "the follow-up", window(answer, key))
         return "FAIL", "fugaro validate exited 0 on the ref and named NOTHING: a file that still writes %s is one release B must tell its owner about even where it does not refuse it, and a follow-up that never learns the key moved is a repository nobody cleans" % key
-    if rc == "0":
-        return "FAIL", "fugaro update --plan-only ACCEPTED a repository file that still writes %s: release B refuses it at update as it does at validate, and a plan that accepts it plans a launch on a value the project decides" % key
-    if named and fixed:
-        return "PASS", "fugaro update --plan-only refused it (exit %s) with the same sentence and before any write: %s" % (rc, window(answer, key))
-    if named:
-        return "FAIL", "fugaro update --plan-only refused %s (exit %s) with no fix for it: %s" % (key, rc, window(answer, key))
-    return "UNVERIFIED", "fugaro update --plan-only exited %s and its answer does not name %s, so it stopped for another reason and this row measures nothing: %s" % (rc, key, answer[:360])
+    if rc != "0" and not named:
+        return "UNVERIFIED", "fugaro update --plan-only exited %s and its answer does not name %s, so it stopped for another reason and this row measures nothing: %s" % (rc, key, answer[:360])
+    if not named:
+        return "FAIL", "fugaro update --plan-only planned without naming %s: release B names every repository whose default branch still writes a lifted key, with the fix, and converges everything else, so a plan that never names it leaves the owner of a value the project decides with nothing to act on" % key
+    if not fixed:
+        return "FAIL", "fugaro update --plan-only named %s but no fix for it — not one of the commands that states it in its new home — so its owner is told a key moved and not what to do: %s" % (key, window(answer, key))
+    if rc != "0":
+        return "FAIL", "fugaro update --plan-only named %s and then exited %s: acceptance 4's update arm is read under the HARD RULE as named, never as a stop of the whole update, so an update that stops over a key it was to name stops on a value the project decides: %s" % (key, rc, window(answer, key))
+    return "PASS", "fugaro update --plan-only named it with the fix and converged everything else (exit 0), before any write: %s" % window(answer, key)
 
 def main():
     if len(sys.argv) < 2:
@@ -669,7 +678,7 @@ fact name "$state" "$detail"
 if [ "$ADDED" = yes ]; then
   fact plan UNVERIFIED "the key $KEY was written into this check's own copy of the tree because $REF's own file writes no lifted key, and \`fugaro update\` reads the default branches of the repositories the project enrolls through the git provider and never a working directory: the copy's key never reaches it, and judging the plan here would accuse a release B that read a file this check made up. Run the check against a checkout whose default branch still writes a lifted key"
 else
-  say "fugaro update --plan-only --project $PROJECT — it must refuse $KEY"
+  say "fugaro update --plan-only --project $PROJECT — it must name $KEY with its fix"
   rc=0
   (cd "$CLONE" && "$FUGARO_BIN" update --plan-only --project "$PROJECT" </dev/null) >"$SCRATCH/plan.out" 2>&1 || rc=$?
   { printf '|'; py plan "$SCRATCH/plan.out" "$KEY" "$rc"; } >"$SCRATCH/plan.row"
