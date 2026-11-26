@@ -661,7 +661,7 @@ step_preflight() {
     preflight_report
   fi
   if [ ! -f "$CHECKOUT/fugaro.yaml" ]; then
-    die "the checkout of $REPO carries no fugaro.yaml at its root, so it is not a Fugaro repository and the enrolment's own first step has nothing to read"
+    say "preflight: $REPO has no fugaro.yaml; the enrolment writes the starter one into the checkout"
   fi
 
   # doctor exits 1 when it finds a problem and still prints its document, and the
@@ -755,9 +755,6 @@ step_checkout() {
   fi
   local head
   head=$(git -C "$CHECKOUT" rev-parse --short HEAD 2>/dev/null || true)
-  if [ ! -f "$CHECKOUT/fugaro.yaml" ]; then
-    stop "the checkout of $REPO carries no fugaro.yaml at its root: the enrolment's own first step reads the repository's file, and a repository without one is not a Fugaro repository"
-  fi
   fact checkout PASS "https://github.com/$REPO.git cloned at ${head:-unknown} into a throwaway checkout in this check's scratch directory (nothing of your own working tree was read or changed)"
 
   # doctor exits 1 when it finds a problem and still prints its document, and the

@@ -25795,7 +25795,8 @@ number is reused.
 **What it settles.** Six readings of the four verbs as shipped, each taken from the outside and nowhere else:
 
 - **The enrolment's six steps, in the order it printed them** (step 1). `fugaro project repos add <repo>
-  --project <installation>` is run on a **fresh throwaway checkout** and the check reads its own output: one
+  --project <installation>` is run on a **fresh throwaway checkout** (a repository with no `fugaro.yaml` gets the
+  starter `fugaro config init` writes, left in the checkout to commit) and the check reads its own output: one
   numbered line per step — the repository's own `fugaro.yaml`, this machine's config entry, its image map, the
   allow-list, the publish and the job with its `roles/run.invoker` grant — the sentence that names the first image
   build as **billable and not part of it**, the question it asks for the project's name, and the closing

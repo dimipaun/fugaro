@@ -113,6 +113,8 @@ type reposEnrolment struct {
 	// from it, because its fugaro.yaml is where its workflows and its base
 	// branch come from and a job is deployed from one (D2401).
 	checkout string
+	// starter is true when this run wrote the checkout's fugaro.yaml.
+	starter bool
 }
 
 // runProjectReposEnroll is the convergent path: read, show, ask once, write.
@@ -162,7 +164,7 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}
-	plan, err := reposEnrolmentRead(ctx, o, lc, db, arg)
+	plan, err := reposEnrolmentRead(ctx, cmd.OutOrStdout(), o, lc, db, arg)
 	if err != nil {
 		return err
 	}
@@ -185,7 +187,7 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 // reposEnrolmentRead reads everything the plan is built from. It writes
 // nothing, and that is the order it exists for: every refusal lands before the
 // operator is shown a plan and asked about it.
-func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, arg string) (reposEnrolment, error) {
+func reposEnrolmentRead(ctx context.Context, w io.Writer, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, arg string) (reposEnrolment, error) {
 	var plan reposEnrolment
 	ownerName, err := reposEnrolmentName(arg)
 	if err != nil {
@@ -205,6 +207,9 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 	if plan.checkout = checkoutRoot(ctx, ownerName); plan.checkout == "" {
 		return plan, userErr("cannot read %s here: this command enrols a repository from its own checkout — its fugaro.yaml is where its workflows and its base branch come from, and its job set is deployed from there too. Run it from a checkout of %s, or write the allow-list entry alone with `fugaro project repos add %s --allow-list-only`",
 			pluginwire.Printable(ownerName), pluginwire.Printable(ownerName), ownerName)
+	}
+	if plan.starter, err = enrolWriteStarter(ctx, w, lc, ownerName, plan.checkout, plan.entryNow, plan.entryKnown); err != nil {
+		return plan, err
 	}
 	provider, err := reposEnrolmentProvider(ctx, ownerName, plan.entryNow, plan.entryKnown)
 	if err != nil {
@@ -754,8 +759,12 @@ func allowStepWhy(have []string, canonical string) string {
 // make the yes it asks for a yes to something else.
 func reposEnrolmentPlan(w io.Writer, lc *localcfg.Config, plan reposEnrolment) {
 	fmt.Fprintf(w, "enrolling %s in project %s: this will change\n", pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name))
+	fileNote := "and never written"
+	if plan.starter {
+		fileNote = "written just now as a starter, left in the checkout to commit"
+	}
 	lines := []string{
-		"the repository's own fugaro.yaml: read for its workflows (" + enrolListLine(workflowNames(plan.row)) + ") and its base branch (" + safetext.Field(plan.row.BaseBranch) + "), and never written",
+		"the repository's own fugaro.yaml: read for its workflows (" + enrolListLine(workflowNames(plan.row)) + ") and its base branch (" + safetext.Field(plan.row.BaseBranch) + "), " + fileNote,
 		"project config: " + plan.entryWhy,
 		"project config: " + plan.imageWhy,
 		"allow-list: " + plan.allowWhy,

@@ -895,14 +895,13 @@ test_a_key_file_that_is_not_a_pem_is_not_measured() {
   expect_row app-key "does not begin with a PEM header" "a key file that is not a PEM: the row"
 }
 
-test_a_checkout_without_a_fugaro_yaml_stops() {
+test_a_checkout_without_a_fugaro_yaml_goes_on() {
   local dir=$work/no-yaml
   prepare "$dir"
   : >"$dir/state/git.noyaml"
   run_check "$dir"
-  expect_status "$status" 1 "a checkout with no fugaro.yaml"
-  expect_contains "$err" "carries no fugaro.yaml" "a checkout with no fugaro.yaml: the refusal"
-  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "doctor" "a checkout with no fugaro.yaml: nothing is read"
+  expect_contains "$err" "enrolling dimipaun/fugarosandbox in project" "a checkout with no fugaro.yaml: the enrolment still runs"
+  expect_absent "$err" "carries no fugaro.yaml" "a checkout with no fugaro.yaml: no refusal"
 }
 
 test_a_clone_that_refuses_stops() {
@@ -1449,7 +1448,7 @@ t test_a_key_file_that_is_not_there_is_not_measured
 t test_a_key_file_that_is_not_0600_is_not_measured
 t test_an_empty_key_file_is_not_measured
 t test_a_key_file_that_is_not_a_pem_is_not_measured
-t test_a_checkout_without_a_fugaro_yaml_stops
+t test_a_checkout_without_a_fugaro_yaml_goes_on
 t test_a_clone_that_refuses_stops
 t test_a_doctor_that_does_not_answer_is_not_measured
 t test_a_doctor_that_finds_a_problem_but_prints_its_document_is_read
