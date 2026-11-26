@@ -21173,7 +21173,10 @@ which no hermetic test can settle because it is about money.
   that says so.
 
 **What has to exist before it runs.** The release carrying **SA2.1** and **SA3.1** installed on the **dogfood
-installation `fugaro`** (**A4**: route `openrouter`, `route_fee_pct: 5.5`), with **a week of runs on that
+installation `fugaro`** (**A4**: route `openrouter`, `route_fee_pct: 5.5`), whose **budget mode is `enforce`**
+— a mode left unset is `observe`, and `observe` never refuses a call, so step 2's run would pass its cap with a
+warning and a bill rather than end `halted (run_cap)`; `fugaro budget show --json`'s `mode` is the reading, and
+`fugaro budget set --global --mode enforce` is the raise — with **a week of runs on that
 route recorded under those rules** — a window holding no OpenRouter run compares two figures that are not
 about each other, and the row records that rather than passing — and **OR1 done**: the dogfood
 `cache_read: 0.0042` override deleted by hand and the policy node republished by `fugaro update` (D2645),
@@ -21185,6 +21188,7 @@ run, so what the halt costs is a sandbox task's own spend. **Never `belong`.**
 
 ```sh
 fugaro budget prices                                  # the row and its checked_at, recorded with the totals
+fugaro budget show --json                             # the mode: enforce, or step 2's halt does not happen
 fugaro budget reconcile --all --from <the week's first UTC day> --to <its last> --json
 fugaro run --repo <a sandbox repository> --max-usd <below the task's expected cost> "<a small task>"
 fugaro runs show <the halted run>                     # the chain's limits: the figure, what is used, what is left
