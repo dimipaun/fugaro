@@ -21,7 +21,7 @@ func TestDocsMobileFrontAgentDesignIsWritten(t *testing.T) {
 		// The status line, the task it is, and the approval it is written under.
 		"design only; nothing is implemented",
 		"design of record",
-		"Task **P5.4**",
+		"Task P5.4",
 		"**P5.4.1**",
 		"approved P5.4 on 2026-11-26",
 		"P5.4.1–P5.4.9",
