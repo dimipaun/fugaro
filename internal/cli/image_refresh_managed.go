@@ -114,8 +114,25 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 	if agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) == "" && !iopts.ask && (iopts.yes || !stdinIsTerminal(cmd.InOrStdin())) {
 		return nil
 	}
-	lc, path, old, err := loadRepoConfig(ctx, iopts, o.checkoutDir())
-	if err != nil || lc == nil {
+	// The installation the gate judges is the one the plan is made against:
+	// for a repository the caller read from the project (o.view) that is the
+	// view's own selection, because a refresh for it has no working directory
+	// to select from at all (U4, R6, R10). Reaching for o.checkoutDir() here
+	// would read the directory the update was started in — its config, its
+	// origin, and recordCheckout, a write — and answer "not managed" wherever
+	// that directory is not a checkout.
+	var lc *localcfg.Config
+	var path string
+	var old []byte
+	if o.view != nil {
+		lc, path, old = o.view.lc, o.view.lcPath, o.view.lcOld
+	} else {
+		var err error
+		if lc, path, old, err = loadRepoConfig(ctx, iopts, o.checkoutDir()); err != nil {
+			return nil
+		}
+	}
+	if lc == nil {
 		return nil
 	}
 	c, err := newInitClients(ctx, lc)

@@ -222,6 +222,7 @@ func TestTheCoveredFieldSetIsTheSameInBothDirections(t *testing.T) {
 		"the answer with reply_to": vectorCase(t, "answer"),
 		"the merge action":         vectorCase(t, "action: merge a pull request"),
 		"the registration":         vectorCase(t, "registration"),
+		"the signed message":       signedMessage(t),
 	}
 	seen := map[string]bool{}
 	covered := map[string]map[string]bool{}
@@ -242,7 +243,7 @@ func TestTheCoveredFieldSetIsTheSameInBothDirections(t *testing.T) {
 				if err != nil {
 					t.Fatalf("signing %s (%s changed) for %s: %v", what, field, direction, err)
 				}
-				isCovered := field != "mac" && field != "acked"
+				isCovered := field != "mac" && field != "sig" && field != "acked"
 				if covered[direction][field] != isCovered && covered[direction][field] {
 					t.Errorf("%s is covered in the %s direction for one record and not another", field, direction)
 				}

@@ -769,9 +769,10 @@ check301 start — the plan, and nothing of it is run in a dry run:
      identity, the unit's path and hash, the daemon's pid, the version at the
      path the unit names
   7. print the one thing you do: reboot this machine
-  You do, before step 4 can pass: nothing — the unit is installed by
-  'fugaro orchestrator install' (which asks you to type the word install) if it
-  is not there yet.
+  You do, before step 4 can pass: nothing — a machine with no unit gets one
+  from 'fugaro update' in your own terminal, which since D2700 installs the
+  first one and loads it, or from 'fugaro orchestrator install' (which asks you
+  to type the word install) when the first one is to be written deliberately.
 PLAN
 }
 
@@ -854,9 +855,9 @@ phase_start() {
   read_unit unit-status
   case "$UNIT_STATE" in
   none)
-    fact unit INFO "the login unit is not installed at $UNIT_PATH, so there is nothing for a reboot to bring back yet. This is the one thing you do here: in this terminal run 'fugaro orchestrator install' (it asks you to type the word install — no flag stands in for it, so this check cannot run it for you), then run this phase again"
-    fact human-install INFO "run in your own terminal, once: fugaro orchestrator install"
-    stop "the login unit is not installed on this machine yet: run 'fugaro orchestrator install' (typing the word install) and then '$USAGE'"
+    fact unit INFO "the login unit is not installed at $UNIT_PATH, so there is nothing for a reboot to bring back yet. This is the one thing you do here: in this terminal run 'fugaro update' — since D2700 it installs the first unit and loads it — or 'fugaro orchestrator install' (it asks you to type the word install — no flag stands in for it, so this check cannot run it for you) if the first one is to be written deliberately, then run this phase again"
+    fact human-install INFO "run in your own terminal, once: fugaro update (it installs the first unit and loads it, D2700), or fugaro orchestrator install to write the first one deliberately"
+    stop "the login unit is not installed on this machine yet: run 'fugaro update' in your own terminal (it installs the first one and loads it, which is D2700), or 'fugaro orchestrator install' (typing the word install), and then '$USAGE'"
     ;;
   unknown)
     fact unit FAIL "fugaro orchestrator status did not answer a state this check reads: its first line is '$UNIT_NOTE'"

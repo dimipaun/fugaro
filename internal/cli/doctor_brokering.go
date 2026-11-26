@@ -227,7 +227,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	}
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("the installation has opted into the credentials service (%s), and %s could not be read: whether it is deployed and whether its callers may invoke it could not be checked", infra.CredentialsServiceName, what),
+			Problem: fmt.Sprintf("the credentials service could not be read. The installation has opted into the credentials service (%s), and %s could not be read: whether it is deployed and whether its callers may invoke it could not be checked", infra.CredentialsServiceName, what),
 			Fix:     "rerun doctor with your credentials and the Cloud Run API available, or check by hand: " + selfCommand() + " update re-applies the installation and its service"}}
 	}
 	jobs, err := infra.CredentialsJobAccounts(lc)
@@ -247,7 +247,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	if err != nil {
 		if errors.As(err, &ge) && ge.Code == http.StatusNotFound {
 			return []doctorCheck{{ID: id, Severity: "warning",
-				Problem: fmt.Sprintf("the local config opted this installation into the credentials service (%s), and Cloud Run has no service %s in project %s, region %s: every run of it would fail to fetch a model credential", infra.CredentialsServiceName, infra.CredentialsServiceName, pluginwire.Printable(lc.GCPProject), pluginwire.Printable(lc.Region)),
+				Problem: fmt.Sprintf("the credentials service is not deployed in this project. The local config opted this installation into the credentials service (%s), and Cloud Run has no service %s in project %s, region %s: every run of it would fail to fetch a model credential", infra.CredentialsServiceName, infra.CredentialsServiceName, pluginwire.Printable(lc.GCPProject), pluginwire.Printable(lc.Region)),
 				Fix:     selfCommand() + " update (re-applies the installation root, which creates the service)"}}
 		}
 		return unreadable("the IAM policy of the Cloud Run service " + infra.CredentialsServiceName + " (" + oneLineCLI(err.Error()) + ")")
@@ -255,7 +255,12 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	bindings := bindingsOf(pol.Bindings, runBindingFields)
 	var (
 		missing []string
-		unread  []string
+		// missingRepos is the repositories those accounts belong to, once each
+		// and in the order they first appear: one repository may have several
+		// workflows whose accounts the service does not admit, and the fix is
+		// one command per repository, not one per workflow.
+		missingRepos []string
+		unread       []string
 	)
 	deployed := map[string]map[string]bool{}
 	for _, j := range jobs {
@@ -280,6 +285,9 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 			unread = append(unread, pluginwire.Printable(j.Repo)+" ("+pluginwire.Printable(j.Workflow)+")")
 		default:
 			missing = append(missing, pluginwire.Printable(j.Repo)+" ("+pluginwire.Printable(j.Workflow)+")")
+			if !slices.Contains(missingRepos, j.Repo) {
+				missingRepos = append(missingRepos, j.Repo)
+			}
 		}
 	}
 	switch {
@@ -287,7 +295,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 		return doctorCredentialsServiceServing(ctx, lc, id)
 	case len(missing) == 0:
 		return []doctorCheck{{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("the credentials service %s is deployed, and whether %s may invoke it could not be checked: a custom role on its or the project's policy could not be read", infra.CredentialsServiceName, strings.Join(unread, ", ")),
+			Problem: fmt.Sprintf("the credentials service's invoker grant could not be read. The credentials service %s is deployed, and whether %s may invoke it could not be checked: a custom role on its or the project's policy could not be read", infra.CredentialsServiceName, strings.Join(unread, ", ")),
 			Fix:     "rerun doctor with the IAM API available, or read the policy yourself: gcloud run services get-iam-policy " + infra.CredentialsServiceName}}
 	}
 	// The fix names the other half of the grant as well, because an operator
@@ -301,11 +309,31 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	// published policy's proxy: true reads as a promise the installation
 	// keeps: nothing about such a repository is brokered, and its runs hold the
 	// Bitbucket token on their own job.
+	// The fix names the repositories rather than a placeholder, and the sentence
+	// above it names them too, because both are the check's own and the one
+	// screen prints only these two lines: a fix saying "each repository named
+	// above" pointed at names no line printed. Each name goes in the words
+	// around the command and never as its argument: update
+	// --repo takes the checkout's PATH, so a name there is refused
+	// (loadCheckoutResolved, image.go); the command that runs is --repo alone,
+	// from inside that repository's checkout, which is what doctor.go and
+	// doctor_bucket.go say too. One command serves a repository however many of
+	// its workflows are missing, and missingRepos holds each repository once.
+	names := make([]string, len(missingRepos))
+	for i, repo := range missingRepos {
+		names[i] = pluginwire.Printable(repo)
+	}
+	where := "in the checkout of each of " + strings.Join(names, ", ")
+	sentence := "the credentials service does not admit job accounts of " + strings.Join(names, ", ") + "."
+	if len(names) == 1 {
+		where = "in the checkout of " + names[0]
+		sentence = "the credentials service does not admit " + names[0] + "'s job account."
+	}
 	return []doctorCheck{{ID: id, Severity: "warning",
-		Problem: fmt.Sprintf("the credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth: a repository that runs with agent.auth: cascade reaches the service wherever the installation has one, and one that runs with agent.auth api-key or oauth reaches it only where its budget mode is observe or enforce AND the service's bundle holds the credential its auth needs — %s for api-key, and the token of every account its workflows may run under for oauth. So a repository of that list that is held off has no grant: the published policy's proxy: true is inert for it — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
-			infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
+		Problem: fmt.Sprintf("%s The credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth: a repository that runs with agent.auth: cascade reaches the service wherever the installation has one, and one that runs with agent.auth api-key or oauth reaches it only where its budget mode is observe or enforce AND the service's bundle holds the credential its auth needs — %s for api-key, and the token of every account its workflows may run under for oauth. So a repository of that list that is held off has no grant: the published policy's proxy: true is inert for it — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
+			sentence, infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
 			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0), config.AnthropicSecret),
-		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them the switch is held off until it holds: an api-key or oauth repository needs its budget mode at observe or enforce and the service's bundle to hold the credential its auth needs (" + selfCommand() + " creds set " + config.AnthropicSecret + " for api-key; " + selfCommand() + " creds set " + config.ClaudeOAuthTokenPrefix + "<account> for oauth), and a repository of any other agent.auth has to run with agent.auth: cascade first (with a model credential in the service's bundle, " + selfCommand() + " creds set). Until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
+		Fix: selfCommand() + " update --repo " + where + " (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them the switch is held off until it holds: an api-key or oauth repository needs its budget mode at observe or enforce and the service's bundle to hold the credential its auth needs (" + selfCommand() + " creds set " + config.AnthropicSecret + " for api-key; " + selfCommand() + " creds set " + config.ClaudeOAuthTokenPrefix + "<account> for oauth), and a repository of any other agent.auth has to run with agent.auth: cascade first (with a model credential in the service's bundle, " + selfCommand() + " creds set). Until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
 }
 
 // doctorCredentialsServiceServing is the rest of
@@ -370,7 +398,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 	switch {
 	case errors.Is(err, errNoBundleVersion):
 		return []doctorCheck{{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (%s) holds no version, so the loader fails closed and every model call of a run against it is refused; %s is the writer", infra.CredentialsServiceName, pluginwire.Printable(store.id), selfCommand()+" creds set NAME"),
+			Problem: fmt.Sprintf("the credentials service has nothing in its bundle to serve a run. The credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (%s) holds no version, so the loader fails closed and every model call of a run against it is refused; %s is the writer", infra.CredentialsServiceName, pluginwire.Printable(store.id), selfCommand()+" creds set NAME"),
 			Fix:     selfCommand() + " creds set NAME (the only writer of the bundle: no update writes a credential)"}}
 	case err != nil:
 		return unreadable("the bundle's newest version ("+oneLineCLI(err.Error())+")",
@@ -391,7 +419,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
 		}
 		return []doctorCheck{{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("the credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the newest version of the bundle it serves from (%s, version %s) is %s, so the loader's read of it is refused and every model call of a run against it fails", infra.CredentialsServiceName, pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
+			Problem: fmt.Sprintf("the credentials service has nothing in its bundle to serve a run. The credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the newest version of the bundle it serves from (%s, version %s) is %s, so the loader's read of it is refused and every model call of a run against it fails", infra.CredentialsServiceName, pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
 			Fix:     fix}}
 	}
 	verifiers, published, err := doctorDeployedVerifierAccounts(ctx, lc)

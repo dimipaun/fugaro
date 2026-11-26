@@ -731,19 +731,27 @@ describe('the wizard’s answers cross from the allow-list to the wizard', () =>
     region: 'europe-west1',
     name: 'fugaro',
     rigor: 'startup',
+    budget: 250,
     bake_repos: true,
   })
 
-  it('keeps the allow-list’s five questions and the contract’s five equal', () => {
+  it('keeps the allow-list’s six questions and the contract’s six equal', () => {
     // Two copies of one fact, held equal here because the allow-list keeps its
     // own list rather than importing the contract's (`ipc.ts` says why: the door
     // is the surface's own module). A question one of them grew alone would be a
     // key the door refuses or the wizard never sees.
     expect([...SETUP_ANSWER_KEYS]).toEqual([...CONTRACT_SETUP_ANSWER_KEYS])
-    expect([...SETUP_ANSWER_KEYS]).toEqual(['gcp_project', 'region', 'name', 'rigor', 'bake_repos'])
+    expect([...SETUP_ANSWER_KEYS]).toEqual([
+      'gcp_project',
+      'region',
+      'name',
+      'rigor',
+      'budget',
+      'bake_repos',
+    ])
   })
 
-  it('serialises the payload into the file, and hands the wizard the five questions back', () => {
+  it('serialises the payload into the file, and hands the wizard the six questions back', () => {
     // The seam, end to end and with no child: the door's validation of what a
     // renderer sends, the string main holds, and the wizard's own reader on the
     // other side of it.
@@ -758,6 +766,7 @@ describe('the wizard’s answers cross from the allow-list to the wizard', () =>
       region: 'europe-west1',
       name: 'fugaro',
       rigor: 'startup',
+      budget: 250,
       bake_repos: true,
     })
   })

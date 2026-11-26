@@ -22,7 +22,7 @@ func TestTheSealKeyPathsAreTheContractsAndNoOthersName(t *testing.T) {
 	others := []string{
 		MessagesPath, CountTokensPath, SignPath, VerifyPath, MintPath, ContextTokenPath,
 		BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath,
-		SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath,
+		SlipClaimPath, PoolDesignatePath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath,
 		HeaderProvider, ProviderRoutePath, ProviderCountTokensPath,
 	}
 	mine := []string{SealKeyPath, SealKeyRegisterPath, SealKeyJobPath}

@@ -997,17 +997,19 @@ var doctorShorts = map[string]doctorShort{
 	// bitbucket-direct on a repository nobody proxied) are counted rather than
 	// printed, so their entries are here for the warning state beside them.
 	//
-	// credentials-service-deployed is the one whose read failures are the audit
-	// class, so they never reach this sentence: what reaches it is the four
-	// states a run cannot work around, and the sentence is true of each of them
-	// — the service not deployed, a job account it does not admit, and the two
-	// halves of having nothing to serve (an empty bundle, a newest version
-	// Secret Manager will not serve). The fix beneath it is the check's own, so
-	// the one screen's two lines never name different problems.
-	"credentials-service-deployed": {"the credentials service is not deployed, does not admit a job account, or has nothing in its bundle to serve a run.", ""},
-	"secret-rotation-age":          {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
-	"bundle-bitbucket-token":       {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
-	"bitbucket-token-valid":        {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
+	// credentials-service-deployed has no entry here, and it is the one that
+	// must not: it is a single ID with six states a reader has to tell apart —
+	// the service not deployed, a job account of a named repository it does not
+	// admit, a grant that could not be read, and the two halves of having
+	// nothing to serve (an empty bundle, a newest version Secret Manager will
+	// not serve) — so a sentence keyed by the ID could only be their union
+	// ("not deployed, does not admit a job account, or has nothing in its
+	// bundle"), which left a reader to guess which state they were in, under
+	// the fix of one of them. The check words its own first sentence per state
+	// instead, which is what every entry here is a shorter stand-in for.
+	"secret-rotation-age":    {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
+	"bundle-bitbucket-token": {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
+	"bitbucket-token-valid":  {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
 	// T10's three other token lines. The per-token half of
 	// bitbucket-token-valid is the prefix below: doctor emits one line per typed
 	// token and the ID carries the token's name.

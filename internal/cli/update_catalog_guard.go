@@ -201,7 +201,7 @@ func (g *catalogGuard) opener(ctx context.Context, repo, kind string) (gitprov.O
 		if err != nil {
 			return nil, err
 		}
-		_, open, err := openCatalogProvider(provEnv, func(s string) {
+		open, err := openRepoProvider(openCatalogProvider, provEnv, repoServiceURL(lc, rs.Name), catalogDockerfileRead, func(s string) {
 			fmt.Fprintf(r.stageDetail(), "fugaro: warning: %s\n", s)
 		})
 		return open, err

@@ -62,6 +62,7 @@ import {
   REFUSALS,
   REQUIRED_FIELDS,
   SENDER_MAX,
+  SIG_CHARS,
   TARGET_MAX,
   TEXT_MAX,
   TOKEN_MAX,
@@ -85,6 +86,11 @@ import { macOf, verifyMac } from './mac.js';
 // key, and where a swapped field under a valid tag is refused.
 const FAKE_MAC = 'f'.repeat(MAC_MAX);
 
+// FAKE_SIG is an obviously fake device signature: 86 characters of unpadded
+// base64url (O6), and the all-zero bytes' own canonical spelling, so it is a
+// shape the schema accepts and a value no key ever produced.
+const FAKE_SIG = 'A'.repeat(SIG_CHARS);
+
 // good returns a fresh well-formed message; overrides are merged in so a case
 // can break exactly one thing.
 function good(over = {}) {
@@ -96,6 +102,14 @@ function good(over = {}) {
     mac: FAKE_MAC,
     ...over,
   };
+}
+
+// signed returns a fresh well-formed message carrying a device signature
+// instead of a MAC: O6's scheme, which is what a phone paired the new way
+// writes and what a node holding a public key is served by.
+function signed(over = {}) {
+  const value = without('mac');
+  return { ...value, sig: FAKE_SIG, ...over };
 }
 
 // anAction returns a COMPLETE action record for its verb, so a case can break
@@ -403,6 +417,11 @@ test('every refusal family has its own code', () => {
     refusal(good({ kind: 'message', options: ['one'] }), REFUSALS.FIELD_NOT_ALLOWED).code,
     refusal(withAction({ target: { run: '-x' } }), REFUSALS.BAD_TARGET).code,
     refusal(good({ mac: 'F'.repeat(MAC_MAX) }), REFUSALS.BAD_MAC).code,
+    // O6's two: a signature that is not one is not a malformed MAC — the two
+    // tags are two schemes, and a record carrying both is a third thing again,
+    // one a reader would have to choose between.
+    refusal(signed({ sig: 'A'.repeat(SIG_CHARS - 1) }), REFUSALS.BAD_SIG).code,
+    refusal(good({ sig: FAKE_SIG }), REFUSALS.BAD_TAG).code,
     refusal(good({ kind: 'prompt', options: ['one', 'one'] }), REFUSALS.DUPLICATE_ENTRY).code,
     refusal(withAction({ verb: 'merge', head_sha: 'short' }), REFUSALS.BAD_SHA).code,
     // P5.2.1's three: a platform outside the two the design writes down is not
@@ -1335,11 +1354,12 @@ test('every field the schema names is covered by the tag, or excluded by name', 
   // maximal message or be added to this list on purpose; the two fixtures below
   // must between them carry every field, so a new field also fails here until a
   // fixture carries it.
-  const EXCLUDED = ['mac', 'acked'];
+  const EXCLUDED = ['mac', 'sig', 'acked'];
   const maximal = [
     good({ kind: 'prompt', agent: 'orchestrator', options: ['merge it', 'leave it'], acked: true }),
     { ...withAction({ verb: 'merge' }), reply_to: 'm-0000', acked: false },
     aRegistration(),
+    signed(),
   ];
   for (const m of maximal) assert.equal(validateMessage(m).ok, true, JSON.stringify(m));
   const carried = new Set(maximal.flatMap((m) => Object.keys(m)));

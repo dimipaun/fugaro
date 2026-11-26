@@ -74,11 +74,36 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	if err != nil {
 		return nil, err
 	}
-	cfg := rf.Cfg
 	repoURL, err := checkoutURL(ctx, p.root)
 	if err != nil {
 		return nil, err
 	}
+	return refreshTargetFor(lc, p, rf.Cfg, fileSetsBaseBranch(rf), repoURL)
+}
+
+// refreshReloadView is refreshReload for a repository the caller read from the
+// project's own list: the same target, built from the local config the base step
+// just wrote and from the view's own fugaro.yaml and clone URL. Nothing is
+// re-resolved against the bucket here — the stage may not make a read of its own
+// (R13) — so the file's parse and its git.base_branch answer are the ones the
+// plan already holds (p.cfg, p.sets).
+func refreshReloadView(ctx context.Context, p *refreshPlan) (*refreshTarget, error) {
+	lc, err := localcfg.Load(p.lcPath)
+	if err != nil {
+		return nil, userErr("%s: %v", p.lcPath, err)
+	}
+	repoURL, err := p.view.repoURL()
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	return refreshTargetFor(lc, p, p.cfg, p.sets, repoURL)
+}
+
+// refreshTargetFor is the repository as steps 3 and 4 see it: the local config
+// (the base step's own write, re-read), the repository's fugaro.yaml, and the
+// spec built from them — a kind the local config has no base for standing in
+// with the release's, for the spec only.
+func refreshTargetFor(lc *localcfg.Config, p *refreshPlan, cfg *config.Config, sets *bool, repoURL string) (*refreshTarget, error) {
 	specLC := *lc
 	specLC.BaseImages = maps.Clone(lc.BaseImages)
 	if specLC.BaseImages == nil {
@@ -87,12 +112,14 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	for _, w := range cfg.Workflows {
 		kind := w.BaseKind()
 		if specLC.BaseImages[kind] == "" {
-			if specLC.BaseImages[kind], err = image.BaseRef(Version); err != nil {
+			ref, err := image.BaseRef(Version)
+			if err != nil {
 				return nil, userErr("%v", err)
 			}
+			specLC.BaseImages[kind] = ref
 		}
 	}
-	spec, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: p.repo, Cfg: cfg, FileSetsBaseBranch: fileSetsBaseBranch(rf), RepoURL: repoURL})
+	spec, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: p.repo, Cfg: cfg, FileSetsBaseBranch: sets, RepoURL: repoURL})
 	if err != nil {
 		return nil, userErr("%v", err)
 	}

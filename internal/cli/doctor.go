@@ -555,7 +555,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(remote(err))
 	}
 	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
-	for _, c := range preflight.Billing(ctx, billingSvc, crmSvc, lc.GCPProject) {
+	for _, c := range preflight.Billing(ctx, billingSvc, lc.GCPProject) {
 		dc := fromPreflight(c)
 		o.Checks = append(o.Checks, dc)
 	}

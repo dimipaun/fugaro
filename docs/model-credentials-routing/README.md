@@ -27,11 +27,11 @@ the migration are unchanged, and `budget.allowed_models` still narrows per repos
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec, as received from the owner on 2026-11-21. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F67, decisions D3170–D3197 with the owner's answers, resolutions R1–R26, open items O1–O17 (O13 to O16 closed), UNVERIFIED U1–U8 (U2 withdrawn), and the amendment of 2026-11-23 (D3237) of F7. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F67, decisions D3170–D3198 with the owner's answers, resolutions R1–R26, open items O1–O17 (O13 to O16 closed), UNVERIFIED U1–U8 (U2 withdrawn), and the amendment of 2026-11-23 (D3237) of F7. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 75 tasks in six modules, integrations I1 and I2 (83 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 880 to 886 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3170–D3199** (D3170–D3197 used), checks **880–889** (880 to
+**Numbers reserved:** decisions **D3170–D3199** (D3170–D3198 used), checks **880–889** (880 to
 886 used). Read twice on 2026-11-21. The first reading found the highest decision on `main` to
 be D3160, in managed-flag-ergonomics' block D3160–D3169, and checks 860–869 taken, so this plan
 took checks 870–879. Before the branch was pushed, console-fixes (#3540) landed on `main` with

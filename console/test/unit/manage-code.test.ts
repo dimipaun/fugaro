@@ -407,10 +407,10 @@ describe('the repositories kind', () => {
       published: '',
       local: '',
     })
-    // The third repository's two halves are the values a free-text class gets
-    // wrong: both of its names are long enough for the rules that redact a
-    // repository-shaped run (`label` draws this pattern as `github<path>` and
-    // this key as `[redacted]`), and each cell is the document's own value.
+    // The third repository's two halves are long names a free-text class must
+    // not touch -- the rules that redacted a repository-shaped run (a pattern as
+    // `github<path>`, a key as `[redacted]`) went with D3213 (2026-11-21) -- and
+    // each cell is the document's own value, drawn as it came.
     expect(rows[2]?.cells['published']).toBe('github/dimipaun/fugaro')
     expect(rows[2]?.cells['local']).toBe('dimipaun/fugaro')
   })
