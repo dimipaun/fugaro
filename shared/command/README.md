@@ -8,7 +8,8 @@ default agent). Two pure functions over values — `routeUtterance` and `default
 Task **J4** of [the mobile identity and pairing plan](../../docs/mobile-identity-pairing/implementation-plan.md)
 added the module's other half: the phone's **job verbs** (`verbs.js`, re-exported from `index.js`),
 which answer what a session's role may send and the mailbox write each one composes — **D2787**
-(every project write goes through the mailbox), **D162** (a start is a launch message) and **D169**
+(every project write goes through the mailbox), **D162** (a start is a launch message, typed by
+O10 in **J5b**) and **D169**
 (a cancel is an action record).
 
 Nothing here reads a clock, a file, a database, a network or a random source, and the module's only
@@ -179,7 +180,7 @@ the boolean a screen asks before it draws the control.
 
 | Verb | What it makes | The write | Role |
 |---|---|---|---|
-| `launch` | **D162's launch**: an ordinary `message` carrying the owner's own words, no record and no confirmation | `{ verb: 'launch' }` — the classification the write path hands the lapse check (S6.3) | `operator` |
+| `launch` | **D162's launch, typed by O10 (J5a, J5b)**: the `launch` action carrying the mode and the repository it starts in, and no confirmation | `{ action: record }` — the record P5.1's consumer re-validates, and refuses when the mode is costly and no confirmation is there | `operator` |
 | `cancel` | **D169's action record** (`kind: 'action'`), built by P6.2's machine and passed through here unchanged | `{ action: record }` — the record P5.1's consumer re-validates and runs | `operator` |
 
 **Why the composition is here and the write is not.** D2787 answers how the phone reaches a
@@ -192,8 +193,13 @@ redaction, the lapse, the gate, the tag, the schema and the store already live; 
 
 The **record is not built here**, and must not be: "one confirmation authorises exactly one action"
 is the P6.2 machine's decision, and the record's id, target and confirmation are its answers, read
-back from the resolved target rather than parsed from anything a speaker said. What this module
-refuses is a record that is not a cancel of a run.
+back from the resolved target rather than parsed from anything a speaker said. A start's record is
+the app's start button's, which is where the repository is known — the session carries an opaque
+project id, not a repository name. What this module refuses is a record that is not the verb's
+action: a `launch` without a mode or a `target.repo`, a `cancel` without a `target.run`, and either
+handed a record of the other verb. J4 sent a start as an ordinary message, because J5a had not
+landed; a start now always carries the typed record, so a reader that predates the verb refuses it
+fail-closed.
 
 **A role here is a display claim, never an authorisation** (F14, D2791). What a role may do is
 enforced at the consumer with `internal/access` (`ActionLaunch`, `ActionCancel`, both min
@@ -236,7 +242,7 @@ for no clock, no random source, no network, no timer and no process handle, and 
 outside this directory (the re-export is the module's one `from`, and it names its sibling).
 
 J4's cases are in the same file, under their own heading: the closed verb set and its role table,
-`maySend` on every way the question can be malformed, a start composed as D162's plain message, a
+`maySend` on every way the question can be malformed, a start composed as O10's typed launch, a
 cancel carrying the machine's record unchanged, a viewer's write refused before it is composed, and
 a sweep that every `JOB_CODES` code is reachable (the same sweep `REFUSAL` gets).
 

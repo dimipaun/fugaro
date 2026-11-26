@@ -156,7 +156,7 @@ func TestUpdateBackfillsRunSummaries(t *testing.T) {
 	lsAsViewer(t, r)
 	before := lsRunIDs(t, "--since", "0", "--repo", "acme/app")
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// What the run said: the count of summaries it created. A run in flight and
 	// a run with no record are the two it must not write one for, so it wrote
@@ -201,7 +201,7 @@ func TestUpdateSummaryIdempotent(t *testing.T) {
 	r := prIndexRig(t)
 	b := prIndexBucket(t, r)
 	plantSummaryRuns(t, b)
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 	if keys := summaryKeys(t, b, "runs/"+appSlug+"/"); len(keys) == 0 {
 		t.Fatalf("the first update wrote no summary at all, so this test would pass over a step that does nothing")
 	}
@@ -255,7 +255,7 @@ func TestUpdateSummaryQuietWhenNothing(t *testing.T) {
 	t.Run("no runs at all", func(t *testing.T) {
 		r := prIndexRig(t)
 		b := prIndexBucket(t, r)
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 		if strings.Contains(out, "run summaries") {
 			t.Errorf("the update says something about the run summaries over a repository with no runs:\n%s", out)
 		}
@@ -277,7 +277,7 @@ func TestUpdateSummaryQuietWhenNothing(t *testing.T) {
 			t.Fatalf("the fixture's recordless run has no task either (%v)", err)
 		}
 
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		if strings.Contains(out, "run summaries") {
 			t.Errorf("the update says something about the run summaries with nothing to write:\n%s", out)
@@ -332,7 +332,7 @@ func TestUpdateSummaryLeavesRunInFlight(t *testing.T) {
 	}
 	before := planted()
 
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	// The note about the runs in flight is untouched by this step, and the
 	// backfill still summarized the finished runs beside it.

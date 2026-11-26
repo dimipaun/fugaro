@@ -75,14 +75,33 @@ record without `mac` and without `acked`, with the **direction** (`inbox` here)
 inside the covered bytes, so a message reflected from another node does not
 verify.
 
-**The key is never held by this directory's code.** It is read out of platform
-secure storage through `SecretStore.use(accountId, 'macKey', fn)`, used inside
-`fn` and never returned: `use` refuses a callback whose *result* carries the
-material (`leaked`). No code path here has a variable holding the key, and the
-read path is therefore the same one P3.1 already fenced. Nothing in this
+**Which of the two tags a record carries is the wiring's answer, not the
+message's** (O6, task J5b). A client built with C2's `session` port signs with
+the **device key**, through the port's `signMessage`, and writes `sig` -- the
+same canonical bytes, the same direction, spelled as unpadded base64url of the
+64 bytes Ed25519 produces (`{ id, sender, text, at, sig }`). A client built
+without one writes D171's per-pairing `mac`, out of the keychain. Both are real
+pairings -- a phone paired the old way has no session -- so the absence is not a
+fault and does not throw; a session that **is** given and cannot sign is a wiring
+bug and is refused at construction. The choice is made once, at the wiring, and
+never per record, because the consumer's device node is what says which tag it
+accepts: a phone that could pick per message would be a phone that could fall
+back to the scheme O6 retires. A session whose `signMessage` fails (it signed
+out, its key is gone) writes nothing and refuses as `key-unreadable` with the
+field `session` -- the same code the unreadable Keychain gets, because it is the
+same fault, and the field is what says which material to look at.
+
+The **key is still never held by this directory's code.** It is read out of
+platform secure storage through `SecretStore.use(accountId, 'macKey', fn)`, used
+inside `fn` and never returned: `use` refuses a callback whose *result* carries
+the material (`leaked`). No code path here has a variable holding the key, and
+the read path is therefore the same one P3.1 already fenced. The device key is
+not even a value here: `sigOf` is handed the session's own `signMessage`, so the
+module sees a signature and never the material behind it. Nothing in this
 directory prints anything (`console.` appears in no production file, and
 `src/boundary.test.js` keeps it that way), and `client.test.js` asserts that no
-write, report, refusal or pending entry contains the key.
+write, report, refusal or pending entry contains the key -- and that a
+session-signed write never asks the keychain at all.
 
 **No unsigned write is ever ATTEMPTED.** With no key in the store (`no-key`) or
 an unreadable one (`key-unreadable`), `send` refuses *before* the store is
@@ -357,27 +376,35 @@ await client.send('cancel the docs refactor', { action: actionRecord });
 * **A refusal is a sentence, from the licence's table** -- see the gate's
   refusal-shape rule above, which now names both refusers.
 
-## A job command from the phone (J4; D2787, D162, D169)
+## A job command from the phone (J4; D2787, D162, D169; typed by O10, J5b)
 
 `sendJob(session, request)` sends a **start** or a **cancel** and nothing else:
 
 ```js
-await client.sendJob(session, { verb: 'launch', text: 'fix the flaky test' });
+await client.sendJob(session, { verb: 'launch', text: 'fix the flaky test', record: launchRecord });
 await client.sendJob(session, { verb: 'cancel', text: 'Cancel run run-42.', record: actionRecord });
 ```
 
-The composition is `shared/command`'s `jobWrite`, which makes a start D162's plain launch message
-(`{ verb: 'launch' }`) and a cancel D169's action record, passed through as P6.2's machine built it
-(`{ action: record }`). It is pure, so a screen can ask it what to draw; the write is here, so
-redaction, the lapse, the gate, the tag, the schema and the store stay in one place and there is
-still one write path. A refusal from `jobWrite` comes back in `send`'s own shape
-(`{ ok, code, field }`).
+The composition is `shared/command`'s `jobWrite`, which makes a start O10's **typed launch action**
+-- the mode it would start in, the repository alone, no confirmation -- and a cancel D169's action
+record, each passed through as its builder built it (`{ action: record }`). It is pure, so a screen
+can ask it what to draw; the write is here, so redaction, the lapse, the gate, the tag, the schema
+and the store stay in one place and there is still one write path. A refusal from `jobWrite` comes
+back in `send`'s own shape (`{ ok, code, field }`).
+
+The **record is the caller's**: for a cancel, P6.2's confirmation machine's; for a start, the start
+button's, which is the only place that knows the repository (the session carries an opaque project
+id, not a repository name). J4 sent a start as an ordinary message, because J5a had not landed; a
+start now always carries the typed record, so a reader that predates the verb refuses it
+fail-closed.
 
 The `session` is C2's port value and only its `role` is read: a viewer's start and cancel are
 refused before anything is minted, which is the phone hiding what its session cannot do. That is a
 display claim and not an authorisation (F14, D2791) -- the P5.1 consumer refuses a viewer
 independently with `internal/access`, and nothing a role claims here can grant what the roster has
-not.
+not. **The port the CLIENT is wired with is a different question** and may be the same value: O6's
+`signMessage` is what this client signs its own records with, and the role is what a screen may
+send.
 
 ## The limits of the gate, named
 
@@ -527,7 +554,7 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 73 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 74 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -571,6 +598,7 @@ than a claim.
 | the fresh-id guard drops (`minted.has(id)`) | `an id that has already been used is not used twice` |
 | the tag is made for `outbox` instead of `inbox` | `the message it writes is exactly the five fields, tagged over the schema's bytes` |
 | the tag is a placeholder `'f'.repeat(64)` | the same test |
+| the registration's tag is a placeholder too | `a registration is one signed message in the inbox, and it queues nothing` |
 | the text is signed **before** redaction | `the tag is over the REDACTED text` |
 | the message is written to the outbox path | `one utterance is one message, with a fresh id each time` |
 | `exists` is treated as a failure in `send` | `a send whose message is already there is landed, even after a restart` |

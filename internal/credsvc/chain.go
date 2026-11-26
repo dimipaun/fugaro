@@ -74,9 +74,9 @@ package credsvc
 // from the node, which is the whole of what that task owes this file.
 //
 // The LAUNCHER'S POOL arrives through LauncherPools, C2's routing.LauncherPool:
-// PL4 assigns the real lookup from its own init, and until then the stub
-// answers "no pool designated" for every principal and every name, which is
-// D3180's answer for a project nothing has designated yet.
+// PL4 assigns the real lookup in credsvc.NewServer, and a process that has built
+// no server is answered by the stub, which designates nothing — D3180's answer
+// for a project nothing has designated yet.
 //
 // # R16: a placement is sticky for one step
 //
@@ -130,11 +130,11 @@ var PublishedTable = func(*projectpolicy.Policy) (routing.Table, bool) {
 // D3176): the pool one run is served from, resolved from the principal the run's
 // slip carries and the pool a launch named with `--pool` (CS12).
 //
-// PL4 assigns the real lookup from its own init; until then it is nil and
-// launcherPool answers the stub, which designates nothing (launcherpool_stub.go,
-// D3180). It is nil-and-not-the-stub at declaration so that PL4's init — which
-// runs after every package-level declaration — is the only writer that matters,
-// the same ordering rule C1's stubs state.
+// PL4 assigns the real lookup, in credsvc.NewServer, from the Server it builds;
+// while it is nil launcherPool answers the stub, which designates nothing
+// (launcherpool_stub.go, D3180), and the stub's deletion is I1's. It is
+// nil-and-not-the-stub at declaration so that the assignment is the only writer
+// that matters, the same ordering rule C1's stubs state.
 var LauncherPools routing.LauncherPool
 
 // launcherPool is the lookup this walk resolves a launcher's pool through.

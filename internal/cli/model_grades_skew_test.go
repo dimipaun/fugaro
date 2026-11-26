@@ -379,7 +379,7 @@ func TestPolicyPreviousVersionConverges(t *testing.T) {
 		t.Fatalf("the fixture's node is version %d, want the release before this one's 7: this is not the installation the test is about", got)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
 		t.Errorf("after the update the published node is version %d, want this binary's %d: the policy stage is what carries it forward", got, projectpolicy.Version)
@@ -407,7 +407,7 @@ func TestPolicyConvergesFromABaseImageThatPredatesGrades(t *testing.T) {
 		t.Fatalf("the installation records the base image %s, want the release before the key, %s: this is not the installation the test is about", got, want)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 	if got, want := projectConfigOf(t, r).BaseImages["base"], r.pinnedBase("base", convergeRelease); got != want {
 		t.Errorf("after the update the installation records the base image %s, want this release's %s: the images stage is what moves it before the repository stage's grades gate reads the config", got, want)

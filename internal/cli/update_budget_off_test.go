@@ -86,7 +86,7 @@ func TestTheLocalConfigIsRewrittenInPlace(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		after, err := os.ReadFile(cfg)
 		if err != nil {
@@ -251,7 +251,7 @@ func TestTheUpdateNamesWhatWillStopFirst(t *testing.T) {
 
 	t.Run("the listing comes before anything this run changes", func(t *testing.T) {
 		r := offLocalConverge(t, currentNode(), refreshYAML+offRepoYAML)
-		out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+		out := convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
 
 		head := "This release is always a budget. Before this update changes anything, what will stop:"
 		at := strings.Index(out, head)
@@ -428,7 +428,7 @@ func TestTheUpdateSaysABudgetOffRunKeepsRunning(t *testing.T) {
 	t.Run("a config that says the word", func(t *testing.T) {
 		r := offLocalConverge(t, currentNode(), refreshYAML)
 		startRunInFlight(t, r)
-		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 		if !strings.Contains(line, "a run that started with the budget off holds its key and finishes") {
 			t.Errorf("the note about the runs in flight does not say the budget-off run keeps running:\n%s", line)
 		}
@@ -437,7 +437,7 @@ func TestTheUpdateSaysABudgetOffRunKeepsRunning(t *testing.T) {
 	t.Run("a config that does not", func(t *testing.T) {
 		r := newConvergeRig(t, currentNode())
 		startRunInFlight(t, r)
-		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+		line := inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"}))
 		if strings.Contains(line, "started with the budget off") {
 			t.Errorf("the note claims a run started with the budget off over a config that does not say the word:\n%s", line)
 		}

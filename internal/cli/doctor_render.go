@@ -134,7 +134,6 @@ var doctorShownSecurityIDs = map[string]bool{}
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"cli-below-required",
-	"plugin-pin",
 	"plugin-install",
 	"orchestrator-unit",
 	"base-image",
@@ -231,14 +230,6 @@ var doctorMeasureIDs = map[string]bool{
 	// docs/plugin-user-scope/implementation-plan.md), and the class of both is
 	// update — the plugin on this machine is what `fugaro update` installs.
 	"plugin-install": true,
-	// pluginwire's "not wired": a checkout nothing pins, because the merge
-	// that writes a pin is gone (D949, U5). It is the normal state of every
-	// repository now, and information rather than a finding — filed as audit
-	// it was counted by the pointer line, so the one screen said "1 more
-	// finding" over a repository with nothing wrong with it. The states that
-	// ARE wrong (a pin this binary does not match, a foreign wiring) are
-	// warnings, and the update arm above keeps them in the default view.
-	"plugin-pin": true,
 	// The standing note the wiring always prints beside its per-notice lines:
 	// a fixed sentence about what wiring the plugin blesses, not a finding of
 	// this checkout's.
@@ -765,9 +756,6 @@ var doctorUpdateFixes = map[string]string{
 	// version (CLAUDE.md's hard rule: those two commands are the whole upgrade).
 	"cli-version":        cliBelowRequiredFix,
 	"cli-below-required": cliBelowRequiredFix,
-	// A check that cannot even be read outside a checkout says so in its own
-	// text: update is the whole upgrade, and it runs in the repository.
-	"plugin-pin": "run `fugaro update` in the repository's checkout",
 	// plugin-install's class is new (D942), and the check's own line was
 	// already the right one (#1500 re-pointed it at `fugaro update`): it keeps
 	// Claude Code's by-hand move beside the command, which is what a machine
@@ -907,7 +895,11 @@ var doctorShorts = map[string]doctorShort{
 	// line is the whole fix (the upgrade, then `fugaro update`), which is why this
 	// entry carries none.
 	"cli-below-required": {"this project requires a newer Fugaro release than this binary.", ""},
-	"plugin-pin":         {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
+	// The two dead values U6b reads off every repository's default branch
+	// (R15): each line's own fix is the edit that takes the value out, so the
+	// entry names the file rather than carrying a fix of its own.
+	"repo-plugin-pin":  {"an older Fugaro's plugin pin is still in a repository's .claude/settings.json.", ""},
+	"repo-budget-mode": {"a repository's fugaro.yaml still says budget.mode: off, which is not a budget mode any more.", ""},
 	// The login unit the daemon runs under was written from an older template,
 	// and `fugaro update` re-renders it in place (init_stages.go's unit stage),
 	// so the entry carries no fix of its own: the class's command is the whole
@@ -1001,17 +993,19 @@ var doctorShorts = map[string]doctorShort{
 	// bitbucket-direct on a repository nobody proxied) are counted rather than
 	// printed, so their entries are here for the warning state beside them.
 	//
-	// credentials-service-deployed is the one whose read failures are the audit
-	// class, so they never reach this sentence: what reaches it is the four
-	// states a run cannot work around, and the sentence is true of each of them
-	// — the service not deployed, a job account it does not admit, and the two
-	// halves of having nothing to serve (an empty bundle, a newest version
-	// Secret Manager will not serve). The fix beneath it is the check's own, so
-	// the one screen's two lines never name different problems.
-	"credentials-service-deployed": {"the credentials service is not deployed, does not admit a job account, or has nothing in its bundle to serve a run.", ""},
-	"secret-rotation-age":          {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
-	"bundle-bitbucket-token":       {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
-	"bitbucket-token-valid":        {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
+	// credentials-service-deployed has no entry here, and it is the one that
+	// must not: it is a single ID with six states a reader has to tell apart —
+	// the service not deployed, a job account of a named repository it does not
+	// admit, a grant that could not be read, and the two halves of having
+	// nothing to serve (an empty bundle, a newest version Secret Manager will
+	// not serve) — so a sentence keyed by the ID could only be their union
+	// ("not deployed, does not admit a job account, or has nothing in its
+	// bundle"), which left a reader to guess which state they were in, under
+	// the fix of one of them. The check words its own first sentence per state
+	// instead, which is what every entry here is a shorter stand-in for.
+	"secret-rotation-age":    {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
+	"bundle-bitbucket-token": {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
+	"bitbucket-token-valid":  {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
 	// T10's three other token lines. The per-token half of
 	// bitbucket-token-valid is the prefix below: doctor emits one line per typed
 	// token and the ID carries the token's name.

@@ -15,7 +15,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -379,7 +378,7 @@ func (r *initRun) canAsk() bool {
 // question cannot be a row `missing` holds. With a project config nothing is
 // asked at all.
 func (r *initRun) gatherInputs(ctx context.Context) error {
-	res, err := initflow.Run(ctx, wizardStages(ctx, r), r.wizardOptions())
+	res, err := r.runStages(ctx, wizardStages(ctx, r), r.wizardOptions())
 	if err != nil {
 		// The loop's own refusal, before a stage ran: --non-interactive's one
 		// error naming every flag this run cannot answer for itself. It is the
