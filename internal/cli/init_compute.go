@@ -89,6 +89,14 @@ type computeStage struct {
 	// both paths that reach the block, since a run that applies nothing still
 	// has a state to read the family out of.
 	outs infra.ComputeOutputs
+	// repoAccounts are the PER-REPOSITORY job accounts the project holds
+	// (infra.JobRunAccounts), which is the list the block's single account is
+	// picked from -- and only when there is exactly one. The root is fed these
+	// BESIDE the shared project job accounts (spec.RunAccounts,
+	// infra.RunAccounts, D3105), and the two are kept apart here because what
+	// the root is fed is a union while the block may carry one account only
+	// (batchBlockAccount).
+	repoAccounts []string
 }
 
 func newComputeStage(e *initEngine) *computeStage { return &computeStage{e: e} }
@@ -316,9 +324,15 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 // and no flag confirms this path either (the stage is registered noYes, so a run
 // with no terminal leaves it for the operator instead of applying it).
 //
-// It writes no block and says nothing about the selection: the block is the
-// provisioning's (and BR16's, for the facts `fugaro update` owns), and every
-// machine's own `backend:` is that machine's.
+// It writes the block, and says nothing about the selection: the block is the
+// installation's and every machine's own `backend:` is that machine's. What the
+// update writes there is what the provisioning writes -- the facts this root
+// answers for, merged into the block the machine already carries -- and, beside
+// them, the retirement this door is the one for: the facts the block no longer
+// carries leave the machine's file in place, whatever else the update finds to
+// do and even where it finds nothing (recordBatchBlock). An installation that
+// opted in and never applied this root keeps its launch refusal and still loses
+// a key fact the release behind wrote.
 //
 // It starts the preload rebuild only where the plan changes what that image is
 // built from -- a role or a grant is not an input, and an update that tightens
@@ -348,6 +362,14 @@ func (s *computeStage) updateApply(ctx context.Context) (initflow.Outcome, error
 	if plan == nil {
 		s.changes = &infra.PlanCounts{}
 		fmt.Fprintln(r.stageDetail(), "No changes: the compute backend's provisioning matches the plan.")
+		// Nothing to apply, and the block is written all the same: the
+		// provisioning's no-changes path does the same, and this is the door
+		// an installation that provisioned under an earlier release comes
+		// through -- the one where a key fact the release behind wrote is
+		// still in the file and has to leave it.
+		if err := s.recordBatchBlock(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	r.planBlock(plan)
@@ -373,6 +395,9 @@ func (s *computeStage) updateApply(ctx context.Context) (initflow.Outcome, error
 				Fix: "start it yourself: gcloud scheduler jobs run " + s.spec.Names.PreloadSchedulerJob + " --location=" + s.spec.SchedulerRegion + " --project=" + s.e.spec.Project}
 		}
 		fmt.Fprintf(r.w, "the preload image's inputs changed: its rebuild starts now (Cloud Build, about two minutes, billable), rather than at its weekly schedule\n")
+	}
+	if err := s.recordBatchBlock(ctx); err != nil {
+		return initflow.Outcome{}, err
 	}
 	return initflow.Outcome{Changed: true, Detail: "applied: " + counts.String()}, nil
 }
@@ -601,11 +626,20 @@ func (s *computeStage) prepare(ctx context.Context) error {
 	}
 	// The run-class accounts, from the project itself: they are what the
 	// repository roots created, and an account missing here is a run whose
-	// VM cannot report its state (see infra.JobRunAccounts).
+	// VM cannot report its state (see infra.JobRunAccounts). Beside them go
+	// the shared project job accounts (D3105): a project job's workflow runs
+	// on Batch under that job's account, and the root is what gives a launcher
+	// actAs on the accounts it is fed -- so a root fed the per-repository
+	// accounts alone refuses every launch of a project job's workflow.
 	runAccounts, err := infra.JobRunAccounts(ctx, e.c, e.spec.Project)
 	if err != nil {
 		return initErr(err)
 	}
+	projectAccounts, err := infra.ProjectJobRunAccounts(ctx, e.c, e.spec.Project)
+	if err != nil {
+		return initErr(err)
+	}
+	s.repoAccounts = runAccounts
 	pin := e.lc.BaseImage(config.BaseKind)
 	// The installation's never-touch list, read from the same variable the
 	// reaper command reads (reaperRefuseProjects): it goes into this root's
@@ -670,7 +704,7 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		// project's name typed at a real terminal.
 		Launchers:          e.spec.Launchers,
 		Operators:          e.spec.Operators,
-		RunAccounts:        runAccounts,
+		RunAccounts:        infra.RunAccounts(runAccounts, projectAccounts),
 		RegistryRepository: registryRepository(e.lc, outs),
 		BaseImage:          pin,
 		BaseProject:        "batch-custom-image",
@@ -731,6 +765,18 @@ func (s *computeStage) prepare(ctx context.Context) error {
 // confirmation is what covers the write, exactly as it covers that one; on the
 // no-changes path there is nothing to apply and so nothing asked, and the write
 // describes the provisioning that is already there.
+//
+// A fact the block no longer carries leaves the file HERE, in place, whatever
+// else this run writes. The block is written whenever the file still names the
+// retired key: the merge this stage writes through has stopped carrying it, so
+// the write is what removes it, and the file's own text is what decides that
+// there is a write to make. Nothing else could: the merged block and the
+// effective one compare EQUAL in every field this stage reads -- which is why
+// the check is a name read off the text (retiredBlockFacts) rather than a
+// comparison of the two blocks -- so without it a machine whose block is
+// otherwise current would keep the key fact for good, its update having nothing
+// left to say about it (R10). The publish at the end carries the same removal
+// to every other machine.
 func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	r := s.e.r
 	block, why := s.batchBlock()
@@ -761,7 +807,7 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 	// installation's for good.
 	owner := s.e.lc.Batch
 	merged := mergeBatch(owner, block)
-	if sameBatch(merged, owner) {
+	if sameBatch(merged, owner) && !namesRetiredBlockFact(old) {
 		if why != "" {
 			fmt.Fprintln(r.w, why)
 		}
@@ -780,6 +826,49 @@ func (s *computeStage) recordBatchBlock(ctx context.Context) error {
 		fmt.Fprintln(r.w, why)
 	}
 	return nil
+}
+
+// retiredBlockFacts are the facts the `batch:` block no longer carries, by the
+// name the config file's own text gives them: the key fact a Batch launch
+// carried before a run's identity came from the claims service. Each is a key
+// this stage's own writing never contains, so a file that still names one is a
+// file the release behind wrote and this run has to rewrite (R10).
+//
+// The name is TEXT and never the Go field and its type. Those have to stay in
+// internal/localcfg until the deletion that follows this task runs -- a file
+// still carrying them has to load (O10) -- and a writer that named them would be
+// a file that deletion has to reach into: what it removes is the field, its
+// validation and its doc, so this stage knows the fact only as the word the
+// config file spells.
+var retiredBlockFacts = []string{"seal_key"}
+
+// namesRetiredBlockFact reports whether the project config's text still names a
+// retired fact inside its `batch:` block. It reads the file as lines rather than
+// as a document because that is all it needs to be: what it answers is whether
+// there is a write to make, and the write itself is the block this stage would
+// have written anyway, whose merge has stopped carrying those facts.
+func namesRetiredBlockFact(src []byte) bool {
+	const block = "batch:"
+	in := false
+	for _, line := range strings.Split(string(src), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, block) {
+			in = true
+			continue
+		}
+		if in && line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			in = false
+		}
+		if !in || strings.HasPrefix(line, "#") {
+			continue
+		}
+		for _, name := range retiredBlockFacts {
+			if strings.HasPrefix(strings.TrimLeft(line, " \t"), name+":") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // batchBlock is the block this provisioning answers for, and the line saying
@@ -821,7 +910,7 @@ func (s *computeStage) batchBlock() (*localcfg.Batch, string) {
 	if family == "" {
 		return nil, "the batch block was not recorded: neither the compute root's state nor this installation's base image names the preloaded boot image family a run's VM boots (batch.boot_image), so the root's state holds no outputs and the base pin is empty"
 	}
-	account, why := batchBlockAccount(s.spec.RunAccounts)
+	account, why := batchBlockAccount(s.repoAccounts)
 	return &localcfg.Batch{
 		Image: image,
 		// The family resource name and not the family's own name: a run's
@@ -937,11 +1026,18 @@ func batchBlockAccount(members []string) (email, why string) {
 // by field -- a hand-set machine type, a network they placed the VMs in, an
 // image they built themselves, a socket gid they measured -- and the fields
 // they left empty take this stage's answer. The block has no field this stage
-// CLEARS: an owner value is never replaced with an empty one. The block's two
-// identity facts are carried the same way and are the reason the rule matters
-// most: this stage forms its block out of the root's outputs and has no answer
-// for either fact, so a block written without them would delete what `fugaro
-// update` and an operator wrote (R2, R13, R16).
+// CLEARS: an owner value is never replaced with an empty one. The opt-in fact is
+// carried the same way and is the reason the rule matters most: this stage forms
+// its block out of the root's outputs and has no answer for it, so a block
+// written without it would delete what an operator wrote (R2, R15).
+//
+// Two of the block's fields are NOT carried, and that is the whole of what this
+// stage does to them: the key fact and `secrets` are facts the block no longer
+// carries (R10), so the block this merge returns holds neither, and a file that
+// carried one loses it at the first write. This merge names neither of them:
+// the deletion that follows this task takes the key's field and its type out of
+// the tree, so what this stage knows of that fact is the word its config file
+// spells (retiredBlockFacts) and nothing else.
 func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
 	if owner == nil {
 		return want
@@ -965,9 +1061,6 @@ func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
 	if owner.ServiceAccount != "" {
 		out.ServiceAccount = owner.ServiceAccount
 	}
-	if owner.Secrets != nil {
-		out.Secrets = owner.Secrets
-	}
 	if owner.SocketGID != 0 {
 		out.SocketGID = owner.SocketGID
 	}
@@ -977,13 +1070,13 @@ func mergeBatch(owner, want *localcfg.Batch) *localcfg.Batch {
 	if owner.OptIn != "" {
 		out.OptIn = owner.OptIn
 	}
-	if owner.SealKey != nil {
-		out.SealKey = owner.SealKey
-	}
 	return &out
 }
 
-// sameBatch reports whether two blocks carry the same fields, nil included.
+// sameBatch reports whether two blocks carry the same fields, nil included. The
+// mounts a file may still carry are compared as they are read; the retired key
+// is not compared at all, because the merge drops it, so a file still naming it
+// is told apart by the file's own text (retiredBlockFacts), never here.
 func sameBatch(a, b *localcfg.Batch) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -991,17 +1084,7 @@ func sameBatch(a, b *localcfg.Batch) bool {
 	return a.Image == b.Image && a.MachineType == b.MachineType && a.BootImage == b.BootImage &&
 		a.Network == b.Network && a.Subnetwork == b.Subnetwork && a.ServiceAccount == b.ServiceAccount &&
 		maps.Equal(a.Secrets, b.Secrets) && a.SocketGID == b.SocketGID && a.TaskTimeout == b.TaskTimeout &&
-		a.OptIn == b.OptIn && sameSealKey(a.SealKey, b.SealKey)
-}
-
-// sameSealKey compares the key fact by value, nil included: a block carries it
-// as a pointer, and two blocks naming the same version and the same public key
-// are the same fact however they were built.
-func sameSealKey(a, b *localcfg.BatchSealKey) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
+		a.OptIn == b.OptIn
 }
 
 // announceBackend is the one line the stage ends with while the installation

@@ -10,7 +10,9 @@ approved, and every amended answer is put to him again — the list is "Answers 
 [reconciliation.md](reconciliation.md). Three tasks merged while this document was being written
 (C1 #3380, BRS #3379, BR0 #3381) and the key-release half of C1 is what BR23 now retires. See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
-2026-11-21.
+2026-11-21. **Check 830 has been run once, on 2026-11-25, and failed** (the owner's block is in
+[docs/gcp-live-checklist.md](../gcp-live-checklist.md)'s Check 830 section, and what it settles is
+below): O1 and O8 are answered, U8 is 10 s, and U2 and U3 still wait on the rerun.
 
 A run launched on Cloud Batch no longer opens anything: the launcher asks the issuer for a ticket
 that names the Batch job it is about to create, the job carries that ticket as
@@ -125,9 +127,15 @@ live probe can settle (U1, Check 830).
 
 **What a reader should not take from here:** nothing is approved — the approvals of 2026-11-20 are
 on hold until the owner answers D3113 to D3115 and the amended answers, and no task has his go by
-name under the amended text. Nothing is launched. Checks 830 and 831 are owner-run;
-BR2, BR3, BR5, BR12, BR13 and BR23 do not start before the owner has run Check 830, and BR3 and
-BR5 wait on O1's answer with it. No CLI release is cut between the merge of BR1, BR6, BR16, BR18 or
+name under the amended text. Nothing is launched. Checks 830 and 831 are owner-run; **the owner ran
+Check 830 once, on 2026-11-25, and it FAILED** — `probe-ran` left no line of the probe container's
+own, so **U2 and U3 are unmeasured**, and `u1-handmade` found that a hand-made VM can carry every
+field the probe's VM carries, so **O1 is answered** (the link is a field of the instance's own
+object, read with `compute.instances.get`) and **R4 returns the design to the owner rather than to
+K1**; **U8 is 10 s**. The check now reads a second channel for U2 and U3 and captures what a run
+with no log line owes the reader, so the rerun answers them; **BR2, BR3, BR5, BR12, BR13 and BR23
+still wait on that result**, and BR3 and BR5 wait on O1's answer with it. No CLI release is cut
+between the merge of BR1, BR6, BR16, BR18 or
 BR22 and I1, BR23's retirement included. The merged files of the old carrier
 (`internal/budget/token/wrap_contract.go`, `internal/credsvc/sealkey_wire.go`,
 `internal/credsvc/sealkey_stub.go`, `internal/localcfg/batch_sealkey.go`) are still in the tree, and

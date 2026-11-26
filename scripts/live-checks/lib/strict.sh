@@ -27,20 +27,28 @@ LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 # strict_fugaro_verify ARGV...
 # 0 when ARGV is a command and flags the real CLI takes, else 1 with the CLI's
 # own wording on stderr ("fugaro: unknown flag: --x").
+# strict_flag_arity TABLE KEY: the arity recorded for KEY (path|flag) in the
+# newline-delimited table the verifier builds.
+strict_flag_arity() {
+  local rest=${1#*$'\n'"$2"=}
+  printf '%s' "${rest%%$'\n'*}"
+}
+
 strict_fugaro_verify() {
   local table=$LIVE_CHECK_LIB/fugaro-surface.tsv
   if [ ! -r "$table" ]; then
     printf 'fugaro: the strict surface table %s is missing (regenerate it: go test ./scripts -run TestLiveCheckCLISurface -update-live-check-surface)\n' "$table" >&2
     return 1
   fi
-  local -A iscmd=() flags=()
+  # Newline-delimited tables, not associative arrays: macOS ships bash 3.2.
+  local iscmd=$'\n' flags=$'\n'
   local line kind rest path name ar sh
   while IFS= read -r line; do
     case "$line" in '' | '#'*) continue ;; esac
     kind=${line%%$'\t'*}
     rest=${line#*$'\t'}
     case "$kind" in
-    cmd) iscmd["$rest"]=1 ;;
+    cmd) iscmd+="$rest"$'\n' ;;
     flag)
       # A tab is IFS whitespace, so `read` would fold the root's empty path
       # field into the next one: split the fields by hand instead.
@@ -50,8 +58,8 @@ strict_fugaro_verify() {
       rest=${rest#*$'\t'}
       sh=${rest%%$'\t'*}
       name=${rest#*$'\t'}
-      flags["$path|$name"]=$ar
-      [ -n "$sh" ] && flags["$path|$sh"]=$ar
+      flags+="$path|$name=$ar"$'\n'
+      [ -n "$sh" ] && flags+="$path|$sh=$ar"$'\n'
       ;;
     esac
   done <"$table"
@@ -68,9 +76,9 @@ strict_fugaro_verify() {
     --*)
       resolving=no
       name=${tok%%=*}
-      case "${flags[$path|$name]+set}" in
-      set)
-        if [ "${flags[$path|$name]}" = value ] && [ "$tok" = "$name" ]; then i=$((i + 1)); fi
+      case "$flags" in
+      *$'\n'"$path|$name="*)
+        if [ "$(strict_flag_arity "$flags" "$path|$name")" = value ] && [ "$tok" = "$name" ]; then i=$((i + 1)); fi
         ;;
       *)
         name=${name#--}
@@ -82,9 +90,9 @@ strict_fugaro_verify() {
     -?*)
       resolving=no
       short=${tok:0:2}
-      case "${flags[$path|$short]+set}" in
-      set)
-        if [ "${flags[$path|$short]}" = value ] && [ "$tok" = "$short" ]; then i=$((i + 1)); fi
+      case "$flags" in
+      *$'\n'"$path|$short="*)
+        if [ "$(strict_flag_arity "$flags" "$path|$short")" = value ] && [ "$tok" = "$short" ]; then i=$((i + 1)); fi
         ;;
       *)
         printf "fugaro: unknown shorthand flag: '%s' in %s\n" "${tok:1:1}" "$tok" >&2
@@ -95,15 +103,18 @@ strict_fugaro_verify() {
     *)
       if [ "$resolving" = yes ]; then
         candidate=${path:+$path }$tok
-        if [ "${iscmd[$candidate]+set}" = set ]; then
+        case "$iscmd" in
+        *$'\n'"$candidate"$'\n'*)
           path=$candidate
-        else
+          ;;
+        *)
           if [ -z "$path" ]; then
             printf 'fugaro: unknown command "%s" for "fugaro"\n' "$tok" >&2
             return 1
           fi
           resolving=no
-        fi
+          ;;
+        esac
       fi
       ;;
     esac

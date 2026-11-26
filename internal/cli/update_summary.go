@@ -25,20 +25,21 @@ import (
 // upgrades holds one only for the runs that START after the upgrade, and
 // `runs ls` reads every older run of its window from its three objects --
 // task.json, launch.json and result.json -- until this step writes them. The
-// step is RL2B's shape (update_prindex.go): it walks each repository's runs of
-// the last 90 days once, reads each run's own task and record, and creates the
-// summary it would have written, create-if-absent.
+// step has the shape of the pull-request index's backfill, which D3204
+// retired: it walks each repository's runs of the last 90 days once, reads each
+// run's own task and record, and creates the summary it would have written,
+// create-if-absent.
 //
-// Which runs already hold one is one listing of the repository, as the index
-// step reads its own (indexedRuns): a converged installation reads no object of
-// its runs at all, and an installation converges by reading only the runs that
-// are missing one. Reading each run's summary instead would cost one read a run
-// of the 90-day window on every update, forever.
+// Which runs already hold one is one listing of the repository: a converged
+// installation reads no object of its runs at all, and an installation
+// converges by reading only the runs that are missing one. Reading each run's
+// summary instead would cost one read a run of the 90-day window on every
+// update, forever.
 //
-// Create-if-absent and never a rewrite, for the reason the index's step is
-// (the HARD RULE, docs/design/update-in-flight.md): a summary a run wrote is
-// the run's own account of itself, and a run in flight rewrites its own at
-// every stage end, so a step that overwrote one could clobber a run's own
+// Create-if-absent and never a rewrite, for the reason every tail step of this
+// update keeps (the HARD RULE, docs/design/update-in-flight.md): a summary a run
+// wrote is the run's own account of itself, and a run in flight rewrites its own
+// at every stage end, so a step that overwrote one could clobber a run's own
 // newer object with a projection of a record it read a moment earlier. The
 // create is conditional in the bucket (runstore.CreateSummary), so the run's
 // object wins whichever way the two race, every object a run holds is byte for
@@ -49,7 +50,7 @@ import (
 // until then, and a step of the upgrade is never stopped over a derived hint.
 func (e *initEngine) backfillRunSummary(ctx context.Context) {
 	r, o := e.r, e.r.o
-	// The door and the session first, as in backfillPRIndex: this is the
+	// The door and the session first, as in reindexRunIndex: this is the
 	// upgrade's step, reached by the same hook the doors share (init_stages.go's
 	// outcome), and a coding agent's session under a marker changes nothing
 	// outside this machine unless the managed gate is the read that stands in
@@ -167,7 +168,7 @@ func backfillRunSummariesIn(ctx context.Context, b *blob.Bucket, now time.Time, 
 }
 
 // summarizedRuns is the runs of one repository that already hold a summary, in
-// one flat listing of it (indexedRuns' shape): every object whose base name is
+// one flat listing of it: every object whose base name is
 // the summary's is one run's, and the run is the key's parent segment. It lists
 // a repository whole rather than the window, because the summary sits inside
 // the run's own directory; what bounds it is the bucket's own aging, which

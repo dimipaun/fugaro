@@ -216,7 +216,9 @@ type buildRepo struct {
 // repositories are held to that set, and a repository outside it is refused BY
 // NAME — whether the project holds it on another entry or nowhere at all,
 // because the two are the same answer to the caller: this entry's credential
-// does not reach it.
+// does not reach it. An entry the map puts nothing on has its published
+// catalog definition's source repository as its set (entrySourceRepo), and
+// no other.
 //
 // The set is then held to the INSTALLATION's own table, one repository at a
 // time, which is githubRepository's reading of a repository and not a second
@@ -234,6 +236,16 @@ func (s *Server) buildEntryRepos(shared *projectpolicy.Policy, req BuildTokenReq
 	for name, entry := range shared.ImageMap {
 		if entry == req.Entry {
 			onEntry[name] = true
+		}
+	}
+	if len(onEntry) == 0 {
+		// An entry the map puts nothing on is still built, for the one repository
+		// its catalog definition is sourced from (the nightly check and update
+		// assign it there). That repository is read off the PUBLISHED catalog and
+		// never off the call, and it is the whole set: a call naming any other
+		// repository is refused below, by name, as for a mapped entry.
+		if source, ok := entrySourceRepo(shared, req.Entry); ok {
+			onEntry[source] = true
 		}
 	}
 	if len(onEntry) == 0 {
@@ -279,6 +291,27 @@ func (s *Server) buildEntryRepos(shared *projectpolicy.Policy, req BuildTokenReq
 		out = append(out, buildRepo{name: name, canonical: canonical, slug: slug, owner: owner, short: short})
 	}
 	return out, nil
+}
+
+// entrySourceRepo is the canonical repository a catalog entry's Dockerfile is
+// sourced from, as the published policy's catalog names it. An entry with no
+// Dockerfile source (an inline definition, a prebuilt image) or absent from the
+// catalog has none, and the map stays the only authority for it.
+func entrySourceRepo(shared *projectpolicy.Policy, entry string) (string, bool) {
+	if shared == nil || shared.ImageCatalog == nil {
+		return "", false
+	}
+	for _, e := range shared.ImageCatalog.Entries {
+		if e.Name != entry || e.Source.Kind != config.SourceDockerfile {
+			continue
+		}
+		canonical, err := task.CanonicalRepo(e.Source.Repo)
+		if err != nil {
+			return "", false
+		}
+		return canonical, true
+	}
+	return "", false
 }
 
 // reposElsewhere reports whether the installation serves name at the provider

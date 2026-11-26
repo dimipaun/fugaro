@@ -71,6 +71,9 @@ type Clients struct {
 	APIKeys *apikeys.Service
 	// NoAuth is set with fakes: no credentials, so no quota project to ask about.
 	NoAuth bool
+	// QuotaProject is the project every call here is billed to, named by the
+	// caller (the installation's own project), never read from the credentials.
+	QuotaProject string
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
@@ -110,9 +113,9 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 			}
 		}
 	}
-	// withQuota: the target project is the quota project. Cloud Billing's is
-	// not (billingOpts): the target may be a project this very run creates,
-	// where the API cannot be enabled yet.
+	// withQuota: the target project is the quota project, named explicitly.
+	// Nothing here falls back to the credentials' own quota project, which may
+	// belong to another product.
 	optsFor := func(endpoint string, withQuota bool) []option.ClientOption {
 		out := []option.ClientOption{option.WithLogger(discardLogger)}
 		if endpoint != "" {
@@ -131,12 +134,9 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 		return out
 	}
 	opts := func(endpoint string) []option.ClientOption { return optsFor(endpoint, true) }
-	// The credentials' own quota project (gcloud auth application-default
-	// set-quota-project), as the project stage's clients: the billing reads
-	// of init never name the project being set up as the one that pays.
-	billingOpts := func(endpoint string) []option.ClientOption { return optsFor(endpoint, false) }
 	var c Clients
 	c.NoAuth = o.Endpoints.NoAuth
+	c.QuotaProject = o.GCPProject
 	var err error
 	if c.IAM, err = iam.NewService(ctx, opts(e.IAM)...); err != nil {
 		return nil, fmt.Errorf("connecting to IAM: %w", err)
@@ -170,7 +170,7 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	}
 	// Only fugaro update --firebase-project calls it.
 	if !o.Endpoints.NoAuth || e.Billing != "" {
-		if c.Billing, err = billing.NewService(ctx, billingOpts(e.Billing)...); err != nil {
+		if c.Billing, err = billing.NewService(ctx, opts(e.Billing)...); err != nil {
 			return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)
 		}
 	}
@@ -483,6 +483,12 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 // local config lacks the entry (project_secrets/providers/claude_accounts
 // are each operator-local) still plans the container the first operator
 // created.
+//
+// A container wearing the retirement mark (IsRetiredCopy) is adopted the same
+// way when the configuration plans its name: D3325 retires the copy of a name
+// whose value moved to the grammar, and a configuration that plans that name
+// again — an operator's own entry, or the release that dropped the derivation
+// not yet applied — is the run that keeps it.
 func (d *discovery) projectSecrets(spec InstallationSpec) error {
 	out := maps.Clone(spec.ProjectSecrets)
 	if out == nil {
@@ -498,7 +504,16 @@ func (d *discovery) projectSecrets(spec InstallationSpec) error {
 			return fmt.Errorf("reading project secret %s: %w", id, err)
 		}
 		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.FugaroProject, gcp.LabelSecret: logical}
-		if !hasMarks(s.Labels, want) {
+		switch {
+		case hasMarks(s.Labels, want):
+		case IsRetiredCopy(s.Labels, spec.FugaroProject, logical):
+			// The copy D3325 retired, for a name this configuration plans
+			// again: the module's own labels map writes LabelSecret back on
+			// the apply, so the container is adopted rather than refused as a
+			// foreign one — a refusal here fails the whole run, and one
+			// operator's config may only ever fail its own.
+			d.im.Notes = append(d.im.Notes, "project secret "+id+" is marked retired and this configuration plans its name again; the apply restores it")
+		default:
 			d.foreign("project secret "+id, s.Labels, want)
 			continue
 		}

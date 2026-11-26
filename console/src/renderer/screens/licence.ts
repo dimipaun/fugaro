@@ -186,18 +186,15 @@ export const LICENCE_UNREADABLE_WORD =
  * CLI's short rendered fields (`label`) -- and `putText` is the only door a
  * document's string has onto this screen.
  *
- * **An organisation that reads as a machine name is drawn as the marker, and
- * the ordinary organisation is a domain.** `sentence` runs the free-text rules,
- * whose host rule is the recorder's, so `acme.com` is drawn `<host>`. That is
- * this console's rule for a machine name and not a property of the claim: a
- * machine name is the one thing this console does not draw, whichever field it
- * arrives in (`projects.ts`'s `routes[].host` says so of a route). No other
- * class can be asked instead -- every other member of `TEXT_CLASSES` is a
- * validating class with a grammar of its own, and the verifier checks no grammar
- * on this value at all (`src/main/licence.ts`: a string, and not empty) -- and
- * the design states the consequence where it describes this section. The row is
- * drawn either way: what the marker costs is the name, never the fact that a key
- * is installed.
+ * **An organisation is drawn as the claim set holds it, a domain included.**
+ * `sentence` runs the free-text rules, and since D3213 (2026-11-21) those are
+ * credential-only, so `acme.com` is drawn `acme.com` -- the key's own claim and
+ * not a marker. No other class can be asked instead -- every other member of
+ * `TEXT_CLASSES` is a validating class with a grammar of its own, and the
+ * verifier checks no grammar on this value at all (`src/main/licence.ts`: a
+ * string, and not empty) -- and the design states the consequence where it
+ * describes this section. The row is drawn either way: what a domain costs is
+ * nothing, and the fact that a key is installed is never in doubt.
  */
 export interface LicenceClaim {
   readonly term: string
@@ -275,9 +272,10 @@ function textAt(raw: unknown): string | null {
  * nothing else, which is the one treatment of a sentence this console did not
  * compose (design section 6.3, `src/shared/sanitize.ts`). The verifier's
  * refusals come from the same CLI the other sections read refusals from, so they
- * take the same door: the free-text rules would draw `roles/datastore.viewer` as
- * `[redacted]` and eat the remedy, while the credential rules still redact a key
- * a child echoed. A sentence too long for the console to read is
+ * take the same door: the free-text rules that used to draw
+ * `roles/datastore.viewer` as `[redacted]` and eat the remedy went with D3213
+ * (2026-11-21), while the credential rules still redact a key a child echoed. A
+ * sentence too long for the console to read is
  * `REFUSAL_UNREADABLE` (`./degraded`, the console's one word for it) rather than
  * a cell the operator reads as the refusal.
  */

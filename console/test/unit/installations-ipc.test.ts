@@ -514,7 +514,7 @@ describe('the picker’s bridge', () => {
 // ---------------------------------------------------------------------------
 
 describe('the picker’s Add project row', () => {
-  it('hands the request to the entry point and spawns no child', async () => {
+  itHostRoute('hands the request to the entry point and spawns no child', async () => {
     const asked: string[] = []
     const logged: unknown[] = []
     // **The machine has a `fugaro`**, and the same log writer records the child

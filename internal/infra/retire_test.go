@@ -1984,3 +1984,47 @@ func TestInstallationAtThePreviousVersionConvergesToTheMix(t *testing.T) {
 		}
 	}
 }
+
+// TestDeployedSecretIDsReadsEveryJobsMounts: the read G4's delete decision is
+// made from, on the shapes a real installation's jobs have — a job mounting
+// one container, a job mounting none, and both kinds of env entry in one list
+// (a plain value beside a mount). Every job of the installation is read, not
+// only the ones this installation's own labels name: a job of the release
+// behind is the one a copy has to stay alive for.
+func TestDeployedSecretIDsReadsEveryJobsMounts(t *testing.T) {
+	f := newCloud(t)
+	spec := InstallationSpec{Project: "proj-1234", FugaroProject: "acme", Region: "us-east5"}
+	copyID := gcp.ProjectSecretID("acme", "npm-token")
+	f.run.AddJob("fugaro-acme-app-app", "2", "4Gi")
+	f.run.SetJobSecretRefs("fugaro-acme-app-app", map[string]string{"NPM_TOKEN": copyID})
+	f.run.SetJobEnv("fugaro-acme-app-app", map[string]string{"PLAIN": "a-value"})
+	// A job with no mount at all, and one that mounts a container of another
+	// repository: neither names this installation's copy.
+	f.run.AddJob("fugaro-acme-api-api", "2", "4Gi")
+	f.run.SetJobEnv("fugaro-acme-api-api", map[string]string{"OTHER": "a-value"})
+
+	ids, warning := DeployedSecretIDs(context.Background(), f.c, spec)
+	if warning != "" {
+		t.Fatalf("the read answered %q for a listing that worked", warning)
+	}
+	if len(ids) != 1 || !ids[copyID] {
+		t.Fatalf("ids = %v, want exactly %s", ids, copyID)
+	}
+}
+
+// TestDeployedSecretIDsWithoutAClientWarns: no client is a question that was
+// never asked, so it answers like a refused listing — no IDs and the warning —
+// and never the empty set a caller reads as "nothing names it" before deleting
+// a container.
+func TestDeployedSecretIDsWithoutAClientWarns(t *testing.T) {
+	spec := InstallationSpec{Project: "proj-1234", FugaroProject: "acme", Region: "us-east5"}
+	for name, c := range map[string]*Clients{"no clients": nil, "no run client": {}} {
+		ids, warning := DeployedSecretIDs(context.Background(), c, spec)
+		if len(ids) != 0 || warning == "" {
+			t.Fatalf("%s answered %v with warning %q, want no IDs and the warning", name, ids, warning)
+		}
+		if !strings.Contains(warning, "gcloud run jobs list") {
+			t.Errorf("%s: the warning names no way to check by hand: %q", name, warning)
+		}
+	}
+}

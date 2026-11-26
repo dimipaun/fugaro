@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	billing "google.golang.org/api/cloudbilling/v1"
@@ -17,25 +16,17 @@ import (
 
 const serviceCloudBilling = "cloudbilling.googleapis.com"
 
-// Billing reads project's billing info once. A SERVICE_DISABLED answer
-// names the credentials' quota project (friction log #4: a project that
-// does not exist yet can't be its own quota project, so a creation run
-// checks an existing one, named by the caller, and this is where that
-// surfaces); otherwise it reports whether project itself has a linked
-// billing account.
-//
-// crmSvc is read only where that answer comes back, to tell the quota project
-// apart from project (billingAPIDisabled): every other path here is the one
-// call it documents. The disabled answer is reported in D3's cases (W4.4):
-// where the quota project is the project being checked, the fix is this
-// project's own to enable and the line says so; where it is another project,
-// the fix names that project and who to ask, because turning an API on in a
-// project nobody named is not this reader's to do — the same distinction the
-// wizard's billing question draws (internal/cli/billing_prompt.go).
-func Billing(ctx context.Context, c *billing.APIService, crmSvc *crm.Service, project string) []Check {
+// Billing reads project's billing info once, billed to project itself (the
+// caller names it as the client's quota project). A SERVICE_DISABLED answer
+// therefore means the Cloud Billing API is off on project, which this reports
+// with the line that turns it on; otherwise it reports whether project has a
+// linked billing account.
+func Billing(ctx context.Context, c *billing.APIService, project string) []Check {
 	bi, err := c.Projects.GetBillingInfo("projects/" + project).Context(ctx).Do()
-	if quota, ok := quotaProjectIfDisabled(err); ok {
-		return []Check{billingAPIDisabled(ctx, crmSvc, quota, project)}
+	if billingAPIOff(err) {
+		return []Check{{ID: "billing-api",
+			Problem: "the Cloud Billing API is disabled on " + project,
+			Fix:     "gcloud services enable cloudbilling.googleapis.com --project " + shellword.Quote(project)}}
 	}
 	var ge *googleapi.Error
 	switch {
@@ -57,54 +48,14 @@ func Billing(ctx context.Context, c *billing.APIService, crmSvc *crm.Service, pr
 	return []Check{{ID: "billing-linked", OK: true}}
 }
 
-// billingAPIDisabled is the Cloud Billing API's disabled answer read in D3's
-// cases (W4.4). The one thing to settle is whether quota — the project Google's
-// answer named — is the project being checked, and Google names that project by
-// *number* (projects/123456789012) while project here is an *ID*: the two are
-// compared as numbers, the way the wizard's own question compares them
-// (internal/cli/billing_prompt.go's billingAPIOff) and the way internal/infra
-// compares the same field with the project it asked about (target.consumes, whose
-// reading of an ID-spelled consumer is kept here too). Comparing the two strings
-// would answer "not this project" every time, which sends a reader to ask an
-// owner about their own project — a reader told nothing.
-//
-// Where the number cannot be read, the check says so and names the quota project
-// as the answer did: it has not established that the two projects differ, and
-// the line to run is the quota project's either way, because that is the project
-// the API is off on.
-func billingAPIDisabled(ctx context.Context, crmSvc *crm.Service, quota, project string) Check {
-	line := "gcloud services enable cloudbilling.googleapis.com --project "
-	// The one wording both readings of "this project" share — the ID spelling
-	// above and the number below — so a reworded half cannot drift from the other.
-	thisProject := Check{ID: "billing-api",
-		Problem: "the Cloud Billing API is disabled on " + project + ", the quota project of your credentials — this project",
-		Fix:     line + shellword.Quote(project)}
-	if quota == project {
-		return thisProject
-	}
-	num, err := infra.ProjectNumber(ctx, &infra.Clients{CRM: crmSvc}, project)
-	switch {
-	case err != nil:
-		return Check{ID: "billing-api",
-			Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials; this check could not read project " + project + "'s number, so it cannot say whether that is this project",
-			Fix:     line + shellword.Quote(quota)}
-	case quota == strconv.FormatUint(num, 10):
-		return thisProject
-	}
-	return Check{ID: "billing-api",
-		Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials, which is not " + project,
-		Fix:     line + shellword.Quote(quota) + "   # on that project: ask an owner of it"}
-}
-
-// quotaProjectIfDisabled reports the quota project the Cloud Billing API is
-// disabled on, read from err's structured detail exactly as
-// infra.CheckFirebaseProject reads the same answer (mirrored here, not
-// reused, to keep preflight's Google surface to the one client each check
-// needs).
-func quotaProjectIfDisabled(err error) (string, bool) {
+// billingAPIOff reports whether err is the Cloud Billing API's
+// SERVICE_DISABLED answer, read from its structured detail as
+// infra.CheckFirebaseProject reads it (mirrored here, not reused, to keep
+// preflight's Google surface to the one client each check needs).
+func billingAPIOff(err error) bool {
 	var ae *googleapi.Error
 	if !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
-		return "", false
+		return false
 	}
 	for _, d := range ae.Details {
 		m, ok := d.(map[string]any)
@@ -113,10 +64,10 @@ func quotaProjectIfDisabled(err error) (string, bool) {
 		}
 		md, _ := m["metadata"].(map[string]any)
 		if consumer, _ := md["consumer"].(string); md["service"] == serviceCloudBilling && consumer != "" {
-			return strings.TrimPrefix(consumer, "projects/"), true
+			return true
 		}
 	}
-	return "", false
+	return false
 }
 
 // IAMPolicy reads project's IAM policy once (every later stage needs the

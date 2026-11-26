@@ -428,7 +428,13 @@ import (
 // asserts never reaches the block or the progress log. A `compute instances
 // create` builds the object Compute would report out of the labels and metadata
 // the call carried, so the plain VM's row measures what a launcher can write
-// rather than what the test chose. The tree is a fixture too: the case writes the
+// rather than what the test chose. Three more of its answers are the readings a
+// run whose lines never arrived is judged on: the job's own object with the
+// state, task states and task status events a case writes (where the task's
+// exit code -- the probe's second channel -- lives), the VM's serial console,
+// and the broader log query under the job's own resource type, which a case can
+// answer with lines of its own so that "they landed elsewhere" is told from
+// "nothing landed". The tree is a fixture too: the case writes the
 // log filter into internal/backend/batch/logs.go, the managed label pair into
 // internal/backend/gcp/names.go and the wrapped variable's name into
 // docs/batch-run-identity/, and two cases bend those files to prove the check
@@ -913,6 +919,7 @@ var liveCheckScripts = []struct {
 	{"check-821.sh", "check-821_test.sh"},
 	{"check-910-lift-snapshot.sh", "check-910-lift-snapshot_test.sh"},
 	{"check-911-lift-compare.sh", "check-911-lift-compare_test.sh"},
+	{"check940.sh", "check940_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
