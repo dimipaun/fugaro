@@ -341,6 +341,28 @@ type Config struct {
 	// cascade" is a fact of its own: silence keeps the node's block, and a
 	// written block is what this machine states (N4's merge of the two).
 	CredentialCascade *projectpolicy.Credentials `yaml:"credential_cascade,omitempty"`
+	// Pause is how a run meets an exhausted credential that is not worth
+	// waiting out inside its own job (R11 of docs/model-credentials-routing,
+	// D3184, D3187, D3190): the in-job floor, the shortest a pause may be, and
+	// the longest one chain may stay paused in total. It is the node member
+	// `pause` under the same name here, and the credentials service is what
+	// reads the published block to decide between waiting, pausing and halting
+	// (PR3); no other reader acts on it.
+	//
+	// It is local-only, the cascade's own reason one step out: these settings
+	// decide how long a run holds a job's time and how long a chain may sit
+	// paused, so a launcher who could write them into the runs bucket's shared
+	// file would be changing the project's behaviour rather than their own
+	// run's (Shared nils it and ParseShared refuses the key). It is not the
+	// cascade's `policy` layer either: the node's block is derived from this
+	// file by the publish and by nothing else, so this file is the store — what
+	// `fugaro settings set` writes, exactly as it writes the binaries block
+	// (AR1, D987).
+	//
+	// A pointer, so "this file says nothing about the pause" is a fact of its
+	// own, the cascade's rule: silence keeps the node's block and a written
+	// block is what this machine states (publishedPause, N4's merge).
+	Pause *projectpolicy.Pause `yaml:"pause,omitempty"`
 	// ModelGrades is the escalation ladder's two model grades as this file
 	// states them (E2, D2039, D2607): which model each rung runs and which
 	// credential or pool its calls go out on. The block is config.ModelGrades,
@@ -3490,6 +3512,18 @@ func (c *Config) validate() error {
 	// not answer for the other.
 	if c.CredentialCascade != nil {
 		if err := projectpolicy.ValidCredentials(c.CredentialCascade, "credential_cascade"); err != nil {
+			bad("%v", err)
+		}
+	}
+	// The pause block is held to the block's own rule, asked with this file's
+	// key so the refusal names what the operator wrote. The rule is about the
+	// three settings TOGETHER — the in-job floor under the shortest pause under
+	// the longest — and an absent member is its default, so a file that writes
+	// one of the three can be refused beside the defaults of the other two: a
+	// `wait_in_job: 45m` alone is a wait longer than any pause the default
+	// minimum allows (projectpolicy.ValidPause).
+	if c.Pause != nil {
+		if err := projectpolicy.ValidPause(c.Pause, "pause"); err != nil {
 			bad("%v", err)
 		}
 	}

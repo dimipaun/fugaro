@@ -132,6 +132,14 @@ func (c *Config) Shared() *Config {
 	s.CredentialCascade = nil
 	s.ModelGrades = nil
 	s.NodeRemovals = nil
+	// The pause block is dropped with them and for the cascade's reason one
+	// step out: its three settings decide how long a run holds a job's time
+	// before it suspends and how long a chain may sit paused in total
+	// (D3184, D3187, D3190), so a launcher who could write them into the runs
+	// bucket's shared file would be changing every teammate's project to suit
+	// their own run. It travels to the policy node instead, which the runner
+	// and the credentials service read.
+	s.Pause = nil
 	s.ProjectSecrets = nil
 	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same

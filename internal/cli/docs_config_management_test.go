@@ -382,9 +382,15 @@ const (
 // gives it (D3370, D3371), one row beside image_map's while both members exist
 // (R15), and its owner is the `image map` family, so no name in the allowlist
 // and no prefix of it reaches the row.
+//
+// PR9 of docs/model-credentials-routing/ is the last mover after it, by three rows
+// and by three: the pause block's in-job floor, its shortest pause and its longest
+// paused time (R11, D3184, D3187, D3190) are three `pause.` rows the generic
+// writer names, so the registry and the named half of the allowlist move together
+// and the rows without a writer stay where they were.
 const (
-	cfmRegistryRows   = 543
-	cfmAllowlistNamed = 122
+	cfmRegistryRows   = 546
+	cfmAllowlistNamed = 125
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
