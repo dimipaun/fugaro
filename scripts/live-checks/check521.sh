@@ -586,7 +586,7 @@ step_terminal() {
   # id: `--limit 1` reads the newest row alone, and a run that has just ended
   # is not where that row is — another run of the same repository lands above
   # it, and the row this check reads then reads as a run whose status and stage
-  # are `unknown` (run 20261126-0318, the owner's).
+  # are `unknown` (run 0650, the owner's).
   local waited=0 run_status="" ended="" stage="" listed=no
   while [ "$waited" -lt "$RUN_TIMEOUT" ]; do
     run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json

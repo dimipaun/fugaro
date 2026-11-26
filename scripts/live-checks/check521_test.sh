@@ -700,7 +700,7 @@ test_the_run_is_read_out_of_the_whole_listing() {
   # The run's own row is what this check reads, and a listing cut to the newest
   # row is not where a run that has just ended is: another run of the same
   # repository lands above it, and the row then reads `status=unknown,
-  # stage=unknown` for a run that had ended (the owner's run 20261126-0318).
+  # stage=unknown` for a run that had ended (the owner's run 0650).
   local dir=$work/endedbelow
   prepare "$dir"
   printf '{"project":"%s","runs":[{"run":"%s/run-20261113000000-9","repo":"acme/sandbox","run_id":"run-20261113000000-9","status":"running","stage":"implement","terminal":false},{"run":"%s/%s","repo":"acme/sandbox","run_id":"%s","status":"infra_error","stage":"bootstrap","terminal":true,"settled":true}],"totals":{"runs":2},"warnings":[]}\n' \
