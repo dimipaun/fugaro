@@ -113,6 +113,9 @@ type reposEnrolment struct {
 	// from it, because its fugaro.yaml is where its workflows and its base
 	// branch come from and a job is deployed from one (D2401).
 	checkout string
+	// starterPR is the pull request this run opened for a missing fugaro.yaml;
+	// the enrolment stops there.
+	starterPR string
 }
 
 // runProjectReposEnroll is the convergent path: read, show, ask once, write.
@@ -166,6 +169,10 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	if err != nil {
 		return err
 	}
+	if plan.starterPR != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "fugaro.yaml for %s: pull request %s\nmerge it, then run `fugaro project repos add %s` again to finish\n", pluginwire.Printable(arg), safetext.Field(plan.starterPR), arg)
+		return nil
+	}
 	reposEnrolmentPlan(cmd.OutOrStdout(), lc, plan)
 	// One question for the whole convergence. Nothing on the command line
 	// answers it — `--yes` is gone (F5, D2403) and `--allow-list-only` takes
@@ -205,6 +212,12 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 	if plan.checkout = checkoutRoot(ctx, ownerName); plan.checkout == "" {
 		return plan, userErr("cannot read %s here: this command enrols a repository from its own checkout — its fugaro.yaml is where its workflows and its base branch come from, and its job set is deployed from there too. Run it from a checkout of %s, or write the allow-list entry alone with `fugaro project repos add %s --allow-list-only`",
 			pluginwire.Printable(ownerName), pluginwire.Printable(ownerName), ownerName)
+	}
+	if plan.starterPR, err = enrolOpenStarter(ctx, lc, ownerName, plan.checkout, plan.entryNow, plan.entryKnown); err != nil {
+		return plan, err
+	}
+	if plan.starterPR != "" {
+		return plan, nil
 	}
 	provider, err := reposEnrolmentProvider(ctx, ownerName, plan.entryNow, plan.entryKnown)
 	if err != nil {
