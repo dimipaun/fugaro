@@ -521,11 +521,11 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		if !strings.Contains(cs[0].Fix, "update --repo") {
 			t.Errorf("the fix does not name the command that grants it: %q", cs[0].Fix)
 		}
-		// The repository is named in the words around the command: the default
-		// view prints this fix under an ID-keyed sentence that names no
-		// repository, so a placeholder here is a line nobody can act on. It is
-		// not named as --repo's argument, which the CLI refuses: that flag takes
-		// the checkout's PATH, not owner/name.
+		// The repository is named in the words around the command, and the
+		// sentence above it names it as well: the screen prints these two lines
+		// and nothing else of the check, so a placeholder is a line nobody can
+		// act on. It is not named as --repo's argument, which the CLI refuses:
+		// that flag takes the checkout's PATH, not owner/name.
 		if !strings.Contains(cs[0].Fix, "update --repo in the checkout of workspace-a/repo-a") {
 			t.Errorf("the fix does not name the repository the command is for: %q", cs[0].Fix)
 		}
@@ -2492,15 +2492,13 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		}
 	}
 
-	// The default view prints the sentence the ID's short form gives, not the
-	// state's: the lookup has the ID and nothing else. So the sentence has to be
-	// true of every warning state of this check — the four a run cannot work
-	// around — and the two subtests below pin it against the two states a
-	// reader is most likely to meet, each with the fix the state words itself.
-	// The sentence the branch first shipped named the callers and the invoker
-	// grant, which is a problem the bundle states do not have: the screen said
-	// one thing and the command under it fixed another.
-	const sentence = "warning credentials-service-deployed: the credentials service is not deployed, does not admit a job account, or has nothing in its bundle to serve a run."
+	// The default view prints one sentence per state, and the sentence is the
+	// check's own: the ID is one and its states are six, so a sentence keyed by
+	// the ID alone could only be their union — "not deployed, does not admit a
+	// job account, or has nothing in its bundle" — which a reader had to guess
+	// their way through, under the very command one of those states does not
+	// run. Each of the three states a reader meets most often is pinned below,
+	// sentence and fix together, and each sentence says what that state is.
 
 	t.Run("the credentials service is missing", func(t *testing.T) {
 		r := newBrokeringRig(t)
@@ -2509,14 +2507,14 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def, sentence, "fugaro update", "re-applies the installation root")
+		wants(t, def, "warning credentials-service-deployed: the credentials service is not deployed in this project.",
+			"fugaro update", "re-applies the installation root")
 	})
 
-	// The one warning state whose fix is a repository's own apply: the sentence
-	// above it is the ID's, and names no repository, so the fix is where the
-	// repository has to be — a reader who meets this line has to know which
-	// checkout `fugaro update --repo` is for, and the name goes in the words
-	// around the command because --repo takes a PATH and refuses owner/name.
+	// The one warning state whose sentence and fix are both a repository's:
+	// a reader who meets this line has to know which checkout the command runs
+	// in, and the name goes in the words around it because --repo takes a PATH
+	// and refuses owner/name.
 	t.Run("the credentials service does not admit a job account", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.svcs.AddService(infra.CredentialsServiceName)
@@ -2525,12 +2523,16 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def, sentence, "update --repo in the checkout of workspace-a/repo-a")
+		wants(t, def, "warning credentials-service-deployed: the credentials service does not admit workspace-a/repo-a's job account.",
+			"update --repo in the checkout of workspace-a/repo-a")
 		if strings.Contains(def, "update --repo workspace-a/repo-a") {
 			t.Errorf("the default view passes the repository as --repo's argument, which takes a checkout's PATH:\n%s", def)
 		}
 	})
 
+	// The bundle states share the one sentence: what the reader has to know is
+	// that the service has nothing to serve, and which of the two it is (no
+	// version, or one Secret Manager will not serve) is the fix line's to say.
 	t.Run("the credentials service is deployed and its bundle holds no version", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		r.svcs.AddService(infra.CredentialsServiceName)
@@ -2541,7 +2543,8 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 			t.Fatalf("a warning must not fail doctor without --strict: %v", err)
 		}
 		def := doctorDefaultOutput(t, o.Checks)
-		wants(t, def, sentence, "creds set NAME")
+		wants(t, def, "warning credentials-service-deployed: the credentials service has nothing in its bundle to serve a run.",
+			"creds set NAME")
 	})
 
 	t.Run("the credentials service is deployed and its callers are granted", func(t *testing.T) {
