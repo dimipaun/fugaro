@@ -355,8 +355,15 @@ func initStages(e *initEngine) []initflow.Stage {
 	// both doors, like the service's own stage: an installation that has not
 	// turned the service on skips it with one line.
 	stages = append(stages, newCredentialsCopyStage(e))
+	// The legacy repo-to-image member off the published node, after the service
+	// that reads it has been replaced (U1c of docs/image-map-by-provider, D3376
+	// as amended): the release behind's credentials service reads image_map and
+	// finds no map on a node carrying only repo_images, so the removal waits
+	// for the stage above to have moved that service onto this release's. It
+	// sits after the copy because the copy is that service's own window.
+	stages = append(stages, newImageMapRetireStage(e))
 	// The required-CLI stamp, registered for both doors and immediately after
-	// the credentials copy: it is the last stage of the run that writes
+	// the image-map retire: it is the last stage of the run that writes
 	// something a deployed reader sees, and it raises the node that refuses
 	// every fugaro below this release (update_version_stamp.go, D3260, R1). It
 	// is registered unconditionally because the stage's own Check is what

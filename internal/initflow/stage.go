@@ -160,6 +160,18 @@ const (
 	// landing it; the stage's position is what makes the guard's answer a
 	// state the same run has already fixed.
 	CredentialsCopy = "credentials-copy"
+	// ImageMapRetire is the stage that takes the legacy repo-to-image member
+	// off the published policy node (internal/cli/repo_images_retire.go, U1c of
+	// docs/image-map-by-provider, D3376 as amended): image_map is the map a
+	// release from before L11 reads, repo_images the one this release's
+	// credentials service reads, and the old member stays on the node until the
+	// service that reads it has been replaced — the release behind finds no map
+	// at all on a node carrying only repo_images.
+	//
+	// It sits after the credentials service's own stage for exactly that
+	// reason, and the write is one conditional PUT of the node with the member
+	// removed.
+	ImageMapRetire = "image-map-retire"
 	// VersionStamp is the required-CLI stamp's stage
 	// (internal/cli/update_version_stamp.go, D3260, R1): the node
 	// config/policy/required_cli, which says the oldest fugaro release that may
@@ -170,8 +182,9 @@ const (
 	// It sits immediately AFTER the credentials copy, and with nothing between
 	// them that the stamp's own fence would refuse: the stage raises the node
 	// only once every other stage of the run — the policy and rules it needs
-	// among them — has converged, and the credentials copy is the last of the
-	// stages that writes a document a deployed service reads (R1). A stamp
+	// among them — has converged, and the image-map retire, which follows it, is
+	// the last of the stages that writes a document a deployed service reads
+	// (R1). A stamp
 	// raised before one of them left an installation whose own `fugaro update`
 	// could not finish: an older binary is refused by this node, so the run
 	// holding the half-finished installation has to be this release's.
@@ -358,6 +371,12 @@ var order = []slot{
 	// the stage before this one is the run's one move of that service's image
 	// (CredentialsCopy's own comment has the window).
 	{name: CredentialsCopy, needs: []string{CredentialsService}},
+	// The legacy repo-to-image member leaves the node after the process that
+	// reads it has been replaced (ImageMapRetire's own comment, U1c, D3376 as
+	// amended): the release behind's credentials service reads image_map and
+	// finds no map on a node that carries only repo_images, so the two moves
+	// are this order and no other.
+	{name: ImageMapRetire, needs: []string{CredentialsService}},
 	// The required-CLI stamp is raised last of the stages that write anything
 	// a deployed reader sees (R1, D3267): it names this release as the oldest
 	// that may act on the project, so a stamp raised before the run had
