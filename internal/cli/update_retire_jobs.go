@@ -217,7 +217,7 @@ func accountsSwitchJobRefusal(ctx context.Context, lc *localcfg.Config, keys []a
 	}
 	live, answered, warning := infra.LiveProjectJobs(ctx, c, lc.GCPProject, lc.Region)
 	if !answered {
-		return userErr("refusing to switch %s: the shared jobs of this installation could not be read (%s), so a job of a profile this switch moves could not be retired; nothing was written", command, warning)
+		return userErr("refusing to switch %s: this installation's shared jobs could not be read (%s); nothing was written", command, warning)
 	}
 	for _, j := range live {
 		if !profiles[j.Profile] || j.Account != from {
@@ -228,10 +228,10 @@ func accountsSwitchJobRefusal(ctx context.Context, lc *localcfg.Config, keys []a
 			continue
 		}
 		if !read {
-			return userErr("refusing to switch %s: whether a run is on %s, the job of the profile %s this switch moves, could not be read (%s); nothing was written",
+			return userErr("refusing to switch %s: whether a run is on %s, the shared job of profile %s, could not be read (%s); nothing was written",
 				command, j.Name, j.Profile, why)
 		}
-		return userErr("refusing to switch %s: a run is in flight on %s, the job of the profile %s this switch moves, and the job cannot be retired while it runs; nothing was written. Rerun this after that run finishes",
+		return userErr("refusing to switch %s: a run is in flight on %s, the shared job of profile %s; nothing was written. Rerun this once it finishes",
 			command, j.Name, j.Profile)
 	}
 	return nil
