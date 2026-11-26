@@ -123,7 +123,7 @@ func (r *initRun) retireProjectJobs(ctx context.Context, c *infra.Clients, t *tf
 	// of it, and the cloud is what a later update retires it by.
 	removed, gone, err := infra.RemoveFromState(ctx, t.StateRm, infra.Removals(st.Addresses(), rets))
 	if err != nil {
-		r.warn(fmt.Sprintf("the project jobs this update retires stay in Terraform's state, so this plan refuses to drop them: %s", safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf("the project jobs this update retires stay in Terraform's state: %s", safetext.FieldErr(err)))
 		return rets, nil
 	}
 	if len(removed) > 0 {
