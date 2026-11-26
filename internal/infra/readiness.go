@@ -389,7 +389,12 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		// C1.20 is the task that drops them ("no model secret mounted when the
 		// service is on"), and it needs the runner to read each from the
 		// service first (C1.15).
-		if spec.Installation.CredentialsService != nil {
+		// spec.credentialsServiceServes and not the block's presence: a
+		// `vertex` repository is handed the block for its runs' address while
+		// the service serves it no credential, so its job keeps every mount it
+		// has (D3326, F17) — which is what the module's own drops read too
+		// (sa.tf's local.service_serves).
+		if spec.credentialsServiceServes() {
 			for _, logical := range config.ServiceHeldSecretNames {
 				dropMount(ws, logical)
 			}
@@ -627,7 +632,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			// catalog :latest tag to ask about, and the job runs it as written.
 			if !imageCatalogShipped {
 				built = false
-				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s (%s), and no released fugaro publishes or reads the project policy's image_catalog key yet: this installation's fugaro is older than the release that does, so run fugaro update, or take the job off the catalog (drop the workflow's image_name:, the repository's image_map entry, or the entry's default). A workflow's own image: or dockerfile: block cannot do it: the image the catalog gives its job is the one it runs, and those keys are ignored beside it (D1900)",
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s (%s), and no released fugaro publishes or reads the project policy's image_catalog key yet: this installation's fugaro is older than the release that does, so run fugaro update, or take the job off the catalog (drop the workflow's image_name:, the repository-to-image map (`repo_images`) entry, or the entry's default). A workflow's own image: or dockerfile: block cannot do it: the image the catalog gives its job is the one it runs, and those keys are ignored beside it (D1900)",
 					ws.Name, entry, ws.Image)})
 			} else if !imageContextShipped && ws.CatalogContext {
 				// The catalog's key is readable here, but this entry's own
@@ -686,7 +691,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 						fix = fmt.Sprintf("build it (fugaro image build %s)", entry)
 						if !imageCatalogShipped {
 							what = fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, and no released fugaro reads that key yet", ws.Name, entry)
-							fix = "run fugaro update, or take the job off the catalog (drop the workflow's image_name:, the repository's image_map entry, or the entry's default), which its own image: or dockerfile: cannot do while the catalog gives its job an image (D1900)"
+							fix = "run fugaro update, or take the job off the catalog (drop the workflow's image_name:, the repository-to-image map (`repo_images`) entry, or the entry's default), which its own image: or dockerfile: cannot do while the catalog gives its job an image (D1900)"
 						} else if !imageContextShipped && ws.CatalogContext {
 							what = fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, whose source names a build context, and no released fugaro reads that key yet", ws.Name, entry)
 							fix = "run fugaro update, or leave context: off the entry"

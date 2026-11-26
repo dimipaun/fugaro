@@ -68,15 +68,28 @@ var reviewJobAdmitted = true
 // for fugaro run.
 const reviewOnlyRecipe = "review-only"
 
-// reviewOptions are `fugaro review`'s own flags: the pull request, the account
-// and the mutant. Everything else a launch needs — the repository, the ref, the
-// workflow, the title — is resolved from the checkout, by reviewSpec, which is
-// the same builder `fugaro run --recipe review-only` goes through: one task
-// shape, and a review launched by either verb is the same task.
+// retiredReviewToken is the flag CS15 removed from this command, written once:
+// the SetFlagErrorFunc below refuses that spelling by name, and the test that
+// pins the removal (review_token_test.go's
+// TestReviewTokenFlagIsRejectedWithTheFix) reads it from here.
+const retiredReviewToken = "token"
+
+// reviewOptions are `fugaro review`'s own flags: the pull request and the
+// mutant. Everything else a launch needs — the repository, the ref, the
+// workflow, the title, the account — is resolved from the checkout, by
+// reviewSpec, which is the same builder `fugaro run --recipe review-only` goes
+// through: one task shape, and a review launched by either verb is the same
+// task.
+//
+// The account is not a flag here (CS15): the review job reaches its model by
+// the project's routing table, so there is no account for `fugaro review` to
+// name, and `--token` is refused with the fix rather than aliased. The account
+// the launch still resolves — agent.oauth_token at the ref, else the project's
+// default_claude_account — is what picks the review-only job it runs on, and it
+// is read the way every other launch reads it (claudeAccountChoice).
 type reviewOptions struct {
 	cloud  cloudOptions
 	pr     int
-	token  string
 	mutate []string
 	// codeOnly and specFile are the two flags this command shares with
 	// `fugaro run --recipe review-only` (R11, D2934): the per-launch switch to
@@ -93,9 +106,9 @@ func newReviewCmd() *cobra.Command {
 	o := &reviewOptions{}
 	cmd := &cobra.Command{
 		Use:   "review --pr N",
-		Short: "Review a pull request in a job of its own, on a named account",
+		Short: "Review a pull request in a job of its own",
 		Long: "Launch an independent review of pull request N, in a container the coding\n" +
-			"run never ran in and with the account you name.\n\n" +
+			"run never ran in.\n\n" +
 			"The review runs in a job of its own and never in the repository's coding job:\n" +
 			"the review-only variant of the repository's shared project job, or, where the\n" +
 			"repository's workflow resolves no shared project job, the installation's\n" +
@@ -105,8 +118,10 @@ func newReviewCmd() *cobra.Command {
 			"pull request's head, writes its verdict as an artifact (fugaro review show\n" +
 			"RUN prints it) and posts no comment and no review on the pull request: what\n" +
 			"reaches the pull request is the owner's and the coordinator's to decide.\n\n" +
-			"The account is picked as everywhere else: --token, else agent.oauth_token in\n" +
-			"fugaro.yaml at the run's ref, else the project's default_claude_account.\n\n" +
+			"The account is the repository's own: agent.oauth_token in fugaro.yaml at\n" +
+			"the run's ref, else the project's default_claude_account. It picks the\n" +
+			"review-only job the review runs on; which credential serves its model calls\n" +
+			"is the project's routing table's answer (fugaro routing ls).\n\n" +
 			"A review judges the pull request against the task the run that opened it was\n" +
 			"given, found through the runs bucket alone, and says what it judged against\n" +
 			"in its artifact and in the against line of fugaro review show RUN. Two flags\n" +
@@ -131,11 +146,24 @@ func newReviewCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.IntVar(&o.pr, "pr", 0, "the pull request to review (required)")
-	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this review runs as; default: agent.oauth_token in fugaro.yaml at the run's ref, else the project's default_claude_account")
 	f.StringArrayVar(&o.mutate, "mutate", nil, "ask for one mutation check, as <file:test>: the Go source in the reviewed head to flip and the Go test name that must then fail; at most one")
 	f.BoolVar(&o.codeOnly, "code-only", false, "review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits, which is the behaviour before reviews checked the task. Refused with --spec")
 	f.StringVar(&o.specFile, "spec", "", "review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over "+fmt.Sprint(task.MaxReviewSpecBytes)+" bytes is refused with its size. Refused with --code-only")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	// --token is gone, not aliased (CS15, D3176 as amended): the review job
+	// reaches its model by the project's routing table, so there is no account
+	// for this command to name, and a scripted launch that still passes the
+	// flag is answered with a sentence naming the fix rather than pflag's bare
+	// "unknown flag: --token". Only that one spelling is answered — the
+	// comparison is on pflag's whole message, so every other unknown flag keeps
+	// cobra's own error — and only for this command: review show never had the
+	// flag, and a typo on it is not this retirement's business.
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		if c.Name() == cmd.Name() && err.Error() == "unknown flag: --"+retiredReviewToken {
+			return userErr("--%s is gone: a review reaches its model by the project's routing table, so there is no account to name. fugaro routing ls shows the table and fugaro routing set writes an entry (fugaro review --help)", retiredReviewToken)
+		}
+		return err
+	})
 	addCloudFlags(cmd, &o.cloud)
 	cmd.AddCommand(newReviewShowCmd())
 	return cmd
@@ -180,7 +208,7 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	if rr.Recipe.Mode != recipe.ModeReview {
 		return userErr("the recipe %q this review resolves is not a mode: review recipe, so there is no review to launch: it reviews nothing and never pushes. A project or agent recipe of that name shadows the catalog's; rename it, or review the pull request with fugaro run --pr %d --recipe %s", oneLineCLI(rr.Name), o.pr, reviewOnlyRecipe)
 	}
-	o2 := &runOptions{repo: repo, pr: []int{o.pr}, token: o.token, asJSON: o.asJSON,
+	o2 := &runOptions{repo: repo, pr: []int{o.pr}, asJSON: o.asJSON,
 		codeOnly: o.codeOnly, specFile: o.specFile}
 	slug, spec, err := reviewSpec(ctx, env, o2, rr, "", 0, cmd.ErrOrStderr())
 	if err != nil {
@@ -352,7 +380,7 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, s
 // copied from the owner's local config at publish). So the review's own account
 // is resolved through the policy's default before the comparison
 // (implicitReviewServedAccount), and a launch whose account IS that default —
-// whatever it read it from, --token, the repository's own agent.oauth_token or
+// whatever it read it from, the repository's own agent.oauth_token or
 // the config's default_claude_account — is the review this job serves.
 //
 // What is refused here is a review naming any OTHER account: the credentials
@@ -395,7 +423,7 @@ func (e *cloudEnv) implicitReviewJobFor(ctx context.Context, spec *task.Spec, sl
 	}
 	served := implicitReviewServedAccount(p)
 	if account := reviewAccount(spec); account != served {
-		return nil, userErr("this review names the Claude account %q, and it runs on the installation's implicit review-only job of the provider %s, which serves one account: the project's default one (%s). That job's account segment is fixed where it is deployed, its container mounts no credential of its own, and the installation's credentials service pairs the caller it verifies with the account the job was deployed for — so a review launched onto it could not be served as the account this launch names. A launch takes its account from --token, else from the repository's own agent.oauth_token, else from the project's default_claude_account: where this project reviews on %s, name it as the default_claude_account and publish the policy (fugaro project policy publish); otherwise read the review in the run's own job, which carries the account its own workflow selects, with fugaro run --pr N --recipe %s",
+		return nil, userErr("this review names the Claude account %q, and it runs on the installation's implicit review-only job of the provider %s, which serves one account: the project's default one (%s). That job's account segment is fixed where it is deployed, its container mounts no credential of its own, and the installation's credentials service pairs the caller it verifies with the account the job was deployed for — so a review launched onto it could not be served as the account this launch names. A launch takes its account from the repository's own agent.oauth_token, else from the project's default_claude_account: where this project reviews on %s, name it as the default_claude_account and publish the policy (fugaro project policy publish); otherwise read the review in the run's own job, which carries the account its own workflow selects, with fugaro run --pr N --recipe %s",
 			pluginwire.Printable(account), provider, pluginwire.Printable(served), pluginwire.Printable(account), reviewOnlyRecipe)
 	}
 	if provider == gitprov.KindBitbucket && !e.nodeBrokersBitbucket(ctx, slug, spec) {
@@ -515,7 +543,7 @@ func checkReviewAccountState(ctx context.Context, env *cloudEnv, spec *task.Spec
 	if state.State == string(creds.StateAvailable) {
 		return nil
 	}
-	return userErr("the Claude account %s is %s, so no review is started on it: a review is never retried for the account's own state, and a job launched now would be refused by the credentials service the moment its reviewer called. Pick another account with --token, or wait for this one", pluginwire.Printable(name), stateText(state))
+	return userErr("the Claude account %s is %s, so no review is started on it: a review is never retried for the account's own state, and a job launched now would be refused by the credentials service the moment its reviewer called. Name another as this repository's agent.oauth_token (or the project's default_claude_account), or wait for this one", pluginwire.Printable(name), stateText(state))
 }
 
 // checkReviewHeadIsStill refuses a review of a pull request whose own coding run

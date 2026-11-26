@@ -311,27 +311,34 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	// above it names them too, because both are the check's own and the one
 	// screen prints only these two lines: a fix saying "each repository named
 	// above" pointed at names no line printed. Each name goes in the words
-	// around the command and never as its argument: update
-	// --repo takes the checkout's PATH, so a name there is refused
-	// (loadCheckoutResolved, image.go); the command that runs is --repo alone,
-	// from inside that repository's checkout, which is what doctor.go and
-	// doctor_bucket.go say too. One command serves a repository however many of
-	// its workflows are missing, and missingRepos holds each repository once.
+	// around the command and never as its argument: update --repo takes the
+	// checkout's PATH (or nothing, which is the checkout the command runs in),
+	// so a name there is refused (loadCheckoutResolved, image.go). The project
+	// is named with it because a checkout alone does not select one where this
+	// machine holds several project configs, and the config doctor read is the
+	// one whose service is short a grant, so the command has to be that
+	// project's. The first sentence ends at the command and nothing else rides
+	// in it, because the default view prints the first sentence alone
+	// (doctorShortFix): it is the line a reader copies, and every word after
+	// it is one the line does not need. One command serves a repository however
+	// many of its workflows are missing, and missingRepos holds each repository
+	// once.
 	names := make([]string, len(missingRepos))
 	for i, repo := range missingRepos {
 		names[i] = pluginwire.Printable(repo)
 	}
-	where := "in the checkout of each of " + strings.Join(names, ", ")
-	sentence := "the credentials service does not admit job accounts of " + strings.Join(names, ", ") + "."
-	if len(names) == 1 {
-		where = "in the checkout of " + names[0]
-		sentence = "the credentials service does not admit " + names[0] + "'s job account."
+	command := selfCommand() + " update --project " + pluginwire.Printable(lc.Name) + " --repo"
+	where := "from a checkout of " + names[0] + ", run " + command
+	sentence := "the credentials service does not admit " + names[0] + "'s job account."
+	if len(names) > 1 {
+		where = "from a checkout of each of " + strings.Join(names, ", ") + ", run " + command
+		sentence = "the credentials service does not admit job accounts of " + strings.Join(names, ", ") + "."
 	}
 	return []doctorCheck{{ID: id, Severity: "warning",
 		Problem: fmt.Sprintf("%s The credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth: a repository that runs with agent.auth: cascade reaches the service wherever the installation has one, and one that runs with agent.auth api-key or oauth reaches it only where its budget mode is observe or enforce AND the service's bundle holds the credential its auth needs — %s for api-key, and the token of every account its workflows may run under for oauth. So a repository of that list that is held off has no grant: the published policy's proxy: true is inert for it — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
 			sentence, infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
 			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0), config.AnthropicSecret),
-		Fix: selfCommand() + " update --repo " + where + " (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them the switch is held off until it holds: an api-key or oauth repository needs its budget mode at observe or enforce and the service's bundle to hold the credential its auth needs (" + selfCommand() + " creds set " + config.AnthropicSecret + " for api-key; " + selfCommand() + " creds set " + config.ClaudeOAuthTokenPrefix + "<account> for oauth), and a repository of any other agent.auth has to run with agent.auth: cascade first (with a model credential in the service's bundle, " + selfCommand() + " creds set). Until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
+		Fix: where + ". The command grants each repository's job accounts " + runInvokeRoles[0] + " on the service. For one of them the switch is held off until it holds: an api-key or oauth repository needs its budget mode at observe or enforce and the service's bundle to hold the credential its auth needs (" + selfCommand() + " creds set " + config.AnthropicSecret + " for api-key; " + selfCommand() + " creds set " + config.ClaudeOAuthTokenPrefix + "<account> for oauth), and a repository of any other agent.auth has to run with agent.auth: cascade first (with a model credential in the service's bundle, " + selfCommand() + " creds set). Until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
 }
 
 // doctorCredentialsServiceServing is the rest of

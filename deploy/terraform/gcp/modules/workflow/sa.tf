@@ -238,6 +238,19 @@ locals {
     env => local.is_run_model_secret[env] || (var.model_secrets_served == "all" && startswith(env, local.model_secret_env_prefix))
   }
 
+  # Whether the service above serves THIS repository's credentials, and so
+  # whether every clause below that takes something away from the job fires at
+  # all (infra.CredentialsServiceServes, written into the repository root's
+  # tfvars as credentials_service_serves). It is read APART from the variable
+  # being set, because the two say different things and come apart for exactly
+  # one repository: a `vertex` one is handed the address — an invoker grant, and
+  # the launcher's FUGARO_CREDENTIALS_SERVICE_URL — while the service serves it
+  # no credential of its own, so nothing of its job's goes (D3326 as amended by
+  # F17). A tfvars written before this input existed carried
+  # credentials_service only for a repository the switch served and planned
+  # every drop with it, which is why the default is true.
+  service_serves = var.credentials_service != null && var.credentials_service_serves
+
   # One entry per mount, so the drop below is per mount and never per name.
   is_service_held = {
     for env, logical in var.workflow.secret_env :
@@ -260,9 +273,14 @@ locals {
   # down where the accessor is decided, exactly as job_mounts' App-key clause
   # is, and a tfvars that still names one of them cannot be applied into a job
   # that reads it.
+  #
+  # The gate is local.service_serves and not the block alone (IS9): a `vertex`
+  # repository is handed the address and served nothing, so its job keeps every
+  # accessor (D3326, F17). The clause can only turn a drop off, and it does so
+  # exactly where the service is granted nothing.
   job_secret_names = toset([
     for env, logical in var.workflow.secret_env :
-    logical if var.credentials_service == null || !local.is_service_held[env] && !contains(local.vault_secret_names, logical)
+    logical if !local.service_serves || !local.is_service_held[env] && !contains(local.vault_secret_names, logical)
   ])
 
   # The secrets the job's CONTAINER still declares, by the variable each is
@@ -305,9 +323,14 @@ locals {
   # dropped it from the spec, so the clause bites only on a hand-written
   # tfvars), because the runner reads that value from the service at bootstrap
   # (B3.4) rather than from its own environment.
+  #
+  # The gate is local.service_serves here too, for job_secret_names' reason: a
+  # mount the job's account has no accessor on is a job Cloud Run refuses to
+  # create, so the two go together — and neither goes for the one repository
+  # handed the address without being served (IS9, D3326).
   job_mounts = {
     for env, logical in var.workflow.secret_env :
-    env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)
+    env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)
   }
 
   # The secrets the CREDENTIALS SERVICE's own account may read, by logical name:
@@ -341,12 +364,15 @@ locals {
   # name, and a repeated name in a for_each is an error rather than a second
   # binding.
   #
-  # Empty while the installation has no service (D147), and empty while the
-  # service has no account to grant it to — an installation's outputs carry one
-  # only from the release that added it, and a repository root planned against
-  # an older installation must plan exactly what it planned (the same
-  # inertness CatalogCheckServiceAccount's empty value buys). An empty for_each
-  # creates no resource at all, so nothing reads var.credentials_service there.
+  # Empty while the installation has no service (D147), empty while the service
+  # serves THIS repository no credential of its own (local.service_serves — a
+  # `vertex` repository is handed the address and no drop, D3326/F17), and
+  # empty while the service has no account to grant it to — an installation's
+  # outputs carry one only from the release that added it, and a repository
+  # root planned against an older installation must plan exactly what it
+  # planned (the same inertness CatalogCheckServiceAccount's empty value buys).
+  # An empty for_each creates no resource at all, so nothing reads
+  # var.credentials_service.account there.
   #
   # try, and not `var.credentials_service == null || var.credentials_service.account == ""`:
   # Terraform's `||` does not short-circuit before 1.12, and these modules
@@ -355,7 +381,7 @@ locals {
   # answers "" for a null object and for one that carries no account at all —
   # the second is how deploy/terraform's proxied_git_test evaluates this file
   # with a stub of only name and region.
-  service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(concat(values(local.job_mounts), local.vault_secret_names))
+  service_secret_names = local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])
 }
 
 # Each secret the job mounts and may read, at the secret level, never the
@@ -402,11 +428,15 @@ resource "google_secret_manager_secret_iam_member" "service" {
   member    = "serviceAccount:${var.credentials_service.account}"
 }
 
-# The credentials service, once the installation has one (D135): the job's
-# account may invoke it, and nothing else may — one member, the job's own
-# account, roles/run.invoker, on that one service. It is the runner's only way
-# to reach a model credential, and an unreachable service halts the run rather
-# than falling back (D143).
+# The credentials service, once the installation has one and this repository is
+# handed its address (D135): the job's account may invoke it, and nothing else
+# may — one member, the job's own account, roles/run.invoker, on that one
+# service. It is the runner's only way to reach a model credential, and an
+# unreachable service halts the run rather than falling back (D143). It is
+# granted on the ADDRESS and not on the drop (local.service_serves): a `vertex`
+# repository's runs fetch their workflow secrets here (D3326) and read no
+# credential of the service's, so its account is granted the call and nothing
+# of its job's is taken away (F17).
 resource "google_cloud_run_v2_service_iam_member" "credentials" {
   count = var.credentials_service == null ? 0 : 1
 

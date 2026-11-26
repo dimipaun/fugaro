@@ -205,6 +205,14 @@ type run struct {
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
+	// gateHandBack is the account the check gate wrote for a first run whose
+	// autofix took implement's place, as a reader of the file gets it back,
+	// and gateHandBackSHA the commit it was written on. Both are "" for every
+	// other run. refreshGateHandBack rewrites from them at finalize, where the
+	// account written before the review loop is stale whenever a fix round
+	// committed on top of the autofix (handback_part.go, LV5.1).
+	gateHandBack    string
+	gateHandBackSHA string
 	// digest is whether the resolved recipe's first step is the digest step
 	// (recipe.UsesDigest, T3.1): a report run, whose first step the runner
 	// executes itself -- the reports it writes are its own work, with no
@@ -3934,6 +3942,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// whatever its environment holds.
 		ImageEnv: r.imageEnv(secretEnvs, wfSecretEnvs),
 		Gateway:  r.gateway(), Compression: r.compression,
+		// The credentials service serves this run's calls, which is the fact
+		// the gateway's own options are built from (chainServed, gateway.go):
+		// the environment is then the cascade's whatever the file's auth says.
+		ChainServed: r.chainServed(),
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
 		// for `docker: true` (the workflow field and the runner's copy of it
@@ -4357,6 +4369,13 @@ func (r *run) agentLoop(ctx context.Context) {
 			// on top of the autofix commit the gate already made; only a
 			// first run (nothing else asked of it) skips straight to review.
 			if r.follow == nil {
+				// No coder stage will run, so the hand-back the run's level
+				// owes is the runner's to write: readiness asks for a file no
+				// agent on this path could have written (writeGateHandBack,
+				// the owner's ruling of 2026-11-26).
+				if err := r.writeGateHandBack(ctx); err != nil {
+					r.d.Log.Warn("writing the check gate's hand-back failed; the run will hand none back", "err", r.redact(err.Error()))
+				}
 				skipImplement = true
 			}
 		default:
@@ -6900,6 +6919,12 @@ func (r *run) finalize(ctx context.Context) error {
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	decidedRound := r.decidingReview()
+	// The check gate's own account is refreshed before it is read: the commits
+	// are all made by now, and a fix round's (or the leftover commit's) landed
+	// on top of the autofix it was written on (LV5.1).
+	if err := r.refreshGateHandBack(ctx); err != nil {
+		r.d.Log.Warn("refreshing the check gate's hand-back failed; the account stays as the gate wrote it", "err", r.redact(err.Error()))
+	}
 	// What the level promised the reader and what the agent handed back, read
 	// here so readiness reads the agent's own file rather than a second parse
 	// of it (LV5.1).
@@ -7314,10 +7339,7 @@ func (r *run) rawPRText() (string, string) {
 			return title, strings.TrimSpace(body)
 		}
 	}
-	first := r.spec.TitleLine()
-	if runes := []rune(first); len(runes) > 72 {
-		first = string(runes[:71]) + "…"
-	}
+	first := r.titleLine()
 	// The description names the run by its short ID (spec.md §1, D1701); the
 	// branch, which a follow-up continues, keeps the full ID.
 	body := fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), r.spec.Task)
@@ -7325,6 +7347,19 @@ func (r *run) rawPRText() (string, string) {
 		body = fmt.Sprintf("Opened by Fugaro run `%s`.\n\n# %s\n\n## Task\n\n%s", task.ShortRun(r.rec.RunID), first, r.spec.Task)
 	}
 	return first, body
+}
+
+// titleLine is the run's own title: the one place the fallback body's first
+// line and the title line of the hand-back the check gate writes (gateHandBackText)
+// are spelled, so the two cannot drift. The 72-rune cut and its ellipsis are the
+// fallback body's own: the title a person stored on the task, else the brief's
+// first line (task.Spec.TitleLine).
+func (r *run) titleLine() string {
+	first := r.spec.TitleLine()
+	if runes := []rune(first); len(runes) > 72 {
+		first = string(runes[:71]) + "…"
+	}
+	return first
 }
 
 // Pull request text bounds. They keep well under GitHub's limits (titles

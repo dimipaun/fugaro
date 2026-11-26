@@ -5,7 +5,8 @@ explicit go by name.** It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md), which wins where the two disagree.
 
 The answers that shaped it: only a Claude model through a provider key waits for Check 50 (D3000),
-and the owner runs Check 50 before release A is cut (D3013);
+and release A ships with that wait standing — the owner's check flips the gate in a change after it
+(the owner's ruling of 2026-11-26, D3013);
 every model key lives in the project's one bundle and `fugaro update` copies the existing ones
 there, one entry per repository (D3001, D3008); the service enforces the
 policy's rules and the cap stays in the gateway (D3003); an old key secret is deleted once copied
@@ -17,9 +18,11 @@ D3002 and D3004). The owner's ruling D2975 reverses D1634 and D1670.
 **It ships in two releases** (A4): release A serves every model key through the service with the
 mounts still there (C1, KS1 to KS5, KS12, KS19, KS20, I1); release B drops the mounts
 and deletes the old secrets (KS11, KS13 to KS16). KS13 is not launched before release A is cut.
-**Release A is not cut before the owner has run Check 50 and KS20 has applied its result**
-(D3013): a Claude model through a provider works on the mounted key today, and release A would
-otherwise stop it.
+**Release A ships without Check 50's result** (the owner's ruling of 2026-11-26, D3013): KS3's
+refusal for a Claude model through a provider stays as KS3 wrote it, KS20 is the not-run branch of
+its own Acceptance — `doctor` and `fugaro update` name every repository the gate stops, with the
+fix, before release A stops it — and the check's result flips the gate in a change of its own. A
+Claude model through a provider works on the mounted key today, and release A stops it until then.
 
 **Three tasks wait on another plan.** KS13 is not launched before
 [model credentials routing](../model-credentials-routing/README.md)'s release 1 is integrated:
@@ -462,21 +465,26 @@ merged, so **KS13 now waits on model credentials routing's I1** (its A1).
 - Commit: `docs: every model key is served by the credentials service (KS18)`.
 - Reviewer tier: opus, mandatory independent review (a rules file).
 
-### KS20: Check 50's result is applied
-- Acceptance: after the owner has run Check 50, its row in the checklist records the result. If it
-  passed, KS3's refusal for a Claude model through a provider is removed and `doctor`'s warning
-  that the cost is unmeasured goes with it. If it failed, the refusal stays, and `doctor` and
-  `fugaro update` name each repository that pins a Claude model through a provider, with the fix,
-  before release A stops it. **Release A is not cut before this task has merged** (D3013).
-- Files: `internal/creds/select.go`, `internal/creds/select_provider_test.go`,
-  `internal/cli/doctor.go`, `docs/gcp-live-checklist.md`.
+### KS20: the Claude-through-a-provider gate, in the state release A ships it
+- Acceptance: the owner ruled on 2026-11-26 that release A ships **without** Check 50's result: its
+  row in the checklist still reads not run, KS3's refusal for a Claude model through a provider
+  stays as KS3 wrote it, and the check's result flips the gate in a change of its own — that change
+  removes the refusal and `doctor`'s warning that the cost is unmeasured. What is built here is the
+  not-run branch: `doctor` and `fugaro update` name each repository that pins a Claude model through
+  a provider, with the fix, before release A stops it.
+- Files: `internal/creds/select_provider_test.go`, `internal/cli/claude_gate.go` (new) and
+  `claude_gate_test.go` (new), `internal/cli/doctor.go`, `doctor_render.go`,
+  `internal/cli/repo_notices.go` (its step calls the new one), `docs/gcp-live-checklist.md`
+  (unchanged: the row still reads not run).
 - Interfaces: none.
 - Tests: `TestCheck50sResultDecidesTheClaudeGate`, `TestDoctorNamesARepositoryTheGateWillStop`.
 - Command: `go test ./internal/creds/ -run 'Check50sResult|AClaudeModelThrough' -count=1 && go test ./internal/cli/ -run 'DoctorNamesARepositoryTheGate|ChecklistHasCheck50|Docs' -count=1`.
-- Red step: the checklist row says not run while the code treats the gate as decided.
-- Depends on: KS3 (kept: it edits the refusal KS3 narrows); KS17 (kept: it records the result of
-  the script KS17 writes); the owner's run of Check 50 (external).
-- Commit: `creds: apply Check 50's result to the Claude-through-a-provider gate (KS20, D3013)`.
+- Red step: the checklist row says not run, and nothing names the repositories the gate stops:
+  `doctor` has no such check and the update prints no such line.
+- Depends on: KS3 (kept: it is the refusal the check decides, and this task's test reads the row
+  that decides it); KS17 (kept: it records the result of the script KS17 writes). The owner's run
+  of Check 50 is no longer this task's wait: it is the wait of the change that flips the gate.
+- Commit: `creds: name the repositories the Claude-through-a-provider gate stops (KS20, D3013)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### I1: integration
@@ -485,7 +493,8 @@ merged, so **KS13 now waits on model credentials routing's I1** (its A1).
   served with a non-Claude provider coder through its gateway to the service and a
   fake provider: the call is served and charged what it cost, with the key copied by the update's
   stage and none read from the job's environment; the same run with a Claude model through the
-  provider does what Check 50's result decided (KS20).
+  provider is refused, as release A ships the gate (KS20; the refusal goes when Check 50's result
+  is applied, which is not this plan's change).
 - Files: `internal/credsvc/provider_wire_stub.go` (deleted),
   `internal/credsvc/provider_wire_bundle.go` (new, the rewiring),
   `internal/cli/keys_end_to_end_test.go` (new).
@@ -510,7 +519,7 @@ repository's mode is `startup`.
 | --- | --- |
 | 0 | C1, KS17 |
 | 1 | KS1, KS2, KS3, KS5, KS19 |
-| 2 | KS4, KS12, KS20 (after the owner has run Check 50) |
+| 2 | KS4, KS12, KS20 |
 | 3 | KS13 (after release A is cut and model credentials routing's I1), I1 |
 | 4 | KS11, KS18 |
 | 5 | KS14 (after the plan that removes budget mode off) |
@@ -526,9 +535,10 @@ secret each go only after the one before.
 so KS1 and KS19, which build C1's other sides, carry no edge to C1 in the graph and the graph
 reads them as ready at once, in level 0 with C1. This table does not: each starts after C1 merges,
 so it puts them in level 1, beside KS2, KS3 and KS5, which wait only on C1. The graph also cannot
-hold the five outside waits: the owner's run of Check 50 before KS20, the release before KS13,
+hold the four outside waits: the release before KS13,
 model credentials routing's I1 before KS13 (F49, amended 2026-11-22), the other plan before KS14,
-and B5.7 before KS16.
+and B5.7 before KS16. The owner's run of Check 50 is no longer one of them: release A ships with
+KS3's refusal standing, and the change that applies the result is not a task of this plan.
 
 **Edges broken by C1 and rejoined in I1.** KS2, KS3, KS4 and KS12 after KS1: each needs the entry's
 naming rule and the accessor's signature, not the bundle's code. KS5 after KS4: the gateway needs
@@ -538,15 +548,15 @@ that records it.
 **Edges kept.** Each is stated in its task: behaviour (KS11 after KS13; KS13 after KS5 and KS12;
 KS14 after KS13 and KS11; KS15 after KS12 and KS14; KS16 after KS15; KS20 after KS17; I1 after
 KS20), a shared file (KS4 and KS20 after KS3; KS11 after KS1 and KS2; KS12 after KS2; KS13 after
-KS2 and KS19; KS16 after KS14), and something outside the plan (KS20 after the owner's run of
-Check 50; KS13 after model credentials routing's I1; KS14 after the removal of budget mode off;
-KS16 after B5.7).
+KS2 and KS19; KS16 after KS14), and something outside the plan (KS13 after model credentials
+routing's I1; KS14 after the removal of budget mode off; KS16 after B5.7).
 
 **Shared files.** No level holds two writers of one file.
 
 | File | Writers, by level |
 | --- | --- |
-| `internal/creds/select.go`, `select_provider_test.go` | KS3 (1), KS20 (2) |
+| `internal/creds/select.go` | KS3 (1) only |
+| `internal/creds/select_provider_test.go` | KS3 (1), KS20 (2) |
 | `internal/credsvc/cascade.go` | KS3 (1) only |
 | `internal/credsvc/forward.go`, `request.go`, `server.go` | KS4 (2) |
 | `internal/credsvc/bundle.go` | KS1 (1), KS11 (4) |
@@ -564,7 +574,8 @@ KS16 after B5.7).
 | `internal/cli/setup_refusals_test.go` | KS12 (2), KS14 (5) |
 | `internal/cli/init_credentials.go` | KS19 (1), KS13 (3) |
 | `internal/localcfg/localcfg.go`, `internal/cli/doctor_brokering.go` | KS19 (1) |
-| `internal/cli/doctor.go` | KS20 (2) |
+| `internal/cli/doctor.go`, `doctor_render.go`, `claude_gate.go` (new), `claude_gate_test.go` (new) | KS20 (2) |
+| `internal/cli/repo_notices.go` | KS20 (2) only |
 | `internal/infra/spec.go` | KS19 (1), KS13 (3), KS11 (4), KS14 (5) |
 | `internal/infra/readiness.go` | KS13 (3), KS14 (5) |
 | `internal/infra/spec_test.go` | KS13 (3) |
@@ -587,7 +598,7 @@ As `fugaro plan graph --plan docs/keys-through-service/implementation-plan.md` p
 `ready in 555–2220 min, no history yet for 18 tasks (18 tasks; seeds for 18; from the seeds: no history is cached on this machine yet)`
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's history
-predict, and it moves as runs finish. It does not count the owner's run of Check 50, the release
+predict, and it moves as runs finish. It does not count the release
 before KS13, the wait for model credentials routing's I1, the wait for the
 plan that removes budget mode off, or the wait for B5.7. The graph counts one node more than this
 plan's 17 runs: the contract change of §7, which runs only if raised.
@@ -603,7 +614,7 @@ From the reserved block 780–789 (780 and 781 used), and Check 50 written as a 
 
 | Check | What it measures |
 | --- | --- |
-| **50** | As its checklist row says: whether Claude's cache markers survive a provider's endpoint. **The owner runs it before release A is cut** (D3013), and KS20 applies the result |
+| **50** | As its checklist row says: whether Claude's cache markers survive a provider's endpoint. Its row reads not run and **release A ships without it** (the owner's ruling of 2026-11-26, D3013): KS20 names every repository the refusal stops, and the change that applies the result flips the gate |
 | **780** | After the release that carries KS15, on a real installation that was at the release before A: a project owner's `fugaro update` copies the model keys, drops the mounts and deletes the old secrets, with a run in flight that finishes; an operator's update does none of it (U3) |
 | **781** | After release A: a non-Claude provider model served through the service end to end, charged the provider's reported cost, with the key read from the bundle |
 
@@ -612,8 +623,10 @@ not reused.
 
 ## 9. After-deploy steps
 
-**Before release A is cut:** the owner runs Check 50 (`bash scripts/live-checks/check50.sh`), and
-KS20 merges its result.
+**Release A ships with Check 50 not run** (the owner's ruling of 2026-11-26, D3013): the refusal
+for a Claude model through a provider stays, and KS20's lines name every repository it stops. The
+owner runs Check 50 (`bash scripts/live-checks/check50.sh`) when they choose to, and the change
+that applies its result is the one that lifts the refusal.
 
 **Release A: `fugaro update`, run by a project owner.** It copies the model keys into the bundle.
 An operator's update skips that step and says so; nothing breaks, because the mounts are still
@@ -647,7 +660,9 @@ KS18's release notes say what each update prints.
 - **Applying KS14's Terraform and refusing launches, or letting operators copy** (D3012's other
   options).
 - **Serving a Claude model through a provider with today's warning, or keeping those
-  repositories on their mounts** (D3013's other options; the first was the recommendation).
+  repositories on their mounts** (D3013's other options; the first was the recommendation). The
+  owner's ruling of 2026-11-26 takes neither: release A stops the call, and KS20 names the
+  repositories it stops.
 - **Copying a key once and ignoring later versions, or removing operators' right to add a version
   in release A** (D3014's other options).
 - **One bundle entry per repository for an account's OAuth token** (D3015's other option).

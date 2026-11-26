@@ -57,13 +57,17 @@ func TestABStrictDecode(t *testing.T) {
 	}
 	// A repository's own file carries its opt-out through the same type, so
 	// the strict decode must accept the key there too; Validate is what
-	// refuses a value other than 0 (TestABRepoMayOnlyOptOut).
+	// refuses a value other than 0 (TestABRepoMayOnlyOptOut). What it writes
+	// is read and dropped (D3237, R2): ab.rate is the project's, so the block
+	// the file wrote resolves as one that wrote nothing — ee/ab's abBlock
+	// reads Config.AB's presence, and the opt-out a repository states now is
+	// `ab.repos.<owner/name>: 0` in the project layer.
 	c, pss := Parse([]byte(minimalRepo + "git: { provider: github }\nab:\n  rate: 0\nworkflows:\n  default:\n    commands: { build: make, test: make test }\n"))
 	if len(pss) > 0 {
-		t.Fatalf("repo problems: %v", pss)
+		t.Fatalf("repo problems: %v; the key is read in release A and dropped, never refused", pss)
 	}
-	if c.AB == nil || c.AB.Rate != 0 {
-		t.Errorf("Config.AB = %+v, want rate 0", c.AB)
+	if c.AB != nil {
+		t.Errorf("Config.AB = %+v, want the drop's nil: ab.rate is the project's (D3237)", c.AB)
 	}
 }
 
@@ -136,8 +140,12 @@ func TestABRepoMayOnlyOptOut(t *testing.T) {
 	if len(ps) > 0 {
 		t.Fatalf("problems = %v, want none: a repository may opt out", ps)
 	}
-	if c.AB == nil || c.AB.Rate != 0 {
-		t.Errorf("Config.AB = %+v, want the repository's rate 0", c.AB)
+	// The repository's rate is read and dropped (D3237, R2): the block is the
+	// project's now, the opt-out it states is `ab.repos.<owner/name>: 0` in the
+	// project layer, and a file that writes only the rate resolves as one that
+	// wrote no ab: block at all (TestABStrictDecode).
+	if c.AB != nil {
+		t.Errorf("Config.AB = %+v, want the drop's nil: ab.rate is the project's (D3237)", c.AB)
 	}
 	for _, rate := range []string{"0.05", "0.1"} {
 		_, _, ps := Resolve(body("ab:\n  rate: "+rate+"\n"), l)

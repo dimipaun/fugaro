@@ -976,11 +976,11 @@ type psRun struct {
 // and the environment a switched job carries.
 func (r *psRig) newRun(t *testing.T) *psRun {
 	t.Helper()
-	files := psRunFiles(t)
+	files, layer := liftPins(psRunFiles(t))
 	remote := testutil.NewRemote(t, files)
 	bucket := memblob.OpenBucket(nil)
 	t.Cleanup(func() { bucket.Close() })
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: psRepoName, Ref: "main", Workflow: psWorkflow, Task: "Add a feature"}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: psRepoName, Ref: "main", Workflow: psWorkflow, Task: "Add a feature", ProjectLayer: projectLayer(layer)}
 	store := runstore.Open(bucket, psSlug, runID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)

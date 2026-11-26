@@ -2,6 +2,8 @@ package creds
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -75,6 +77,59 @@ func TestAClaudeModelThroughAProviderWaitsForCheck50(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestCheck50sResultDecidesTheClaudeGate is KS20 in the state the owner ruled
+// on 2026-11-26: the release ships WITHOUT Check 50's result, so the gate D150
+// put there stands exactly as KS3 wrote it and the checklist's own row still
+// reads not run. The two are one answer read in two places, which is what this
+// test holds together — a row that says not run with a selection that already
+// serves a Claude model through a provider is a release shipping a decision
+// nobody made, and a row recording a result with the refusal still there is a
+// result not applied. When the owner's run lands, the flip is the row and this
+// test in one change (D3013).
+//
+// The state is read from the checklist's own section header, which is the line
+// that says NOT RUN to the owner reading it: the fact this test is about is
+// what that file records, and not a second copy of it here.
+func TestCheck50sResultDecidesTheClaudeGate(t *testing.T) {
+	ran := check50RecordsAResult(t)
+
+	s := selector(newFakeStore(), noWindow())
+	s.Model = claudeModel
+	c, _, err := s.Select(ctx, run, []Credential{openrouter})
+	if !ran {
+		if err == nil {
+			t.Fatalf("Check 50's row still reads not run and a Claude model was served through a provider key as %q: only a recorded result lifts the gate D150 put there (D3013)", c.Name)
+		}
+		for _, want := range []string{"tier C", "Check 50"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal of a Claude model through a provider says %q, and does not say %q: an operator reading it must learn which credential stopped the call and which check decides it", err, want)
+			}
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("the checklist records Check 50's result and the refusal is still there: %v\nKS20 is the change that applies the result: the refusal goes, and doctor's unmeasured-cost warning with it", err)
+	}
+}
+
+// check50RecordsAResult reports whether the live checklist's own Check 50
+// section records a result, by the NOT RUN its header carries while none has
+// been written into it.
+func check50RecordsAResult(t *testing.T) bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "docs", "gcp-live-checklist.md"))
+	if err != nil {
+		t.Fatalf("the live checklist could not be read: %v", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "## Check 50:") {
+			return !strings.Contains(line, "NOT RUN")
+		}
+	}
+	t.Fatal("docs/gcp-live-checklist.md has no `## Check 50:` section: the row Check 50's result is recorded in is gone")
+	return false
 }
 
 // TestANonClaudeProviderModelIsServed is the other half of D3000, and the red

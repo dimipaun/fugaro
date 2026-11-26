@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -171,6 +172,111 @@ func TestLintAutofixCommitsAndSkipsImplement(t *testing.T) {
 	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("record = %+v", rec)
 	}
+}
+
+// TestLintAutofixSkipsImplementWritesItsHandBack: on the Fixed-gate path the
+// autofix is the run's whole work and no coder stage ever runs, so no agent
+// writes the hand-back file the run's level owes — and readiness refuses every
+// such run for a file nothing could have written. The path writes the run's
+// own account instead, and the run ends ready (the owner's ruling of
+// 2026-11-26, LV5.1). The harness writes no file of its own here
+// (h.noHandBack), so what the pull request publishes is the runner's write.
+//
+// Mutation: drop the writeGateHandBack call, and this run is a draft for
+// ReasonNoHandBack.
+func TestLintAutofixSkipsImplementWritesItsHandBack(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "touch fixed")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	h.noHandBack = true
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady || rec.Reason != "" {
+		t.Fatalf("record = gate %q outcome %s (reason %q), want the fixed gate's ready", rec.Gate, rec.Outcome, rec.Reason)
+	}
+	if body := onlyPR(t, h.provider).Body; !strings.Contains(body, "commands.fix") {
+		t.Fatalf("the pull request does not carry the autofix's own account:\n%s", body)
+	}
+}
+
+// TestLintAutofixHandBackCarriesTheSectionsTheLevelNeeds: the account the gate
+// path writes is not merely a file — it carries entries under the sections the
+// run's level stands on, the ones a heading with nothing under it cannot
+// satisfy. A Hotfix lint-autofix run owes a revert plan and a morning note, so
+// a file that names neither is a draft whatever it is called.
+//
+// Mutation: write the file's title alone, and this run is a draft for the empty
+// Revert plan its level stands on.
+func TestLintAutofixHandBackCarriesTheSectionsTheLevelNeeds(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app",
+		Task: "# Task: fix the nightly import\n", Rigor: rigor.Hotfix}
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "touch fixed")
+	h := newHarnessFiles(t, cfg, spec, gateFiles("lint-fix", lintFixRecipe))
+	h.noHandBack = true
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Rigor == nil || rec.Rigor.LevelOf() != rigor.Hotfix {
+		t.Fatalf("the run resolved %+v, want the Hotfix the task asked for", rec.Rigor)
+	}
+	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady || rec.Reason != "" {
+		t.Fatalf("record = gate %q outcome %s (reason %q), want the fixed gate's ready", rec.Gate, rec.Outcome, rec.Reason)
+	}
+	body := onlyPR(t, h.provider).Body
+	for _, want := range []string{"## Revert plan", "## Morning note"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the account carries no %s section:\n%s", want, body)
+		}
+	}
+}
+
+// TestLintAutofixHandBackCoversAFixRoundsCommit: the gate writes its account
+// before the review loop, and the loop's fix rounds commit on top of the
+// autofix. Readiness takes the file either way — it is there and it carries the
+// level's sections — so what the run publishes would call the autofix the whole
+// of the change and hand back a revert plan that leaves the fixer's commit on
+// the branch. The account is rewritten at finalize, where every commit is made.
+//
+// Mutation: drop the refresh at finalize, and the published revert plan names
+// the autofix commit alone, so following it leaves the fix round's commit.
+func TestLintAutofixHandBackCoversAFixRoundsCommit(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 2, "true", "test -f fixed", "touch fixed")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	h.noHandBack = true
+	rec, err := h.run(t, review("changes", 1), fixTrackedFile, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady || rec.Reason != "" {
+		t.Fatalf("record = gate %q outcome %s (reason %q), want the fixed gate's ready", rec.Gate, rec.Outcome, rec.Reason)
+	}
+	if len(rec.HeadSHA) < 7 {
+		t.Fatalf("the run published no head: %q", rec.HeadSHA)
+	}
+	head := rec.HeadSHA[:7]
+	body := onlyPR(t, h.provider).Body
+	plan := lineWithPrefix(t, body, "- revert every commit the run made")
+	if !strings.Contains(plan, ".."+head) {
+		t.Fatalf("the revert plan does not end at the fix round's commit %s, so reverting it leaves that commit on the branch:\n%s\n\n%s", head, plan, body)
+	}
+	if !strings.Contains(body, "the run committed more on top of it, up to `"+head+"`") {
+		t.Fatalf("the account still calls the autofix the whole of the run's work:\n%s", body)
+	}
+}
+
+// lineWithPrefix is the first line of the published account that opens with
+// prefix, which is how one entry under a section is rendered.
+func lineWithPrefix(t *testing.T, body, prefix string) string {
+	t.Helper()
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(l, prefix) {
+			return l
+		}
+	}
+	t.Fatalf("the published account carries no %q line:\n%s", prefix, body)
+	return ""
 }
 
 // fixTrackedFile is a fix step for the Fixed-gate path: it modifies "fixed",
@@ -747,6 +853,7 @@ func (h *fuHarness) followUpWithRecipe(t *testing.T, id, previous, text string, 
 	t.Helper()
 	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Task: text,
 		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Workflow: h.first.Workflow, Recipe: rcp}
+	h.taskWithLayer(spec)
 	store := runstore.Open(h.bucket, repoSlug, id)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)

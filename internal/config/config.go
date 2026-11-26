@@ -1677,15 +1677,63 @@ func Parse(data []byte) (*Config, []Problem) {
 // "cannot tell", which is not the same answer as "names no account" — and it is
 // the answer a run whose own file is one of those gets too, since the runner
 // resolves that same file with the same strict decode inside the job.
+//
+// The lifted keys (config.LiftedKeys) are the one thing here that is not
+// exactly as written: they are dropped, as Resolve drops them, so a file whose
+// agent block names a model the project owns reads the same here as it does in
+// a run (R21). It is the same drop, on the same list — a file that has been
+// migrated reads byte for byte as before.
 func AgentOf(data []byte) (Agent, bool) {
 	c, ps := decodeRepo(data)
 	if c == nil || len(ps) > 0 {
 		return Agent{}, false
 	}
+	// The lifted keys are dropped here too, and this is the one reader of a
+	// repository's file that never goes through Resolve (F25, R21): the block
+	// handed back is the one a run uses, without the models a repository may no
+	// longer choose, so a launcher judging a file at a ref it never checks out
+	// cannot honour a key that file's own resolution drops.
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return Agent{}, false
+	}
+	tree, ps := docTree(&doc)
+	if len(ps) > 0 {
+		return Agent{}, false
+	}
+	if dropped, notes := dropLiftedKeys(tree); len(notes) > 0 {
+		if c, ps = decodeTree(dropped); len(ps) > 0 {
+			return Agent{}, false
+		}
+	}
 	if c.Agent.Auth == "" {
 		c.Agent.Auth = DefaultAgentAuth
 	}
 	return c.Agent, true
+}
+
+// RepoOf reads a fugaro.yaml's own bytes as the file writes them — the strict
+// decode of the repository layer alone, with no defaults, no project layer and
+// no key dropped — and says whether the file could be read at all.
+//
+// It is the one reader of a file's own text that honours the lifted keys, and
+// the migration of those keys is why it exists (MG2, R21): Resolve and every
+// reader built on it drop them, so a caller that has to MOVE a lifted key needs
+// the value the file still writes. Every other reader wants what a run holds,
+// which is a resolved config.
+//
+// ok is false for bytes this Fugaro cannot read as a fugaro.yaml at all — the
+// strict decode's own refusal, an unknown field, a duplicate key — exactly as
+// AgentOf and SecurityOf answer. The config is as written and is not validated:
+// a file a run would refuse at load is a file no run of this repository exists
+// for, and the lifted keys are still decoded by this release, so a caller reads
+// a value rather than a refusal.
+func RepoOf(data []byte) (*Config, bool) {
+	c, ps := decodeRepo(data)
+	if c == nil || len(ps) > 0 {
+		return nil, false
+	}
+	return c, true
 }
 
 // decodeRepo decodes a fugaro.yaml strictly, without defaults or

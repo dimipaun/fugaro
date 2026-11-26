@@ -66,6 +66,30 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 		// write was made from.
 		return afterWriteNotLive(change)
 	}
+	// D1541's fence: this hook is where a semantic command's write reaches the
+	// project's own state (its policy node, and the layer the node is read
+	// through), and it opens its clients through the init engine rather than
+	// through the two seams the fence is free at, so it asks for itself. The
+	// question is the publish's and not the calling command's: every caller of
+	// this hook but `secrets set` is a command the classification exempts — its
+	// own argv writes this machine's file and names no project — and the
+	// publish it leaves behind is a write to the project all the same, so the
+	// read is made whenever a stage is owed, whatever the caller is.
+	//
+	// What the answer is worth here is not what it is worth to a command: this
+	// line is reached only after the calling command's own write has landed, a
+	// fenced one included — `fugaro secrets set NAME --expires` writes the record
+	// into this machine's config and reaches the hook with it written — so the
+	// fence's own refusal, which says nothing was written, would be a sentence
+	// about a write that is on the machine and about a value the person never
+	// passed. A project the read does not answer "managed" for gets what every
+	// stage that cannot leave a change live gets: nothing is published, the steps
+	// stay owed, and the command ends on the one sentence (afterWriteOwed,
+	// D2614).
+	allowed, _ := managedWriteAllowed(ctx, cmd, lc)
+	if !allowed {
+		return afterWriteOwed(lc, change, names)
+	}
 	// The run's own door is the command that called: it names the run on every
 	// line it prints and it is the command the audit record files (the door's
 	// own reason is accountsAddRunStages'), and it is deliberately not `fugaro

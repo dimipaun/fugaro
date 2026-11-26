@@ -153,7 +153,7 @@ variable "runs_bucket" {
 }
 
 variable "credentials_service" {
-  description = "The installation's credentials service (D146, D147): its Cloud Run service name, its region and the email of its own account, or null while the installation has not opted in. Null is what keeps the job's model-secret accessors and creates no invoker grant; set, it is what drops them (the service holds those credentials), grants the job's account roles/run.invoker on it (D135) and grants the service's account a secretAccessor on each secret the job mounts (D2074) — that last one only when account is set, which it is not in an installation applied before this input existed."
+  description = "The installation's credentials service (D146, D147): its Cloud Run service name, its region and the email of its own account, or null while the installation has not opted in, and while this repository is handed no address at all (infra.CredentialsServiceAddress). Null is what creates no invoker grant; set, it is the ADDRESS this repository's job accounts are granted roles/run.invoker on (D135) — and, with credentials_service_serves below, what drops the job's model-secret accessors and grants the service's account a secretAccessor on each secret the job mounts (D2074) — that last one only when account is set, which it is not in an installation applied before this input existed."
   type = object({
     name   = string
     region = string
@@ -172,6 +172,13 @@ variable "credentials_service" {
     )
     error_message = "credentials_service needs a Cloud Run service name, a region such as us-east5, and, when it carries one, its account as an email (name@project.iam.gserviceaccount.com)."
   }
+}
+
+variable "credentials_service_serves" {
+  description = "Whether the service above serves THIS repository's credentials (infra.CredentialsServiceServes): while it is true the job's account keeps no secretAccessor on the model credentials the service hands the run instead, the job's container declares no mount of them, and the service's own account is granted each of the containers the job still mounts (D135, D145, D2074). With credentials_service set and this false the installation's service is the ADDRESS this repository's job accounts are granted and the launcher hands the execution — and nothing of the job's is dropped — which is the one repository D3326 puts there: a `vertex` one, whose runs read no credential of the service's and fetch their workflow secrets through it (F17). The default is true because that is what a tfvars written before this input existed means: a root applied then carried credentials_service only for a repository the switch served, and planned every drop with it."
+  type        = bool
+  default     = true
+  nullable    = false
 }
 
 variable "bitbucket_proxied" {

@@ -1156,6 +1156,7 @@ probe account carries predefined grants only).
 | 663 | The `orch` account is refused the grants §4.3 does not list ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.3, §4.5's E4 and §6's never-list; task **P5.1b** writes the account and its **piecemeal** bindings): read from the project's actual IAM and then probed with a token **for that account** — the account is **not in `var.launchers`** (no `roles/firebasedatabase.viewer`, `roles/datastore.viewer` or `roles/serviceusage.serviceUsageConsumer`, and a read of another mailbox or of `config/admin/devices/**` over the RTDB API is **denied by the rules** rather than answered with a `null`, which is what that viewer role — an IAM read that bypasses the rules — would give it); `setIamPolicy` and `iam.roles.*` are refused and the deployer is **not impersonable**; a write at the **runs-bucket root** is refused (the launcher's condition is `runs/`, `tokens/` and `issues/` only, so the marker that permits a managed apply is unwritable) **while the read of it is not**, which the design says in its own words; `secretmanager.secrets.list` and `versions.list` succeed and `versions access` on a model, git or App secret is refused; and the same token **does** list the installation's jobs, which is the positive control a check of nothing but refusals would not have | See "Check 663" below; **you** run it, on a **sandbox installation** with the module applied and your own credential, **never `belong`**, and **no agent runs any step of it** | Reads and probes: **no model call, no run and nothing billable** — two IAM policy reads, one bucket listing, one RTDB `GET` and the refusals. The one write attempted at the bucket root is a **throwaway object of your own, never the marker itself**, because a probe that succeeds must not leave a marker behind. The probes run with a token minted for the account, which needs you to hold `roles/iam.serviceAccountTokenCreator` on it: that grant is **added by hand for the check and removed afterwards**, and deleting the throwaway object is the other half of the restore. **OWNER-RUN, NOT RUN.** |
 | 580 | A Bitbucket shared job: clone, fetch, push, a pull request ([`docs/shared-jobs-default/`](shared-jobs-default/implementation-plan.md), its **Check 580** and task **S8**; **I1** for a shared project job really serving a Bitbucket repository, **D2302** for the job that holds no Bitbucket token at all — its git traffic reaches `bitbucket.org` through the installation's credentials service or not at all — and **F17** for the model access of a shared job's run, which is the profile's `claude_accounts` through the cascade, held open since Check 191 was blocked on no Claude account being admitted to a per-repository Bitbucket job; **D2303** is why this check gates **M6**, **M7**, **S10** and **M2**, because with no retire gate it is the live proof before a per-repository job is deleted): ONE throwaway run of a sandbox Bitbucket repository, launched with `fugaro run` and read back from outside — the run ends `succeeded`, its own row says it **pushed** its branch and names a **pull request number**; the job its execution path names is one of the profile's **shared Bitbucket jobs** (`fugaro-p-<profile>-bitbucket…`, one per (profile, provider, account)) and not a per-repository one, and that project's job list carries `FUGARO_CREDENTIALS_SERVICE_URL` on **every** such job and `FUGARO_BITBUCKET_TOKEN` on **none**; and the credentials service's **own** `credsvc: audit` lines for that run carry at least one `purpose=git status=ok` — **the clone and the fetch**, since one purpose covers a run's whole git traffic — and an earliest `purpose=forward status=ok` whose **credential name is one of the profile's `claude_accounts`** (F17) | See "Check 580" below; `bash scripts/live-checks/check-580.sh --sandbox <a sandbox Bitbucket repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-580_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox Bitbucket repository only, **never `belong`** (a project, region, account, repository or path naming that installation is refused before a single call, and a checkout whose origin is GitHub is refused by name — this is the Bitbucket half) | **ONE billable run** — an ordinary run of the installation's agent, so its model calls are real, on the sandbox's own budget — plus the branch and the pull request it opens, which **stay on that repository**: this check holds no Bitbucket credential of its own and cannot delete them, so their rows are yours to settle. Everything else is a read: the checkout's own doctor document, the published policy, the project's job list and the service's own lines. It writes no cloud resource, no record, no object and no node, and its scratch directory is removed from its exit trap. **OWNER-RUN, RUN 2026-11-26: FAILED at `run`, rerun owed after #4007.** |
 | 581 | A multi-repository catalog build and the leak scan ([`docs/shared-jobs-default/`](shared-jobs-default/implementation-plan.md), its **Check 581** and task **B4**; **D2301** for a build baking every repository the project's map puts on the entry, and **B3**/**R2** for the scan that stands before the promote): one catalog entry the project's image map puts two repositories on is built through Cloud Build, from the checkout its Dockerfile belongs to — the CLI refuses a build from any other repository by name — and the build's own record is read back: its note names every repository the map puts on the entry, its steps carry `catalog-scan` with SUCCESS before `promote`, the build itself ends SUCCESS, and the entry records the digest that build reported it made | See "Check 581" below; `bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-581_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call) | **One billable Cloud Build**, of an entry the catalog already lists, which promotes that entry's image; the check writes no entry, no mapping and no switch, launches no run and opens no pull request. **OWNER-RUN, NOT RUN.** |
+| 582 | `update` migrates a repository onto its profile's shared job and retires its per-repository root ([`docs/shared-jobs-default/`](shared-jobs-default/implementation-plan.md), its **Check 582** and task **M5**, out of the plan's "Checks the plan takes", the row `582 | update migrates a project and retires its per-repository jobs | The owner`; **M2** for the retirement itself — the destroy plan, the state removal, the jobs deleted through the Cloud Run API and the state object forgotten — **S10**/**D2305** for the project image every shared job has to resolve before a root may be retired, **S6**/**D2306** for the Bitbucket proxy that has to be on for a Bitbucket repository, and **T7** for the confirmation the update's own retirement asks at a terminal): ONE `fugaro update --repo <a sandbox Bitbucket checkout>` on the sandbox project, read back from outside and nowhere else — the published policy admits the repository to exactly ONE profile of its provider; the repository's OWN per-repository jobs (the `fugaro_repo` label) are deployed before the update and **gone** from `gcloud run jobs list` after it; the profile's shared jobs each resolve to a container image and each carry `FUGARO_CREDENTIALS_SERVICE_URL` with the published `bitbucket_token` node's `proxy: true`; and the ONE run launched afterwards ends `succeeded`, says it pushed, names a pull request, and its execution path names one of the profile's **shared** jobs | See "Check 582" below; `bash scripts/live-checks/check-582.sh --sandbox <a sandbox Bitbucket repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-582_test.sh` drives it against fake `gcloud` and `fugaro` only, and **you** run it, at your own terminal, on the **sandbox project** (`fugaro-dev`) and a sandbox Bitbucket repository only, **never `belong`** (a project, region, account, repository or path naming that installation is refused by name, as is a checkout whose origin is GitHub and a coding agent's session) | **ONE billable run** — an ordinary run of the installation's agent, so its model calls are real, on the sandbox's own budget — plus the branch and the pull request it opens, which stay on that repository. The update it drives **RETIRES the sandbox repository's whole per-repository root** — its jobs deleted, its state object forgotten, the repository enrolled on the profile's shared job — and **that is not undone**: it is what this check measures, and the repository runs on the shared job from then on. Everything else is a read: the checkout's own doctor document, the published policy, and the project's job list before and after the update. It writes no cloud resource of its own, no record, no object and no node, and its scratch directory is removed from its exit trap. **OWNER-RUN, NOT RUN.** |
 | 590 | The three Bitbucket token types, and what the verifier says for each ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; **U1**, **U2** and **U5** are the open questions it answers, and **R14** with **O7** — the repository token's 403 at `/user`, confirmed 2026-11-13 — is the row the other two are read against): a **repository**, a **project** and a **workspace** access token are each added to the sandbox installation through the release's own add path (`fugaro creds set bitbucket-token--<name> --type … --coverage …`, whose check runs **before** anything is written, **D2352**) — and each one is then asked Bitbucket itself: what `GET /2.0/user` answers and what its `kind` says there (**U1**), which scopes Bitbucket reports for it (**U2**), and whether a project token is accepted as `x-token-auth` for git over HTTPS and as `Bearer` for REST (**U5**). **U6** — whether a project token covers a repository moved into its project later — is **not** this check's: it is Check 180's, which moves the repository, and this check records no row for it | See "Check 590" below; `bash scripts/live-checks/check590.sh --repo <workspace>/<sandbox repo> --token-file <path> --project-token-file <path> --workspace-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check590_test.sh` drives it against fake `fugaro` and `git` beside a fake Bitbucket Cloud on a loopback port (the `curl` is the real one, and it has nowhere else to go) only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev` and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as the repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | Three `creds set` writes into the sandbox installation (three bundle keys and three records), a handful of Bitbucket API calls and three git reads: **no run is launched, no model call is made and nothing is built**. The published policy node is untouched, so nothing this check writes is visible to a run until you republish (`fugaro update --repo`) — which the check deliberately does not do. Each token file is read once, at mode 0600, and no value is printed or put on a command line; the Restore removes the scratch directory and every file a value was written into, and what stays is the three bundle keys and the three records the `verifier-*` rows name (`fugaro creds rm bitbucket-token--<name>`). **USER-RUN, NOT RUN.** |
 | 591 | Which of the installation's Bitbucket tokens serves **which** repository, and the one 403 a caller at your terminal can force ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; the selection rules **R2**, **R9**, **R12** and **C1.13**, the plan's **D2355**, and the service's own refusal **`unverified_run_identity`** for a caller that is not a run): with a **repository** token recorded for one sandbox repository and a **project** token recorded for the other — two repositories of **one** Bitbucket project, so two repositories, two tokens and one installation make the choice a real one — two runs (one per repository, because the released CLI has **no change-set launch**: `fugaro run --change-set` is Subscription Edition and not available in any build) are launched, waited for and read: the credentials service's **own audit lines** name the credential that served each run's git and Bitbucket-API calls, and the two must be **different** tokens. One call of the check's own, made on the route a run's git traffic takes with an identity token and **no** run identity, must be answered **403 `unverified_run_identity`** — the service refuses a caller that is not a run of the installation before any route and therefore before any token is chosen, which is the only 403 a check at your terminal can force (a coverage refusal is HTTP 400 with its class on the audit line) | See "Check 591" below; `bash scripts/live-checks/check591.sh --repo <workspace>/<first repo> --other-repo <workspace>/<second repo> --token-file <path> --project-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check591_test.sh` drives it against fake `gcloud`, `fugaro`, `git` and one loopback server answering both faces of the service only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev`, region `us-east5`, and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as either repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | **TWO full runs**: each clones, implements, reviews and opens a pull request, so two runs' worth of model spend, two branches and two pull requests on the two sandbox repositories — the block names each one and the Restore is to decline them. Both repositories must be **on the credentials-service switch** (`agent.auth: cascade`), which the audit rows are where you read. Beyond the runs: a handful of read-only Bitbucket API calls, two `fugaro creds ls` reads, one `gcloud logging read` per run (retried while Cloud Logging catches up, which lags the request by seconds), and ONE request that is refused. **No write to the installation**: no `creds set`, no policy publish and no `fugaro update` — every call of the check's own is a read, plus the one that is refused. Each token file is read once, at mode 0600, and no value is printed or put on a command line — the identity token it mints is written into a 0600 file and from there into a 0600 curl config. **USER-RUN, NOT RUN.** |
 | 540 | A stalled, Routine sandbox pull request walks R0 to R3 and **merges**, and the follow-ups the landing filed wait for you ([`docs/outer-loop-escalation/`](outer-loop-escalation/implementation-plan.md), its task **E15** and its **E10b**'s ladder; **G13** is the rebased head's own scored review, **D2041** is `escalation.ready_drafts`, **D2042** is the item's approval covering the rungs, **D2037** with **D1247** is the `waiting_on: person` a rung raises, and **D1226** with **D1245** is a landing's follow-ups): the premise comes from the host (`gh pr view`: an **OPEN draft**, which is the one thing `ready_drafts` readies) and from `fugaro doctor --json`; the walk is then driven through the daemon's **own** cycle (`fugaro orchestrator run --once`, one cycle per invocation, the lease released between them) until the host says MERGED or the bound is reached — R0 a rebase, R2 the one stronger pass, R3 the merge rung under the deterministic gate; the rungs are read in the ledger (`fugaro escalation show <item> --json`) and their moves in the audit lines (`fugaro orchestrator events --json`); **the time to merge** is read rather than assumed, from the ledger's own stamps and the host's `mergedAt`; and the follow-ups named `<item>-fu-…` (`fugaro backlog list --json`) are queued and **unapproved** | See "Check 540" below; `bash scripts/live-checks/check540.sh --sandbox <checkout> --item <work item> --pr <number>` is the whole of it (`--dry-run` prints the plan and touches nothing), its sibling test `scripts/live-checks/check540_test.sh` drives it against fake `fugaro`, `gh` and `gcloud` only, and **you** run it, at your own terminal, on the **sandbox project and repository** only — **never `belong`** — the account and the project are refused by name, and so is a checkout whose project names it, as are a coding agent's session and a traced shell; **no agent runs any step of it** | The ladder's own runs on your installation — the rebase, the stronger pass, the review at the rebased head and the judge, all covered by the item's approval (**D2042**); this check launches none of them, it drives the daemon's cycles. **Two local settings** (`escalation.ready_drafts=true` and `escalation.r2_after_attempts=1`) are written for the length of the run and put back by the `restore` row. The pull request is **merged** by the walk and is not undone — that is the thing being measured — and its branch and the follow-ups are yours afterwards. One scratch directory, removed from the exit trap. **OWNER-RUN, NOT RUN.** |
@@ -1221,9 +1222,12 @@ probe account carries predefined grants only).
 
 | 820 | **A first installation in the EU, read back from the cloud** ([`docs/location-preference/`](location-preference/implementation-plan.md), its task **LP13**, which settles the reconciliation's **U1**, **U2** and **U6** and records **U8**, under **D3080**–**D3086**): a first `fugaro setup --location eu` in a scratch project leaves **every** located thing in `europe-west1` — the `(default)` Firestore database (**U1**), the default Realtime Database instance and the host its URL carries (**U2**), every bucket, every Artifact Registry repository, every `fugaro=managed` secret container **user-managed** and none automatic (**D3092**), and the installation's own run log bucket — the locations record `fugaro doctor` reads back must say so, and a run must launch, lease budget and write its history, which is a job in the region reading the region's own secret container (**U6**); the three Realtime Database hosts' answers for a database that lives in the EU are **recorded** (**U8**, **LP15**) | See "Check 820" below; **you** run it, in **a scratch project of your own** that exists and holds nothing of Fugaro's — **never `belong`**, because a project with an installation is not one a first `setup` runs in — and at **a real terminal**, where you answer the setup's own confirmations: `bash scripts/live-checks/check-820.sh <project>` (`--dry-run` first; the whole sequence is in [location-preference/check820-steps.md](location-preference/check820-steps.md)), with the hermetic test that drives it against fake `gcloud`, `curl` and `fugaro`, `scripts/live-checks/check-820_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | A scratch project, billing for the day, a **permanent** Firestore database and a default Realtime Database, and one run's model spend: everything the setup creates stays — the check **deletes nothing**, and the block names `gcloud projects delete` for you. **PASS** (exit 0) is every located thing in the EU and the run's record whole; **FAIL** (exit 1) is one that did not hold; exit **2** is stopped before its last step; exit **3** is a row **UNVERIFIED**. **OWNER-RUN, NOT RUN.** |
 | 821 | **`fugaro update` on the dogfood installation, with a run in flight** ([`docs/location-preference/`](location-preference/implementation-plan.md), its task **LP13**, which reads **LP12**'s locations record (**D3087**), settles the reconciliation's **U9**, and takes the owner's requirement of 2026-11-09 that an update is safe while runs are in flight): the record reads what that installation really has — Firestore `us-east5`, the Realtime Database `us-central1`, Google's **automatic** replication for the secret containers, a **`global`** run log bucket; `fugaro update --plan-only` straight after the converge plans **no change** to any root (**U9**); **nothing is asked** during the update (**D3090**, `docs/no-prompt-policy` **T7**); and a run launched **before** the update finishes with its record whole | See "Check 821" below; **you** run it, from the checkout of installation `fugaro` only (the checkout's own doctor answer must read region `us-east5` — another installation stops the check by name, and a new EU installation is Check 820's): `bash scripts/live-checks/check-821.sh` (`--dry-run` first; the whole sequence is in [location-preference/check821-steps.md](location-preference/check821-steps.md)), with the hermetic test that drives it against a fake `fugaro`, `scripts/live-checks/check-821_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It **converges the installation** — a real `fugaro update`, Terraform's own applies — and launches **one throwaway run**, whose model calls are billable and whose branch and pull request, if it makes one, stay on the repository for you to settle. It creates no cloud resource of its own and writes no record. **PASS** (exit 0) is the four locations, a plan with every count zero, no question asked and the run finished; **FAIL** (exit 1) names what did not hold; exit **2** is stopped before its last step; exit **3** is a row **UNVERIFIED** (a step left for you, a plan that only imports, a run that was not in flight). **OWNER-RUN, NOT RUN.** |
+| 850 | **A person's token at the workspace, end to end** ([`docs/workspace-credentials/`](workspace-credentials/implementation-plan.md), its task **WC12** and its own **Check 850**; the reconciliation's **U5**, **U6** and **U10**, with **D2960**, **D2962**, **D3148**, **R6**–**R9**, **R11** and **D3146**): the three questions only a real workspace answers — whether its own service reads a person's container through the accessor its root writes on the project — `secretAccessor` for the workspace's **own account**, conditioned on the `fugaro_u_` prefix **and** the `claude-oauth-token` name (**U5**, **R6**; an **unconditional** accessor, or one naming the **prefix alone**, is a FAIL and not a pass), whether a roster person holding **nothing but** the two `roles/run.invoker` grants is admitted with a `gcloud` identity token (**U6**), and whether a person with **no role on the workspace's project** loads that project's config and reaches its intake by **naming the project** (**U10**, **D3148**) — read together with what a run is served: the person's own container in **two members** (**R7**), a second person's run served something else (**D2962**), the switch off and a deleted token each refused with the sentence the release writes (**R9**, **D2974**), and a person removed from the roster refused within a minute — **a run of theirs in flight included**, and halted with the removal named (**D3146**) | See "Check 850" below; **one command**, run by **you**, on the workspace's own project (**never `belong`**): `CHECK850_WORKSPACE_PROJECT=<project> CHECK850_PERSON=<address> bash scripts/live-checks/check-850.sh` (`--dry-run` first: it prints every read and makes none), with the hermetic test that drives it against fake `gcloud` and `fugaro` on `PATH`, `scripts/live-checks/check-850_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It **creates and deletes nothing** and launches no run: the token, the launches, the switch, the deletion and the removal are **your own acts**, and every row reads what they left — the workspace project's IAM policy, its two services and their policies, `gcloud secrets list --filter=name:fugaro_u_`, the intake's and the credentials service's own log lines for each run, and `fugaro runs ls`. No secret's **value** is read and no token is printed. A knob left unset leaves its row **UNVERIFIED** rather than guessed, and a project that names the person directly leaves **U6** unmeasured, because the premise is a person holding the two grants and nothing else. | **PASS** (exit 0) is the two grants and nothing else on the project, one container under the prefix reached under a conditioned accessor, both members served, the second person not, and the four refusals as the release writes them; **FAIL** (exit 1) names the criterion that did not hold — an unconditional accessor, a run served another person's token, a refusal that is not the release's sentence, a removal that took longer than a minute; exit **2** is stopped before a row was measured (a guard, a missing tool, a read that did not answer). **OWNER-RUN, NOT RUN.** |
+| 851 | **`fugaro update` on a workspace and on a member at the previous release, with a run in flight on each** ([`docs/workspace-credentials/`](workspace-credentials/implementation-plan.md), its task **WC12** and its own **Check 851**; the reconciliation's **R11** and **R12**, and §9's promise for an installation that does not use the feature, under the HARD RULE that `fugaro update` is the whole upgrade and is safe while runs are in flight, always): both sides **converge with no other step** — `fugaro doctor --all --json` answering `ok: true` with no warning on each afterwards (a doctor that does not answer `ok`, or one that answers an empty list, is a FAIL and never a pass); each update prints the one line the HARD RULE asks for about the runs in flight (*"in flight: update waits for none and changes nothing they hold"*) with **no line beside it naming a step that did not land** (the steps that note itself lists under it are the ones that can still **reach** a run and are not read as failures); the run that was in flight on each side **finishes, terminal and unhalted** (a run the update stopped, or one that never finished across it, is exactly what **R11** forbids); and a member that **never turned the personal switch on** is served exactly what it served before — the workspace's credentials-service log for its run names **no `fugaro_u_` container at all** (**R12**, §9: the personal half is configuration, and a member without it takes none of it) | See "Check 851" below; **one command**, run by **you**, after the two updates, on the workspace's own project (**never `belong`**): `CHECK851_WORKSPACE_PROJECT=<project> CHECK851_WORKSPACE_UPDATE_LOG=<file> CHECK851_MEMBER_UPDATE_LOG=<file> CHECK851_WORKSPACE_RUN=<id> CHECK851_MEMBER_RUN=<id> bash scripts/live-checks/check-851.sh` (`--dry-run` first: it prints every read and makes none), with the hermetic test that drives it against fake `gcloud` and `fugaro` on `PATH`, `scripts/live-checks/check-851_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** | It **runs no update and writes nothing anywhere**: the two updates, their logs and the runs are **yours**, and the check reads what they left — `fugaro doctor --all --json` on the workspace, on the member and on a member whose switch is off, the two update logs you saved, `fugaro runs ls --json` for the run in flight on each side, and the workspace's credentials-service log for the quiet member's run. A knob left unset leaves its row **UNVERIFIED** rather than guessed, and it **only reads**: no installation is converged, no policy is published and no run is launched by it. | **PASS** (exit 0) is three clean doctors, both in-flight lines present with no failed step beside them, both runs terminal and unhalted, and the quiet member's log naming no personal container; **FAIL** (exit 1) names the criterion that did not hold — a doctor still warning, a step that did not land, a run the update stopped or that never finished, a line the quiet member's run should not have; exit **2** is stopped before a row was measured (a guard, a missing tool, a read that did not answer). **OWNER-RUN, NOT RUN.** |
 
 | 870 | **The run index's three reads, timed warm on a project of yours** ([`docs/console-fixes/`](console-fixes/implementation-plan.md), its task **T-CHK** and its own **Check 870**, the first half of the pair that plan takes against **D3205**): on ONE project you name, `fugaro runs ls --json`, `fugaro plan status --json --all` (in your checkout) and `fugaro graph --json` each answer **once warm** and are then timed **three** times, and the **median** of each is judged against **1000 ms** — the plan's "under 1 s each" (I-INDEX, RI1 to RI6: the three reads that used to walk the runs bucket read `runIndex/<run id>` and `runIndexMeta/summary` instead). It reads nothing else, and `plan status` is called with `--no-merges`, so the `gh` lookups — network, not index — stay out of the figure | See "Check 870" below; **one command**, run by **you**, on a project of your own (**never** `belong`): `bash scripts/check-870-run-index-timings.sh <fugaro-project>`, with the hermetic test that drives it against fake tools, `scripts/check-870-run-index-timings_test.sh`. **No agent runs any step of it.** | It **only reads**: three `fugaro` reads per sample, a few requests each; no run is launched, no model is called, no bucket object is written, and nothing is written outside its own scratch directory. It refuses to start in a coding agent's session and in a traced shell. **PASS** (exit 0) is all three medians under the bound; **FAIL** (exit 1) is a median at or over it, or a read that did not answer; exit **2** is stopped before it could judge; exit **3** is nothing to judge at all (**UNVERIFIED**): a build whose `graph` is the Subscription Edition stub, a checkout no run joins, or an index that holds no run. **OWNER-RUN, NOT RUN.** |
 | 871 | **The run index's three reads at 100x, on a scratch project of yours** ([`docs/console-fixes/`](console-fixes/implementation-plan.md), its task **T-CHK** and its own **Check 871**, the second half of that pair, after **870**): it seeds a **throwaway** installation that holds no run with **350,000** synthetic runs — three objects per run (`task.json`, `launch.json`, `result.json`) under `runs/<slug>/<run id>/`, then `fugaro runs reindex`, which is the history job's reindex mode (RI5: the reset, then one execution of the job that walks the bucket into the index) — waits for that walk to reach the end of history, times the same three reads **870** times and by the same bound (**1000 ms** on the median of three), and removes everything it wrote | See "Check 871" below; **one command**, run by **you**, after **870**, on a **throwaway** project (**never** `belong`): `bash scripts/check-871-run-index-100x.sh --scratch <project>`, with the hermetic test that drives it against fakes on `PATH` and a local HTTP server, `scripts/check-871-run-index-100x_test.sh`. **No agent runs any step of it.** | It **writes only that project**, under names of its own (`runs/<slug>/<run id>/` and `runIndex/<run id>`), and it refuses to start unless the project holds no run at all — which is what makes the slug it seeds under and the index it writes into its own to remove. **Not small**: about 1.05M object writes and as many deletes in the runs bucket, 350,000 index documents written and deleted, and the history job's executions that walk them — roughly ten dollars of GCS and Firestore operations and **hours** of wall clock. **PASS** (exit 0) is the walk reached the end of history, all three medians under the bound and everything removed; **FAIL** (exit 1) is a median at or over it, a read that did not answer, a seed that failed or a cleanup that did not land; exit **2** is stopped before it could judge; exit **3** is nothing to measure (**UNVERIFIED**): a walk that had not reached the end of history, a build with no graph, or an index that does not carry the seeded runs. **OWNER-RUN, NOT RUN.** |
+| 930 | **Where `fugaro update` reads each of its stages from, after the release that carries I1** ([`docs/update-from-anywhere/`](update-from-anywhere/implementation-plan.md), its task **K1** and its own **Check 930**, the owner's half of that plan's **F28** and the reading of its acceptance 2 — the event stream byte-identical from an empty directory and from each checkout, the `repository` stage exempt until **U11**): the plan makes every stage read each enrolled repository's **default branch** through C1's view instead of the working directory it stands in, and this reads that back on the installation that matters — **Check 891**'s own script plans `fugaro update --plan-only --json --events` from an empty directory and from each checkout named and marks every stage whose state or detail differs between the two | See "Check 930" below; **one command**, run by **you**, on **`fugaro`** (**never `belong`**), after that release: `bash scripts/live-checks/check-891-update-trace.sh fugaro <each of the three checkouts>` — 891's own script, **Check 891** above, with the hermetic test that drives it against fakes, `scripts/live-checks/check-891-update-trace_test.sh`. **No agent runs any step of it.** | It launches nothing, applies nothing and calls no model, and writes no file of its own: 891's own two accepted side effects are Terraform's plan lock (a `.tflock` object written and deleted) and the **remembered checkouts** in your local config. **Before U11's release** the `repository` stage is the only stage marked **DIFFERS**, a §4 blocker (RC8, RC13, RC17, RC39, RC48, RC60, RC64, RC70, RC71, RC77) — the read **L2**, outside that plan, owns; **after it** no stage differs. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -2046,7 +2050,7 @@ Expect the four addresses under `module.firebase.`.
 
 1. Record `fugaro version`, `claude --version`, `claude plugin marketplace list --json` and `claude plugin list --json` (the `fugaro` entries), `git -C <checkout> diff --stat`, and whether the checkout's `.claude/settings.json` carries a `fugaro` pin at all.
 2. In your own terminal (not Claude Code), run `fugaro update --check <checkout>`: expect a `plugin:`, a `cloud:`, a `rules:` and a `policy:` line, exit 1 if anything is stale, and no change to the records of step 1 — the mode reads the checkout's own files, runs no `claude` command and makes no cloud call, so the `rules:` and `policy:` lines say they cannot tell, and the `plugin:` line reads Claude Code's own record of installed plugins.
-3. Run the converge in the checkout, in your own terminal — `cd <checkout> && fugaro update`. The `plugin` stage is this check's, and its lines are `  using claude at <absolute path>`, each `  running: <claude> <args>` line, and `plugin: done: installed <version>; restart running Claude Code sessions to apply it`, beside the converge's other stages (the `cloud:` one among them). **`fugaro update --repo <checkout>` is not this step's command**: it runs one stage, the repository's (`internal/cli/init.go`'s `runInitRepo`, `repoEngine`), and never reaches the plugin stage, whose only caller is the converge's own stage list (`internal/cli/init_stages.go`, `newPluginStage`). Where the plugin half alone is what you want, `fugaro update-skills --dir <checkout>` runs the same function (`internal/cli/updateskills.go`) and prints the same `using claude at` and `running:` lines, then its result bare — `installed <version>; restart running Claude Code sessions to apply it`, with no `plugin:` prefix. The install is at user scope, so `claude plugin list --json` shows the version this release publishes and no project-scoped install, and `git diff` in the checkout holds nothing but a pin removal, when step 1 found a pin to remove (step 4).
+3. Run the converge in the checkout, in your own terminal — `cd <checkout> && fugaro update`. The `plugin` stage is this check's, and its lines are `  using claude at <absolute path>`, each `  running: <claude> <args>` line, and `plugin: done: installed <version>; restart running Claude Code sessions to apply it`, beside the converge's other stages (the `cloud:` one among them). **`fugaro update --repo <checkout>` is not this step's command**: it runs one stage, the repository's (`internal/cli/init.go`'s `runInitRepo`, `repoEngine`), and never reaches the plugin stage, whose only caller is the converge's own stage list (`internal/cli/init_stages.go`, `newPluginStage`). Where the plugin half alone is what you want, `fugaro update-skills --dir <checkout>` runs the same function (`internal/cli/updateskills.go`) and prints the same `using claude at` and `running:` lines, then its result bare — `installed <version>; restart running Claude Code sessions to apply it`, with no `plugin:` prefix. The install is at user scope, so `claude plugin list --json` shows the version this release publishes and no project-scoped install, and `git diff` in the checkout is **empty**: no step of the converge writes a checkout, and a leftover pin is a notice `update` prints, naming the file and the line to delete, never a write (step 4).
 4. **FACT:** whether any `claude plugin` call changed the checkout's `.claude/settings.json` (the step says `claude changed`); whether `claude plugin update --scope project` (run only if a project-scope install exists) rewrote it; and what a pin the checkout already carried made the run print (the removal's diff, and the sentence naming what the repository loses) — nothing here commits it.
 5. Run step 3 again: expect `plugin: current: installed <version>`. The step is current, so it makes no change call and no `running:` line appears — what `claude` is asked is only the two reads, the marketplace list and the install list. (`fugaro update-skills --dir <checkout>` prints the same line bare, without the `plugin: ` prefix.)
 6. In a Claude Code session in the checkout, ask the agent to run `fugaro update`: expect the plugin stage to apply there — every write it makes is this machine's — the cloud half left for you with the command that runs it, named per repository — `cloud: skipped: <owner/name>: a coding agent's session (…)` — exit 1, and nothing in Cloud Build or the check job's revisions.
@@ -3314,7 +3318,7 @@ fugaro update --firebase-project fugaro-dev --project fugaro
 - `fugaro update`'s cloud step only **reports** drift in the jobs' environment (`internal/cli/upgrade_cloud.go`, `jobConfigCopyNote`: "only fugaro update --repo does"); it is one of the checkout's four steps, and there is no `--cloud` flag — the step is the converge's own, not a command's;
 - `fugaro image refresh` patches a job's **image** through the API and nothing else (`internal/cli/image_refresh_steps.go`, `refreshCloneJobs`).
 
-⚠ **Use `fugaro image refresh` for the image half, not `fugaro update`.** The converge runs four steps in a checkout, and only the cloud step is this step's: beside it, the `plugin` step **installs or updates the Fugaro plugin in Claude Code at user scope** (through the `claude` CLI) and the `rules` and `policy` steps **deploy the project's rules generation and its published policy node** — `internal/cli/update_check.go` is where those four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`. **The `pin` step an older Fugaro had is gone with the pin merge, and nothing here puts a pin back** — but the plugin step is not a reader: a checkout that still carries a pin is offered its removal as a diff and, at **your own terminal** (which this check is), the run takes that entry out of `.claude/settings.json` (`internal/cli/init_plugin_stage.go`'s `remove`, behind the same confirm-then-write path every checkout write has), printing the diff, what the repository loses, and the line that tells you to review it with `git diff` and commit it like any change, or discard it. **So the converge can write this one file in this checkout, and that removal is the only write of its four steps here.** `fugaro image refresh` is the cloud step alone: it moves no file and there is nothing to put back. If you run the converge anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against — a pin removal is the one difference it can show — and the plugin this machine ends up with is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
+⚠ **Use `fugaro image refresh` for the image half, not `fugaro update`.** The converge runs four steps in a checkout, and only the cloud step is this step's: beside it, the `plugin` step **installs or updates the Fugaro plugin in Claude Code at user scope** (through the `claude` CLI) and the `rules` and `policy` steps **deploy the project's rules generation and its published policy node** — `internal/cli/update_check.go` is where those four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`. **The `pin` step an older Fugaro had is gone with the pin merge, and nothing here puts a pin back** — and the plugin step no longer takes a leftover pin out of a checkout either: a repository whose default branch still carries one gets a single notice line from `update`, naming the file and the exact edit (delete the `fugaro` entry from `extraKnownMarketplaces` and the `fugaro@fugaro` entry from `enabledPlugins`; `internal/cli/repo_notices.go`), which `doctor` reports with the same text and a fix. **So the converge writes nothing in this checkout at all.** `fugaro image refresh` is the cloud step alone: it moves no file and there is nothing to put back. If you run the converge anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against — it must be identical — and the plugin this machine ends up with is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
 
 So the rollout is: **release** a runner image carrying Task 1.3, then **`fugaro update --repo`** in the sandbox checkout to write the env, then let the image land. A rollout that skips the middle step is a rollout whose runs never see the pointer at all — the job would carry the new image and no `FUGARO_RTDB_URL`, and every run would fall back to the ceiling in its environment, which is exactly the state step 5 is supposed to change.
 
@@ -3478,7 +3482,7 @@ and one ordinary sandbox task to confirm the env ceiling governs again:
 fugaro run "$TASK" --workflow <the sandbox's workflow> --ref master --json --project fugaro
 ```
 
-**FACT:** the restore is complete — `fugaro project show --json --project fugaro` matches step 1's recorded file key for key (or reports no policy at all, if `--delete` was run), `fugaro budget show --json --project fugaro` matches step 1's recorded caps and mode, `git diff -- fugaro.yaml` is empty, `git diff -- .claude/settings.json` holds nothing but a pin removal if the converge made one (step 3's warning: it is the one file of this check's the converge can write) with the file where step 3 found it, and the operator's config is byte-for-byte the copy step 1 made (`cmp "$C.before-49" "$C"`). **FACT:** the sandbox still runs — one ordinary sandbox task succeeds, with `policy.sources` naming the ceiling from the env again if the policy was deleted.
+**FACT:** the restore is complete — `fugaro project show --json --project fugaro` matches step 1's recorded file key for key (or reports no policy at all, if `--delete` was run), `fugaro budget show --json --project fugaro` matches step 1's recorded caps and mode, `git diff -- fugaro.yaml` is empty, `git diff -- .claude/settings.json` is empty (step 3's warning: the converge writes no file of this check's any more — a leftover pin is a notice, not a write) with the file where step 3 found it, and the operator's config is byte-for-byte the copy step 1 made (`cmp "$C.before-49" "$C"`). **FACT:** the sandbox still runs — one ordinary sandbox task succeeds, with `policy.sources` naming the ceiling from the env again if the policy was deleted.
 
 **Paste back:** every FACT line above, never a secret value and never a key value. Never run this against `belong`.
 
@@ -21383,6 +21387,108 @@ commands that produce a missing one are printed in the rows that stay yours rath
 secret is read or printed by the check or by its test, and no value it reads is echoed in a way that
 would put one in a log: the documents it prints are the CLI's own JSON, which carries no credential.
 
+## Check 582: `update` migrates a repository onto its profile's shared job and retires its per-repository root (the sandbox project `fugaro-dev` and a sandbox Bitbucket repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **M5** of
+[docs/shared-jobs-default/implementation-plan.md](shared-jobs-default/implementation-plan.md) — its
+"Checks the plan takes", the row `582 | update migrates a project and retires its per-repository jobs | The owner` — and
+**run by you**: nothing below is a claim that an update retires a root or that a repository's runs land on a
+shared job, and what it measures is a real `fugaro update --repo` on the sandbox, read back from outside and
+from the project's own job list. The check is `scripts/live-checks/check-582.sh` (its sibling test
+`scripts/live-checks/check-582_test.sh` drives it against fake `gcloud` and `fugaro` only), and the owner types
+`bash scripts/live-checks/check-582.sh --sandbox <a sandbox Bitbucket repository checkout>`. The project the
+checkout belongs to has to be the sandbox one (`fugaro-dev`, or `CHECK582_SANDBOX_PROJECT`) — this check
+**retires a root**, so it refuses by name a project, a region, an account, a repository or a path that names
+`belong`, and a checkout whose origin is GitHub rather than Bitbucket (the retirement's own precondition is the
+Bitbucket proxy's) — and a coding agent's session is refused too: **no agent runs any step of it**, and it asks
+you nothing: it reads the policy and the job list, runs the one update, reads the job list again, launches one
+run and prints one block.
+
+**What it settles.** M2's own behaviour — **the migration**, which no hermetic test can state: an update of ONE
+checkout leaves that repository running on the profile's **shared** job and takes the repository's
+per-repository Terraform root away with it (the jobs deleted, the state object forgotten, nothing of it left to
+apply). Every one of those is a fact about a live installation and a live project, so the check drives the real
+`fugaro update --repo` and reads the project back before and after it. One row per assertion:
+
+- **The profile.** The published policy (`fugaro project policy show --json`) has to admit the repository to
+  the **project** and to **exactly one** profile of the repository's provider (`projectpolicy.Admits`, both
+  halves). The shared job's name is built from the profile's name, so a repository admitted to two profiles
+  leaves which one the launch selects unreadable and the row is **not measured** (exit 2) rather than guessed
+  at; a repository admitted to no profile is a **FAIL** whose text names the fix (`fugaro project policy
+  publish`). The profile's name is what the shared job's name is read against (`fugaro-p-<profile>-bitbucket…`).
+- **The premise.** The repository's **own** per-repository jobs have to be deployed before the update — the
+  jobs in `gcloud run jobs list` carrying `fugaro_repo` equal to the repository's label (`gcp.RepoLabel` of
+  `task.Slug`, derived the same way `internal/infra` derives it) and **no** `fugaro_profile` at all. A
+  repository with none has nothing to retire — it is already on the shared job, or its root was never applied —
+  and the row says so instead of measuring an update that changes nothing.
+- **The image.** The profile's shared jobs have to resolve to a container image: **every** job named
+  `fugaro-p-<profile>-bitbucket…` or labelled `fugaro_profile=<profile>` with `fugaro_provider=bitbucket`
+  carrying a non-empty `spec.template.spec.template.spec.containers[].image`. That is the value
+  `infra.ProjectJobImage` resolves — the deployer, the launcher and the retirement's own precondition
+  (**S10/D2305**) — and a job with an empty image is a repository with no job at all: while it does not
+  resolve, an update holds the root back by name.
+- **The proxy.** The published `bitbucket_token` node has to have `proxy: true` and admit the repository, and
+  **every** shared job of the profile has to carry `FUGARO_CREDENTIALS_SERVICE_URL` (**S6/D2306**, **D2302** —
+  a Bitbucket shared job holds no token at all). That pair is the other half of M2's precondition: a Bitbucket
+  repository whose token is not brokered holds its retirement back, so a proxy that is off is a **FAIL** here
+  and an update that would leave the root standing.
+- **The retirement.** `fugaro update --repo <the checkout>` — the ONE documented command (CLAUDE.md's HARD
+  RULE) — has to exit 0 and leave **none** of the repository's own jobs in the job list read after it. The row
+  is read from the job list and not from the update's own words. A retirement that did **not happen yet** is
+  **not a failure**: an update that prints the hold note (`…'s own root is not retired here: …`, M2's
+  `rootRetireHolds` — a run is executing on a job about to be deleted, or the read did not answer) or that
+  leaves a step for you (`N step(s) left for you`) is **not measured** (exit 2), naming the note, because the
+  release is not what kept it back. An update that exits non-zero, or exits 0 and leaves one of the
+  repository's jobs behind, is a **FAIL** naming the jobs.
+- **The run.** ONE throwaway run of that repository, launched with `fugaro run` after the retirement and waited
+  for by polling `fugaro runs ls --json` until its own row is terminal, has to end `succeeded`, to say
+  `pushed=yes`, to name a pull request, **and** to have run on one of the profile's shared jobs — the job read
+  off its execution path (`projects/<project>/locations/<region>/jobs/<job>/executions/<name>`), the only place
+  a run's job is written down. A run on a per-repository job after the retirement is a repository that was not
+  enrolled, and that is exactly what this check exists to catch.
+- **The update's own confirmation is the terminal's (T7).** The retirement's confirmation is answerable only
+  from a real terminal: at one, the update confirms by itself and prints `  confirmed`; with no terminal it
+  prints the hold note and leaves the root standing, which the retirement row reads as **not measured**. So this
+  check is run at **your** terminal, it passes no `--json` to the update (a JSON session asks nothing and
+  retires nothing) and it never passes `--plan-only` (which returns before the retirement).
+
+**What a run costs.** **ONE billable run** — an ordinary run of the installation's agent, so its model calls are
+real, on the sandbox's own budget — plus the branch and the pull request it opens, which **stay on that
+repository**: this check holds no Bitbucket credential of its own and cannot delete them, so their rows are
+yours to settle. The update it drives **RETIRES the sandbox repository's whole per-repository root** — the
+destroy plan, the state removal, the jobs deleted through the Cloud Run API, the state object forgotten — and
+**that is not undone**: it is what this check measures, and the repository runs on the profile's shared job from
+then on. Everything else is a read: the checkout's own doctor document, the published policy and the project's
+job list before and after the update. The check writes no cloud resource of its own, no record, no object and no
+node, and its scratch directory is removed from its exit trap.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check-582.sh --dry-run
+bash scripts/live-checks/check-582.sh --sandbox <a sandbox Bitbucket repository checkout>
+```
+
+The dry run prints the plan and calls nothing. The real run needs `gcloud` authenticated as **you** (the job
+list is read with your credentials) and the installed `fugaro` (the update and the run it drives are the ones
+you have). Progress goes to stderr and one `CHECK 582 RESULT` block goes to stdout at the end: paste that block
+here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
+criterion that did not hold, or a guard that stopped the check — a dirty checkout, an origin that is not
+Bitbucket, a project that is not the sandbox, a policy that admits no profile, a shared job with an empty image
+or without the switch, a proxy that is off, an update that failed, or a retirement that left a job behind;
+**`2`** is the check not being able to measure (a tool missing, a read that did not answer, a policy that admits
+two profiles, a repository with no jobs of its own, an update that printed the hold note or left a step for you,
+a job list that did not answer after the update, a run that never appeared or never ended). A key the run never
+reached reads `FAIL — not reached`. The knobs are `CHECK582_SANDBOX`, `CHECK582_SANDBOX_PROJECT` (`fugaro-dev`),
+`CHECK582_DRY_RUN`, `CHECK582_KEEP_SCRATCH`, `CHECK582_RUN_ID` (the base of this check's own run id, `-0582`
+appended), `CHECK582_UPDATE_SECONDS` (3600), `CHECK582_RUN_SECONDS` (2400), `CHECK582_POLL_SECONDS` (20),
+`CHECK582_DOCTOR_TIMEOUT_SECONDS` (180) and `CHECK582_CLI_TIMEOUT_SECONDS` (180).
+
+**What waits on it.** Nothing gates on it: it is the outside reading of M2's retirement and of the enrolment
+that follows it, and the one to take again whenever the retirement, the shared job's name or the launcher's
+selection changes. Its own test is the offline half (`bash scripts/live-checks/check-582_test.sh`), and it is
+what CI runs.
+
 ## Check 581: one catalog entry over two repositories — the bake and the leak scan (the sandbox project `fugaro-dev` and the sandbox repository only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **B4** of
@@ -27240,6 +27346,230 @@ back. Its last line is the verdict and the exit status:
 `scripts/live-checks/check-821_test.sh`, which drives it against a fake `fugaro` (no cloud, no update, no run) and
 is run by `go test ./scripts`.
 
+## Check 850: a person's token at the workspace, end to end (the workspace's own project, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WC12** of
+[docs/workspace-credentials/implementation-plan.md](workspace-credentials/implementation-plan.md), from the row its
+§8 gives it, and it is the register's own script for it. It is the live half of **U5**, **U6** and **U10** of
+[reconciliation.md](workspace-credentials/reconciliation.md) — the three questions only a real workspace answers —
+and it reads **D2960**, **D2962**, **D3148**, **R6**–**R9**, **R11** and **D3146** as WC2, WC3, WC4, WC7 and WC9
+built them. It **creates and deletes nothing** and launches no run: the token, the launches, the switch, the
+deletion and the removal are **your own acts**, and every row reads what they left. **No agent runs any step of
+it.**
+
+**What it settles.** One row per question — seven of them, one of which is read twice, once per member — and each
+is a reading of something the release writes rather than of a paraphrase of it: the two sentences and the one
+error code below are constants of `internal/credsvc` (`personal_workspace.go`, `dynamicsecrets.go`, `wire.go`) and
+are grepped, never restated.
+
+- **U6 — nothing but the two invoke grants.** The workspace's own project must bind `roles/run.invoker` to
+  `user:<the person>` on **both** of its services — the credentials service and the intake — and name that
+  principal in **no binding at all** on the project itself. That is the premise the platform's answer is read on:
+  whether a roster person holding nothing else is admitted with a `gcloud` identity token. A project that names
+  the person directly leaves the row **UNVERIFIED**: U6 cannot be read off someone who holds a role on the project.
+- **U5 and R6 — the accessor.** The workspace's project holds **exactly one** container under `fugaro_u_`
+  (**D2960**: a person's token is stored once, at the workspace), and the workspace's **own** account
+  (`fugaro-workspace@<the workspace's project>.iam.gserviceaccount.com`) holds
+  `roles/secretmanager.secretAccessor` on the **project's own IAM** — where its root writes it, because a
+  container's name is the verified token's own `sub` and no plan knows it — under a condition naming **both**
+  halves: the `fugaro_u_` prefix **and** the `claude-oauth-token` name the container ends in. An accessor with
+  **no condition** is a FAIL and not a pass — it reaches **every secret of the project**, every other person's
+  token included — and so is one naming the **prefix alone**, which admits every other person's container. The same row
+  carries **U10**'s write half: the intake's own `intake: audit` line must say the write was the person's — op
+  `create`, scope `user`, status `ok`, and the `sub` the line names is the person's — which is a person who holds
+  nothing but the two invoke grants and no role on the workspace's project reaching that intake at all
+  (**D3148**).
+- **R7 — a run is served it.** A run of the person's, launched in a member whose switch is on, must be **served
+  that container**, which the workspace's credentials service writes as its `credsvc: audit` line for the run. Two
+  members are read — the plan's row is "served in both".
+- **D2962 — and no other person's run is.** A second person's run in a member must be served **something else**: no
+  line of the service's for it may name the first person's container. That is the one finding this row exists for.
+- **R9 and D2974 — the two refusals that are not a removal.** A run in a member whose switch is off is refused with
+  the sentence the service writes — `has the personal workspace token switch off` — and a run launched after the
+  container was deleted meets its own — `the personal token this call's slip names is not there`.
+- **D3146 — a person removed from the roster.** The service's refusal for a run of theirs in flight carries the
+  code `slip_owner_removed` **within a minute** of the removal, and the run's own record says it **halted**, with
+  the removal named in the detail: a run that finished anyway, or that moved to another credential, is the finding
+  this row exists for.
+
+Its other rows are its own honesty about itself: the CLI version every row is read against, that this shell is not
+tracing, that `--dry-run` ran nothing (on a real run that row reads INFO and says the plan is the dry run's own),
+the list of acts **no script may take for you**, and the two rows that read the scratch directory back as gone.
+
+**What has to exist before it runs.** A workspace whose personal half is configured (WC13's §9: the workspace
+owner's `fugaro update` binds the roster its two grants, each member's admin turns the switch on and updates, and
+each person stores their token once per person — `fugaro secrets user set --project <the workspace's project>`,
+**D3148**) and **the acts themselves**, which no script may take: a run of the person's in **two** members; a run
+of a **second person's** in one of them; a run in a member whose switch is **off**; a run after the container was
+**deleted**; and a run of the person's in flight when they were **removed from the roster**, with the moment
+written down. It needs `bash`, `mktemp`, `python3`, `gcloud` — authenticated as an **owner of the workspace's
+project**, where every read lands — and `fugaro`. It refuses to start in a coding agent's session and in a traced
+shell, and it reads **nothing of `belong`**: a project, service, account or container naming it is refused by name
+before the first read.
+
+**The command.**
+
+```sh
+bash scripts/live-checks/check-850.sh --dry-run     # first: prints every read it would make, makes none
+CHECK850_WORKSPACE_PROJECT=<the workspace's project> \
+CHECK850_PERSON=<the person's address> \
+  bash scripts/live-checks/check-850.sh
+```
+
+Every knob is `CHECK850_*`; `--dry-run` and `--help` are the only flags. `WORKSPACE_PROJECT` and `PERSON` are the
+two the check cannot read anything without — there is no default for either, because a member's project carries
+none of what this check reads — and `INSTALLATION` (`fugaro`) is the installation whose doctor answer the guard
+reads. `REGION` (`us-east5`) is the region the workspace's two services run in: every Cloud Run call carries one,
+because one left out makes `gcloud` ask for it. `WORKSPACE_ACCOUNT`
+(`fugaro-workspace@<the workspace's project>.iam.gserviceaccount.com`) is the account R6's accessor is read for.
+`PERSON_SUB` and `CONTAINER` are read off the intake's own line and the listing when unset; the two members
+and the run of the person's in each are `MEMBER_ONE_PROJECT`/`MEMBER_ONE_RUN` and
+`MEMBER_TWO_PROJECT`/`MEMBER_TWO_RUN`; the second person's run is `OTHER_PERSON`/`OTHER_PROJECT`/`OTHER_RUN`; the
+switch-off run is `OFF_PROJECT`/`OFF_RUN`; the deleted-token run is `DELETED_PROJECT`/`DELETED_RUN`; the removed
+person's run and the moment are `REMOVED_PROJECT`/`REMOVED_RUN`/`REMOVED_AT` (epoch seconds or RFC 3339); `LOG_AGE`
+(24h) and `LOG_LIMIT` (200) bound every log read; `GRACE_SECONDS` (60) is the bound "within a minute" is read
+against. A knob left unset leaves its row **UNVERIFIED** (exit 2) rather than guessed.
+
+**What it reads, and what it never prints.** Only reads: the workspace project's IAM policy (the accessor among its
+bindings), its two services and their policies in the region, `gcloud secrets list --filter=name:fugaro_u_`, the
+intake's and the credentials service's own log lines for each run, and `fugaro runs ls`. **No secret's value is read anywhere**
+and no token is printed: the check never calls either service itself, so it holds no credential of the person's at
+all. The copies it takes sit in a `mktemp` directory (mode 0700) and are removed from the exit trap, a Ctrl-C
+included.
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 850 RESULT`, is what you copy
+back, and its last line is `CHECK 850 RESULT END (exit N)`.
+
+- **PASS** (exit 0): the two grants and nothing else on the project, one container under the prefix reached under a
+  conditioned accessor, both members served, the second person not, and the four refusals as the release writes
+  them.
+- **FAIL** (exit 1): a measured criterion did not hold — an unconditional accessor, a run served another person's
+  token, a refusal that is not the release's sentence, a removal the service took longer than a minute to answer —
+  and the row names which, with what was read instead.
+- **UNVERIFIED** (exit 2): the check stopped before a row was measured — a guard, a missing tool, a knob that was
+  never set, a read that did not answer — with the rows saying which. A read that did not answer is **not** the
+  service having written nothing.
+
+**Restore.** Nothing was created. The only thing this run makes is its scratch directory, which the exit trap
+removes and the `scratch-removed` row reads back as gone. The container, the grants, the switch and the runs are
+yours and stay as you left them.
+
+**What waits on it.** The plan's own row 850, and with it **U5**, **U6** and **U10** of the reconciliation: this is
+where those three stop being UNVERIFIED, and each FAIL is a finding against the design that built them (WC2's
+grants, WC3's admission, WC4's scope, WC7's launch and WC9's intake) rather than against the workspace it ran on.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check-850_test.sh`, which drives the script against fake `gcloud` and `fugaro` on `PATH` — no
+network, no cloud, nothing spent, and the runs it reads are the owner's own — and is run by `go test ./scripts`.
+
+## Check 851: `fugaro update` on a workspace and on a member at the previous release, with a run in flight on each (the workspace's own project, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WC12** of
+[docs/workspace-credentials/implementation-plan.md](workspace-credentials/implementation-plan.md), from the row its
+§8 gives it. It settles **R11** and **R12** of
+[reconciliation.md](workspace-credentials/reconciliation.md), and with them §9's promise for an installation that
+does not use the feature — *"`fugaro update`, and nothing else … a workspace whose members leave the switch off
+serves exactly what it served before"* — under the HARD RULE both come from: `fugaro update` is the whole upgrade
+and it works perfectly, and it is **safe while runs are in flight, always**. It **runs no update and writes nothing
+anywhere**: the two updates and the runs are **yours**, and every row reads what they left. **No agent runs any
+step of it.**
+
+**What it settles.** Eight measured rows, one question each.
+
+- **R11 — both sides converge, with no other step.** `fugaro doctor --all --json` on the **workspace** and on the
+  **member** must answer **`ok: true`** with **no warning** after the update: every step the release owed that
+  installation, it took. A warning left behind is an update with another step behind it, which is exactly what the
+  HARD RULE forbids, and the fix belongs inside the same release's update rather than in a runbook. A doctor that
+  does **not** answer `ok`, or one that answers an **empty** list of checks, is a FAIL and an UNVERIFIED row and
+  never a pass: a refusal is not an installation that converged.
+- **R11 — the update names the runs in flight.** Each update's own output must carry the one line the HARD RULE
+  asks for — `<N> in flight: update waits for none and changes nothing they hold` — and **no line beside it naming
+  a step that did not land** (`refused`, `failed`, `could not`, `not applied`, `permission denied`). The steps the
+  note itself lists under that line are **not** read as failures: they are the steps that can still **reach** a run
+  in flight, and one of them says `refused` in its own words. A release that reaches a run in flight names it
+  rather than denying it, and leaves nothing for a person to take.
+- **R11 — the run in flight finishes.** The run that was in flight on each side, read out of `fugaro runs ls
+  --json`, must be **terminal** and **unhalted**: one whose halt falls inside the update's own window is a run the
+  update stopped, and a run still going hours later is one the update is holding or one that died without its
+  record being written. Both are what R11 forbids. The moment the workspace's update began is
+  `CHECK851_WORKSPACE_UPDATE_AT`, and it is what puts a halt inside that window rather than after it.
+- **R12 and §9 — a member that never turned the switch on sees no change.** A run of that member's, launched before
+  the update, must be served **exactly what it was served before**: the workspace's credentials-service log for it
+  must carry **no `fugaro_u_` container at all**, and that member's own doctor must be clean too. A line naming a
+  person's container for a member that never turned the switch on is the personal half having reached a member that
+  never asked for it.
+
+Its other rows are its own honesty about itself: the CLI version the two updates' logs are read against, that this
+shell is not tracing, that `--dry-run` ran nothing (on a real run that row reads INFO and says the plan is the dry
+run's own), the list of acts **no script may take for you**, and the two rows that read the scratch directory back
+as gone.
+
+**What has to exist before it runs.** Both sides **staged at the previous release** — the release before the one
+carrying the personal half, whether as an older installed CLI or a checkout at the previous tag — and then, before
+each update: **one run launched on each side** (`fugaro run`) so that it really is in flight, and **one more on a
+member whose switch is left off**. Then `fugaro update` on each side, with its output saved
+(`fugaro update 2>&1 | tee /tmp/ws-update.log`), and the moment each update began written down
+(`date -u +%s`). The premise is the same check's guard: `fugaro doctor --project fugaro --all` must answer
+`project: … (GCP fugaro-dev,`, because the reads are about a member on that installation and never about `belong`.
+It needs `bash`, `mktemp`, `python3`, `gcloud` (authenticated for the run listing) and `fugaro`, and **no update is
+run by it**.
+
+**The command.**
+
+```sh
+bash scripts/live-checks/check-851.sh --dry-run     # first: prints every read it would make, makes none
+CHECK851_WORKSPACE_PROJECT=<the workspace's project> \
+CHECK851_WORKSPACE_UPDATE_LOG=/tmp/ws-update.log \
+CHECK851_MEMBER_UPDATE_LOG=/tmp/member-update.log \
+CHECK851_WORKSPACE_RUN=<the workspace's run id> \
+CHECK851_MEMBER_RUN=<the member's run id> \
+CHECK851_QUIET_PROJECT=<the member whose switch is off> \
+CHECK851_QUIET_RUN=<its run id> \
+CHECK851_WORKSPACE_UPDATE_AT=<when the workspace's update began> \
+  bash scripts/live-checks/check-851.sh
+```
+
+Every knob is `CHECK851_*`; `--dry-run` and `--help` are the only flags. `WORKSPACE_PROJECT` is the workspace's own
+GCP project — its doctor read and its credentials-service log — `MEMBER_PROJECT` is the member's (`fugaro` by
+default) and `INSTALLATION` (`fugaro`) is the installation the guard reads. A run id may be given in full or by its
+last four characters. `QUIET_PROJECT`/`QUIET_RUN`, `WORKSPACE_UPDATE_LOG`, `MEMBER_UPDATE_LOG`, `WORKSPACE_RUN`,
+`MEMBER_RUN` and `WORKSPACE_UPDATE_AT` may each be left unset, and then their rows read **UNVERIFIED** (exit 2)
+rather than guessed — `UPDATE_WINDOW_SECONDS` (3600) and `LOG_AGE` (24h)/`LOG_LIMIT` (200) bound the window a halt
+is judged in and every log read.
+
+**What it reads, and what it never prints.** Only reads: `fugaro doctor --all --json` on the workspace, on the
+member and on the member whose switch is off; the two update logs you saved; `fugaro runs ls --json` for the run in
+flight on each side; and one `gcloud logging read` on the workspace's credentials service for the quiet member's
+run, by that run's id. No secret is read and no credential value is printed. The copies sit in a `mktemp` directory
+(mode 0700) removed from the exit trap, a Ctrl-C included.
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 851 RESULT`, is what you copy
+back, and its last line is `CHECK 851 RESULT END (exit N)`.
+
+- **PASS** (exit 0): three clean doctors, both in-flight lines present with no failed step beside them, both runs
+  terminal and unhalted, and the quiet member's run served no personal container.
+- **FAIL** (exit 1): a measured criterion did not hold — a doctor still warning, a step that did not land, a run
+  the update stopped or that never finished, a personal container named for a member that never turned the switch
+  on — and the row names which, with what was read instead.
+- **UNVERIFIED** (exit 2): the check stopped before a row was measured — a guard, a missing tool, a knob that was
+  never set, a log that did not answer, a run the service wrote no line for. A read that did not answer is **not**
+  the service having served nothing.
+
+**Restore.** Nothing was created: no installation was converged, no policy was published and no run was launched by
+this check. The only thing a run makes is its scratch directory, which the exit trap removes and the
+`scratch-removed` row reads back as gone. The two installations, the two updates and the runs are yours and stay as
+the updates left them.
+
+**What waits on it.** The plan's own row 851, and with it **R11** and **R12**: this is where "both converge with no
+other step, the run finishes, and a member that never turns the switch on sees no change" stops being a promise and
+becomes a reading — the same promise `TestUpdateLeavesARunInFlightRunning` pins in the tree, taken here against a
+real installation at the previous release.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check-851_test.sh`, which drives the script against fake `gcloud` and `fugaro` on `PATH` — no
+network, no cloud, no update — and is run by `go test ./scripts`.
+
+
 
 ## Check 910: every enrolled repository's lifted values, read before release A's `fugaro update` (the project you name, never `belong`; run by you; NOT RUN)
 
@@ -27562,3 +27892,57 @@ product and one given, a checkout with no plan task refused, only the needed com
 check's own `cd` per call), the access token never reaching an argv, `--dry-run` calling nothing, the kept scratch and
 the kept cloud, and the refusals (a coding agent's session, a traced shell, the owner's own installation, a bad
 argument) — and is run by `go test ./scripts/runindexchecks` (`TestCheck871Script`).
+
+## Check 930: where `fugaro update` reads each of its stages from, after the release that carries I1 (installation `fugaro`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K1** of
+[docs/update-from-anywhere/implementation-plan.md](update-from-anywhere/implementation-plan.md), the owner's
+half of that plan's **F28**. That plan's whole subject is one admin running the whole update from anywhere: it
+makes every stage read each enrolled repository's **default branch** through C1's view instead of the working
+directory the command happens to stand in, and no hermetic test can say whether a real installation's `update`
+still reads the directory it is run from. This reads that back, and what it reads is the plan's acceptance 2 —
+**the event stream is byte-identical from an empty directory, from each checkout, and from a checkout dirty in
+a key other than `project:`**, with the `repository` stage exempt until **U11**.
+
+**It reads Check 891's own script, not a new one.** `scripts/live-checks/check-891-update-trace.sh`, registered
+above as **Check 891** with its own hermetic test (`scripts/live-checks/check-891-update-trace_test.sh`, run by
+`go test ./scripts`), already runs `fugaro update --plan-only --json --events --project <p>` once from an empty
+temporary directory of its own and once from each checkout named, and marks every stage whose **state or
+detail** differs between the two. That is exactly the reading this task needs, so Check 930 is that script run
+again on the release that carries I1 rather than a second script that would drift from it. **No agent runs any
+step of it** — 891 refuses a coding agent's session and a shell started with `-x` by name — and it writes no
+file of its own.
+
+**The command.** Run by **you**, at your own terminal, on **`fugaro`** (**never `belong`**), after the release
+that carries **I1**:
+
+```sh
+bash scripts/live-checks/check-891-update-trace.sh fugaro <each of the three checkouts>
+```
+
+The three checkouts are the ones Check 891's own run of 2026-11-23 used — `dimipaun/fugaro`,
+`edgeappinc/fugarosandbox`, `dimipaun/fugarosandbox` ([report.md](repo-coupling-audit/report.md) §1). 891 makes
+its own empty directory, so this one run is the whole comparison; running it again with your cwd inside a
+checkout reads the same thing.
+
+**What to read.** Each stage's mark, **not only the script's verdict** (F28). 891 prints a row per place and
+marks a stage **DIFFERS** when its state or detail is not the same in the empty directory and in a checkout,
+naming the `report.md` §4 blocker rows that make a difference legitimate. A verdict alone cannot tell the two
+apart: 891 **PASSES** while the `repository` stage differs, because that stage is one of §4's blockers.
+
+**Expected.**
+
+- **Before U11's release:** the `repository` stage is the only stage marked **DIFFERS**, as a blocker of
+  `report.md` §4 (`RC8`, `RC13`, `RC17`, `RC39`, `RC48`, `RC60`, `RC64`, `RC70`, `RC71`, `RC77`). It is the one
+  stage I1 leaves reading the checkout it stands in, and **U11** — which waits on **L2**, outside that plan —
+  is what takes that read away. The run before I1 marked `checkout` and `secrets` differing as well; those read
+  every enrolled repository's default branch now, so they must be the same from everywhere.
+- **After U11's release:** **no stage differs.**
+- A stage that differs and the expectation above does not name, or a detail that names the working directory
+  where it should name a repository, is that plan's acceptance 2 not holding: record it in the register's row
+  with the stage, its detail in the empty directory and in the checkout, and the checkout it was read in.
+
+**Costs.** It launches nothing, applies nothing and calls no model. Two side effects of `update --plan-only`
+are accepted, as 891's own header says: Terraform's plan takes the state lock (a `.tflock` object written and
+deleted in the state bucket, once per root it plans), and the run records remembered checkouts in your local
+config. **OWNER-RUN, NOT RUN: no agent runs any step of it.**

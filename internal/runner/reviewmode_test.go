@@ -2108,7 +2108,7 @@ func TestReviewStageRefusesProjectHooksAndMCP(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := c.build(t)
-			if err := h.store.WriteTask(context.Background(), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7)); err != nil {
+			if err := h.store.WriteTask(context.Background(), h.taskWithLayer(reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))); err != nil {
 				t.Fatal(err)
 			}
 			pushReviewBranch(t, h, "feature", func(dir string) {

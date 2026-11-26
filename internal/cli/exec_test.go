@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -577,6 +578,14 @@ func localExecCfg(t *testing.T, edit func(string) string, env map[string]string,
 	if edit != nil {
 		files["fugaro.yaml"] = edit(files["fugaro.yaml"])
 	}
+	// The models a fixture's file writes are lifted (S1, D3237): config.Resolve
+	// drops them, so they ride the task's project layer — where a real run reads
+	// them — and the file is anchored to the project that layer names, which is
+	// what makes it apply. A file that names none (the bare fixture, and the one
+	// TestExecSpendFromEnv wants refused for naming no model) carries no layer
+	// and is left alone.
+	file, layer := testutil.TakeFilePins(files["fugaro.yaml"], config.LiftedKeyPaths())
+	files["fugaro.yaml"] = testutil.AnchorFile(file)
 	remote := testutil.NewRemote(t, files)
 	dir := t.TempDir()
 	b, err := fileblob.OpenBucket(dir, nil)
@@ -595,8 +604,15 @@ func localExecCfg(t *testing.T, edit func(string) string, env map[string]string,
 	// compute-backend.md §2.5): a local run is named by the invocation, so
 	// this is what makes the checks below treat the process as local.
 	taskFile := filepath.Join(t.TempDir(), "task.json")
-	spec := `{"version": 1, "run_id": "` + runID + `", "repo": "acme/app", "ref": "main", "task": "x"}`
-	if err := os.WriteFile(taskFile, []byte(spec), 0o644); err != nil {
+	spec := task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}
+	if layer != "" {
+		spec.ProjectLayer = &task.ProjectLayer{YAML: layer, SHA256: config.LayerSum([]byte(layer))}
+	}
+	specJSON, merr := json.Marshal(spec)
+	if merr != nil {
+		t.Fatal(merr)
+	}
+	if err := os.WriteFile(taskFile, specJSON, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	args := append([]string{"exec", "--bucket", "file://" + dir, "--task-file", taskFile, "--remote", remote,

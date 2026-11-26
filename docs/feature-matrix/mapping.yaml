@@ -356,6 +356,8 @@ excluded:
     reason: "The repository's licence split and its published terms: legal documents rather than a capability."
   - spec: repo-image-removal
     reason: "Internal cleanup of the image build path; the capability it moves to is the image catalogue."
+  - spec: image-map-by-provider
+    reason: "Moves where a repository's image per model provider is written; the capability is the job images feature, which already ships."
   - spec: console-windows
     reason: "Platform support, which the compatibility matrix lists, rather than a capability of its own: the console's capabilities are the same on Windows."
   - spec: portal
