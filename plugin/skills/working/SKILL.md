@@ -112,7 +112,7 @@ The **daily report is the outlier sweep**, and each lesson it yields goes where 
 
 ## A usage limit on the Claude account
 
-A `failed` run can mean its Claude account ran out of its subscription's usage limit, never any other kind of failure. `reference/diagnose.md`'s usage-limit section says what counts as that evidence and what does not; read it before concluding a run hit a limit. When it applies, `fugaro accounts ls --repo <owner/name> --json` lists the other credentials the repository may use, and `reference/followup.md` (with a pull request) or `reference/launch.md` (none yet) relaunches the work on another credential, named with `--token` or `--pool`, never in a loop.
+A `failed` run can mean its Claude account ran out of its subscription's usage limit, never any other kind of failure. `reference/diagnose.md`'s usage-limit section says what counts as that evidence and what does not; read it before concluding a run hit a limit. When it applies, `fugaro accounts ls --repo <owner/name> --json` lists the other accounts the repository may use, and `reference/followup.md` (with a pull request) or `reference/launch.md` (none yet) relaunches the work on another, named with `--pool`, never in a loop.
 
 ## Workspaces of projects
 
