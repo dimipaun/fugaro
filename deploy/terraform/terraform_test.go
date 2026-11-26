@@ -7313,9 +7313,15 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 
 	// The drop is gated on the opt-in, in the same expression that reads the
 	// names: with credentials_service null the set is the workflow's own
-	// secret_env and nothing changes (D147).
-	if !strings.Contains(squash(code), "logical if !local.service_serves || !local.is_service_held[env]") {
-		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the credentials it holds only when it is on:\n%s", path, code)
+	// secret_env and nothing changes (D147). Two gates, one per half (IS6): the
+	// credentials the service HOLDS leave where it serves this repository
+	// (local.service_serves, false for a `vertex` one, which is handed the
+	// address and served nothing of its own), and the FETCHED class leaves
+	// wherever the job is handed the address at all — that drop is the run's
+	// fetch and not the service's bundle, so a vertex job gives its workflow
+	// secrets up like any other (D3326, F17).
+	if !strings.Contains(squash(code), jobSecretNamesExpr) {
+		t.Errorf("%s: job_secret_names must be the workflow's own secret_env while the credentials service is off, drop the credentials it holds where it serves them, and drop the FETCHED class wherever the job is handed the address:\n%s", path, code)
 	}
 
 	// And the grant the job gains: one invoker grant, on the one service the
@@ -7348,7 +7354,7 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	// halves here, and the tftest run credentials_service_on_github_app_key_
 	// stays plans the state this branch ships them in: neither moves, because
 	// the list is empty and the job still reads the key.
-	if !strings.Contains(squash(code), "env => logical if !(local.service_serves && (contains(local.service_held_secret_names, logical) || local.is_proxied_git[env])) && !(local.service_addressed && contains(local.vault_secret_names, logical))") {
+	if !strings.Contains(squash(code), jobMountsExpr) {
 		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key, the proxied git token) once it is on — and drop the FETCHED class (local.vault_secret_names) wherever the repository is handed the service's ADDRESS, which is one condition wider (IS6, IS9):\n%s", path, code)
 	}
 	// The container is the consumer of that local, and it is what a missing
@@ -7363,11 +7369,18 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	}
 }
 
-// jobMountsExpr is the workflow module's job_mounts expression, squashed
-// byte for byte: the one place the three tests that pin it read it from, so a
-// rewrite of the rule is one edit and not three that can drift apart (IS6's own
-// edit is what showed the need).
-const jobMountsExpr = "env => logical if !(local.service_serves && (contains(local.service_held_secret_names, logical) || local.is_proxied_git[env])) && !(local.service_addressed && contains(local.vault_secret_names, logical))"
+// jobSecretNamesExpr and jobMountsExpr are the workflow module's two drop
+// expressions, squashed byte for byte: the places every test that pins them
+// reads them from, so a rewrite of the rule is one edit and not several that
+// can drift apart (IS6's own edit is what showed the need). The accessor set
+// and the mount are one rule in two spellings — the mount's is the wider one,
+// because it names what the accessor set reaches through local.is_service_held
+// — and both carry IS6's two gates: local.service_serves for everything the
+// service holds, local.service_addressed for the fetched class (D3326, F17).
+const (
+	jobSecretNamesExpr = "logical if !(local.service_serves && local.is_service_held[env]) && !(local.service_addressed && contains(local.vault_secret_names, logical))"
+	jobMountsExpr      = "env => logical if !(local.service_serves && (contains(local.service_held_secret_names, logical) || local.is_proxied_git[env])) && !(local.service_addressed && contains(local.vault_secret_names, logical))"
+)
 
 // The `google_secret_manager_secret_iam_member` blocks of the workflow
 // module, squashed, by Terraform name.
@@ -8114,7 +8127,7 @@ func TestProxiedGitDropIsKeyedOnTheFactAndOffByDefault(t *testing.T) {
 	}
 	for _, clause := range []struct{ name, want string }{
 		{"the job's accessor set", "|| local.is_proxied_git[env]"},
-		{"the job's mounts", "&& !local.is_proxied_git[env]"},
+		{"the job's mounts", jobMountsExpr},
 	} {
 		if !strings.Contains(squash(scode), clause.want) {
 			t.Errorf("gcp/modules/workflow/sa.tf: %s does not read local.is_proxied_git (%q), so the flip list would not be the one thing that moves it:\n%s", clause.name, clause.want, scode)

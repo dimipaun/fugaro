@@ -38,15 +38,18 @@ const poolWithoutLauncherTableYAML = `model_routing:
 `
 
 // poolModelRepoYAML is the cascade checkout with the run's model written down:
-// the launcher reads the models a chain is judged against out of the file the
-// run will check out (launchRunModels), so a fixture that leaves agent.model to
-// the installation's default names a model this test cannot spell, and every
-// arm below would read an empty model set.
+// the launcher prices and judges a run by the models the file resolves to
+// (launchRunModels), so a fixture that leaves the model to the installation's
+// default names one this test cannot spell, and every arm below would read an
+// empty model set.
 //
-// agent.model is a lifted key (R1, D3237), and the arms therefore move the
-// fixture's base image to l8Since, the release that stops reading it: a
-// repository's own model on an older image is L8's own refusal, which is not
-// the refusal these tests read.
+// agent.model is a lifted key (R1, D3237) and a repository's file no longer
+// decides its own (S1, config.Resolve): the pin the file writes is published as
+// the project layer the run resolves over (poolFixture, publishFilePins), which
+// is where a launch reads a repository's models now. The file keeps the key it
+// wrote, and the arms move the fixture's base image to l8Since, the release
+// where the runner honours it: a repository's own model on an older image is
+// L8's own refusal, which is not the refusal these tests read.
 const poolModelRepoYAML = `version: 1
 project: aurora
 git:
@@ -73,6 +76,7 @@ workflows:
 func poolFixture(t *testing.T, table string) *projectJobFixture {
 	t.Helper()
 	f := newCascadeProjectJobFixture(t, poolModelRepoYAML)
+	projectJobCheckoutYAML(t, publishFilePins(t, f.cloudFixture, poolModelRepoYAML))
 	f.rewriteConfig(t, "fugaro-base/fugaro-base:"+nodeRelease, "fugaro-base/fugaro-base:"+l8Since)
 	f.appendConfig(t, table)
 	f.appendConfig(t, "credentials_service:\n  url: "+credentialsServiceFixtureURL+"\n")

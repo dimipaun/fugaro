@@ -12,11 +12,13 @@ package cli
 // release behind still names (marked and kept alive, and its state row removed
 // all the same — the plan produces no container for it any more, and the
 // container's life is the job's), a copied copy the installation's OWN
-// configuration still plans (untouched: the release did not drop it here), a
-// project copy of a name nobody copied (untouched: a project_secret whose owner
-// emptied its allow-list has exactly this shape from the configuration's side),
-// and the record itself, which is what drives the whole step and is not this
-// step's to change.
+// configuration still plans (untouched: the release did not drop it here —
+// team-a-api-key is a reserved project secret, so the installation derives its
+// container whatever the workflow-secret class does), a project copy of a name
+// nobody copied (untouched: a project_secret whose owner emptied its
+// allow-list has exactly this shape from the configuration's side), and the
+// record itself, which is what drives the whole step and is not this step's to
+// change.
 //
 // Both tests pin the release-level switch the whole step hangs on
 // (infra.ProjectCopiesDropped): with it off — every release before IS6 — none
@@ -54,21 +56,25 @@ const retireCopiesYAML = "version: 1\nproject: aurora\ngit: { provider: github }
 // left holds three names whose value is in the fugaro_p_<name> grammar, the
 // module's project-wide container exists for four and the state manages all
 // four, a deployed job still mounts one of the three, and the installation's
-// own configuration plans one of them again.
+// own configuration plans one of them again (team-a-api-key, the reserved
+// project secret whose container projectSecretContainers still makes
+// eligible).
 func retiredCopiesRig(t *testing.T) (r *convergeRig, db creds.DB, goneID, keptID, plannedID string) {
 	t.Helper()
 	r = newConvergeRigYAML(t, v7Node(), retireCopiesYAML)
-	// The installation's own local config, which is what makes planned-token
-	// the name a run leaves alone: the block is operator-local, so this
-	// operator still derives the container for the name and the release
-	// dropped nothing for them. registerInstallation copies the file the rig
-	// appends to into the project file the update door reads.
-	r.appendConfig(t, "workflow_secrets:\n  planned-token: { allow_data_to: [acme/app] }\n")
+	// The installation's own local config, which is what makes team-a-api-key
+	// the name a run leaves alone: a model provider's key is one of the
+	// project-wide containers projectSecretContainers derives whatever the
+	// workflow-secret class does, so the release dropped nothing for this
+	// operator (IS6 takes that class off the function and leaves providers
+	// alone). registerInstallation copies the file the rig appends to into the
+	// project file the update door reads.
+	r.appendConfig(t, "providers:\n  team-a:\n    kind: anthropic-compat\n    base_url: https://openrouter.invalid/api\n    auth: bearer\n    secret: team-a-api-key\n    models: [\"deepseek/*\"]\n")
 	registerInstallation(t, r.initRig)
 
 	// The grammar: the names a copy may be retired for, with the marker the
 	// write path puts on a workflow's own value (G2) and one enabled version.
-	copied := []string{"gone-token", "kept-token", "planned-token"}
+	copied := []string{"gone-token", "kept-token", "team-a-api-key"}
 	for _, name := range copied {
 		id, err := secretname.Project(name)
 		if err != nil {
@@ -97,11 +103,11 @@ func retiredCopiesRig(t *testing.T) (r *convergeRig, db creds.DB, goneID, keptID
 	// beside one resource of the root that has nothing to do with any of it.
 	goneID = r.seedProjectKey(t, "gone-token")
 	keptID = r.seedProjectKey(t, "kept-token")
-	plannedID = r.seedProjectKey(t, "planned-token")
+	plannedID = r.seedProjectKey(t, "team-a-api-key")
 	r.seedProjectKey(t, "uncopied-token")
 	goneAddr := `module.installation.google_secret_manager_secret.project["gone-token"]`
 	keptAddr := `module.installation.google_secret_manager_secret.project["kept-token"]`
-	plannedAddr := `module.installation.google_secret_manager_secret.project["planned-token"]`
+	plannedAddr := `module.installation.google_secret_manager_secret.project["team-a-api-key"]`
 	uncopiedAddr := `module.installation.google_secret_manager_secret.project["uncopied-token"]`
 	coordinator := "module.installation.google_cloud_run_v2_job.coordinator[0]"
 	stateDoc := func(addrs ...string) string {
@@ -150,8 +156,9 @@ func dropProjectCopies(t *testing.T, dropped bool) {
 // `fugaro update`, at the release that no longer derives the project-wide
 // containers, leaves the copies D3325 retires gone, the copy a deployed job
 // still names marked retired and alive, the copy its own configuration still
-// plans exactly as it was, and Terraform's state free of the instances the plan
-// no longer produces.
+// plans — team-a-api-key, eligible as the reserved project secret it is —
+// exactly as it was, and Terraform's state free of the instances the plan no
+// longer produces.
 func TestUpdateRetiresTheProjectCopiesItCopied(t *testing.T) {
 	r, db, goneID, keptID, plannedID := retiredCopiesRig(t)
 	dropProjectCopies(t, true)
@@ -178,7 +185,7 @@ func TestUpdateRetiresTheProjectCopiesItCopied(t *testing.T) {
 	}
 	// The name nobody copied keeps its container, its labels and its value; so
 	// does the one the installation's own configuration still plans.
-	for id, name := range map[string]string{uncopiedID: "uncopied-token", plannedID: "planned-token"} {
+	for id, name := range map[string]string{uncopiedID: "uncopied-token", plannedID: "team-a-api-key"} {
 		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: initProjectName, gcp.LabelSecret: name}
 		if got := r.sm.Labels(id); !maps.Equal(got, want) {
 			t.Errorf("the %s copy carries %v; want %v", name, got, want)
@@ -219,7 +226,7 @@ func TestUpdateRetiresTheProjectCopiesItCopied(t *testing.T) {
 	}
 	for _, c := range removed {
 		for _, a := range c {
-			if strings.Contains(a, "uncopied-token") || strings.Contains(a, "planned-token") || strings.Contains(a, "coordinator") {
+			if strings.Contains(a, "uncopied-token") || strings.Contains(a, "team-a-api-key") || strings.Contains(a, "coordinator") {
 				t.Errorf("the state removal named %s, which this run did not retire: %v", a, c)
 			}
 		}
@@ -312,7 +319,7 @@ func TestUpdateRetiresNothingBeforeTheReleaseDropsTheKeys(t *testing.T) {
 	for id, name := range map[string]string{
 		gcp.ProjectSecretID(initProjectName, "gone-token"):     "gone-token",
 		gcp.ProjectSecretID(initProjectName, "kept-token"):     "kept-token",
-		gcp.ProjectSecretID(initProjectName, "planned-token"):  "planned-token",
+		gcp.ProjectSecretID(initProjectName, "team-a-api-key"): "team-a-api-key",
 		gcp.ProjectSecretID(initProjectName, "uncopied-token"): "uncopied-token",
 	} {
 		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: initProjectName, gcp.LabelSecret: name}

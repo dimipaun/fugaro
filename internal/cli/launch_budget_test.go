@@ -1611,9 +1611,16 @@ workflows:
 // and the row on the current release, which reaches the backend, holds the
 // other end: the same repository, on an image this gate is old for, is
 // launched.
+//
+// Every row that admits an image is on this release's own base (vaultNameSince,
+// the release this flip ships in), because the fetch's own release is no longer
+// enough for this repository: the by-name half of the gate refuses a 0.26.0
+// image too (IS6, TestLaunchRefusesImageBelowNameFetch), and a row left at
+// releasePolicy would be reading that sentence rather than the one it is
+// about.
 func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
 	const old = "ghcr.io/dimipaun/fugaro-base:0.25.0"
-	const atFetch = "ghcr.io/dimipaun/fugaro-base:" + vaultSince
+	const atName = "ghcr.io/dimipaun/fugaro-base:" + vaultNameSince
 	for _, tc := range []struct {
 		name    string
 		yaml    string
@@ -1627,9 +1634,8 @@ func TestLaunchRefusesAVaultRunOnAnOldImage(t *testing.T) {
 		{"the workflow declares no secret", apiKeyLaunchYAML, old, proxiedBlock, "enforce", true, false},
 		{"the repository's own switch is off", vaultLaunchYAML, old, proxiedBlock, "enforce", false, false},
 		{"the installation carries no credentials service", vaultLaunchYAML, old, "", "enforce", true, false},
-		{"the published node still says the removed budget mode", vaultLaunchYAML, releasePolicy, proxiedBlock, "off", true, false},
-		{"the job image is at the fetch's release", vaultLaunchYAML, atFetch, proxiedBlock, "enforce", true, false},
-		{"the job image is the current release", vaultLaunchYAML, releasePolicy, proxiedBlock, "enforce", true, false},
+		{"the published node still says the removed budget mode", vaultLaunchYAML, atName, proxiedBlock, "off", true, false},
+		{"the job image is the current release", vaultLaunchYAML, atName, proxiedBlock, "enforce", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")

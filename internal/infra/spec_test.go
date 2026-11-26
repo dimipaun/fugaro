@@ -2329,19 +2329,31 @@ func TestProjectSecretContainers(t *testing.T) {
 	}
 }
 
-// TestProjectSecretContainerIsDerivedFromTheEntry: the plan creates the
-// project container for a workflow_secrets entry exactly as it does for a
-// project_secrets one -- a non-empty allow_data_to and nothing else, D1263 --
-// so a container Terraform creates and one the store path created first (F16)
-// are the same container.
-func TestProjectSecretContainerIsDerivedFromTheEntry(t *testing.T) {
+// TestProjectSecretContainerIsNotDerivedFromTheEntry is D3324's Terraform half
+// (IS6): a workflow_secrets entry derives NO project container, whatever its
+// allow-list says. The loop that read this entry left projectSecretContainers
+// with the release that stopped creating the copy — the acceptance's
+// "modules/installation/secrets.tf creates no project copy" — and the container
+// that class has is the installation's OWN fugaro_p_<name> one: the store path
+// creates it and a run's fetch reads it there (IS5, D3325), while a name whose
+// copy the record does not mark yet keeps the live container it already has,
+// because discovery unions those in before the map reaches Terraform (N3).
+//
+// The two rows are the pair the rule that is gone used to read — a non-empty
+// allow_data_to made a container and an empty one made none (D1263) — and
+// neither makes one now. The three classes that still derive theirs are
+// TestProjectSecretContainers' subject, one test above.
+//
+// Mutation (verified, run and restored): put the workflow_secrets loop back
+// into projectSecretContainers, and the first row fails — a container the
+// migration has just retired is planned again.
+func TestProjectSecretContainerIsNotDerivedFromTheEntry(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		lc   string
-		want []string
 	}{
-		{"entry with a list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [acme/sandbox] }\n", []string{"sandbox-probe"}},
-		{"entry with an empty list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [] }\n", nil},
+		{"entry with a list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [acme/sandbox] }\n"},
+		{"entry with an empty list", "workflow_secrets:\n  sandbox-probe: { allow_data_to: [] }\n"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
@@ -2349,12 +2361,8 @@ func TestProjectSecretContainerIsDerivedFromTheEntry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := map[string]string{}
-			for _, logical := range tt.want {
-				want[logical] = gcp.ProjectSecretID(lc.Name, logical)
-			}
-			if !maps.Equal(spec.ProjectSecrets, want) {
-				t.Errorf("ProjectSecrets = %+v, want %+v", spec.ProjectSecrets, want)
+			if len(spec.ProjectSecrets) != 0 {
+				t.Errorf("ProjectSecrets = %+v, want none: a workflow secret's container is the installation's own fugaro_p_<name> copy and never a project-secret one (D3324, IS6)", spec.ProjectSecrets)
 			}
 		})
 	}

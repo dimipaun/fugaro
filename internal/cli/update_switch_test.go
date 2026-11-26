@@ -134,22 +134,30 @@ func TestAnOAuthInstallationStillLaunchesAfterUpdateAlone(t *testing.T) {
 }
 
 // TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate: the auth is read from
-// the document the RUN will read and never from a copy stored when the record
-// was written, so a repository that switches to the cascade — or away from it —
-// is judged by the file it has now.
+// the document the RUN will read and never from a copy stored when a record was
+// written, so a repository an owner edits is judged by the file it has now.
 //
 // It matters because `fugaro update` is the whole upgrade (CLAUDE.md's HARD
 // RULE): an installation whose owner edits agent.auth must not need a second
-// command before the change is honoured. One fixture, one local config and one
-// record, two launches: the first on a checkout of the cascade, the second on a
-// checkout of the same repository with agent.auth: vertex, the one auth the
-// service does not serve. Nothing between them writes the config.
+// command before the change is honoured. One fixture, one local config and two
+// launches of the same repository: the first on a checkout of the cascade, the
+// second on a checkout of the same file with agent.auth: vertex. Nothing
+// between them writes the config.
 //
-// Mutation (verified, run and restored): store agent.auth on the record at the
-// write and read it at the launch (pass the recorded auth into
-// credentialsServiceLaunchEnv's third argument instead of the checkout's), and
-// this fails on the second launch — the vertex checkout is still handed the
-// service's address.
+// The installation is one whose bundle nothing has vouched for YET — the state
+// ONE `fugaro update` leaves a fresh installation in
+// (TestAnOAuthInstallationStillLaunchesAfterUpdateAlone above) — and that is
+// what makes the two launches part company here: the switch's vouch is what a
+// `cascade` checkout's address rests on, while a `vertex` repository's is the
+// installation's own block and nothing else (D3326, pinned by IS9's
+// TestLaunchPutsAddressForVertexRepo). On an installation whose record already
+// vouches, BOTH auths are handed the address and the edit would be invisible.
+//
+// Mutation (verified, run and restored): judge the switch with an auth the
+// record was written from rather than the checkout's (pass config.AuthCascade
+// into credentialsServiceLaunchEnv's fourth argument in launchExecution), and
+// this fails on the second launch — the vertex checkout is handed nothing while
+// its own file says vertex.
 func TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
@@ -164,21 +172,19 @@ func TestEditingTheAuthModeTakesEffectWithoutAnotherUpdate(t *testing.T) {
 		}
 		return withoutServicesStamp(t, rec.env)
 	}
-	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	before := readFileString(t, os.Getenv("FUGARO_CONFIG"))
 
-	on := launch(cascadeLaunchYAML, "20261107-100000-ca5c")
-	if want := envCredentialsServiceURL + "=" + launchCredsURL; len(on) != 1 || on[0] != want {
-		t.Fatalf("the cascade checkout launched with %v, want [%s]: the fixture is the switch on, or the second launch below says nothing", on, want)
+	unvouched := launch(cascadeLaunchYAML, "20261107-100000-ca5c")
+	if len(unvouched) != 0 {
+		t.Fatalf("the cascade checkout launched with %v, want none: this installation's record vouches for no credential yet, so the first launch is the one the edit below has to change", unvouched)
 	}
 	vertex := strings.Replace(cascadeLaunchYAML, "auth: cascade", "auth: vertex", 1)
-	off := launch(vertex, "20261107-100000-0a5c")
-	for _, kv := range off {
-		if strings.HasPrefix(kv, envCredentialsServiceURL+"=") {
-			t.Errorf("after the repository's fugaro.yaml was edited to agent.auth: vertex, the launch carried %q: the auth the switch is judged with is the one the run will read from that file — the service serves no vertex runs — so an owner's edit takes effect without another update", kv)
-		}
+	edited := launch(vertex, "20261107-100000-0a5c")
+	if want := envCredentialsServiceURL + "=" + launchCredsURL; len(edited) != 1 || edited[0] != want {
+		t.Errorf("after the repository's fugaro.yaml was edited to agent.auth: vertex, the launch carried %v, want [%s]: the auth the switch is judged with is the one the run will read from that file, so an owner's edit takes effect without another update — a launch that judged the auth it was written with would hand a vertex repository the switch's held-off answer", edited, want)
 	}
-	if off := readFileString(t, os.Getenv("FUGARO_CONFIG")); !strings.Contains(off, "credentials_service_ready: true") {
-		t.Errorf("the local config no longer carries the record the fixture wrote, so the second launch's answer is not the auth's:\n%s", off)
+	if after := readFileString(t, os.Getenv("FUGARO_CONFIG")); after != before {
+		t.Errorf("the local config changed between the two launches, so the second launch's answer is not the file's alone:\n%s", after)
 	}
 }
 
