@@ -520,7 +520,13 @@ def mode_judge(args):
         return "", "the digest %s resolves to was not read (gcloud artifacts docker images describe)" % ref
 
     def short(d):
-        return "<none>" if not d else d.split(":")[-1][:12]
+        """The digest as it was read: the acceptance is the image digest the
+        execution runs and the one its job deploys, and a truncated one is
+        neither a thing to compare nor a thing to paste into a report."""
+        if not d:
+            return "<none>"
+        m = DIGEST.search(d)
+        return m.group(1) if m else d.split(":")[-1][:12]
 
     for name in sorted(own):
         e = own[name]
