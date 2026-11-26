@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The per-level hand-back in the account a run publishes
@@ -102,6 +104,142 @@ func (r *run) handBackText() (string, bool) {
 		return "", false
 	}
 	return agent.Redact(string(data), r.secretList()), true
+}
+
+// writeGateHandBack writes the hand-back a first run owes when the check gate's
+// autofix takes implement's place: the gate commits the change itself, no coder
+// stage runs, and readiness would otherwise refuse every such run for a file no
+// agent could have written (the owner's ruling of 2026-11-26, LV5.1).
+//
+// It is the run's own account and not an agent's, and it goes to pr.md — the
+// file a first run's hand-back is read from (handBackText) and the file the
+// pull request's title and body come from (rawPRText) — so the pull request says
+// what the gate changed and the readiness rule has the file it asks for. Every
+// section is written, not only the ones the level carries right now: the level
+// is resolved again at finalize from the paths the run changed (D22), so a run
+// whose autofix reached an area of a higher level would otherwise owe a section
+// this file left out. handBackBlock publishes the level's own row alone, so a
+// section its level does not carry costs the reader nothing.
+//
+// The text it wrote and the commit it was written on are kept (gateHandBack,
+// gateHandBackSHA): this account is written before the review loop, and the
+// review loop's fix rounds commit on top of the autofix, which the account
+// would still call the whole of the change and hand back a revert plan that
+// leaves those commits on the branch. refreshGateHandBack rewrites it at
+// finalize, where every commit is made.
+//
+// A failure to write is the caller's to report: an absent file is the draft
+// every such run was before this, never a run failed over its own account.
+func (r *run) writeGateHandBack(ctx context.Context) error {
+	text, sha, err := r.gateHandBackText(ctx)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(r.d.StateDir, prFile)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|oNoFollow, 0o644)
+	if err != nil {
+		return fmt.Errorf("writing the check gate's hand-back: %w", err)
+	}
+	if _, err := f.WriteString(text); err != nil {
+		f.Close()
+		return fmt.Errorf("writing the check gate's hand-back: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("writing the check gate's hand-back: %w", err)
+	}
+	// The redacted text is what a reader of the file gets back (handBackText),
+	// which is what refreshGateHandBack compares against to tell this runner's
+	// own file from an agent's.
+	r.gateHandBack, r.gateHandBackSHA = agent.Redact(text, r.secretList()), sha
+	return nil
+}
+
+// refreshGateHandBack rewrites the check gate's account when the branch has
+// moved past the autofix commit it was written on (LV5.1): a review round's fix,
+// or the leftover commit finalize makes, lands on top of the autofix, and the
+// file would otherwise still call the autofix the whole of the change and hand
+// the reader a revert plan that leaves the later commits on the branch.
+// Readiness accepts the file either way — it is there and it carries the
+// level's sections — so a stale account is published as it stands.
+//
+// The file is rewritten only while it is still the text this runner wrote: a
+// fix round runs with the coder's own instructions, which name pr.md, so an
+// agent may have written its own account on this path, and that one is the
+// agent's to hand back.
+func (r *run) refreshGateHandBack(ctx context.Context) error {
+	if r.gateHandBackSHA == "" {
+		return nil
+	}
+	if text, ok := r.handBackText(); !ok || text != r.gateHandBack {
+		return nil
+	}
+	sha, err := r.repo.HeadSHA(ctx)
+	if err != nil {
+		return err
+	}
+	if sha == r.gateHandBackSHA {
+		return nil
+	}
+	return r.writeGateHandBack(ctx)
+}
+
+// gateHandBackText is that account: the run's own title line, which is what the
+// fallback body opens with (rawPRText), and one entry under each of the five
+// sections an agent may write, each stating what the gate's autofix changed and
+// nothing the runner does not know — the checks that passed on it are the ones
+// the recipe named.
+//
+// It answers with the commit it describes as well: the head the run is on when
+// it is written, which is what refreshes are judged against.
+func (r *run) gateHandBackText(ctx context.Context) (string, string, error) {
+	sha, err := r.repo.HeadSHA(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	short := shortGitHead(sha)
+	// autofix is the commit the gate's own autofix is, and later says whether
+	// the branch has moved past it: this run wrote the file before the review
+	// loop, so a head other than the one recorded is a fix round's (or the
+	// leftover commit's) on top of the autofix — not an autofix that never
+	// happened.
+	autofix, later := short, ""
+	if r.gateHandBackSHA != "" && sha != r.gateHandBackSHA {
+		autofix = shortGitHead(r.gateHandBackSHA)
+		later = fmt.Sprintf("; no implement stage ran, and the run committed more on top of it, up to `%s`", short)
+	}
+	subject := "the check gate's autofix"
+	if later != "" {
+		subject += " and the commits the run made after it"
+	}
+	checks := make([]string, 0, len(r.gateSteps))
+	for _, s := range r.gateSteps {
+		checks = append(checks, "`commands."+string(s.Command)+"`")
+	}
+	// The range of the run's own commits, from the commit it was cut from
+	// (workBase) to the head it publishes: what reverting it undoes, whatever
+	// the run committed after the autofix.
+	from := r.workBase()
+	if validGitHead(from) {
+		from = shortGitHead(from)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", r.titleLine())
+	fmt.Fprintf(&b, "Opened by Fugaro run `%s`.\n\n", task.ShortRun(r.rec.RunID))
+	para := func(head string, entries ...string) {
+		b.WriteString("## " + head + "\n\n")
+		for _, e := range entries {
+			b.WriteString("- " + e + "\n")
+		}
+		b.WriteString("\n")
+	}
+	para(handBackDeferred, "nothing: the whole of the change is "+subject)
+	para(handBackOpenRisks, fmt.Sprintf("none known: the repository's own checks passed on the autofix commit `%s`", autofix))
+	para(handBackVerification, fmt.Sprintf(
+		"the check gate's autofix (`commands.fix`) changed the branch and %s passed on the autofix commit `%s`%s",
+		strings.Join(checks, ", "), autofix, later))
+	para(handBackRevertPlan, fmt.Sprintf("revert every commit the run made: `git revert %s..%s` (`%s` is where the run started)", from, short, from))
+	para(handBackMorningNote, "what changed: "+subject+"; nothing else is known to need a fix")
+	return b.String(), sha, nil
 }
 
 // handBackFile is the file this run's hand-back is written in, which the block
