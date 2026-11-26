@@ -69,7 +69,7 @@ var prVocabularyCopies = []struct {
 		"**ready** (no run is going, the pull request is not a draft, and the last run that opened or followed it ended with the outcome `ready`",
 		"an independent review job records the pull request too, and its own outcome `reviewed` changes nothing",
 		"so a pull request a review has since read stays ready",
-		"**stalled** (it had a run, no run is going and it is not ready: the outcome `draft`",
+		"**stalled** (it had a run, no run is going, no pause stands and it is not ready: the outcome `draft`",
 		"a pull request on a host with no drafts, an ordinary one it marks `[DRAFT]` in its title that can look ready",
 		"or a ready one a person turned back into a draft",
 		"**orphan** (no run ever produced or follows it: a person's pull request, or one whose run records are gone)",
@@ -91,7 +91,7 @@ var prVocabularyCopies = []struct {
 		"**ready** when no run is going, it is not a draft, and the last run that opened or followed it ended with the outcome `ready`",
 		"a review job's own outcome `reviewed` changes nothing",
 		"so a pull request a review has since read is still ready",
-		"**stalled** when it had a run, no run is going and it is not ready — the outcome `draft`",
+		"**stalled** when it had a run, no run is going, no pause stands and it is not ready — the outcome `draft`",
 		"an ordinary pull request on a host with no drafts that marks it `[DRAFT]` in its title and can look ready",
 		"or a ready one a person turned back into a draft",
 		"**orphan** when no run ever produced or follows it",
@@ -102,7 +102,7 @@ var prVocabularyCopies = []struct {
 		"**paused** while a run of it suspended itself and the orchestrator will resume it at a named time",
 		"**ready** when the last run that opened or followed it ended with the outcome `ready`",
 		"a review job's own outcome `reviewed` changes nothing",
-		"**stalled** when a run has been on it and it is not ready (`[DRAFT]`-titled ordinary pull requests on a host with no drafts included)",
+		"**stalled** when a run has been on it, no pause stands and it is not ready (`[DRAFT]`-titled ordinary pull requests on a host with no drafts included)",
 		"**orphan** when no run produced or follows it",
 	}},
 	{"docs/status.md", []string{
@@ -110,7 +110,7 @@ var prVocabularyCopies = []struct {
 		`**live** (a run is going on it, which is what rule 3's "in a run" means)`,
 		"**paused** (a run suspended itself on it and the orchestrator will resume it at a named time",
 		"**ready** (no run is going, it is not a draft, and the last run that opened or followed it ended with the outcome `ready`, a review job's own outcome `reviewed` changing nothing)",
-		"**stalled** (it had a run, no run is going and it is not ready — the outcome `draft`, a `[DRAFT]`-titled ordinary pull request on a host with no drafts included, or a ready one a person turned back into a draft)",
+		"**stalled** (it had a run, no run is going, no pause stands and it is not ready — the outcome `draft`, a `[DRAFT]`-titled ordinary pull request on a host with no drafts included, or a ready one a person turned back into a draft)",
 		"**orphan** (no run ever produced or follows it)",
 		"Landing is an action, not a sixth state",
 		"to **land** a pull request is to merge it as-is, with the findings it still carries recorded as follow-up tasks, rather than running another fix round (the `landing` skill)",
@@ -118,10 +118,10 @@ var prVocabularyCopies = []struct {
 }
 
 // prVocabularyRetired are wordings a copy of the vocabulary may not go back to,
-// with the fact that rules each one out. All three were written, all three were
-// found wrong by the runner's own behaviour, and any one coming back means the
-// four words classify a pull request differently from the record they are read
-// from.
+// with the fact that rules each one out. Every one of them was written and every
+// one was found wrong -- three by the runner's own behaviour, three once D3195
+// named the fifth word -- and any one coming back means the words classify a
+// pull request differently from the record they are read from.
 var prVocabularyRetired = []struct {
 	phrase string
 	why    string
@@ -145,6 +145,10 @@ var prVocabularyRetired = []struct {
 	{
 		"the four words",
 		"there are five of them since D3195 added `paused`, and a copy that counts four is a copy whose reader has lost one",
+	},
+	{
+		"no run is going and it is not ready",
+		"it reads a paused pull request as stalled: a run that suspended itself on the pull request is still in flight, so the pause is decided before ready and stalled (prGroup.state), and stalled's remedy -- a follow-up run's work, or a merge as-is -- is what a standing pause forbids. Every copy says no pause stands before stalled can",
 	},
 	{
 		"non-draft whose checks the owner accepts",
