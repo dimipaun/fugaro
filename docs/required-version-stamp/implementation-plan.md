@@ -407,9 +407,9 @@ from the start.
 - Depends on: T1 (the node's shape and the schema it checks against).
 - Commit: `required-version-stamp K1: Check 900, as a script`
 - Reviewer tier: standard.
-- Owner-run: after the release that carries L1, the owner runs
-  `bash scripts/live-checks/check-900-version-stamp.sh fugaro`. If a member exists, the member runs
-  it as well. No agent runs it.
+- Owner-run: the owner ran `bash scripts/live-checks/check-900-version-stamp.sh fugaro` on
+  2026-11-26, on 0.29.5: PASS, the cold read 284 ms (U1 settled). `fugaro` has no member, so U2
+  still waits on a project that has one. No agent runs it.
 
 ### K2: Check 900 registered
 - Acceptance:
@@ -546,7 +546,7 @@ From the reserved block 900–909. Check 900 is used and 901–909 are free.
 
 | Check | What it measures | Who runs it |
 | --- | --- | --- |
-| **900** | The stamp on a real project after `update`: the node's shape and value, doctor's row, and a cold-cache read under 2 seconds (U1); run as a member, the viewer's read (U2) | The owner (and a member, where one exists), after the release that carries L1 |
+| **900** | The stamp on a real project after `update`: the node's shape and value, doctor's row, and a cold-cache read under 2 seconds (U1); run as a member, the viewer's read (U2) | The owner ran it on `fugaro` on 2026-11-26 (PASS, 0.29.5; U1 settled). A member's run (U2) waits on a project that has one |
 
 ## 7. After-deploy steps
 

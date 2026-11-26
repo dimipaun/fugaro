@@ -1,7 +1,8 @@
 # Repo-coupling audit
 
 **Status: all seven tasks approved 2026-11-23 and done with R1.** The report has its live columns
-from the owner's runs of Checks 890–892 on `fugaro` (2026-11-23). The owner ruled on B1–B19 on
+from the owner's runs of Checks 890–892 on `fugaro` (2026-11-23); Check 890 was re-run there on
+2026-11-26 with 0.29.5 and passes. The owner ruled on B1–B19 on
 2026-11-23 (D3237: thirteen kept, B4 and B18 kept tight, B3 rejected, B9, B11 and B16 lifted to the
 project), on the lift order (D3238, amended the same day) and on L5's scope (D3239). Nothing of the lift is implemented. See
 [docs/status.md](../status.md) for the current table.
