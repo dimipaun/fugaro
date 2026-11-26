@@ -11547,6 +11547,7 @@
         "internal/cli/reviewverify.go",
         "internal/cli/run.go",
         "internal/cli/update_proxy_switch.go",
+        "internal/cli/update_repos_read.go",
         "internal/cli/update_route.go",
         "internal/cli/workspace_state.go",
         "internal/cmdlog/**",
