@@ -683,6 +683,62 @@ func TestUpdatePreviousVersionConvergesToSharedJobs(t *testing.T) {
 	}
 }
 
+// inFlightNote is the update door's note about the runs in flight for this
+// world, with one run of the project in the registry: the engine's own
+// announcement, which is what the door prints before any stage writes and
+// before its own confirmation (init_stages.go).
+func (r *sharedRetireRig) inFlightNote(t *testing.T) string {
+	t.Helper()
+	r.db.Set("agents", map[string]any{
+		initProject: map[string]any{"20260101-000000-0000": map[string]any{"repo": "bitbucket/acme/sandbox"}},
+	})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetErr(&syncBuf{})
+	o := &initOptions{door: updateDoor.name}
+	run := newInitRun(cmd, o)
+	run.setProject(lc)
+	e := &initEngine{r: run, lc: lc, c: retireClients(t, r.initRig), path: r.cfg}
+	if err := e.announceRunsInFlight(t.Context()); err != nil {
+		t.Fatalf("the door's note about the runs in flight failed: %v", err)
+	}
+	return out.String()
+}
+
+// TestUpdateLeavesARunInFlightRunningOverAMigratedRoot: M2's own step under the
+// door's note about the runs in flight, which no door named before it: the
+// migration takes a repository's whole root apart — the jobs with whatever is
+// executing on them — so the note names it, one short line, rather than leaving
+// a person to find out that the update they are confirming deletes jobs.
+//
+// The line is about a retirement still owed, which is what the door can read
+// before the repository stage runs: the state object under the repository's own
+// prefix. Once the root is retired that object is gone, and the note goes quiet
+// for the repository rather than naming a step every later update would not
+// take.
+func TestUpdateLeavesARunInFlightRunningOverAMigratedRoot(t *testing.T) {
+	const line = "retirement: takes a migrated repository's root apart; a job with a run waits"
+	r := newSharedRetireRig(t, sharedRetireOpts{proxy: true, forget: true})
+	if out := r.inFlightNote(t); !strings.Contains(out, line) {
+		t.Errorf("the door's note does not name M2's step over a migrated root that is still deployed:\n%s", out)
+	}
+	if out, err := r.update(t); err != nil {
+		t.Fatalf("the update did not retire the root: %v\n%s", err, out)
+	}
+	if names := r.stateObjects(t); len(names) != 0 {
+		t.Fatalf("the retired repository still holds %v in gs://%s, so this test cannot tell a line about a retirement owed from one about a root that is gone", names, initStateBucket)
+	}
+	if out := r.inFlightNote(t); strings.Contains(out, "retirement: takes a migrated repository's root apart") {
+		t.Errorf("the note names a retirement that is no longer owed, on every update of the project:\n%s", out)
+	}
+}
+
 // callsHave is whether the run made a terraform subcommand: the same reading
 // ran does, over a slice of calls a test has already taken.
 func callsHave(calls [][]string, sub string) bool {
