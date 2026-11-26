@@ -4303,9 +4303,11 @@ new flags is unchanged, and its one `--json` document is unchanged too**: the
 feed takes that document's place on stdout, the run's progress stays on stderr
 where `--json` already puts it, and the final exit code is the run's own.
 
-**`--answers-file -` is the wizard's other half.** The five questions
-(`gcp_project`, `region`, `name`, `rigor`, `bake` — `setupQuestions`, and the
-bake switch is `--bake-repos` beside the file) arrive as one JSON document with
+**`--answers-file -` is the wizard's other half.** The questions
+(`gcp_project`, `region`, `name`, `rigor`, `budget`, `bake_repos` —
+`setupQuestions`, and the bake switch is `--bake-repos` beside the file; the
+place question contributes `location` and `region` and the amount contributes
+`budget` and `budget_currency`, each optional) arrive as one JSON document with
 its own `version`; `-` means **stdin**, and the console passes the dash and never
 a path — the document reaches the child on its stdin as bytes main holds in
 memory, so no file exists for another process of the same user to change between

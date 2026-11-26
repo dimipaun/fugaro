@@ -1884,7 +1884,7 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		"recipes ls --json",
 		// The first-run wizard's plan and its apply (the same plan's AL, the
 		// `setup.plan` and `setup.apply` operations, ST1, ST2 and SW3a): the
-		// converge `setup` drives, whose five answers arrive as one JSON
+		// converge `setup` drives, whose answers arrive as one JSON
 		// document on the child's standard input -- `--answers-file -`, never a
 		// path, so no file exists for another process of the same user to change
 		// between main's validation and the CLI's read, and no word of the argv
