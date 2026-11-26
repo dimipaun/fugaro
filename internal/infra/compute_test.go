@@ -17,6 +17,7 @@ import (
 	"time"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // The compute root's contract (design compute-backend §8.1 task 6). The root
@@ -494,6 +495,91 @@ func TestJobRunAccountsReadsTheJobMark(t *testing.T) {
 	// could do neither of the things a run must.
 	if slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, ReaperAccountID) }) {
 		t.Errorf("the reaper's own account was returned as a run account: %q", got)
+	}
+}
+
+// TestTheRootIsFedTheProjectJobAccounts: the compute root's run_accounts is
+// what gives a launcher actAs on the accounts it is fed, so a shared project
+// job's account has to be one of them — the identity a project job's workflow
+// runs as on Batch is that job's own account (D3103), and a launch naming an
+// account the root never saw is refused by IAM before anything starts (D3105).
+//
+// The two classes are listed APART and fed TOGETHER. Apart, because the block's
+// single account is picked from the per-repository ones alone (internal/cli's
+// batchBlockAccount): a listing that answered with both would make the block
+// carry whichever account sorted first, and a project job's account is not a
+// repository's to run under.
+//
+// The display names come from the gcp functions that write them rather than
+// being spelled out here, so a mark that moves in that package fails this test
+// instead of leaving every project job account unfound in a live project.
+func TestTheRootIsFedTheProjectJobAccounts(t *testing.T) {
+	f := newCloud(t)
+	f.crm.AddProject("proj-1234", testProjectNumber)
+	repo := "fugaro-acme-web@proj-1234.iam.gserviceaccount.com"
+	repoM4 := "fugaro-acme-web-m4@proj-1234.iam.gserviceaccount.com"
+	projectJob := "fugaro-acme-shared@proj-1234.iam.gserviceaccount.com"
+	f.iam.AddServiceAccount("proj-1234", repo, gcp.JobSADisplayName("acme/web", "sandbox"))
+	f.iam.AddServiceAccount("proj-1234", repoM4, gcp.LegacyJobSADisplayName("acme/web", "sandbox"))
+	f.iam.AddServiceAccount("proj-1234", projectJob, gcp.ProjectSADisplayName("acme", "github", "sandbox"))
+	f.iam.AddServiceAccount("proj-1234", "fugaro-reaper@proj-1234.iam.gserviceaccount.com", "Fugaro reaper")
+	f.iam.AddServiceAccount("proj-1234", "123456789012-compute@developer.gserviceaccount.com", "Compute Engine default service account")
+
+	ctx := context.Background()
+	perRepo, err := JobRunAccounts(ctx, f.c, "proj-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{"serviceAccount:" + repoM4, "serviceAccount:" + repo}
+	if !slices.Equal(perRepo, got) {
+		t.Errorf("JobRunAccounts = %q, want the two per-repository accounts %q: the block's single account is picked from this list, so a shared project job's account among them is a block that names the wrong identity", perRepo, got)
+	}
+	projectJobs, err := ProjectJobRunAccounts(ctx, f.c, "proj-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"serviceAccount:" + projectJob}
+	if !slices.Equal(projectJobs, want) {
+		t.Errorf("ProjectJobRunAccounts = %q, want %q", projectJobs, want)
+	}
+
+	// Fed together, and what the root is fed is what reaches its tfvars: the
+	// apply's grant loop (modules/compute/iam.tf) is over var.run_accounts.
+	fed := RunAccounts(perRepo, projectJobs)
+	want = []string{"serviceAccount:" + projectJob, "serviceAccount:" + repoM4, "serviceAccount:" + repo}
+	if !slices.Equal(fed, want) {
+		t.Errorf("RunAccounts = %q, want the per-repository accounts beside the project job's %q", fed, want)
+	}
+	spec := computeSpec()
+	spec.RunAccounts = fed
+	b, err := ComputeVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vars map[string]any
+	if err := json.Unmarshal(b, &vars); err != nil {
+		t.Fatalf("the compute root's tfvars: %v", err)
+	}
+	raw, ok := vars["run_accounts"].([]any)
+	if !ok {
+		t.Fatalf("the compute root's tfvars carry no run_accounts list: %v", vars["run_accounts"])
+	}
+	var tfvars []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("run_accounts carries %T, want a member string", v)
+		}
+		tfvars = append(tfvars, s)
+	}
+	if !slices.Equal(tfvars, want) {
+		t.Errorf("the root is fed run_accounts = %q, want %q", tfvars, want)
+	}
+	// A union with a duplicate is not a wider grant, and the order is the
+	// listing's rather than the caller's: two callers that pass the same
+	// account (a project job that is also a repository's) feed it once.
+	if got := RunAccounts([]string{"serviceAccount:b", "serviceAccount:a"}, []string{"serviceAccount:a"}); !slices.Equal(got, []string{"serviceAccount:a", "serviceAccount:b"}) {
+		t.Errorf("RunAccounts did not sort and dedupe its two halves: %q", got)
 	}
 }
 

@@ -166,12 +166,19 @@ func runReviewLaunch(cmd *cobra.Command, o *reviewOptions) error {
 	if err != nil {
 		return err
 	}
-	rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), reviewOnlyRecipe, time.Now(), false)
+	// The name resolves the launch's own way (resolveLaunchRecipe): the
+	// project store's copy of it first, then the catalog, and the checkout's
+	// .fugaro/recipes/ on no path (D3237). Reading the folder first, which is
+	// what this did, wrote a task naming a repository recipe: the release-A
+	// runner refuses that shape at bootstrap (D3304), after the run was paid
+	// for.
+	provider := env.repoProvider(repo, checkoutOf(ctx, repo)())
+	rr, err := resolveLaunchRecipe(ctx, env, provider, repo, reviewOnlyRecipe, time.Now())
 	if err != nil {
 		return err
 	}
 	if rr.Recipe.Mode != recipe.ModeReview {
-		return userErr("the recipe %q this review resolves is not a mode: review recipe, so there is no review to launch: it reviews nothing and never pushes. A project, agent or repository recipe of that name shadows the catalog's; rename it, or review the pull request with fugaro run --pr %d --recipe %s", oneLineCLI(rr.Name), o.pr, reviewOnlyRecipe)
+		return userErr("the recipe %q this review resolves is not a mode: review recipe, so there is no review to launch: it reviews nothing and never pushes. A project or agent recipe of that name shadows the catalog's; rename it, or review the pull request with fugaro run --pr %d --recipe %s", oneLineCLI(rr.Name), o.pr, reviewOnlyRecipe)
 	}
 	o2 := &runOptions{repo: repo, pr: []int{o.pr}, token: o.token, asJSON: o.asJSON,
 		codeOnly: o.codeOnly, specFile: o.specFile}

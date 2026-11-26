@@ -1046,13 +1046,17 @@ func TestMobileSessionRTDBDevicesReadsAndWritesTheNode(t *testing.T) {
 }
 
 // TestMobileSessionPolicyCarriesTheProjectsSwitches: the session policy is the
-// published policy's mobile members, and the compaction threshold is left 0
-// because the member behind it is Z2's.
+// published policy's mobile members, the compaction threshold of Z2's own key
+// included (D2789) — the phone's automatic compaction fires on it, and a node
+// that carries none answers the contract's zero.
 func TestMobileSessionPolicyCarriesTheProjectsSwitches(t *testing.T) {
-	p := &projectpolicy.Policy{Mobile: &projectpolicy.Mobile{
-		CostlyModes:       []rigor.Rigor{rigor.Critical, rigor.Hotfix},
-		BiometricOnCostly: boolPtrMobile(true),
-	}}
+	p := &projectpolicy.Policy{
+		Mobile: &projectpolicy.Mobile{
+			CostlyModes:       []rigor.Rigor{rigor.Critical, rigor.Hotfix},
+			BiometricOnCostly: boolPtrMobile(true),
+		},
+		MobileCompactionThreshold: intPtr(40),
+	}
 	got := mobileSessionPolicy(p)
 	if len(got.CostlyModes) != 2 || got.CostlyModes[0] != string(rigor.Critical) || got.CostlyModes[1] != string(rigor.Hotfix) {
 		t.Fatalf("CostlyModes = %v, want the project's list", got.CostlyModes)
@@ -1060,7 +1064,12 @@ func TestMobileSessionPolicyCarriesTheProjectsSwitches(t *testing.T) {
 	if !got.BiometricOnCostly {
 		t.Fatal("BiometricOnCostly is false though the project wrote it")
 	}
-	if got.CompactThresholdPercent != 0 {
-		t.Fatalf("CompactThresholdPercent = %d, want 0 until Z2 defines the member", got.CompactThresholdPercent)
+	if got.CompactThresholdPercent != 40 {
+		t.Fatalf("CompactThresholdPercent = %d, want the node's 40: the phone's automatic compaction fires on the project's own threshold", got.CompactThresholdPercent)
+	}
+	// A project that wrote no threshold, which is the whole of "no automatic
+	// compaction" (projectpolicy.DefaultMobileCompactionThreshold).
+	if none := mobileSessionPolicy(&projectpolicy.Policy{Version: projectpolicy.Version}); none.CompactThresholdPercent != 0 {
+		t.Fatalf("CompactThresholdPercent = %d for a node that carries no key, want 0", none.CompactThresholdPercent)
 	}
 }

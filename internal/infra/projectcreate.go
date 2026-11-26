@@ -90,6 +90,7 @@ import (
 	firebase "google.golang.org/api/firebase/v1beta1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
+	serviceusage "google.golang.org/api/serviceusage/v1"
 
 	"github.com/dimipaun/fugaro/internal/shellword"
 )
@@ -100,10 +101,22 @@ type ProjectClients struct {
 	CRM      *crm3.Service
 	Firebase *firebase.Service
 	Billing  *billing.APIService
+	// ServiceUsage turns on the APIs a created project is then billed through
+	// (EnableForProject); nil without its endpoint under fakes.
+	ServiceUsage *serviceusage.Service
 }
 
 // ProjectEndpoints override the APIs' roots, so fakes can stand in.
-type ProjectEndpoints struct{ ResourceManager, Firebase, Billing string }
+type ProjectEndpoints struct {
+	ResourceManager, Firebase, Billing string
+	// ServiceUsage is optional: without it (and with no_auth) there is no client.
+	ServiceUsage string
+	// QuotaProject is the project every call is billed to, named by the caller
+	// (an installation's own project). Empty names none: the credentials' own
+	// quota project then applies, which only a call that has no project of its
+	// own yet (the creation of one) may leave to it.
+	QuotaProject string
+}
 
 // NewProjectClients connects with the user's credentials (noAuth: none, for
 // fakes, which then need every endpoint).
@@ -122,6 +135,8 @@ func NewProjectClients(ctx context.Context, e ProjectEndpoints, noAuth bool, hc 
 		}
 		if noAuth {
 			out = append(out, option.WithoutAuthentication())
+		} else if e.QuotaProject != "" {
+			out = append(out, option.WithQuotaProject(e.QuotaProject))
 		}
 		if hc != nil {
 			out = append(out, option.WithHTTPClient(hc))
@@ -139,7 +154,34 @@ func NewProjectClients(ctx context.Context, e ProjectEndpoints, noAuth bool, hc 
 	if c.Billing, err = billing.NewService(ctx, opts(e.Billing)...); err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)
 	}
+	if !noAuth || e.ServiceUsage != "" {
+		if c.ServiceUsage, err = serviceusage.NewService(ctx, opts(e.ServiceUsage)...); err != nil {
+			return nil, fmt.Errorf("connecting to Service Usage: %w", err)
+		}
+	}
 	return &c, nil
+}
+
+// ProjectBillingAPIs are the APIs the calls made on a project this run created
+// are billed through, once the project itself is their quota project.
+var ProjectBillingAPIs = []string{"cloudresourcemanager.googleapis.com", "firebase.googleapis.com", "cloudbilling.googleapis.com"}
+
+// EnableForProject turns on each of ProjectBillingAPIs in project, calling
+// done(api) after each. pc must already be billed to project. Without a
+// Service Usage client (fakes with no endpoint for it) there is nothing to call.
+func EnableForProject(ctx context.Context, pc *ProjectClients, project string, done func(api string)) error {
+	if pc.ServiceUsage == nil {
+		return nil
+	}
+	for _, api := range ProjectBillingAPIs {
+		if err := EnableService(ctx, &Clients{ServiceUsage: pc.ServiceUsage}, project, api); err != nil {
+			return err
+		}
+		if done != nil {
+			done(api)
+		}
+	}
+	return nil
 }
 
 var (

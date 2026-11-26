@@ -582,3 +582,38 @@ func initOnTTY(t *testing.T, asJSON bool) {
 		noLeak(t, v, out.String(), errOut.String(), f.displayed())
 	}
 }
+
+// The update door takes the value it read about: C1's stand-in answers
+// `fugaro update` with the working directory's checkout, and for the name the
+// node covers and this machine's config cannot store, that checkout's prompt
+// is the only step that does -- the door's own line would leave the run asking
+// itself, and `fugaro update` has always asked here (R18, R21).
+func TestUpdateAsksTheCheckoutItRead(t *testing.T) {
+	f := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, f.tty, func(o *initOptions) { o.door = updateDoor.name })
+	r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+		"claude-oauth-token": {AllowDataTo: []string{"acme/app"}},
+	}
+	readNodeFrom(r, bitbucketTokenNode(t, "bitbucket/acme/app"))
+	r.store.seedProject(r.e.lc.Name, "claude-oauth-token", tokenValue)
+	done := r.start(context.Background())
+	r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
+	lr := waitLoop(t, done)
+	if lr.err != nil || lr.res.Failed != nil {
+		t.Fatalf("%v, %+v: the update door did not ask for the token it read about (stderr %q)", lr.err, lr.res, r.errOut.String())
+	}
+	if got := stateOf(lr.res, initflow.Secrets); got != initflow.Changed {
+		t.Fatalf("state = %q, want changed: the value was taken at the prompt", got)
+	}
+	// The prompt's own decision, which is the checkout door's: the name the
+	// node makes project-wide is stored in the installation's own container.
+	if got := r.store.latestProject(r.e.lc.Name, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
+		t.Fatalf("the project's copy = %q, want the value the prompt took", got)
+	}
+	for _, l := range lr.res.Left {
+		if strings.Contains(strings.Join(l.Commands, "\n"), "fugaro update") {
+			t.Fatalf("the run left its own door for a value it took: %v", l.Commands)
+		}
+	}
+	noLeak(t, "bb-secret-value-EXAMPLE", tokenValue, resultJSON(t, lr.res), r.out.String(), r.errOut.String())
+}

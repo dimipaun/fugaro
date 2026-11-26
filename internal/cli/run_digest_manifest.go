@@ -61,12 +61,11 @@ var digestManifestMax = task.MaxDigestRuns
 //
 // rcp is the recipe the launch resolved — nil for the catalog default — and
 // root the checkout it resolved that recipe from, "" when there is none. A
-// repository recipe carries its name alone, so its file is read from root the
-// way refuseFollowUpRepoRecipe reads it; a recipe the launcher cannot read
-// there is not a report run, because the runner reads it at the task's own
-// base and refuses a bad one itself, and a manifest under a recipe that is
-// not a report recipe is read by nothing (the digest step is its only
-// reader).
+// repository recipe carries its name alone, so its file is read from root when
+// there is one; a recipe the launcher cannot read there is not a report run,
+// because the runner reads it at the task's own base and refuses a bad one
+// itself, and a manifest under a recipe that is not a report recipe is read by
+// nothing (the digest step is its only reader).
 func digestManifest(ctx context.Context, env *cloudEnv, slug, root string, rcp *task.Recipe, now time.Time, warn io.Writer) ([]string, error) {
 	if !digestRecipe(root, rcp) {
 		return nil, nil

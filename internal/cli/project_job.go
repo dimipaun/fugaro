@@ -193,15 +193,30 @@ func (e *cloudEnv) launchConfigWhereTheTreeGivesNone(ctx context.Context, spec *
 	if err != nil || !found || p == nil || len(p.Profiles) == 0 {
 		return nil, nil
 	}
-	// Then the document, from the source this launch has. Where a checkout of
-	// the repository is here at all, only the second state above is left (the
-	// working tree cannot give the file, missing or unparseable) and the ref's
-	// file is read out of its objects (D909) and resolved exactly as the
-	// working tree's would have been, so the rest of the decision and every
-	// gate after it is unchanged. Where the machine holds no checkout of the
-	// repository anywhere, its own objects cannot answer and the document is
-	// read at the forge — as the operator themselves, through the
-	// installation's credentials service (source 3, spec.md §2, §5; D902).
+	return e.launchDocumentAtTheRef(ctx, spec)
+}
+
+// launchDocumentAtTheRef is the document of a launch that has no working tree
+// to give one, from the source that launch has — the read the job decision
+// above ends on, and the recipe's own reader too (chooseRecipe, run.go).
+//
+// The recipe is not the job: a project that published no profile decides no
+// job from this document, and its ref's file still carries agent.recipe, so
+// the recipe cannot be read behind the two facts that answer the job
+// (launchConfigWhereTheTreeGivesNone, D908, spec.md §7). What the two readers
+// do share is the read itself — memoized per (repo, ref) in the command's own
+// scope, so the document costs one mint however many of them ask
+// (withServiceReadCache).
+func (e *cloudEnv) launchDocumentAtTheRef(ctx context.Context, spec *task.Spec) (*config.Config, error) {
+	// Where a checkout of the repository is here at all, only the second state
+	// checkoutParse answers nil for is left (the working tree cannot give the
+	// file, missing or unparseable) and the ref's file is read out of its
+	// objects (D909) and resolved exactly as the working tree's would have
+	// been, so the rest of the decision and every gate after it is unchanged.
+	// Where the machine holds no checkout of the repository anywhere, its own
+	// objects cannot answer and the document is read at the forge — as the
+	// operator themselves, through the installation's credentials service
+	// (source 3, spec.md §2, §5; D902).
 	if root := checkoutRoot(ctx, spec.Repo); root != "" {
 		d, resolved := launchDocumentOf(ctx)
 		if !resolved {
