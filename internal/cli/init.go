@@ -2646,18 +2646,20 @@ func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []strin
 // jobsPaused is the project layer's jobs: block (R13) as the installation's
 // options take it: whether each of the project's two scheduled jobs is stopped.
 // A file this run can read gives both values — the ones the layer states, and
-// paused where it states nothing (config.Jobs' own default) — and a file it
-// cannot read gives none at all, which infra.InstallOptions reads as paused.
+// each job's own default where it states nothing (config.Jobs, D3444: the
+// reports job stopped, the catalog check running) — and a file it cannot read
+// gives none at all, which infra.InstallOptions reads as those same defaults.
 //
 // It reads the LOCAL layer file — the one the owner edits and the run's layer
 // stage publishes — because the installation stage runs before that stage and
-// this is the only copy readable without the runs bucket. Silence is paused
-// along every way of having no value: no file, a file this CLI does not read
-// (a symlink, an oversized one), a file that does not parse. An unreadable
-// file is not silently accepted as an answer — it is not an answer at all, and
-// the layer stage refuses it moments later with the message that names it —
-// while the one thing neither direction may do is start a schedule the owner
-// never asked for.
+// this is the only copy readable without the runs bucket. Having no value along
+// every other way — no file, a file this CLI does not read (a symlink, an
+// oversized one), a file that does not parse — is the defaults, not an answer
+// of its own. An unreadable file is not silently accepted as an answer — it is
+// not an answer at all, and the layer stage refuses it moments later with the
+// message that names it — and the value a schedule takes by accident may be
+// neither one: the job's own default is the figure its schedule was designed
+// around.
 //
 // The installation's own apply does not stop at that silence: where this run's
 // layer stage will not leave the local file's bytes in place — the file is not
@@ -2686,21 +2688,20 @@ func jobsPaused(lc *localcfg.Config) (*bool, *bool) {
 // local file's own bytes in place: the stage seeds a file that is not there
 // FROM that object, and re-seeds one the object has moved past (D854's stale
 // state), and it runs after the installation stage. Without this, a `fugaro
-// update` on either machine would apply the silence of a file that is not the
-// project's answer (paused) and stop a schedule the published layer has
-// started, until the next update.
+// update` on either machine would apply the defaults of a file that is not the
+// project's answer and run or stop a schedule the published layer answers
+// otherwise, until the next update.
 //
 // Which of the two files this run leaves in place is the layer stage's own
 // decision, so it is the stage's own reading that answers it here (layerPlanFor)
 // rather than a second rule that could drift from it. Every other state — the
 // file is published as it stands, or it already is the published layer —
 // settles the question by itself, whatever it says: silence in the file the
-// stage publishes is its answer, and nothing the published object says may
-// overrule it. A bucket that cannot be read, a layer this CLI does not read and
-// a spec that carries neither of the scheduled jobs all leave the spec exactly
-// as installOptions built it: paused, which is also what each module defaults
-// its own value to, and the layer stage names the read that failed a moment
-// later.
+// stage publishes is each job's own default, and nothing the published object
+// says may overrule it. A bucket that cannot be read, a layer this CLI does not
+// read and a spec that carries neither of the scheduled jobs all leave the spec
+// exactly as installOptions built it — the layer's silence, which is each job's
+// own default — and the layer stage names the read that failed a moment later.
 //
 // Both jobs are corrected together, and the read is one: jobs.catalog_check and
 // jobs.reports are two keys of one object, so a run that has to ask the bucket
