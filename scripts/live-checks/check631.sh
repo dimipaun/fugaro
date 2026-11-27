@@ -194,6 +194,10 @@ GCP_PROJECT=""
 # by the command under test at its own hidden prompt, with this check's terminal
 # as that command's stdin.
 HAVE_TTY=no
+# The settings the owner's terminal had before any command touched it (stty -g on
+# fd 5): a command that reads a value takes the echo off, and this check puts the
+# terminal back to these on its way out whatever happened to the command.
+TERMIOS_AT_START=""
 ANTHROPIC=""
 OPENROUTER=""
 POOL=""
@@ -506,10 +510,33 @@ run_at_terminal() { # run_at_terminal SECONDS KEY DIR CMD...
   shift 3
   ( trap - ERR; cd "$dir" || exit 1
     exec python3 "$SCRATCH/at_terminal.py" "$secs" "$KEY_SHAPE" "$SCRATCH/$key.out" "$SCRATCH/$key.err" "$@" ) &
-  bound_loop "$secs" "$!"
+  ACTIVE_RUNNER=$!
+  bound_loop "$secs" "$ACTIVE_RUNNER"
+  ACTIVE_RUNNER=""
   # The runner ends a command that outstayed its deadline itself, with 124, the
   # child killed by its own process group rather than by this shell.
   [ "$BOUNDED_STATUS" != 124 ] || BOUNDED_TIMED_OUT=yes
+}
+
+# ACTIVE_RUNNER is the runner of the declaration going on right now, and
+# end_active_runner is how this check ends one it is leaving behind: the command
+# reads the owner's terminal, it is in a session of its own so no signal from this
+# shell reaches it, and the runner is the process that can end it and the one that
+# holds the terminal's settings to put back. An interrupt, a signal or any other
+# way out of this check runs this before the check goes.
+ACTIVE_RUNNER=""
+end_active_runner() {
+  [ -n "$ACTIVE_RUNNER" ] || return 0
+  local pid=$ACTIVE_RUNNER i=0
+  ACTIVE_RUNNER=""
+  kill -TERM "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  return 0
 }
 
 # write_terminal_runner is the child that runs one declaration at the owner's
@@ -549,6 +576,33 @@ secs = float(sys.argv[1])
 key_shape = re.compile(sys.argv[2].encode())
 out_path, err_path = sys.argv[3], sys.argv[4]
 argv = sys.argv[5:]
+
+# The command takes the echo off fd 5, the owner's terminal, while it reads a
+# value (x/term's ReadPassword) and puts it back when that read returns. A command
+# this check ends at its bound cannot do that, and a terminal left without echo is
+# a person typing at a screen that shows nothing: the settings are taken here,
+# before the command starts, and put back on every way out of this runner.
+try:
+    TERMINAL_AT_START = termios.tcgetattr(5)
+except termios.error:
+    TERMINAL_AT_START = None
+
+
+def restore_terminal():
+    if TERMINAL_AT_START is None:
+        return
+    try:
+        # TCSANOW and not TCSAFLUSH: the owner's own input is not this runner's to
+        # throw away.
+        termios.tcsetattr(5, termios.TCSANOW, TERMINAL_AT_START)
+    except termios.error:
+        pass
+
+
+# The grace a signalled command is given before it is killed outright: it is the
+# time a command needs to put the terminal back and stop what it started, and it
+# is shorter than the two seconds the check's own bound waits on this runner.
+COMMAND_GRACE = 0.5
 
 out_master, out_slave = output_terminal()
 err_master, err_slave = output_terminal()
@@ -606,32 +660,45 @@ def relay(master):
 live = set(captures)
 deadline = time.time() + secs
 timed_out = False
-while True:
-    if live:
-        ready, _, _ = select.select(list(live), [], [], 0.2)
-    else:
-        ready = []
-        time.sleep(0.2)
-    for master in ready:
-        if not relay(master):
-            live.discard(master)
-    if child.poll() is not None:
-        break
-    if bound_signalled or time.time() > deadline:
-        timed_out = True
-        try:
-            os.killpg(os.getpgid(child.pid), signal.SIGKILL)
-        except OSError:
-            pass
-        child.wait()
-        break
-# The child is gone; drain what its terminals still hold, briefly.
-edge = time.time() + 1.0
-while live and time.time() < edge:
-    ready, _, _ = select.select(list(live), [], [], 0.1)
-    for master in ready:
-        if not relay(master):
-            live.discard(master)
+try:
+    while True:
+        if live:
+            ready, _, _ = select.select(list(live), [], [], 0.2)
+        else:
+            ready = []
+            time.sleep(0.2)
+        for master in ready:
+            if not relay(master):
+                live.discard(master)
+        if child.poll() is not None:
+            break
+        if bound_signalled or time.time() > deadline:
+            timed_out = True
+            # The command is signalled first, in the group it leads, and killed
+            # only if it outstays the grace: a command that takes its own signal
+            # puts the terminal back and stops its children, and killing it
+            # outright would leave both to this runner alone.
+            try:
+                os.killpg(os.getpgid(child.pid), signal.SIGTERM)
+                child.wait(timeout=COMMAND_GRACE)
+            except OSError:
+                pass
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+                except OSError:
+                    pass
+            child.wait()
+            break
+    # The child is gone; drain what its terminals still hold, briefly.
+    edge = time.time() + 1.0
+    while live and time.time() < edge:
+        ready, _, _ = select.select(list(live), [], [], 0.1)
+        for master in ready:
+            if not relay(master):
+                live.discard(master)
+finally:
+    restore_terminal()
 for fh in captures.values():
     fh.close()
 screen.close()
@@ -1534,6 +1601,11 @@ restore() {
 
 cleanup() {
   trap - ERR
+  # The terminal is the person's, and a declaration takes the echo off it while a
+  # value is read: whatever became of that command, the settings the terminal had
+  # are back before this check prints anything else on it (the runner puts them
+  # back too; this is the one that runs when the runner did not survive).
+  [ -z "$TERMIOS_AT_START" ] || stty "$TERMIOS_AT_START" <&5 2>/dev/null || true
   restore
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   remove_scratch
@@ -1543,6 +1615,7 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  end_active_runner
   if [ "$PREFLIGHT_MODE" = yes ]; then
     # A preflight wrote nothing and launched nothing: it prints its own lines
     # and no RESULT block.
@@ -1633,6 +1706,7 @@ on_signal() {
     owner "cleanup is running, do not press Ctrl-C again"
     return 0
   fi
+  end_active_runner
   owner "interrupted"
   exit 130
 }
@@ -1767,6 +1841,7 @@ open_terminal() {
   if { exec 5<"$TTY_DEV"; } 2>/dev/null; then
     if [ -t 5 ]; then
       HAVE_TTY=yes
+      TERMIOS_AT_START=$(stty -g <&5 2>/dev/null || true)
     else
       exec 5<&-
     fi

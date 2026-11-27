@@ -253,8 +253,26 @@ accounts_add() { # accounts_add NAME TYPE
     printf 'fugaro: declared %s\n' "$name"
     return 0
   fi
+  if [ "$mode" = add-interrupts ]; then
+    # The command's own hidden prompt, and the owner's own interrupt. The echo
+    # goes off the way the release takes it off the terminal it reads, and the pid
+    # is written before the prompt so the case can say afterwards whether this
+    # command is gone.
+    printf '%s\n' "$$" >"$FAKE_LOG_DIR/prompt.pid"
+    stty -echo
+  fi
   if [ "$mode" != add-no-prompt ]; then
     printf 'Paste the value for credential-%s-key (input hidden), then press Enter: ' "$name" >&2
+  fi
+  if [ "$mode" = add-interrupts ]; then
+    # The signal a person pressing Ctrl-C at this prompt sends the check. This
+    # command is a grandchild of the check (its parent is the runner), so the pid
+    # is walked up rather than searched for: the case signals the check that is
+    # reading this prompt and not another shard's.
+    local check_pid
+    check_pid=$(ps -o ppid= -p "$(ps -o ppid= -p "$$" 2>/dev/null | tr -d ' ')" 2>/dev/null | tr -d ' ')
+    [ -n "$check_pid" ] || printf 'fugaro: no check process was found to interrupt\n' >&2
+    kill -INT "$check_pid" 2>/dev/null || true
   fi
   # The value this read answers is typed at this declaration's own announcement.
   # At a terminal, end-of-file reads nothing at all — the terminal's other end is
@@ -269,6 +287,11 @@ accounts_add() { # accounts_add NAME TYPE
     fi
   else
     IFS= read -r value || true
+  fi
+  if [ "$mode" = add-interrupts ]; then
+    # The read returned, so the ending that ends a declaration is not what ended
+    # this one: the echo goes back, the way the release puts it back itself.
+    stty echo
   fi
   if [ "$mode" = add-reads-ahead ]; then
     # The read this case is about: the command takes its own line and then reads
@@ -603,6 +626,21 @@ need_pty() {
   return 1
 }
 
+# pty_echo DEV — what the terminal at DEV says about its echo, yes or no. The
+# terminal the declarations run at is this test's own pty, so what a command did
+# to it is still readable here after the check has gone: that is how a case says
+# the terminal was given back.
+pty_echo() {
+  python3 - "$1" <<'PY'
+import sys
+import termios
+
+with open(sys.argv[1], "rb") as handle:
+    attrs = termios.tcgetattr(handle)
+print("yes" if attrs[3] & termios.ECHO else "no")
+PY
+}
+
 FEEDER_PID=""
 FEEDER_TTY=""
 start_feeder() { # start_feeder DIR [NEEDLE VALUE]... — each value is typed once its NEEDLE is on the check's stderr
@@ -905,6 +943,31 @@ test_a_declaration_that_reads_past_its_line_does_not_take_the_other_value() {
   expect_status "$status" 0 "a declaration that reads past its line"
   expect_contains "$out" "FACT add-anthropic: PASS" "a declaration that reads past its line: the first declaration read its value"
   expect_contains "$out" "FACT add-openrouter: PASS" "a declaration that reads past its line: the second declaration still read its own"
+}
+
+# The owner's own interrupt, at the command's own hidden prompt. A declaration
+# reads the owner's terminal with the echo off, and a person interrupting has to
+# get both back: the runner is the process that can end the command (it leads a
+# session of its own, so no signal this check sends reaches it) and the one that
+# knows what the terminal looked like. The fake below stands at that prompt, takes
+# the echo off the way the release does, and sends the check the interrupt; the
+# case measures what is here once the check has gone — the command gone, the echo
+# back.
+test_an_interrupt_at_the_prompt_ends_the_command_and_puts_the_terminal_back() {
+  local dir=$work/interrupted
+  prepare "$dir"
+  need_pty || return 0
+  start_feeder "$dir"
+  run_check "$dir" FAKE_MODE=add-interrupts
+  expect_status "$status" 130 "an interrupt at the prompt"
+  local command_pid
+  command_pid=$(cat "$dir/logs/prompt.pid" 2>/dev/null || true)
+  [ -n "$command_pid" ] || fail "an interrupt at the prompt: the command never reached its prompt"
+  if [ -n "$command_pid" ] && kill -0 "$command_pid" 2>/dev/null; then
+    fail "an interrupt at the prompt: the command (pid $command_pid) is still running with the terminal held"
+  fi
+  [ "$(pty_echo "$FEEDER_TTY")" = yes ] || fail "an interrupt at the prompt: the terminal's echo is off after the check has gone"
+  stop_feeder
 }
 
 # The ending a bound asks for is the command's own. bound_loop signals the
@@ -1329,6 +1392,7 @@ t test_both_commands_read_at_their_own_prompts
 t test_with_no_terminal_the_check_stops
 t test_a_declaration_is_measured_against_its_own_bound
 t test_a_declaration_that_reads_past_its_line_does_not_take_the_other_value
+t test_an_interrupt_at_the_prompt_ends_the_command_and_puts_the_terminal_back
 t test_a_command_a_bound_ended_is_not_still_running
 t test_a_session_that_is_refused
 t test_a_session_that_is_not_refused_is_a_finding
