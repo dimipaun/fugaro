@@ -11,6 +11,17 @@ plan cites the merged code.
 It is one capability, so there is no capability map: every part serves the same rule, and none
 ships alone.
 
+## Amended by [docs/ground-rules](../ground-rules/reconciliation.md) (2026-11-26)
+
+- **U11 is cancelled, and U12 no longer waits on it** (D3420 amends D3353). The merged tasks stay: they
+  read each repository from its default branch, with no checkout. The stage over every enrolled
+  repository, which U11 would have built, is UO2 of
+  [docs/ground-rules](../ground-rules/implementation-plan.md) (D3421), so every clause that reads
+  "until U11" is read against that task: R3, the two global constraints, Check 930 (K1's two clauses
+  included), I1's exemption clause, the edges table and the declined-options note, and spec.md's scope
+  line, which is the owner's text and is left as written. U12 waits on U9d and on that task. R4's RC39
+  facts (D3346) no longer have a home here.
+
 ## Assumptions
 
 - **A1.** "Every enrolled repository" is the list L8's reader draws (F1): the local config's
@@ -257,7 +268,7 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
 | D3350 | Does a published admit count as enrolled for secrets, builds and the fold? (F17) | Yes: the list is the project's own, not a directory's, so the hostile-checkout gate has nothing to guard in `update`'s stages | **As recommended (2026-11-24).** Whoever can publish the allow-list can direct a value into that repository's secrets. The gate stays for `setup --repo` and `--onboard-repo`. This is the owner's go for the cloud writes it widens (F41, R20) |
 | D3351 | Does `setup --anchor` go too? (F20) | Remove it from both; the anchor lives in `project repos add` alone | **As recommended (2026-11-24).** → R14 |
 | D3352 | In a coding agent's session, do L5's reads mint the operator's identity? (F44) | No, as D902: every repository reads as unread with one line, "run fugaro update from your own terminal", and the stages that need repositories say needs-you | **As recommended (2026-11-24).** An agent-run update converges only the project-wide parts. → R1 |
-| D3353 | Does `update --repo` go once plain `update` covers every repository? | Out of scope (spec) | **The owner's ruling (2026-11-26):** yes. U12 removes the flag and every instruction to run it per checkout, after U11 and U9d. Until U11 merges nothing changes. |
+| D3353 | Does `update --repo` go once plain `update` covers every repository? | Out of scope (spec) | **The owner's ruling (2026-11-26):** yes. U12 removes the flag and every instruction to run it per checkout, after U9d. **Amended the same day by D3420 of [docs/ground-rules](../ground-rules/reconciliation.md):** U11 is cancelled, so U12 no longer waits on it. Until U12 merges nothing changes |
 
 ## Resolutions
 
@@ -388,7 +399,8 @@ None.
 
 ## Open items
 
-- **O1.** L2 (owned by the shared-jobs plan) gates U11 (D3341). Check 930's full pass waits for it
+- **O1. Closed 2026-11-26.** L2 (owned by the shared-jobs plan) gated U11 (D3341); U11 is cancelled by
+  D3420, so nothing in this plan waits on L2. Check 930's full pass still waits for the stage marks
   (R3).
 - **O2.** Two follow-up tasks are outside this plan: the backlog fold's deletion, one release after
   L5 ships (D3344), and moving the RC39 facts to installation state (D3346).
