@@ -146,8 +146,19 @@ func (p *Provider) srcFile(ctx context.Context, path, rev string, max int64) ([]
 		return nil, "", fmt.Errorf("reading the reply: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, "", fmt.Errorf("%s: HTTP %d: %s", http.MethodGet, resp.StatusCode,
-			secretsFree(replyExcerpt(data), tok))
+		// The status is TYPED and not only spelled, as it is on every other
+		// call this adapter makes: a caller that has to tell a host which
+		// ANSWERED from one that was never heard from -- the credentials
+		// service's read of a repository's own fugaro.yaml, which falls back to
+		// a record for the second state alone (D3459) -- has nothing but the
+		// type to read, and a message it had to parse would be a rule written
+		// in prose.
+		return nil, "", &httpjson.StatusError{
+			Method: http.MethodGet,
+			URL:    req.URL.Path,
+			Status: resp.StatusCode,
+			Body:   secretsFree(replyExcerpt(data), tok),
+		}
 	}
 	return data, resp.Header.Get("Content-Type"), nil
 }

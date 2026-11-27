@@ -126,6 +126,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -378,20 +379,47 @@ func (t staticToken) Token(context.Context, time.Duration) (string, time.Time, e
 	return string(t), time.Time{}, nil
 }
 
-// hostAnswer classifies a failed read by whether the host ANSWERED.
+// hostAnswer classifies a failed read by whether the host was HEARD FROM.
 //
-// An answer — any status below 500, a 404 included — is a refusal the caller
-// reads as this route's own, and never the fallback: the repository's file is
-// there or it is not, and a record consulted beside it would be a second
-// authority for a fact the first one settled (D3459). A host that could not be
-// reached at all, or one that answered 5xx, is the one state the record is the
-// fallback for.
+// The two are not the same failure and must not be read as one. A host that
+// ANSWERED — any status below 500, or a reply this release cannot read as a
+// file (a directory's listing, an empty file, one over the ceiling) — has
+// settled the question the read asked, and its answer is a refusal, never the
+// fallback: a record consulted beside a file that changed would serve a name
+// the repository's own file no longer writes (D3459). Only a host that was
+// never heard from at all — a transport failure, a timeout, a call the caller
+// gave up on, a 5xx — is the one state the record is the fallback for.
 func hostAnswer(err error) error {
-	var se *httpjson.StatusError
-	if errors.As(err, &se) && se.Status < http.StatusInternalServerError {
+	if hostAnswered(err) {
 		return err
 	}
 	return fmt.Errorf("%w: %w", ErrRepoFileUnreachable, err)
+}
+
+// hostAnswered reports whether a failed read carries the host's own answer.
+//
+// It asks for the OTHER state positively, because the fallback is the state
+// that must not be reached by accident: a read is a host this code never heard
+// from only where the failure says so — a 5xx, or a failure that never reached
+// the host at all (net.Error, which http.Client wraps every one of them in: a
+// refused connection, a DNS failure, a timeout) — and every failure this code
+// cannot place is an answer, and so a refusal.
+//
+// The status is read as httpjson's StatusError, which is what BOTH adapters
+// report a reply outside 2xx as: GitHub's through its own client, and
+// Bitbucket's file read through the same type (contents.go's srcFile). An
+// adapter that reported an answer some other way would be read as unreachable
+// here, which is why the two are held to it.
+func hostAnswered(err error) bool {
+	var se *httpjson.StatusError
+	if errors.As(err, &se) {
+		return se.Status < http.StatusInternalServerError
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return false
+	}
+	return !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
 }
 
 // The refusals of this route, as sentences written here. Each one names the

@@ -25,6 +25,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -1595,6 +1596,229 @@ func TestRecordFallbackOnlyWhenUnreachable(t *testing.T) {
 			resp, body, f.svc, f.workflowReads, 1, ErrorRequestRefused)
 		if len(f.records.reads) != 0 {
 			t.Errorf("the record was read (%v) beside a file that answered: the record is the fallback for an unreachable host alone", f.records.reads)
+		}
+	})
+}
+
+// The classification TestRecordFallbackOnlyWhenUnreachable holds at the SEAM is
+// only as good as the errors the adapters hand it, and the seam's fake can make
+// any error it likes. These two tests drive the REAL reader — repoFiles over an
+// HTTP host — so that the answer of a real Bitbucket adapter is what the
+// fallback is decided on. Before them the Bitbucket arm reported a 404, a
+// directory listing, an empty file and an oversized one as plain errors, which
+// hostAnswer read as a host that was never heard from: the record was then
+// served a value the repository's own file no longer writes (D3459).
+
+// bitbucketRepo is the canonical name these tests read a file for, and
+// bitbucketBundleDoc is a bundle holding the one credential that read uses.
+const bitbucketRepo = "bitbucket/acme/web"
+
+// fallbackLine is the one line the fallback writes (logRepoFileFallback), which
+// is how a test tells a fallback from a refusal without reading the value.
+const fallbackLine = "the workflow secrets record is the fallback"
+
+func bitbucketBundleDoc(t *testing.T) []byte {
+	t.Helper()
+	return []byte(config.BitbucketSecret + ": " + fakeCred(t, "bitbucket") + "\n")
+}
+
+// fileHost is a Bitbucket API answering the two calls one repository-file read
+// makes: the repository object the default branch is read from, and the src
+// endpoint the file itself is read through. src counts the second call, so a
+// test can tell a classification that is about the file read from one made
+// before it.
+type fileHost struct {
+	status int
+	ctype  string
+	body   string
+	src    int
+}
+
+func (h *fileHost) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/2.0/repositories/acme/web":
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"mainbranch":{"name":"main"}}`)
+	case "/2.0/repositories/acme/web/src/main/fugaro.yaml":
+		h.src++
+		if h.ctype != "" {
+			w.Header().Set("Content-Type", h.ctype)
+		}
+		w.WriteHeader(h.status)
+		io.WriteString(w, h.body)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// bitbucketRepoFiles wires the fixture's route to the REAL reader over srv, for
+// the repository bitbucketRepo: the route's repository table is moved there —
+// the table is what the pairing resolves the run identity's slug through, and
+// the fixture's own two rows for one slug would otherwise leave the GitHub
+// spelling in place — while the slug stays the fixture's, so the record is
+// still the fallback the unreachable state is served from.
+func bitbucketRepoFiles(t *testing.T, srv *httptest.Server) func(*svc, *Config) {
+	t.Helper()
+	return func(s *svc, cfg *Config) {
+		cfg.Repos = map[string]string{
+			s.slug:                         bitbucketRepo,
+			testSlug(t, testOtherRepoPath): testOtherRepo,
+		}
+		cfg.RepoFiles = &repoFiles{
+			bundles: &BundleLoader{Source: &dynReader{doc: bitbucketBundleDoc(t)}},
+			client:  srv.Client(),
+			baseURL: srv.URL + "/2.0",
+		}
+	}
+}
+
+// TestRepoFilesReadClassifiesAHostAnswer drives the real reader against a real
+// Bitbucket answer and holds the ONE rule the fallback turns on: a host that
+// ANSWERED is a refusal whatever it said, and only a host this code never heard
+// from — a 5xx, or a call that never reached one — is ErrRepoFileUnreachable.
+//
+// Hand mutation this fails on: dropping the StatusError branch of hostAnswered,
+// which turns a 404 into the fallback, and dropping the net.Error branch, which
+// turns a refused connection into a refusal.
+func TestRepoFilesReadClassifiesAHostAnswer(t *testing.T) {
+	cases := []struct {
+		name string
+		// answer is the src endpoint's reply.
+		status int
+		ctype  string
+		body   string
+		// wantOK is a file this release reads: no error at all.
+		wantOK bool
+		// unreachable is the one state the record is the fallback for.
+		unreachable bool
+	}{
+		{name: "the file is there", status: http.StatusOK, ctype: "text/plain", body: "workflows: {}\n", wantOK: true},
+		{name: "the file is not there", status: http.StatusNotFound, ctype: "application/json", body: `{"type":"error"}`},
+		{name: "the credential is refused", status: http.StatusForbidden, ctype: "application/json", body: `{"type":"error"}`},
+		{name: "the path names a directory", status: http.StatusOK, ctype: "application/json", body: `{"values":[]}`},
+		{name: "the file is empty", status: http.StatusOK, ctype: "text/plain", body: ""},
+		{name: "the host answered 5xx", status: http.StatusInternalServerError, ctype: "text/html", body: "upstream", unreachable: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &fileHost{status: tc.status, ctype: tc.ctype, body: tc.body}
+			srv := httptest.NewServer(h)
+			defer srv.Close()
+			r := &repoFiles{
+				bundles: &BundleLoader{Source: &dynReader{doc: bitbucketBundleDoc(t)}},
+				client:  srv.Client(),
+				baseURL: srv.URL + "/2.0",
+			}
+			data, err := r.Read(context.Background(), RepoFileQuery{
+				Provider: gitprov.KindBitbucket, Repo: bitbucketRepo, Path: fugaroYAMLPath,
+			})
+			switch {
+			case tc.wantOK:
+				if err != nil {
+					t.Fatalf("a file the host served was read as a failure: %v", err)
+				}
+				if string(data) != tc.body {
+					t.Errorf("the read answered %q, want the file's own bytes %q", data, tc.body)
+				}
+			case tc.unreachable:
+				if !errors.Is(err, ErrRepoFileUnreachable) {
+					t.Errorf("a host that answered %d was not read as unreachable (%v), so the record is not the fallback it is the one state for", tc.status, err)
+				}
+			default:
+				if err == nil {
+					t.Fatalf("a host that answered %d with %q was read as a file: the record would be shadowed by a reply that is not one", tc.status, tc.body)
+				}
+				if errors.Is(err, ErrRepoFileUnreachable) {
+					t.Errorf("a host that answered %d was read as a host that could not be reached (%v), so the record would serve a value the repository's own file no longer writes (D3459)", tc.status, err)
+				}
+			}
+			if h.src != 1 {
+				t.Errorf("the src endpoint was asked %d times, want one: the classification is about the file read", h.src)
+			}
+		})
+	}
+	t.Run("the host was never reached", func(t *testing.T) {
+		srv := httptest.NewServer(http.NotFoundHandler())
+		url, client := srv.URL, srv.Client()
+		srv.Close()
+		r := &repoFiles{
+			bundles: &BundleLoader{Source: &dynReader{doc: bitbucketBundleDoc(t)}},
+			client:  client,
+			baseURL: url + "/2.0",
+		}
+		_, err := r.Read(context.Background(), RepoFileQuery{
+			Provider: gitprov.KindBitbucket, Repo: bitbucketRepo, Path: fugaroYAMLPath,
+		})
+		if !errors.Is(err, ErrRepoFileUnreachable) {
+			t.Errorf("a call that never reached a host was not read as unreachable (%v), so a repository whose host is down would be refused rather than served from the record", err)
+		}
+	})
+}
+
+// TestWorkflowSecretsFallBackOnlyForAFileReadNeverHeardFrom is the same rule at
+// the ROUTE: the record is read for a host that was never heard from and for
+// nothing else, and the operator's fallback line is written in that state
+// alone. It is the test TestRecordFallbackOnlyWhenUnreachable cannot be — that
+// one hands the route a fake's own ErrRepoFileUnreachable, so it says nothing
+// about which real answers reach it.
+func TestWorkflowSecretsFallBackOnlyForAFileReadNeverHeardFrom(t *testing.T) {
+	t.Run("the host answered 404", func(t *testing.T) {
+		srv := httptest.NewServer(&fileHost{status: http.StatusNotFound, ctype: "application/json", body: `{"type":"error"}`})
+		defer srv.Close()
+		f := newWorkflowSvc(t, bitbucketRepoFiles(t, srv))
+		resp, body := f.fetch(t, testWorkflowEnv)
+		assertRefused(t, "a job whose repository's own file is not there", resp, body, f.svc, f.workflowReads, 1, ErrorStateUnavailable)
+		if len(f.records.reads) != 0 {
+			t.Errorf("the record was read (%v) after the host answered 404: an answered host is a refusal, never the fallback (D3459)", f.records.reads)
+		}
+		if strings.Contains(f.logs.String(), fallbackLine) {
+			t.Errorf("the fallback was logged for a host that answered:\n%s", f.logs.String())
+		}
+	})
+	t.Run("the host answered with a body this release cannot read", func(t *testing.T) {
+		srv := httptest.NewServer(&fileHost{status: http.StatusOK, ctype: "text/plain", body: "workflows:\n  " + testWorkflow + ":\n    secrets: ["})
+		defer srv.Close()
+		f := newWorkflowSvc(t, bitbucketRepoFiles(t, srv))
+		resp, body := f.fetch(t, testWorkflowEnv)
+		assertRefused(t, "a job whose repository's own file cannot be read", resp, body, f.svc, f.workflowReads, 1, ErrorStateUnavailable)
+		if len(f.records.reads) != 0 {
+			t.Errorf("the record was read (%v) after the host answered with a file this release cannot read: a parse error is never the fallback (D3459)", f.records.reads)
+		}
+		if strings.Contains(f.logs.String(), fallbackLine) {
+			t.Errorf("the fallback was logged for a file that was read:\n%s", f.logs.String())
+		}
+	})
+	t.Run("the host answered 5xx", func(t *testing.T) {
+		srv := httptest.NewServer(&fileHost{status: http.StatusInternalServerError, ctype: "text/html", body: "upstream"})
+		defer srv.Close()
+		f := newWorkflowSvc(t, bitbucketRepoFiles(t, srv))
+		resp, body := f.fetch(t, testWorkflowEnv)
+		ans := served(t, "a job whose code host answered 5xx", resp, body)
+		if ans.Value != f.value {
+			t.Errorf("the call was served %q, want the record's own value: a 5xx is the fallback", ans.Value)
+		}
+		if !slices.Equal(f.records.reads, []string{f.slug}) {
+			t.Errorf("the records read were %v, want the calling repository's own", f.records.reads)
+		}
+		if !strings.Contains(f.logs.String(), fallbackLine) {
+			t.Errorf("the fallback line is missing from a 5xx's log:\n%s", f.logs.String())
+		}
+	})
+	t.Run("the host was never reached", func(t *testing.T) {
+		srv := httptest.NewServer(http.NotFoundHandler())
+		extra := bitbucketRepoFiles(t, srv)
+		srv.Close()
+		f := newWorkflowSvc(t, extra)
+		resp, body := f.fetch(t, testWorkflowEnv)
+		ans := served(t, "a job whose code host cannot be reached", resp, body)
+		if ans.Value != f.value {
+			t.Errorf("the call was served %q, want the record's own value: the record is the fallback", ans.Value)
+		}
+		if !slices.Equal(f.records.reads, []string{f.slug}) {
+			t.Errorf("the records read were %v, want the calling repository's own", f.records.reads)
+		}
+		if !strings.Contains(f.logs.String(), fallbackLine) {
+			t.Errorf("the fallback line is missing from an unreachable host's log:\n%s", f.logs.String())
 		}
 	})
 }
