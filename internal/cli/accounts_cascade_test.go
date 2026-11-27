@@ -16,9 +16,11 @@ import (
 )
 
 // This file is K1's own half: `fugaro accounts cascade set`, the command D2613
-// names for the credentials cascade, and the six leaves it writes into the
-// carrier N1 added (docs/config-ownership/implementation-plan.md, K1; D2607,
-// D2613, D2617).
+// names for the credentials cascade, and the leaves it writes into the carrier
+// N1 added (docs/config-ownership/implementation-plan.md, K1; D2607, D2613,
+// D2617). The two the chain replaced — `fallback` and `wait_threshold` — are no
+// longer among them (MG4 of docs/model-credentials-routing/implementation-plan.md),
+// and the tests below pin their refusal instead of their write.
 
 // accountsCascadeHome is the installation these tests write into: the fixture
 // A2's tests use, whose project config declares the credentials and the crafts
@@ -41,12 +43,12 @@ func accountsCascadeLocal(t *testing.T, path string) *localcfg.Config {
 	return lc
 }
 
-// TestCascadeSetWritesTheCarrier is K1's red step: the six cascade leaves have
-// a command at last, and the file it writes them into is this installation's
-// own config under the name F23 gives the block — `credential_cascade`, because
-// the local `credentials` key is the list of typed credentials and one key may
-// not mean two things in two documents (D2607). The members nobody named are
-// left exactly as they were, the credentials beside them are untouched, and the
+// TestCascadeSetWritesTheCarrier is K1's red step: the cascade's leaves have a
+// command at last, and the file it writes them into is this installation's own
+// config under the name F23 gives the block — `credential_cascade`, because the
+// local `credentials` key is the list of typed credentials and one key may not
+// mean two things in two documents (D2607). The members nobody named are left
+// exactly as they were, the credentials beside them are untouched, and the
 // sentence says which member the write put where the project's node will carry
 // it (D1540).
 func TestCascadeSetWritesTheCarrier(t *testing.T) {
@@ -54,7 +56,7 @@ func TestCascadeSetWritesTheCarrier(t *testing.T) {
 	before := readFileString(t, path)
 
 	out, _, err := execute(t, "accounts", "cascade", "set",
-		"--fallback", "oauth-only", "--wait-threshold", "30m", "--backoff-cap", "1h")
+		"--backoff-initial", "20m", "--backoff-cap", "1h")
 	if err != nil {
 		t.Fatalf("accounts cascade set: %v\n%s", err, out)
 	}
@@ -64,14 +66,14 @@ func TestCascadeSetWritesTheCarrier(t *testing.T) {
 	if blk == nil {
 		t.Fatalf("the write left no credential_cascade block:\n%s", after)
 	}
-	if blk.Fallback != projectpolicy.FallbackOAuthOnly {
-		t.Errorf("credential_cascade.fallback = %q, want the value the command named (%q)", blk.Fallback, projectpolicy.FallbackOAuthOnly)
+	// The two members the chain replaced are not written by any run, whatever it
+	// passes: the chain says what a run does when its credential is exhausted
+	// (R4), and this command no longer states it at all.
+	if blk.Fallback != "" || blk.WaitThreshold != "" {
+		t.Errorf("credential_cascade carries fallback %q and wait_threshold %q, and neither is this command's to write any more", blk.Fallback, blk.WaitThreshold)
 	}
-	if blk.WaitThreshold != "30m" {
-		t.Errorf("credential_cascade.wait_threshold = %q, want 30m", blk.WaitThreshold)
-	}
-	if blk.Backoff == nil || blk.Backoff.Cap != "1h" || blk.Backoff.Initial != "" {
-		t.Errorf("credential_cascade.backoff = %+v, want the cap alone: the members no flag named are left as the file had them", blk.Backoff)
+	if blk.Backoff == nil || blk.Backoff.Initial != "20m" || blk.Backoff.Cap != "1h" {
+		t.Errorf("credential_cascade.backoff = %+v, want the two waits the command named", blk.Backoff)
 	}
 	if blk.StopAfterExhaustionPerWindow != nil || blk.ConcurrencyPerToken != nil {
 		t.Errorf("credential_cascade carries the two D142 controls (%v, %v) that no flag named: a member left out is a member left alone",
@@ -84,11 +86,11 @@ func TestCascadeSetWritesTheCarrier(t *testing.T) {
 	if !strings.HasPrefix(after, before) {
 		t.Errorf("the write did not splice into the file, so the bytes the owner wrote did not survive:\n%s", after)
 	}
-	if !strings.Contains(after, "credential_cascade:\n  fallback: oauth-only\n  wait_threshold: 30m\n  backoff:\n    cap: 1h\n") {
-		t.Errorf("the credential_cascade block does not carry the three members the command named:\n%s", after)
+	if !strings.Contains(after, "credential_cascade:\n  backoff:\n    initial: 20m\n    cap: 1h\n") {
+		t.Errorf("the credential_cascade block does not carry the two members the command named:\n%s", after)
 	}
 	for _, want := range []string{
-		"write the credentials cascade: fallback = oauth-only, wait_threshold = 30m, backoff.cap = 1h, which the project's node carries to every run",
+		"write the credentials cascade: backoff.initial = 20m, backoff.cap = 1h, which the project's node carries to every run",
 		path,
 	} {
 		if !strings.Contains(out, want) {
@@ -106,21 +108,21 @@ func TestCascadeSetWritesTheCarrier(t *testing.T) {
 func TestCascadeSetWritesOneMemberAtATime(t *testing.T) {
 	path := accountsCascadeHome(t)
 
-	if _, _, err := execute(t, "accounts", "cascade", "set", "--fallback", "oauth-only"); err != nil {
-		t.Fatalf("accounts cascade set --fallback: %v", err)
+	if _, _, err := execute(t, "accounts", "cascade", "set", "--backoff-cap", "1h"); err != nil {
+		t.Fatalf("accounts cascade set --backoff-cap: %v", err)
 	}
 	out, _, err := execute(t, "accounts", "cascade", "set", "--concurrency-per-token", "2")
 	if err != nil {
 		t.Fatalf("accounts cascade set --concurrency-per-token: %v\n%s", err, out)
 	}
 	blk := accountsCascadeLocal(t, path).CredentialCascade
-	if blk == nil || blk.Fallback != projectpolicy.FallbackOAuthOnly {
-		t.Errorf("credential_cascade = %+v, want the first run's fallback kept by the second run", blk)
+	if blk == nil || blk.Backoff == nil || blk.Backoff.Cap != "1h" {
+		t.Errorf("credential_cascade = %+v, want the first run's cap kept by the second run", blk)
 	}
 	if blk.ConcurrencyPerToken == nil || *blk.ConcurrencyPerToken != 2 {
 		t.Errorf("credential_cascade.concurrency_per_token = %v, want the 2 the second run named", blk.ConcurrencyPerToken)
 	}
-	if strings.Contains(out, "fallback =") {
+	if strings.Contains(out, "backoff.cap =") {
 		t.Errorf("the second run's sentence names a member it did not write:\n%s", out)
 	}
 
@@ -138,10 +140,12 @@ func TestCascadeSetWritesOneMemberAtATime(t *testing.T) {
 }
 
 // TestCascadeSetWideningSaysWhatItWidens is D2617's other half at the owner's
-// own terminal: the three directions that spend what the protective values hold
+// own terminal: the two directions that spend what the protective values hold
 // back are written, and what the person reads before them is what they widen —
-// the paid tiers, a run spending past an exhausted window, and the runs holding
-// one shared credential at once (D142, D152). No gate is read for these: the
+// a run spending past an exhausted window, and the runs holding one shared
+// credential at once (D142). D142's third, the paid fallback, is the chain's to
+// state now and this command refuses it (MG4), so it is not a case here. No
+// gate is read for these: the
 // owner's terminal is where they are written, and the command that refused them
 // in a coding agent's session is the same line, run here.
 //
@@ -156,14 +160,6 @@ func TestCascadeSetWideningSaysWhatItWidens(t *testing.T) {
 		want  string
 		spent func(*localcfg.Config) bool
 	}{
-		{
-			name: "auto",
-			args: []string{"accounts", "cascade", "set", "--fallback", "auto"},
-			want: "credential_cascade.fallback auto is the value that spends paid tiers",
-			spent: func(lc *localcfg.Config) bool {
-				return lc.CredentialCascade != nil && lc.CredentialCascade.Fallback == projectpolicy.FallbackAuto
-			},
-		},
 		{
 			name: "stop false",
 			args: []string{"accounts", "cascade", "set", "--stop-after-exhaustion-per-window=false"},
@@ -203,35 +199,31 @@ func TestCascadeSetWideningSaysWhatItWidens(t *testing.T) {
 	}
 }
 
-// TestCascadeFallbackRejectsAnUnknownValue is the one value with two answers
-// (D152): `auto` and `oauth-only` are the whole vocabulary, and a name outside
-// it is refused before the file is read at all, in a sentence that names both —
-// one of which spends the project's money, which is the fact a person guessing
-// at the spelling needs. The sentence is this flag's and not the loader's,
-// because the loader is never reached: a value refused here writes nothing.
-func TestCascadeFallbackRejectsAnUnknownValue(t *testing.T) {
+// TestCascadeFallbackIsRetired is the flag's own answer now (MG4, R4): whether a
+// run waits for its credential's reset or falls over to the next source is the
+// project's routing table's chain, so no value of this flag is written — not the
+// two the old vocabulary knew and not a name outside it — and the refusal names
+// the key and the command that owns the write.
+func TestCascadeFallbackIsRetired(t *testing.T) {
 	path := accountsCascadeHome(t)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "accounts", "cascade", "set", "--fallback", "spend-it")
-	if err == nil {
-		t.Fatal("--fallback spend-it wrote a cascade")
-	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
-	}
-	for _, want := range []string{
-		"--fallback spend-it",
-		projectpolicy.FallbackOAuthOnly, projectpolicy.FallbackAuto,
-		"falls over to the paid tiers, which spends it",
-		"nothing was written",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q: %v", want, err)
+	for _, value := range []string{projectpolicy.FallbackOAuthOnly, projectpolicy.FallbackAuto, "spend-it"} {
+		_, _, err := execute(t, "accounts", "cascade", "set", "--fallback", value)
+		if err == nil {
+			t.Fatalf("--fallback %s wrote a cascade", value)
 		}
-	}
-	if got := readFileString(t, path); got != before {
-		t.Errorf("the refused write changed the file:\n%s", got)
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+		}
+		for _, want := range []string{"credential_cascade.fallback", "fugaro routing set", "fugaro accounts pool add", "nothing was written"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("--fallback %s: the refusal does not name %q: %v", value, want, err)
+			}
+		}
+		if got := readFileString(t, path); got != before {
+			t.Errorf("the refused write changed the file:\n%s", got)
+		}
 	}
 }
 
@@ -248,7 +240,7 @@ func TestCascadeSetRefusesWhatTheLoaderRefuses(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"not a duration", []string{"--wait-threshold", "banana"}, `"banana" is not a duration`},
+		{"not a duration", []string{"--backoff-initial", "banana"}, `"banana" is not a duration`},
 		{"cap below the first wait", []string{"--backoff-initial", "5h", "--backoff-cap", "1h"}, "is below credential_cascade.backoff.initial"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -270,9 +262,10 @@ func TestCascadeSetRefusesWhatTheLoaderRefuses(t *testing.T) {
 }
 
 // TestCascadeSetSaysWhichFlagsItTakes is the call that names no member: the
-// command writes nothing and answers with its own flag list, so a person who
+// command writes nothing and answers with the members it writes, so a person who
 // typed the command without a value is told what there is to write rather than
-// left with a file the command read and did not change.
+// left with a file the command read and did not change. The two the chain
+// replaced are not offered, because every value of them is refused (MG4).
 func TestCascadeSetSaysWhichFlagsItTakes(t *testing.T) {
 	path := accountsCascadeHome(t)
 	before := readFileString(t, path)
@@ -282,34 +275,18 @@ func TestCascadeSetSaysWhichFlagsItTakes(t *testing.T) {
 		t.Fatal("accounts cascade set with no member wrote something")
 	}
 	for _, leaf := range cascadeWriterLeaves {
+		if accountsCascadeRetiredLeaf(leaf.leaf) {
+			if strings.Contains(err.Error(), leaf.flagArg()) {
+				t.Errorf("the refusal offers %s, and every value of it is refused: %v", leaf.flagArg(), err)
+			}
+			continue
+		}
 		if !strings.Contains(err.Error(), leaf.flagArg()) {
 			t.Errorf("the refusal does not name %s: %v", leaf.flagArg(), err)
 		}
 	}
 	if got := readFileString(t, path); got != before {
 		t.Errorf("the refused write changed the file:\n%s", got)
-	}
-}
-
-// TestCascadeFallbackAutoRefusedInAnAgentSession is D2617's answer on the one
-// direction that spends the project's money: the paid fallback turned on is the
-// owner's own step, so a coding agent's session is refused it whatever the
-// managed gate answers, with the diff, the marker and the command to run at a
-// terminal. The local config is the document, so the fence here is the marker's
-// and not the edit's own — but the edit's own is what keeps the flag pinned
-// where the document is a checkout's (accounts_craft_test's own reading of the
-// two arms).
-func TestCascadeFallbackAutoRefusedInAnAgentSession(t *testing.T) {
-	for _, marker := range agentenv.Markers {
-		t.Run(marker, func(t *testing.T) {
-			path := accountsCascadeHome(t)
-			before := readFileString(t, path)
-			t.Setenv(marker, "1")
-
-			out, _, err := execute(t, "accounts", "cascade", "set", "--fallback", "auto")
-			assertAccessWriteRefused(t, err, out, marker, path, before,
-				"fugaro accounts cascade set --fallback auto")
-		})
 	}
 }
 
@@ -359,11 +336,11 @@ func TestCascadeSetEndsWithTheAfterWriteHook(t *testing.T) {
 	var landed bool
 	runAfterWrite = func(_ context.Context, _ *cobra.Command, c afterWriteChange) error {
 		got = append(got, c)
-		landed = strings.Contains(readFileString(t, path), "fallback: oauth-only")
+		landed = strings.Contains(readFileString(t, path), "cap: 1h")
 		return nil
 	}
 
-	out, _, err := execute(t, "accounts", "cascade", "set", "--fallback", "oauth-only", "--wait-threshold", "30m")
+	out, _, err := execute(t, "accounts", "cascade", "set", "--backoff-cap", "1h")
 	if err != nil {
 		t.Fatalf("accounts cascade set: %v\n%s", err, out)
 	}
@@ -373,8 +350,8 @@ func TestCascadeSetEndsWithTheAfterWriteHook(t *testing.T) {
 	if !landed {
 		t.Error("the hook ran before the bytes landed, so the stage it owes was told about a write that had not happened")
 	}
-	if got[0].Key != "credential_cascade.fallback" {
-		t.Errorf("the hook was told about %q, want the first member this run wrote (credential_cascade.fallback)", got[0].Key)
+	if got[0].Key != "credential_cascade.backoff.cap" {
+		t.Errorf("the hook was told about %q, want the first member this run wrote (credential_cascade.backoff.cap)", got[0].Key)
 	}
 	if got[0].Store != settings.StoreLocal {
 		t.Errorf("the hook was told the write landed in %q, want %q: the cascade is declared in the installation's own config", got[0].Store, settings.StoreLocal)
@@ -385,21 +362,21 @@ func TestCascadeSetEndsWithTheAfterWriteHook(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"one member", []string{"accounts", "cascade", "set", "--wait-threshold", "45m"}},
+		{"one member", []string{"accounts", "cascade", "set", "--backoff-initial", "45m"}},
 		{"a later member", []string{"accounts", "cascade", "set", "--concurrency-per-token", "3"}},
 	} {
 		if _, _, err := execute(t, w.args...); err != nil {
 			t.Fatalf("%s: %v", w.name, err)
 		}
 	}
-	if len(got) != 2 || got[0].Key != "credential_cascade.wait_threshold" || got[1].Key != "credential_cascade.concurrency_per_token" {
+	if len(got) != 2 || got[0].Key != "credential_cascade.backoff.initial" || got[1].Key != "credential_cascade.concurrency_per_token" {
 		t.Errorf("the two later writes told the hook %+v, want each write's own member", got)
 	}
 
 	runAfterWrite = func(context.Context, *cobra.Command, afterWriteChange) error {
 		return errors.New("the policy stage refused")
 	}
-	if _, _, err := execute(t, "accounts", "cascade", "set", "--wait-threshold", "50m"); err == nil {
+	if _, _, err := execute(t, "accounts", "cascade", "set", "--backoff-initial", "50m"); err == nil {
 		t.Error("a hook that failed was swallowed: the command answered success for a write whose stage never ran")
 	}
 }
@@ -450,7 +427,7 @@ func TestCascadeSetRefusesAForeignLayerNamingTheRight(t *testing.T) {
 			path := accountsCascadeHome(t)
 			before := readFileString(t, path)
 
-			_, _, err := execute(t, "accounts", "cascade", "set", "--wait-threshold", "30m", "--layer", layer)
+			_, _, err := execute(t, "accounts", "cascade", "set", "--backoff-cap", "1h", "--layer", layer)
 			if err == nil {
 				t.Fatalf("--layer %s wrote a cascade, which has no such layer", layer)
 			}
@@ -472,11 +449,11 @@ func TestCascadeSetRefusesAForeignLayerNamingTheRight(t *testing.T) {
 func TestCascadeSetReadsNoStdin(t *testing.T) {
 	path := accountsCascadeHome(t)
 
-	out, _, err := accountsPoolClosedStdin(t, "accounts", "cascade", "set", "--wait-threshold", "30m")
+	out, _, err := accountsPoolClosedStdin(t, "accounts", "cascade", "set", "--backoff-cap", "1h")
 	if err != nil {
 		t.Fatalf("accounts cascade set with stdin closed: %v\n%s", err, out)
 	}
-	if got := readFileString(t, path); !strings.Contains(got, "  wait_threshold: 30m\n") {
+	if got := readFileString(t, path); !strings.Contains(got, "    cap: 1h\n") {
 		t.Errorf("the write did not land with stdin closed:\n%s", got)
 	}
 }
