@@ -40,6 +40,18 @@ var (
 	grantOrchRow   = "module.installation.google_service_account_iam_member.orchestrator_token_minter[0]"
 )
 
+// grantIntakePlan is the installation root's plan for one of the module's own
+// services, which is what a rig plants wherever a plan that reports changes is
+// needed and its content is not what the test is about. A bare change() carries
+// no attributes at all, and a managed installation puts that plan in front of
+// the gate (D1016), whose cover refuses it — "a service that does not require
+// IAM" — over a document terraform never writes
+// (update_converge_test.go's installationServicePlan).
+func grantIntakePlan(t *testing.T, r *convergeRig) string {
+	t.Helper()
+	return planJSON(t, installationServicePlan(intakeServiceShape(), "update", r.credentialsRefAt(convergeRelease))...)
+}
+
 // newGrantRig is the update door's fixture with the runs' identity grant still
 // to move, on the release behind: the installation's credentials service and
 // its recorded block are one release older, the config names the service and
@@ -87,10 +99,11 @@ func newGrantRig(t *testing.T) *convergeRig {
 	// over a root whose switch is already off; the Firebase root's plan is the
 	// same plan one root over, of the people's rows.
 	r.script["plan@installation"] = []map[string]any{{"exit": 2}, {"exit": 2}, {"exit": 2}, {"exit": 2}}
+	intake := grantIntakePlan(t, r)
 	r.script["show@installation"] = []map[string]any{
-		{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_service.intake", "update"))},
-		{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_service.intake", "update"))},
-		{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_service.intake", "update"))},
+		{"stdout": intake},
+		{"stdout": intake},
+		{"stdout": intake},
 		{"stdout": planJSON(t, change(grantOrchRow, "delete"))},
 	}
 	r.script["plan@firebase"] = map[string]any{"exit": 2}
@@ -274,7 +287,7 @@ func TestUpdateMovesTheGrantOnlyAfterTheIssuerAnswers(t *testing.T) {
 // fixture's plans are scripted, and the switch is what makes the row go.
 func keepGrantPlans(t *testing.T, r *convergeRig) {
 	t.Helper()
-	kept := planJSON(t, change("module.installation.google_cloud_run_v2_service.intake", "update"))
+	kept := grantIntakePlan(t, r)
 	r.script["show@installation"] = []map[string]any{
 		{"stdout": kept}, {"stdout": kept}, {"stdout": kept}, {"stdout": kept},
 	}
