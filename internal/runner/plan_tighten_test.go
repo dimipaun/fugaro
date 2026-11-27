@@ -1,12 +1,15 @@
 package runner
 
 import (
+	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // tightenPlanCfg is a repository file and a project layer that says nothing
@@ -94,6 +97,78 @@ func TestUncheckedRoundsTakeTheMode(t *testing.T) {
 			got := planOf(knobs, planLevels(true, true, tc.l3), planAgent(cfg, tc.mode), nil, tc.mode)
 			if !slices.Equal(got, tc.want) {
 				t.Fatalf("plan at %s = %+v, want %+v (RT2: the tighter of the file's knob and the mode's row)", tc.mode, got, tc.want)
+			}
+		})
+	}
+}
+
+// stageBudgetLayer is a project layer that sets the two keys no mode row holds
+// (R20): the case where the reader must not judge the file's figure, because
+// the merge already did (RT1).
+func stageBudgetLayer(t *testing.T, usd, stop float64) *config.ProjectLayer {
+	t.Helper()
+	l, ps := config.ParseProjectLayer([]byte(fmt.Sprintf(
+		"version: 1\nproject: aurora\ngcp_project: aurora-fugaro\ndefaults: { git: { provider: github }, agent: { max_budget_usd: %v, review_stop_fraction: %v } }\nprofiles:\n  p:\n    commands: { build: make, test: make test }\ndefault_profile: p\n", usd, stop)),
+		config.LayerAnchor{Project: "aurora", GCPProject: "aurora-fugaro"})
+	if len(ps) > 0 {
+		t.Fatalf("layer problems: %v", ps)
+	}
+	return l
+}
+
+// TestStageBudgetTakesTheBaseline is RT2's leftover (R3, R20, spec §5.2): the
+// runner's own readers of the two keys no mode row holds — the per-stage model
+// cap agent.max_budget_usd (yield.go's stageBudget and stageRemaining, and the
+// checkpoint call) and the stop rule agent.review_stop_fraction — take the
+// tighter of the repository's value and Fugaro's own default where the project
+// layer says nothing. So a silent project's runs stop at the baseline and not
+// where the file asks, exactly as the launcher's preview already quotes them.
+func TestStageBudgetTakesTheBaseline(t *testing.T) {
+	start := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		cfg     *config.Config
+		wantCap float64
+		// wantStop is the instant the loop must stop starting rounds: the
+		// baseline's share of a ten-minute budget for a looser value under a
+		// silent project, and the file's own share where it stands.
+		wantStop time.Time
+	}{
+		{
+			name:     "a silent project and figures over the baseline",
+			cfg:      &config.Config{Agent: config.Agent{MaxBudgetUSD: 100, ReviewStopFraction: 0.2}},
+			wantCap:  config.DefaultMaxBudgetUSD,
+			wantStop: start.Add(8 * time.Minute),
+		},
+		{
+			name:     "a silent project and figures under the baseline",
+			cfg:      &config.Config{Agent: config.Agent{MaxBudgetUSD: 10, ReviewStopFraction: 0.9}},
+			wantCap:  10,
+			wantStop: start.Add(9 * time.Minute),
+		},
+		{
+			name:     "a project that sets the keys",
+			cfg:      &config.Config{Layer: stageBudgetLayer(t, 100, 0.2), Agent: config.Agent{MaxBudgetUSD: 100, ReviewStopFraction: 0.2}},
+			wantCap:  100,
+			wantStop: start.Add(2 * time.Minute),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &run{cfg: tc.cfg, rec: &runstore.Record{}}
+			if got := r.stageBudget(stageOpts{}); got != tc.wantCap {
+				t.Errorf("stageBudget = %v, want %v (R20: the stage cap takes the tighter of the file's figure and the baseline)", got, tc.wantCap)
+			}
+			if got := r.stageRemaining(&yieldStage{}); got != tc.wantCap {
+				t.Errorf("stageRemaining = %v, want %v", got, tc.wantCap)
+			}
+			// The stop rule's fraction as setup reads it. A looser value under
+			// a silent project reads as unset, which is what Budget.stopAt
+			// supplies the baseline for.
+			b := Budget{StopFraction: config.TightenStopFraction(tc.cfg, tc.cfg.Agent.ReviewStopFraction),
+				Start: start, Total: 10 * time.Minute, Reserve: time.Minute}
+			at, ok := b.stopAt()
+			if !ok || !at.Equal(tc.wantStop) {
+				t.Errorf("the loop stops starting rounds at %s (ok=%v), want %s (R20: the stop rule takes the tighter of the file's share and the baseline)", at, ok, tc.wantStop)
 			}
 		})
 	}
