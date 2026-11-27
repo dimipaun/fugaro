@@ -369,6 +369,13 @@ PY
   chmod 700 "$SCRATCH/read.py"
 }
 
+# The shape of a provider key: what the sweeper reads a file for, and what the
+# terminal runner redacts before it relays a command's own output to your screen.
+# This check holds no value, so the shape is all it can read for — and a line
+# carrying one may reach neither your terminal nor a transcript of it. The two
+# children are handed this one pattern rather than carrying a copy each.
+KEY_SHAPE='(sk-ant-|sk-or-v1-)[A-Za-z0-9_-]{12,}'
+
 # write_sweeper is the child that reads a config directory and a set of history
 # files looking for a line shaped like a provider key. It is handed NO value —
 # this check never holds one — so all it can do is name the files a shape appears
@@ -379,7 +386,7 @@ import os
 import re
 import sys
 
-KEY_SHAPE = re.compile(r"(sk-ant-|sk-or-v1-)[A-Za-z0-9_-]{12,}")
+KEY_SHAPE = re.compile(sys.argv[1])
 
 
 def walk(paths):
@@ -393,8 +400,8 @@ def walk(paths):
             yield path
 
 
-what = sys.argv[1]
-paths = sys.argv[2:]
+what = sys.argv[2]
+paths = sys.argv[3:]
 scanned = 0
 hits = 0
 for path in walk(paths):
@@ -432,7 +439,7 @@ sweep() { # sweep QUERY DEST PATH...
   local query=$1 dest=$2
   shift 2
   [ $# -gt 0 ] || return 0
-  python3 "$SCRATCH/sweep.py" "$query" "$@" >"$dest" 2>"$dest.err"
+  python3 "$SCRATCH/sweep.py" "$KEY_SHAPE" "$query" "$@" >"$dest" 2>"$dest.err"
 }
 
 field() { # field FILE KEY
@@ -492,12 +499,13 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
 # command on the command's own fd 0, so this check never holds it; what the
 # command prints is captured, its two streams apart, and relayed to this
 # check's own stderr, which is the screen the person at the terminal is reading
-# the prompt on.
+# the prompt on — with a key shape redacted, since that screen and the transcript
+# of it are exactly what the acceptance's "nothing echoed" clause is about.
 run_at_terminal() { # run_at_terminal SECONDS KEY DIR CMD...
   local secs=$1 key=$2 dir=$3
   shift 3
   ( trap - ERR; cd "$dir" || exit 1
-    exec python3 "$SCRATCH/at_terminal.py" "$secs" "$SCRATCH/$key.out" "$SCRATCH/$key.err" "$@" ) &
+    exec python3 "$SCRATCH/at_terminal.py" "$secs" "$KEY_SHAPE" "$SCRATCH/$key.out" "$SCRATCH/$key.err" "$@" ) &
   bound_loop "$secs" "$!"
   # The runner ends a command that outstayed its deadline itself, with 124, the
   # child killed by its own process group rather than by this shell.
@@ -510,6 +518,9 @@ run_at_terminal() { # run_at_terminal SECONDS KEY DIR CMD...
 # output streams gets a terminal of its own, and everything written to it is
 # appended to that stream's capture file as well, so the command sees the
 # terminal the door asks for while this check can still read what it printed.
+# The screen gets a redacted copy of what is relayed: a command that echoed the
+# value it stores puts it in the capture this check reads — which is the finding
+# the nothing-echoed row is — and never on the screen the person is typing at.
 # NO_COLOR is set for the command: a terminal writer draws its steps with colour
 # and an in-flight line, and the escape sequences are not what any row of this
 # check reads.
@@ -517,6 +528,7 @@ write_terminal_runner() {
   cat >"$SCRATCH/at_terminal.py" <<'PY'
 import os
 import pty
+import re
 import select
 import signal
 import subprocess
@@ -534,8 +546,9 @@ def output_terminal():
 
 
 secs = float(sys.argv[1])
-out_path, err_path = sys.argv[2], sys.argv[3]
-argv = sys.argv[4:]
+key_shape = re.compile(sys.argv[2].encode())
+out_path, err_path = sys.argv[3], sys.argv[4]
+argv = sys.argv[5:]
 
 out_master, out_slave = output_terminal()
 err_master, err_slave = output_terminal()
@@ -561,6 +574,12 @@ os.close(out_slave)
 os.close(err_slave)
 screen = os.fdopen(os.dup(4), "wb", 0)
 captures = {out_master: open(out_path, "wb"), err_master: open(err_path, "wb")}
+# A key shape can be split across two reads, and half of one on the screen is
+# still half a value: a tail that could still grow into one waits for the read
+# that completes it, and is dropped if the command never writes it.
+PARTIAL_SHAPE = re.compile(rb"(sk-ant-|sk-or-v1-)[A-Za-z0-9_-]*\Z")
+REDACTED = b"[redacted]"
+held = dict.fromkeys(captures, b"")
 
 
 def relay(master):
@@ -572,7 +591,14 @@ def relay(master):
         return False
     captures[master].write(chunk)
     captures[master].flush()
-    screen.write(chunk)
+    text = held[master] + chunk
+    partial = PARTIAL_SHAPE.search(text)
+    if partial is not None:
+        held[master] = text[partial.start():]
+        text = text[:partial.start()]
+    else:
+        held[master] = b""
+    screen.write(key_shape.sub(REDACTED, text))
     screen.flush()
     return True
 
@@ -989,7 +1015,7 @@ step_nothing_echoed() {
     fi
   done
   if [ "$hits" != 0 ]; then
-    fact nothing-echoed FAIL "the output of fugaro accounts add --type for ${named} carries a line shaped like a provider key: a command that echoes the value it stores writes it into every transcript of this check, and the acceptance's clause is that nothing is echoed. The check did not print those lines; what each command printed is in $SCRATCH/add-anthropic.err and $SCRATCH/add-openrouter.err"
+    fact nothing-echoed FAIL "the output of fugaro accounts add --type for ${named} carries a line shaped like a provider key: a command that echoes the value it stores writes it into every transcript of this check, and the acceptance's clause is that nothing is echoed. This check prints no line shaped like one (it redacts the shape before it relays a command's output to your screen); what each command printed is in $SCRATCH/add-anthropic.err and $SCRATCH/add-openrouter.err"
     return 0
   fi
   fact nothing-echoed PASS "neither the stdout nor the stderr of fugaro accounts add --type for ${names[*]} carries a line shaped like a provider key (${scanned} stream(s) scanned, 0 of them carrying one): the value was read with no echo at the command's own hidden prompt and printed nowhere"

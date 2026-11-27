@@ -781,6 +781,10 @@ test_a_command_that_echoes_a_key_shape_is_a_finding() {
   expect_contains "$out" "carries a line shaped like a provider key" "a command that echoes a key shape: the row says so"
   # The check names the stream and never the line.
   expect_absent "$out" "sk-ant-not-a-real-key" "a command that echoes a key shape: the check does not reprint the string"
+  # The check relays each declaration's output to its own stderr, which is the
+  # screen the person at the terminal is reading: a key shape it relayed there
+  # would be in that screen and in the transcript of the run that printed it.
+  expect_absent "$err" "sk-ant-not-a-real-key" "a command that echoes a key shape: the check does not reprint the string on the screen it relays the command's output to"
 }
 
 test_the_second_command_echoing_a_key_shape_is_a_finding() {
@@ -792,6 +796,7 @@ test_the_second_command_echoing_a_key_shape_is_a_finding() {
   expect_contains "$out" "FACT nothing-echoed: FAIL" "the second command echoing a key shape: the row"
   expect_contains "$out" "credential-$openrouter-key" "the second command echoing a key shape: the row names which command"
   expect_absent "$out" "sk-or-v1-not-a-real-key" "the second command echoing a key shape: the check does not reprint the string"
+  expect_absent "$err" "sk-or-v1-not-a-real-key" "the second command echoing a key shape: the check does not reprint the string on the screen it relays the command's output to"
 }
 
 test_a_command_that_prints_no_prompt_is_a_finding() {
