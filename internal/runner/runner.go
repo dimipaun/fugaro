@@ -4195,7 +4195,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
-		StopFraction: r.cfg.Agent.ReviewStopFraction, Now: r.d.Now}
+		// The stop rule's fraction as the run really reads it (R20, RT2): the
+		// repository's share where it tightens the baseline, and 0 — which
+		// stopAt reads as config.DefaultReviewStopFraction — where the project
+		// layer says nothing about the key and the share is smaller.
+		StopFraction: config.TightenStopFraction(r.cfg, r.cfg.Agent.ReviewStopFraction), Now: r.d.Now}
 	if r.follow != nil {
 		if r.spec.Resumes != "" {
 			// A resumed run's task is a follow-up's too (task.Spec.Resumes):

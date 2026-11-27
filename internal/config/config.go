@@ -674,8 +674,9 @@ type Agent struct {
 	// the mode's own senior row). It is the level's one round knob — the
 	// review of #1522 asked for exactly one, so the count is not a key of
 	// each level — and a default rather than a ceiling, like ReviewRounds
-	// and FirstLineRounds: a written number replaces the mode's, up or down,
-	// inside the recipe's own bound of 10.
+	// and FirstLineRounds: a number the project layer says nothing about is
+	// judged against the mode's own row, and the tighter of the two stands
+	// (R20, RT2), inside the recipe's own bound of 10.
 	AdversarialRounds int `yaml:"adversarial_rounds"`
 	// ReviewStopFraction is the share of the run's total time budget after
 	// which the review loop starts no further review or fix round and goes to

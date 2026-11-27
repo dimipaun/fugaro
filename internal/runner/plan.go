@@ -393,8 +393,10 @@ func planRecipe(rcp *recipe.Recipe, levels config.Levels) []recipe.Step {
 // (docs/recipes/spec.md §6). Rounds come from the task's override, else the
 // step's max_rounds, else agent.*, else the mode's own row (rigor.DefaultRounds,
 // and rigor.AdversarialDefault for level 3) — a default the four layers above
-// it set another number against, up or down, within the recipe's bounds (the
-// owner's ruling of 2026-10-31, which answers O3).
+// it set another number against, up or down, within the recipe's bounds, the
+// repository's own number excepted: the project layer saying nothing about it,
+// that one is judged against the row before it arrives (planAgent, R20, RT2)
+// (the owner's ruling of 2026-10-31, which answers O3).
 func planOf(rcp *recipe.Recipe, levels config.Levels, a config.Agent, reviewOverride *int, mode rigor.Rigor) []planStep {
 	defaults := rigor.DefaultRounds(mode)
 	var out []planStep
