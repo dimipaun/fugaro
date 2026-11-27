@@ -165,7 +165,8 @@ shared/front-agent/mutation-proof.sh      # the guards, mutation-proved
 and a hostile title it must not be read as), the go's one action record, each near-miss as agent
 text, an app command, a wake word the grammar does not know, the replayed go, the expired go (and
 the deadline edge), the command-and-go, the unresolved target, the withdrawn brief, the cleared
-target, purity, and a transition table **written by hand** — never imported — compared cell for
+target, a go the agent still owes an answer to, purity, and a transition table **written by hand**
+— never imported — compared cell for
 cell with `TRANSITIONS` and then driven through every cell with literal transcripts. A source-level
 scan holds both files to no clock, no randomness, no network and no `process`.
 
