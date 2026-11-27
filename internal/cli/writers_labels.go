@@ -188,6 +188,7 @@ var settingsLabelRows = []settingsLabelRow{
 	{"endpoints.service_usage", labelFakeEndpoint, reasonEndpoint},
 	{"endpoints.storage", labelFakeEndpoint, reasonEndpoint},
 	{"image_source", labelPlumbing, "`fugaro setup` writes it as it installs: where the installation's images are built from"},
+	{"images.retention_days", labelFile, "the days a shared image no job points at is kept: stated in the project layer, which `fugaro update` publishes, and `fugaro image prune` reads it"},
 	{"local.gcp_project", labelPlumbing, "`fugaro setup` writes it when it creates the file: the local config's own GCP project"},
 	{"local.version", labelPlumbing, "`fugaro setup` writes it when it creates the file: the local config's own format version"},
 	{"log_view", labelPlumbing, "`fugaro setup` writes it from the apply's outputs as it installs: the installation's Cloud Logging view"},

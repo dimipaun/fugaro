@@ -54,7 +54,8 @@ type Options struct {
 	// (the owner's feedback of 2026-11-09). A command that prints its own
 	// short phrases leaves this false and prints exactly what it did before.
 	Brief bool
-	// Now is the clock the summary's elapsed time is read from.
+	// Now is the clock the summary's elapsed time is read from, and the one
+	// the line in flight and the heartbeat count a step with.
 	Now func() time.Time
 	// Sink is the run's log, when it has one: every byte of the run's own
 	// output. A nil Sink is a run that keeps no log.
@@ -126,9 +127,11 @@ type Reporter struct {
 	rerunStep    string
 	rerunShown   string
 	// spin is whether the step in flight is drawn on the terminal's own line.
-	// The rest is the state of that line, guarded by mu.
+	// Where it is not, the step says it is still running once a minute
+	// instead. The rest is the state of that line, guarded by mu.
 	spin      bool
 	spinName  string
+	spinSince time.Time
 	spinFrame int
 	spinStop  chan struct{}
 	// spinPaused is a line in flight that is down on purpose: a prompt is on
@@ -210,7 +213,8 @@ func (r *Reporter) step(name, shown string) *Step {
 	defer r.mu.Unlock()
 	r.stopSpinner()
 	r.spinPaused = false
-	r.startSpinner(shownName(name, shown))
+	r.spinName, r.spinSince = shownName(name, shown), r.o.Now()
+	r.startSpinner()
 	return &Step{r: r, name: name, shown: shown}
 }
 
@@ -246,9 +250,10 @@ func (r *Reporter) Summary() Outcome {
 // Pause takes the line in flight down and stops drawing it, without ending
 // the step: a command about to write something a person has to read on a line
 // of its own — a prompt it then reads stdin on — pauses first, so no frame is
-// ever drawn over it (G1). Resume draws the line again; ending the step ends
-// it whether it was paused or not, and a run with nothing in flight pauses
-// nothing.
+// ever drawn over it (G1). Off a terminal there is no frame, but the step's
+// heartbeat is still something written, so it goes quiet for the same reason.
+// Resume draws the line again; ending the step ends it whether it was paused
+// or not, and a run with nothing in flight pauses nothing.
 func (r *Reporter) Pause() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -271,7 +276,7 @@ func (r *Reporter) Resume() {
 		return
 	}
 	r.spinPaused = false
-	r.startSpinner(r.spinName)
+	r.startSpinner()
 }
 
 // Stream is where a run's own output goes: Terraform's progress, a stage's

@@ -91,7 +91,7 @@ func fetchWithin(ctx context.Context, fetch func(context.Context) error) error {
 // after prefetchBound, so a remote that stops answering costs a warning and
 // a bounded delay rather than the run.
 func (r *run) prefetchObjects(ctx context.Context) {
-	if !r.cloneJob() || (r.follow == nil && !r.review) {
+	if !r.clones() || (r.follow == nil && !r.review) {
 		return
 	}
 	// Each range's own base, not the configuration's (diffbase.go): the

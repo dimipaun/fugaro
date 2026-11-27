@@ -968,6 +968,23 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 		if d.Sweep == nil {
 			return userErr("workspace %s has no intake this machine can reach: a person's token is stored once, at the workspace (D2960), and removing them deletes every container they own there (F21), so this machine's wiring supplies the workspace's own intake", safetext.Field(d.Workspace))
 		}
+		// The IAM half of a workspace removal is a RECORD and not a write: no
+		// binding on a member is written from here (D2801), so the grant a removed
+		// workspace admin holds on a member's project (D2818) is dropped by that
+		// member's own `fugaro update` -- and that update admits the removal only
+		// against the member's own record of removed people (DG5, D3454). So the
+		// record is written on EVERY member the workspace holds, before the members
+		// are offboarded and before this workspace's own node: a re-run converges,
+		// and a member already recorded is left as the record is.
+		member, err := accesslib.Member(address)
+		if err != nil {
+			return workspaceUserRmCarry(userErr("%s as the member a removal is recorded under: %v", safetext.Field(address), err), address, nil)
+		}
+		for _, m := range linked {
+			if err := d.Members.RecordRemoval(ctx, m, member); err != nil {
+				return workspaceUserRmCarry(fmt.Errorf("recording the removal of %s on member %s: %w", safetext.Field(address), safetext.Field(m.Project), err), address, nil)
+			}
+		}
 		var memberErr error
 		deleted, memberErr, sweepErr = offboardWorkspacePerson(ctx, d.Members, d.Sweep, linked, address)
 		if memberErr != nil {

@@ -235,6 +235,79 @@ func TestTheExampleWritesNoRetiredKey(t *testing.T) {
 	}
 }
 
+// TestRetiredWorkflowResources is D3421's
+// (docs/ground-rules/reconciliation.md): every repository runs on the project's
+// shared jobs, the profile the workflow starts from decides the sizing, and a
+// repository's workflows.*.resources is read and ignored. The key still loads
+// and the file is still judged as written — nothing refuses a document for it —
+// and the resolution drops the block and names the profile in its place.
+//
+// The drop is in both arms, as the lifted keys' is (R2): a file resolved with
+// no project layer is the config Parse reads, byte for byte
+// (TestResolveOverAnEmptyLayerIsParse), so the arm that has no profile to name
+// drops the block just the same and names Fugaro's defaults.
+//
+// Mutation (honour the repository's block again, drop the note, name a profile
+// the workflow does not start from, or drop the key before the file is judged):
+// this test fails.
+func TestRetiredWorkflowResources(t *testing.T) {
+	const written = "    resources: { cpu: 16, memory: 32Gi }\n"
+	const git = "git: { provider: github }\n"
+	const api = git + "workflows:\n  api:\n    profile: java-service\n    commands: { build: ./gradlew assemble, test: ./gradlew test }\n" + written
+	const web = git + "workflows:\n  web:\n    commands: { build: make, test: make test }\n" + written
+
+	// A workflow that starts from a profile is sized by that profile's own
+	// resources: java-service's 4/16Gi, not the file's 16/32Gi.
+	c, res, ps := Resolve([]byte(minimalRepo+api), mustLayer(t, testLayer))
+	if len(ps) > 0 {
+		t.Fatalf("a file that writes workflows.*.resources is refused: %v", ps)
+	}
+	if got := c.Workflows["api"].Resources; got != (Resources{CPU: 4, Memory: "16Gi"}) {
+		t.Errorf("workflows.api.resources = %+v, want the profile's own 4/16Gi", got)
+	}
+	if got := res.SourceOf("workflows.api.resources.memory"); got != SourceProfile("java-service") {
+		t.Errorf("the memory in force is sourced %q, want the profile's", got)
+	}
+	if len(res.IgnoredKeys) != 1 || res.IgnoredKeys[0].Path != "workflows.api.resources" {
+		t.Fatalf("the resolution names %+v, want the one resources block the file wrote", res.IgnoredKeys)
+	}
+	if why := res.IgnoredKeys[0].Why; !strings.HasPrefix(why, "workflows.api.resources") || !strings.Contains(why, "java-service") {
+		t.Errorf("the note is %q, want it to open with the key and name the profile that decides the sizing", why)
+	}
+
+	// A workflow that names no profile is sized by Fugaro's defaults, and the
+	// note names none: no profile decides that workflow's sizing.
+	c, res, ps = Resolve([]byte(minimalRepo+web), mustLayer(t, testLayer))
+	if len(ps) > 0 {
+		t.Fatalf("a file that writes workflows.*.resources is refused: %v", ps)
+	}
+	if got := c.Workflows["web"].Resources; got != (Resources{CPU: DefaultCPU, Memory: DefaultMemory}) {
+		t.Errorf("workflows.web.resources = %+v, want Fugaro's own defaults", got)
+	}
+	if len(res.IgnoredKeys) != 1 || strings.Contains(res.IgnoredKeys[0].Why, "java-service") {
+		t.Errorf("the resolution names %+v, want one note that names no profile", res.IgnoredKeys)
+	}
+
+	// Without a project layer there is no profile at all, and the block is
+	// dropped all the same.
+	c, res, ps = Resolve([]byte(minimalRepo+web), nil)
+	if len(ps) > 0 {
+		t.Fatalf("a file that writes workflows.*.resources is refused: %v", ps)
+	}
+	if got := c.Workflows["web"].Resources; got != (Resources{CPU: DefaultCPU, Memory: DefaultMemory}) {
+		t.Errorf("without a layer workflows.web.resources = %+v, want Fugaro's own defaults", got)
+	}
+	if len(res.IgnoredKeys) != 1 {
+		t.Errorf("without a layer the resolution names %+v, want the one block the file wrote", res.IgnoredKeys)
+	}
+
+	// The drop is not a loosening: the file as written is still judged, so a
+	// resources block no reader could honour is still refused where it stands.
+	if _, ps := Parse([]byte(minimalRepo + strings.Replace(web, "cpu: 16", "cpu: -1", 1))); len(ps) == 0 {
+		t.Error("a file whose workflows.*.resources.cpu is -1 parsed: the file as written is still judged")
+	}
+}
+
 // docWriting is a document that writes key and nothing else of fugaro.yaml's: a
 // repository's file for InRepo, a project layer for InProject.
 func docWriting(t *testing.T, key string, doc Scope) []byte {

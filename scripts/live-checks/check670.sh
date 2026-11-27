@@ -298,6 +298,35 @@ need_tools() {
 
 last_lines() { tail -n 6 "$1" 2>/dev/null | tr '\n' ' ' | cut -c1-400; }
 
+# refused_plan is the guard's refusal out of a command's output, as the one line
+# a row prints about it: what the guard refused, which is the one thing its
+# reader acts on. last_lines does not do: it prints the last six lines joined and
+# cut at 400 characters, and a managed refusal's advice alone runs longer than
+# that, so the addresses are exactly what falls off the end — the resources the
+# row was asked about, missing (Check 670, 2026-11-26). It prints nothing when
+# the output carries no refusal, and its caller then keeps the tail.
+refused_plan() { # refused_plan FILE
+  local head n items line
+  head=$(grep -m1 'the plan would delete or replace .* nothing was applied' "$1" 2>/dev/null || true)
+  [ -n "$head" ] || return 0
+  n=$(printf '%s' "$head" | sed -n 's/.*the plan would delete or replace \([0-9][0-9]*\) resource(s).*/\1/p')
+  items=$(awk '/the plan would delete or replace .* nothing was applied/{p=1; next}
+    p && /^[^[:space:]]/{exit}
+    p && NF {if ($1 ~ /:$/) exit; gsub(/^[[:space:]]+/, ""); printf "%s; ", $0}' "$1")
+  line="the plan would delete or replace ${n:-one or more} resource(s): ${items%; }"
+  if [ "${#line}" -gt 400 ]; then line="$(printf '%s' "$line" | cut -c1-399)…"; fi
+  printf '%s' "$line"
+}
+
+# refusal_or_tail is what a row prints about a command that exited non-zero: what
+# the plan refusal named where the command made one, and the tail of its output
+# otherwise.
+refusal_or_tail() { # refusal_or_tail FILE
+  local refusal
+  refusal=$(refused_plan "$1")
+  if [ -n "$refusal" ]; then printf '%s' "$refusal"; else last_lines "$1"; fi
+}
+
 # ------------------------------------------------------------ scratch + trap
 SCRATCH=""
 SCRATCH_MARKER=".chk670-mine"
@@ -801,7 +830,7 @@ step_enrol() {
   run_tee enrol "$FUGARO_BIN" project repos add "$REPO" --project "$INSTALLATION" || true
   local status=$BOUNDED_STATUS out="$SCRATCH/enrol.out"
   if [ "$status" != 0 ]; then
-    stop "'fugaro project repos add $REPO --project $INSTALLATION' exited $status: $(last_lines "$out") — the enrolment is the whole of this check's first step, and the rest of the block would be about a repository nothing enrolled"
+    stop "'fugaro project repos add $REPO --project $INSTALLATION' exited $status: $(refusal_or_tail "$out") — the enrolment is the whole of this check's first step, and the rest of the block would be about a repository nothing enrolled"
   fi
   if grep -q 'merge it, then run' "$out" 2>/dev/null; then
     stop "$REPO had no fugaro.yaml, so the enrolment opened a pull request for it: $(last_lines "$out") — merge it, then run this check again"

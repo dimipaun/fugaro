@@ -225,6 +225,11 @@ func (o *wu13FakeOps) Offboard(context.Context, workspace.MemberTarget, string) 
 	return nil
 }
 
+func (o *wu13FakeOps) RecordRemoval(context.Context, workspace.MemberTarget, string) error {
+	o.t.Error("reconcile recorded a removal: recording one is WU9's verb")
+	return nil
+}
+
 func (o *wu13FakeOps) Audit(context.Context, workspace.MemberTarget, string, []byte) error {
 	o.t.Error("reconcile filed its events in the member's trail: the workspace admin's changes belong in the workspace's own")
 	return nil

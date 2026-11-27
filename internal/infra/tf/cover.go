@@ -2508,6 +2508,20 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 	return created, held
 }
 
+// holdsAccount is whether the module prefix holds a service account after this
+// plan: a member a change computes from a service account is the module's own
+// whether the plan creates that account or finds it already there, and an
+// update's incremental plan — the credentials-service invoker grant on a job
+// account that is a no-op, 0.29.5 — writes exactly the second.
+func holdsAccount(heldSAIDs map[string]bool, prefix string) bool {
+	for k := range heldSAIDs {
+		if strings.HasPrefix(k, prefix+"|") {
+			return true
+		}
+	}
+	return false
+}
+
 // credentialsAccountResource and intakeAccountResource are the names of the
 // installation module's own two service accounts for its two Cloud Run
 // services: resource "google_service_account" "credentials" in
@@ -2721,10 +2735,13 @@ func planDeployer(p *Plan) deployerPlan {
 //
 // createdSAIDs and heldSAIDs are planAccounts': a project job's widened bucket
 // condition is accepted only for the project module's own account
-// (projectJobCondition). dep is planDeployer's.
+// (projectJobCondition). dep is planDeployer's. A member the module computes
+// from a service account is the module's own whether the plan creates that
+// account or finds it already there (holdsAccount): an update's incremental
+// plan writes the member of an account that is a no-op.
 func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, dep deployerPlan) string {
 	t := rc.Type
-	why := c.checkGrant(t, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"], dep.createsRole)
+	why := c.checkGrant(t, rc.Change, creates[modulePrefix(rc)+"|google_service_account"] || holdsAccount(heldSAIDs, modulePrefix(rc)), creates[modulePrefix(rc)+"|google_project_iam_custom_role"], dep.createsRole)
 	// The front door's account's row is one grant and not a role: the bit it
 	// carries in grantRules opens the objectAdmin cell, and mcpauthStoreGrant
 	// is what closes it again to D935's store — the account, that role, that
@@ -2990,18 +3007,18 @@ func unknownAt(v any, path ...any) bool {
 	return v == true
 }
 
-func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, createsDeployerRole bool) string {
+func (c Cover) checkGrant(typ string, ch Change, hasSA, createsRole, createsDeployerRole bool) string {
 	rules := grantRules[typ]
 	if rules == nil {
 		return "a grant of a type the modules do not use"
 	}
 	// The principal. A member computed from a service account this module
-	// creates is an account.
+	// creates or already holds is an account.
 	kind := toAccounts
 	switch {
 	case unknown(ch, "member"):
-		if !createsSA { // a member computed from a service account this module creates
-			return "a member that is not known and no service account is created with it"
+		if !hasSA { // a member computed from a service account this module has
+			return "a member that is not known and the module has no service account"
 		}
 	default:
 		m, _ := ch.After["member"].(string)

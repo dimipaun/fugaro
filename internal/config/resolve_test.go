@@ -121,10 +121,13 @@ func TestResolveTable(t *testing.T) {
 				"workflows.api.resources.memory": func(c *Config) string { return c.Workflows["api"].Resources.Memory },
 			},
 			want: map[string]want{
-				"workflows.api.commands.test":    {"./gradlew test -x slow", SourceRepo},
-				"workflows.api.commands.build":   {"./gradlew assemble", SourceProfile("java-service")},
+				"workflows.api.commands.test":  {"./gradlew test -x slow", SourceRepo},
+				"workflows.api.commands.build": {"./gradlew assemble", SourceProfile("java-service")},
+				// The resources: block beside them is the profile's, not the
+				// file's: a repository's workflows.*.resources is read and
+				// ignored (D3421, TestRetiredWorkflowResources).
 				"workflows.api.resources.cpu":    {"4", SourceProfile("java-service")},
-				"workflows.api.resources.memory": {"8Gi", SourceRepo},
+				"workflows.api.resources.memory": {"16Gi", SourceProfile("java-service")},
 			},
 		},
 		{

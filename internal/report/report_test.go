@@ -493,7 +493,7 @@ func TestPauseKeepsAPromptOnItsOwnLine(t *testing.T) {
 		t.Errorf("the prompt is not the last thing on the screen: %q", got)
 	}
 	r.Resume()
-	if got := out.String(); !strings.HasSuffix(got, "Creating the project") {
+	if got := out.String(); !strings.Contains(lastFrame(got), "Creating the project") {
 		t.Errorf("the answer did not put the line in flight back: %q", got)
 	}
 	// A resume with nothing paused draws nothing: the reporter is not a

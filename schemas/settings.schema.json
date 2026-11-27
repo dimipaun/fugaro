@@ -949,6 +949,10 @@
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
         },
+        "images.retention_days": {
+          "$comment": "localcfg.DefaultImageRetentionDays",
+          "default": "30"
+        },
         "issue_sync": {
           "default": "unset = none: no repository's issues are ingested into the project's backlog, and no item opens an issue of its own"
         },

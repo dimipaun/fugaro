@@ -66,13 +66,13 @@ const ServicesEnv = backend.ServicesEnv
 // CheckoutEnv is the job environment variable internal/infra sets to the
 // workflow's own config.Checkout value (clone or shared) on a workflow whose
 // image holds no repository's source, and to nothing on a baked one (design
-// generic-tool.md §2, G3/G4): it tells the runner's bootstrap that there is
-// no checkout baked into the image, so the run makes its own blobless clone
-// and installs the repository's mise tools.
+// generic-tool.md §2, G3/G4).
 //
-// It is named here, in the runner, because the runner is what reads it;
-// internal/infra (spec.go) sets it from this constant, the way it takes
-// runner.BudgetModeEnv and the rest.
+// No run reads it any more (CF1, D3440): whether a run clones is the absence of
+// a usable baked tree, which the runner settles from the tree itself, and a
+// marker a launcher can write must not decide it. The name stays for the
+// deployer — internal/infra (spec.go) still writes it from this constant — until
+// it stops writing one (CF2a).
 const CheckoutEnv = "FUGARO_CHECKOUT"
 
 // RemoteEnv is the job environment variable internal/infra sets to the
@@ -115,44 +115,27 @@ const provisionStage = "provision"
 // stalled download must not hold the run until its total timeout.
 const provisionTimeout = 10 * time.Minute
 
-// cloneJob reports whether this run's job has no checkout baked into its
-// image. The job's own environment decides, never the checkout's fugaro.yaml:
-// before the clone there is no checkout to read one from, and the job is what
-// the run actually executes in.
+// clones reports whether the checkout this run works on is one it cloned for
+// itself, rather than a tree its image laid down. It is what the function that
+// settled the tree recorded (run.cloned: openBakedCheckout for a per-repository
+// job, checkProjectCheckoutOrigin for a project job, discardBakedCheckout for a
+// tree that went), and it is never read from the environment: whether a job
+// clones is the absence of a usable baked tree, and FUGARO_CHECKOUT — the
+// marker a launcher wrote for a job whose image held no checkout — is ignored
+// (CF1, D3440). A local invocation has no image and so no bake; what it decides
+// on is the work directory it was given, which is opened as it stands when it
+// holds a checkout.
 //
-// A project job is always such a job, and says so by being one: its image is
-// the installation's base image (internal/infra's ProjectJob.Image is
-// lc.BaseImage(config.BaseKind)), which bakes no checkout, and projectJobEnv
-// carries none of the per-repository variables — FUGARO_CHECKOUT, the only
-// marker, is written by internal/infra's spec.go for a per-repository clone
-// or shared workflow alone. A shared job is one of these too: its image is
-// the dependency layer, which holds no checkout either (design
-// forge-authorship-images/shared-images.md §1), so it stands and falls with
-// the clone. Its environment is also a launcher's to override
-// (run.jobs.runWithOverrides), so reading the marker there would let a launch
-// decide whether the run clones at all; the design keeps that class of fact
-// computed from the job rather than read from the environment, as the provider
-// and the clone URL already are (project-centric.md §12a items 1 and 2).
-//
-// Its four call sites depend on it, and each does the baked job's thing without
-// it: openCheckout clones whole through gitops.OpenOrClone instead of blobless
-// (gitops.CloneBlobless); provision installs nothing (images/base's
-// mise-system.toml sets auto_install = false, so a tool its mise.toml names
-// then fails loudly rather than installing); bootstrap's review branch leaves
-// the work tree on the remote's default branch instead of checking out
-// origin/<spec.Ref>; and prefetchObjects skips its fill, leaving a review-mode
-// project job's agent to fetch the branch's revisions and the base tip its
-// reads want with git credentials it does not have.
-func (r *run) cloneJob() bool {
-	if _, project := r.projectJob(); project {
-		return true
-	}
-	switch r.jobEnv(CheckoutEnv) {
-	case config.CheckoutClone, config.CheckoutShared:
-		return true
-	}
-	return false
-}
+// Its four call sites each do the cloned run's thing, and each is what a run
+// with a baked tree must not do: openCheckout makes the blobless clone
+// (gitops.CloneBlobless) and not the whole one gitops.OpenOrClone makes;
+// provision installs the checkout's mise tools (images/base's mise-system.toml
+// sets auto_install = false, so a tool its mise.toml names otherwise fails
+// loudly rather than installing); bootstrap's review arm checks origin/<spec.Ref>
+// out, because a blobless clone is --no-checkout and review mode checks out no
+// branch of its own; and prefetchObjects fills the objects a review's reads
+// want.
+func (r *run) clones() bool { return r.cloned }
 
 // jobEnv reads key from the runner's environment; a nil Deps.Env means "the
 // process's own", the same meaning procgroup.Cmd.Env gives nil.
@@ -174,7 +157,7 @@ func (r *run) jobEnv(key string) string {
 // run's reason: the run cannot do its work without the tools its own
 // repository declares.
 func (r *run) provision(ctx context.Context) error {
-	if !r.cloneJob() {
+	if !r.clones() {
 		return nil
 	}
 	configs, err := config.MiseConfigFiles(r.d.WorkDir)

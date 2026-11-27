@@ -91,6 +91,22 @@ func layerWithDefaults(extra string) string {
 	return strings.Replace(testProjectLayer, testProjectLayerAgent, testProjectLayerAgent+extra, 1)
 }
 
+// layerWithProfiles is testProjectLayer with extra profile blocks (two-space
+// indented under profiles:, like svc) added to it: a repository's
+// workflows.*.resources is read and ignored (D3421), so a fixture whose case
+// is about a sizing publishes it as a profile and has the workflow start from
+// that profile. It fails rather than returning the layer unchanged when the
+// needle no longer matches, as layerReplacing does.
+func layerWithProfiles(t *testing.T, extra string) string {
+	t.Helper()
+	const svcProfile = "  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n"
+	out := strings.Replace(testProjectLayer, svcProfile, svcProfile+extra, 1)
+	if out == testProjectLayer {
+		t.Fatalf("the project layer fixture no longer carries %q: the rewrite matched nothing", svcProfile)
+	}
+	return out
+}
+
 // layerWithRoles is testProjectLayer whose agent block carries extra beside the
 // keys testProjectLayerAgent writes: the layer a test that judges a lifted
 // agent key publishes. extra names keys only — auth: api-key and the three
