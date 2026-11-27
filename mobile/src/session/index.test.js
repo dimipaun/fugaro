@@ -186,3 +186,21 @@ test('signing out everywhere revokes each live project and signs the identities 
   assert.equal(called.filter((entry) => entry.url?.includes('/mobile/v1/revoke-self')).length, 2);
   assert.equal(called.some((entry) => entry.identities === true), true);
 });
+
+test('a project that refuses the revoke is named, and the identities still go', async () => {
+  const fetch = async () => ({ status: 403, text: async () => JSON.stringify({ code: 'device_revoked' }) });
+  let signedOut = 0;
+  const result = await session.signOutEverywhere({
+    projects: [{ endpoint: ENDPOINT, refreshToken: TOKEN, sign: async () => new Uint8Array(64).fill(1) }],
+    identities: async () => {
+      signedOut += 1;
+    },
+    fetch,
+  });
+  // A family that could not be ended is named rather than swallowed, and the
+  // sign-out of the phone itself does not depend on a project's answer.
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.revoked, []);
+  assert.deepEqual(result.failed, [{ endpoint: ENDPOINT, code: 'device_revoked' }]);
+  assert.equal(signedOut, 1);
+});
