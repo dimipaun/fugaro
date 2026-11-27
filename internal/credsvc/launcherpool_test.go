@@ -66,6 +66,10 @@ const (
 	// lpVanishedPool is a name no node of the fixture holds: a designation that
 	// points at a pool the project has since stopped publishing.
 	lpVanishedPool = "gone-pool"
+	// lpCraftOnlyPool is a name the fixture's node holds in `craft_pools` alone,
+	// which is no node a publish produces: it is the state the lookup and the
+	// chain would disagree about if the lookup asked one block only.
+	lpCraftOnlyPool = "craft-only-pool"
 	// lpOtherProject is another installation's project id, for the designation
 	// that answers for a project this one is not.
 	lpOtherProject = "another-project"
@@ -259,6 +263,31 @@ func (f *lpFixture) withEmptyPool(t *testing.T) *lpFixture {
 	t.Helper()
 	f.policy.shared.ModelRouting.Pools = append(f.policy.shared.ModelRouting.Pools,
 		lpPool(lpEmptyPool, testLauncherAccount, lpPoolPrincipal(routing.PrincipalPerson, testLauncherSub)))
+	return f
+}
+
+// withContainers is the fixture whose bundle source reads per-secret containers
+// as well, holding these values. It is what a personal pool needs (PL9): a
+// member is a container of its owner's own, so a fixture whose source reads none
+// would answer every member from the bundle entry of the bare name it holds —
+// which is the fall a personal pool must not take, and therefore the state a
+// test cannot tell a served container from.
+func (f *lpFixture) withContainers(t *testing.T, values map[string]string) *lpFixture {
+	t.Helper()
+	dyn := &dynReader{doc: chainBundleDoc(t), values: values, marked: map[string]bool{}}
+	f.server.cfg.Bundles = &BundleLoader{Source: dyn, Now: func() time.Time { return f.now }}
+	return f
+}
+
+// withCraftPool is the fixture whose node holds one pool in `craft_pools` ALONE,
+// written as withEmptyPool writes one because such a pool is not a node a publish
+// produces: every publish writes a pool into both blocks (lpPolicyDoc), and this
+// is the state the two readers disagree about — the lookup resolves a launcher's
+// pool against the key, and the chain resolves a named one against this block
+// (launcherpool.go's poolHeldByNode, chain.go's namedPool).
+func (f *lpFixture) withCraftPool(t *testing.T, pool config.Pool) *lpFixture {
+	t.Helper()
+	f.policy.shared.CraftPools = append(f.policy.shared.CraftPools, pool)
 	return f
 }
 

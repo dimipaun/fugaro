@@ -578,22 +578,26 @@ func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 			t.Errorf("the plugin stage leaves %q for the user, want nothing: the pin is a notice (U6a)\n%s", l["text"], out)
 		}
 	}
-	// The stage behind it is reached, and it is the checkout whose cloud half
-	// this session may not take: its own line is done with what this session
-	// may do, the images are not built, and the run is not done — the parked
-	// step is what the exit code and left_for_you say (the loop's applied: a
-	// stage that left a step for the user is done, not finished).
-	if got := res.state(initflow.Checkout); got != "done" {
-		t.Errorf("the checkout stage is %q, want %q: the plugin stage applied, so nothing before it stops the run\n%s", got, "done", out)
+	// The stage behind it is reached: on a managed project the gate admits the
+	// session to the stages before it, and the repository stage is the one that
+	// parks the billable image build for the user's own terminal, so the run
+	// is not done and the checkout behind that stop is skipped, not blocked
+	// (the loop's applied: a stage that left a step for the user is done, not
+	// finished).
+	if got := res.state(initflow.Repository); got != "needs-you" {
+		t.Errorf("the repository stage is %q, want %q: the image build is the step this session leaves\n%s", got, "needs-you", out)
+	}
+	if got := res.state(initflow.Checkout); got != "skipped" {
+		t.Errorf("the checkout stage is %q, want %q: the repository stage stopped for the user ahead of it\n%s", got, "skipped", out)
 	}
 	left := false
 	for _, l := range res.Left {
-		if l["stage"] == initflow.Checkout && strings.Contains(l["text"], "terminal window") {
+		if l["stage"] == initflow.Repository && strings.Contains(l["text"], "terminal window") {
 			left = true
 		}
 	}
 	if !left {
-		t.Errorf("the checkout's parked cloud half is not left for the user:\n%s", out)
+		t.Errorf("the repository's parked build is not left for the user:\n%s", out)
 	}
 	if len(*ran) != 0 {
 		t.Errorf("the session reached the cloud: steps %q\n%s", *ran, out)

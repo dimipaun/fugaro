@@ -99,6 +99,13 @@ type accountsPoolWriteOptions struct {
 	allowUsers     []string
 	layer          string
 	yes            bool
+	// personal is --personal (PL9): the pool is the caller's OWN, kept at the
+	// installation's credentials service and served to the runs that caller
+	// launches, rather than an entry of this project's config. It carries none
+	// of the config flags above, because none of them has a field in that
+	// record, and it is refused in a coding agent's session with the rest of
+	// them.
+	personal bool
 }
 
 func newAccountsPoolLsCmd() *cobra.Command {
@@ -314,6 +321,7 @@ spent and whose key they may carry, so a coding agent's session is refused.`,
 	f.StringVar(&o.owner, "owner", "", "the person the pool is served to, by email: the owner a craft's access is checked against. Left out, a pool that exists keeps the owner it has")
 	f.StringArrayVar(&o.allowUsers, "allow-user", nil, "another person the pool is served to, by email; repeat the flag for each. Left out, a pool that exists keeps the users it has")
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
+	f.BoolVar(&o.personal, "personal", false, "record the pool as YOUR OWN, at the installation's credentials service, rather than in this project's config: it is served to the runs you launch and to nobody else, its members are the names of containers of your own, and its flags are --rule and the member list alone")
 	return cmd
 }
 
@@ -326,6 +334,13 @@ func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o acc
 	sel, lc, err := settingsSelection()
 	if err != nil {
 		return err
+	}
+	// A personal pool is not this project's config entry, so it is not the
+	// admin gate's act and not this file's write: it is recorded at the
+	// installation's credentials service, keyed on the person's own verified
+	// subject (PL9, R26).
+	if o.personal {
+		return runAccountsPoolAddPersonal(cmd, name, members, o, lc)
 	}
 	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "declaring a model pool"); err != nil {
 		return err

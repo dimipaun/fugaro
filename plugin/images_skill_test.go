@@ -380,18 +380,51 @@ func TestImagesSkillRerunProposesDiffOnly(t *testing.T) {
 	// The one way a rerun's write replaces a working setup: a machine whose
 	// project config names no catalog states the whole catalog when it is
 	// written, and the update publishes it over the project's, leaving every
-	// `image_map` value that named another entry pointing at nothing — which
+	// `repo_images` value that named another entry pointing at nothing — which
 	// refuses those repositories' next update and every run of them
 	// (internal/cli/image_catalog.go's whole-catalog note). The skill has to
 	// send the agent to that note and stop it, and the note's own words are read
 	// from the command that prints it.
-	for _, want := range []string{"whole catalog", "setup.catalog", "image_map", "stop"} {
+	for _, want := range []string{"whole catalog", "setup.catalog", "repo_images` value naming it", "stop"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the rerun section never says %q, so a rerun on a machine whose config holds no catalog replaces the project's and is not stopped:\n%s", want, section)
 		}
 	}
 	if !strings.Contains(readRepoFile(t, "internal/cli/image_catalog.go"), "written as the project's whole catalog") {
 		t.Error("`fugaro image add` no longer prints the note the rerun section tells the agent to stop on, so the sentence the user is asked to recognise is gone")
+	}
+}
+
+// TestImagesSkillNamesTheMapByItsProviderKey: the map is `repo_images`, keyed
+// `provider/owner/name` (D3370, D3371), and the bare-name member survives only
+// as the survey's `legacy_image_map`, for a project an update has not migrated
+// yet (R4). The command that writes a key takes the provider as written
+// (`fugaro image map set github/acme/app web`, R6), so a skill teaching the old
+// spelling sends the user into a refusal, and one naming the map `image_map`
+// names a member no release writes.
+func TestImagesSkillNamesTheMapByItsProviderKey(t *testing.T) {
+	skill := imagesSkillFile(t)
+	for _, want := range []string{"repo_images", "provider/owner/name"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("the images skill never names %q: the map is `repo_images`, keyed `provider/owner/name` (D3370, D3371)", want)
+		}
+	}
+	if !regexp.MustCompile(`fugaro image map set \w+/\w+/\w+ \S+`).MatchString(skill) {
+		t.Error("the images skill never shows `fugaro image map set <provider>/<owner>/<name> <entry>`, so an agent maps a repository by a bare name the command refuses when the config cannot place it (R6)")
+	}
+	// The two skills name the map the same way, and neither keeps the retired
+	// member's spelling: `legacy_image_map` is the survey's member for the map
+	// an update has not migrated, and it is the only place the old name belongs.
+	for name, text := range map[string]string{
+		"images": skill,
+		"setup":  readRepoFile(t, "plugin/skills/setup/SKILL.md"),
+	} {
+		if strings.Contains(strings.ReplaceAll(text, "legacy_image_map", ""), "image_map") {
+			t.Errorf("the %s skill still calls the map `image_map`, the member no release writes: it is `repo_images`, and the bare-name one is the survey's `legacy_image_map` (D3371, R4)", name)
+		}
+	}
+	if setup := readRepoFile(t, "plugin/skills/setup/SKILL.md"); !strings.Contains(setup, "repo_images") {
+		t.Error("skills/setup/SKILL.md never names `repo_images`, so the step that checks the image a workflow runs names the map a job's entry is chosen from by a member no release writes (D3371)")
 	}
 }
 

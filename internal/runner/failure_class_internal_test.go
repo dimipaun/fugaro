@@ -410,14 +410,15 @@ type endingCall struct {
 	class    string
 }
 
-// classlessEnding reports whether a call ends a run that did not succeed with
-// no class at all: the one shape
+// classlessEnding reports whether a call ends a run that neither succeeded nor
+// paused with no class at all: a pause is the service's own answer that the
+// run resumes later, so it is not a failure and names no family. The one shape
 // TestNoFailureEndingCallsRecordEndWithoutAClass is about. A succeeded ending
 // with an empty class is the writer's own rule (writeEnd), not a site's
 // mistake, and a call that passes anything else — a class, a call to
 // haltClass — is a site choosing one.
 func classlessEnding(call endingCall) bool {
-	return call.class == `""` && call.status != "runstore.StatusSucceeded"
+	return call.class == `""` && call.status != "runstore.StatusSucceeded" && call.status != "runstore.StatusPaused"
 }
 
 // endingCalls is every call to a writer in the package's own code: a test may

@@ -498,6 +498,12 @@ type chainLimitPolicy struct {
 	// (H1, internal/runner's policySources says the same at bootstrap).
 	fromNode map[string]bool
 	mode     rigor.Rigor
+	// cfg is the file the run will read, kept for the one figure the
+	// launcher quotes back at a launcher (chainRoundCeiling): the rounds the
+	// run starts from are the file's own where they tighten the mode's row
+	// (R20, RT2), and a refusal that named the row alone would name a number
+	// the run may not start from.
+	cfg *config.Config
 }
 
 // chainLimitPolicyOf resolves the layers above for a launch. cfg is the file
@@ -509,6 +515,7 @@ func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg
 		ceiling: modeScaledCeiling(ceilingLayer(env.lc), mode),
 		under:   []policy.Layer{defaultBranchPolicyLayer(ctx, spec.Repo), runner.FileLayer(cfg)},
 		mode:    mode,
+		cfg:     cfg,
 	}
 	// The node is what the owner says now, where the ceiling is the copy the
 	// job was deployed with, and the runner reads it that way at bootstrap
@@ -619,8 +626,11 @@ func layerWord(src string) string {
 	return "the " + src + " layer"
 }
 
-// chainRoundCeiling is the rounds one run of mode m spends on its review loop
-// with nothing else set: the mode's own senior row, held inside the recipe's
+// chainRoundCeiling is the rounds one run of mode m starts its review loop
+// from, as the run itself reads them (internal/runner's planAgent): the file's
+// own number where it stands — the project layer states it, or it tightens the
+// mode's senior row — and that row where it does not stand, which is a silent
+// project and a number below the row (R3, R20, RT2), held inside the recipe's
 // bound (internal/runner's setRounds, recipe.MaxReviewRounds).
 //
 // It is the figure a refusal about the review-round dimension quotes, and it
@@ -629,12 +639,15 @@ func layerWord(src string) string {
 // (DefaultRounds and AdversarialDefault replaced it, #1483) and whose output
 // the mode's row was never equal to anyway — POC's and Hotfix's rows sit below
 // the floor that function used to apply and Pro's and Critical's above it
-// (docs/run-limit-carry-over F15). Quoting the mode's own row through this
-// function is the narrower, true claim: the number a run of this mode starts
-// from is this one, and it is a default rather than a cap — the recipe's bound
-// is the only ceiling either number is held under.
-func chainRoundCeiling(m rigor.Rigor) int {
-	return min(rigor.DefaultRounds(m).Senior, recipe.MaxReviewRounds)
+// (docs/run-limit-carry-over F15). Quoting the number a run of this mode
+// starts from is the narrow, true claim: it is a default rather than a cap —
+// the recipe's bound is the only ceiling it is held under.
+func chainRoundCeiling(cfg *config.Config, m rigor.Rigor) int {
+	row := rigor.DefaultRounds(m).Senior
+	if n := config.TightenRounds(cfg, "agent.review_rounds", cfg.Agent.ReviewRounds, row); n > 0 {
+		row = n
+	}
+	return min(row, recipe.MaxReviewRounds)
 }
 
 // budgetPrecheck refuses a launch the budget would refuse anyway (see

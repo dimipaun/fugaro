@@ -84,6 +84,7 @@ cmd	image ls
 cmd	image map
 cmd	image map set
 cmd	image promote
+cmd	image prune
 cmd	image refresh
 cmd	image render
 cmd	image rm
@@ -278,6 +279,7 @@ flag	accounts	bool	-h	--help
 flag	accounts	bool	-v	--verbose
 flag	accounts add	bool		--ask
 flag	accounts add	bool		--claude
+flag	accounts add	bool		--personal
 flag	accounts add	bool	-h	--help
 flag	accounts add	value		--pool
 flag	accounts add	value		--profile
@@ -327,6 +329,7 @@ flag	accounts ls	value		--region
 flag	accounts ls	value		--repo
 flag	accounts pool	bool	-h	--help
 flag	accounts pool	bool	-v	--verbose
+flag	accounts pool add	bool		--personal
 flag	accounts pool add	bool	-h	--help
 flag	accounts pool add	value		--allow-user
 flag	accounts pool add	value		--layer
@@ -703,6 +706,12 @@ flag	image promote	value		--config
 flag	image promote	value		--gcp-project
 flag	image promote	value		--project
 flag	image promote	value		--region
+flag	image prune	bool		--dry-run
+flag	image prune	bool	-h	--help
+flag	image prune	value		--config
+flag	image prune	value		--gcp-project
+flag	image prune	value		--project
+flag	image prune	value		--region
 flag	image refresh	bool		--ask
 flag	image refresh	bool	-h	--help
 flag	image refresh	value		--config
@@ -1428,7 +1437,6 @@ flag	settings unset	value		--layer
 flag	settings unset	value		--project
 flag	settings unset	value		--repo
 flag	setup	bool		--allow-job-delete
-flag	setup	bool		--anchor
 flag	setup	bool		--ask
 flag	setup	bool		--bake-repos
 flag	setup	bool		--check
@@ -1504,7 +1512,6 @@ flag	troubleshoot	bool	-h	--help
 flag	troubleshoot	value		--max-budget-usd
 flag	troubleshoot	value		--max-turns
 flag	update	bool		--allow-job-delete
-flag	update	bool		--anchor
 flag	update	bool		--ask
 flag	update	bool		--bake-repos
 flag	update	bool		--check

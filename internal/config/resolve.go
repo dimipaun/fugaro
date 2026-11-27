@@ -261,7 +261,6 @@ func setRepoOwn(c *Config, own *Config, dropped, written map[string]any) {
 	c.RepoWorkspaceBeatSet = setsWorkspaceBeat(written)
 	c.RepoTriageSet = setsTriage(written)
 	c.RepoReviewAgainstTaskSet = setsReviewAgainstTask(written)
-	c.RepoModelGradesSet = setsModelGrades(written)
 	c.RepoVisionSet = setsVision(written)
 	c.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(written)
 	c.RepoWorkflowABSet = setsWorkflowAB(written)
@@ -829,15 +828,6 @@ func levelsNoneModel(agent any) bool {
 // answer becomes Config.RepoPlanningSet.
 func setsPlanning(tree map[string]any) bool {
 	_, ok := tree["planning"]
-	return ok
-}
-
-// setsModelGrades is ProjectLayer.SetsModelGrades for a repository file's own
-// tree: whether the text writes the model_grades key, at any value, which is
-// the same question setsPlanning answers for planning:, for the same reason.
-// Its answer becomes Config.RepoModelGradesSet.
-func setsModelGrades(tree map[string]any) bool {
-	_, ok := tree["model_grades"]
 	return ok
 }
 

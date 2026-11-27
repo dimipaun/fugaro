@@ -1158,6 +1158,8 @@ func TestWorkspaceModeRefusesEveryOtherRoute(t *testing.T) {
 		{IssuePath, false},
 		{SlipPath, false},
 		{PoolDesignatePath, false},
+		{PersonalPoolPath, false},
+		{PersonalPoolGetPath, false},
 		{SlipClaimPath, true},
 		{WorkflowSecretsPath, true},
 		{BuildTokenPath, false},

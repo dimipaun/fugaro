@@ -1006,11 +1006,6 @@ func TestChecklistHasCheck49(t *testing.T) {
 	for _, want := range []string{
 		"git diff -- fugaro.yaml",
 		"git diff -- .claude/settings.json",
-		// The revert of the one edit the check can make to the sandbox's own
-		// file: step 3's answer to `update --repo`'s gcp_project: prompt is `n`,
-		// and this is what handles the run that did not give it.
-		"if ! git diff --quiet -- fugaro.yaml; then",
-		"git checkout -- fugaro.yaml",
 		"fugaro budget show --json --project fugaro",
 		"fugaro project show --json --project fugaro",
 	} {
@@ -1018,12 +1013,12 @@ func TestChecklistHasCheck49(t *testing.T) {
 			t.Errorf("step 8's restore block has no %q line of its own: the step's FACT prose writes the same string, so the substring pin above cannot see this line deleted", want)
 		}
 	}
-	// …and the revert is guarded by step 1's own record, not by the file being
-	// dirty: a checkout whose committed copy already carries gcp_project: is
-	// never written to, so an unrelated working-tree change in it belongs to the
-	// operator and must not be discarded here.
+	// …and there is no revert at all any more: `update --repo` writes no file
+	// in the checkout (the anchor left the converge, U9b), so step 8's diff of
+	// `fugaro.yaml` is a confirmation, and a diff there is the operator's own
+	// change rather than the command's.
 	chk49MustContain(t, chk49Step(t, section, "### 8."), "step 8", []string{
-		"grep -q '^gcp_project:' /tmp/chk49-sandbox-yaml-before.txt",
+		"a diff here is the operator's own change, left alone",
 	})
 	// Read as a command line, not as a substring: the section SAYS it has no
 	// `fugaro budget set`, and that sentence is the point — it is running one
@@ -1132,25 +1127,17 @@ func TestChecklistHasCheck49(t *testing.T) {
 		}
 	}
 
-	// Step 3 is not the job environment alone, and step 8's `git diff --
-	// fugaro.yaml` FACT rests on knowing that. `fugaro update --repo`'s
-	// repository stage ends by WRITING the checkout's gcp_project: line —
-	// init_repo_stage.go:163, Apply's `s.anchor(ctx, env, s.e.r.o.planOnly)`,
-	// where the --plan-only run plans the same line and writes nothing (:143) —
-	// through the anchor at init_fugaroyaml.go:218 and the write at :248. The
-	// [y/N] the line used to be behind is gone (T7, docs/no-prompt-policy): a
-	// person at the terminal is asked nothing, --yes writes the same way (:230),
-	// and `fugaro update --ask` is the one flag that puts the question back. The
-	// check runs `update --repo` in that checkout TWICE (step 3 and step 8), so
-	// the section has to say what puts the line back and step 8 has to have the
-	// revert: without both, "this is a confirmation that it is unchanged" is a
-	// confirmation of an edit the check itself made, and the FACT above fails
-	// on the operator's own checkout.
+	// Step 3 is the job environment and the image, and the checkout's own file
+	// is not its business: `fugaro update --repo` writes no file there any more,
+	// because the repository stage stopped calling the anchor (U9b; the
+	// gcp_project: line is `fugaro project repos add`'s). The check runs the
+	// command twice (step 3 and step 8), so the section has to say that neither
+	// run edits `fugaro.yaml` and step 8 has to leave a diff alone — the old
+	// warning about the anchor's write and its revert is gone with the write.
 	chk49MustContain(t, chk49Step(t, section, "### 3."), "step 3", []string{
-		"`update --repo` also writes the checkout's own `gcp_project:` line",
-		"`internal/cli/init_repo_stage.go` → `internal/cli/init_fugaroyaml.go`",
-		"the `Write this to <path>? [y/N]:` confirmation this line used to be behind",
-		"**step 8 runs the same command and then puts the file back.**",
+		"`update --repo` writes no file in this checkout, and there is nothing to put back",
+		"the checkout's `gcp_project:` line is written by `fugaro project repos add` and by no other command",
+		"a diff there is the operator's own working-tree change, not this check's",
 	})
 
 	// The citations the review found drifted. Asserted ABSENT rather than
@@ -2307,9 +2294,12 @@ var chk49Citations = []chkCitation{
 	// `fugaro upgrade` is gone (U4): its four steps are update --check's
 	// checkSteps, the anchor for the sentence's list of steps.
 	{"internal/cli/update_check.go", "var checkSteps = []checkStep{"},
-	{"internal/cli/init_repo_stage.go", "s.anchor(ctx, env, s.e.r.o.planOnly)"},
-	{"internal/cli/init_fugaroyaml.go", "writeFileAtomic"},
-	{"internal/cli/init_fugaroyaml.go", "func (s *repositoryStage) anchor"},
+	// The anchor left the converge (U9b), so the Check 49 section cites
+	// init_repo_stage.go no more: the sentences about `update --repo` are about
+	// the job environment (`upgrade_cloud.go`), the image
+	// (`image_refresh_steps.go`) and the converge's steps (`update_check.go`),
+	// all cited above, and the checkout's `gcp_project:` line is `fugaro project
+	// repos add`'s.
 	{"internal/projectpolicy/match.go", "func Canonical(provider, repo string)"},
 	{"internal/cli/project_cmd.go", "func allowSourcesOf"},
 	{"internal/runstore/runstore.go", "runRefRE"},

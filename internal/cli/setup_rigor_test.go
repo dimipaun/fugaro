@@ -457,7 +457,7 @@ func TestUpdateRefusesRigorOnAMachineWithNoProjectConfig(t *testing.T) {
 
 // TestRigorIsRefusedOnEveryWalkThatNeverReachesTheLayerStage: the Layer stage
 // is the flag's only reader (init_layer_stage.go), and it is a stage of the
-// converge alone. Every other walk — the four one-shot modes, --anchor, and a
+// converge alone. Every other walk — the four one-shot modes and a
 // --repo run, which has a stage set of its own — stops before it, so a flag
 // accepted there would be dropped with exit 0 and the user's explicit answer
 // to the wizard's question would be lost with no error. Each refuses it by
@@ -474,7 +474,6 @@ func TestRigorIsRefusedOnEveryWalkThatNeverReachesTheLayerStage(t *testing.T) {
 		{"--print-vars", []string{"setup", "--print-vars", "--rigor", "pro"}, oneShot},
 		{"--forget", []string{"update", "--forget", "--rigor", "pro"}, oneShot},
 		{"--publish-config", []string{"update", "--publish-config", "--rigor", "pro"}, oneShot},
-		{"--anchor", []string{"setup", "--anchor", "--rigor", "pro"}, "it excludes --rigor"},
 		{"--repo", []string{"update", "--repo", "--rigor", "pro"}, "--rigor set(s) up the installation, not a repository"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

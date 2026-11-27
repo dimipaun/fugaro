@@ -778,7 +778,7 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"the project's two grades for the escalation ladder",
 		"the model its rung runs and the credential or pool its calls go out on",
 		"A grade nobody sets is no grade: the rung that needs one refuses and asks, never a hidden default",
-		"a repository's `model_grades:` block is dropped and recorded by the merge",
+		"a repository's `model_grades:` block is dropped, its grade models by the lift (`config.LiftedKeys`), which names them where they are written, and its `.access` rows by the merge",
 		"the rungs that spend on it arrive with the ladder's own tasks",
 		"A version-6 reader lists the key as unknown and runs every rung on whatever its own configuration said, which is why the node is version 7",
 	} {

@@ -12,6 +12,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -38,6 +39,18 @@ const limitsYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_b
 func limitsCheckout(t *testing.T) {
 	t.Helper()
 	baseBranchCheckout(t, limitsRepo, limitsYAML, "main")
+}
+
+// limitsCfg is the configuration the fixture's file resolves to: the checkout's
+// own layer, with no project layer over it (Resolve's layerless arm, which is
+// what the launcher resolves for a repository whose project publishes none).
+func limitsCfg(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, _, ps := config.Resolve([]byte(limitsYAML), nil)
+	if len(ps) > 0 {
+		t.Fatalf("limitsYAML: %v", ps)
+	}
+	return cfg
 }
 
 // limitsImage gives the fixture's web job a build record naming the release
@@ -543,7 +556,7 @@ func TestRunLimitNeverAboveTheModeCeiling(t *testing.T) {
 	f := newCloudFixture(t)
 	limitsImage(t, f)
 	limitsCheckout(t)
-	above := chainRoundCeiling(rigor.Pro) + 7
+	above := chainRoundCeiling(limitsCfg(t), rigor.Pro) + 7
 	args := []string{"run", "--run-id", "20261110-140000-abcd", "--max-review-rounds", fmt.Sprint(above), "A task"}
 	if _, _, err := execute(t, args...); err != nil {
 		t.Fatalf("--max-review-rounds %d: %v", above, err)
@@ -567,8 +580,8 @@ func TestRunClampedRoundsRefusalNamesTheFigure(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error", err)
 	}
-	want := fmt.Sprintf("A %s run's own review loop starts from %d rounds per run (the mode's default, held inside the recipe's %d)",
-		rigor.Pro, chainRoundCeiling(rigor.Pro), recipe.MaxReviewRounds)
+	want := fmt.Sprintf("A %s run's own review loop starts from %d rounds per run (the file's own number where it tightens the mode's, the mode's default where it does not, held inside the recipe's %d)",
+		rigor.Pro, chainRoundCeiling(limitsCfg(t), rigor.Pro), recipe.MaxReviewRounds)
 	for _, w := range []string{"--max-review-rounds 0", "must be at least 1", want} {
 		if !strings.Contains(err.Error(), w) {
 			t.Fatalf("err = %v, want it to name %q", err, w)
@@ -577,6 +590,73 @@ func TestRunClampedRoundsRefusalNamesTheFigure(t *testing.T) {
 	if n := len(f.run.RunRequests()); n != 0 {
 		t.Fatalf("%d launches, want none", n)
 	}
+}
+
+// TestLaunchBudgetUsesTheTighter: the review rounds a launch's budget names
+// for a run are the rounds the run starts from — the file's number where it
+// tightens the mode's row, and the row where the project layer says nothing
+// about the knob and the file's number is below it (R20, RT2). Both readers of
+// that figure answer with it: the refusal a chain limit below one round gets
+// names it, and the preview's knobs carry it.
+func TestLaunchBudgetUsesTheTighter(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rounds int
+		want   int
+	}{
+		{"a knob under the row takes the row", 2, rigor.DefaultRounds(rigor.Pro).Senior},
+		{"a knob over the row is the run's own", 8, 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			baseBranchCheckout(t, limitsRepo, limitsRoundsYAML(tc.rounds), "main")
+			_, _, err := execute(t, "run", "--max-review-rounds", "0", "A task")
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error", err)
+			}
+			want := fmt.Sprintf("A %s run's own review loop starts from %d rounds per run", rigor.Pro, tc.want)
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want the refusal to quote %q", err, want)
+			}
+			if n := len(f.run.RunRequests()); n != 0 {
+				t.Fatalf("%d launches, want none", n)
+			}
+		})
+	}
+
+	t.Run("the preview prices the same figure", func(t *testing.T) {
+		pf := newBudgetFixture(t, "")
+		pf.SetCaps(100, 3, 20, 3)
+		pf.SetSpentToday(0)
+		// No layer published: the preview's checkout is the repository whose
+		// project says nothing about the knob, which is the case the figure is
+		// about — the fixture's own checkouts state the numbers they write.
+		pf.CheckoutWithoutLayer(t, "  review_rounds: 2\n")
+		out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "1", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Knobs struct {
+				FirstLineRounds int `json:"first_line_rounds"`
+				ReviewRounds    int `json:"review_rounds"`
+			} `json:"knobs"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if want := rigor.DefaultRounds(rigor.Pro).Senior; doc.Knobs.ReviewRounds != want {
+			t.Errorf("knobs.review_rounds = %d, want the mode's %d: the file wrote 2 and the project layer says nothing about the knob", doc.Knobs.ReviewRounds, want)
+		}
+	})
+}
+
+// limitsRoundsYAML is limitsYAML with a review-round knob the file wrote: the
+// project layer says nothing about the key, so the number stands only where it
+// tightens the mode's row (R20, RT2).
+func limitsRoundsYAML(rounds int) string {
+	return strings.Replace(limitsYAML, "agent: { max_run_tokens: 900000 }",
+		"agent: { max_run_tokens: 900000, review_rounds: "+fmt.Sprint(rounds)+" }", 1)
 }
 
 // TestRunRefusesAMalformedLimit: the syntax of the four flags is refused

@@ -388,8 +388,13 @@ const (
 // paused time (R11, D3184, D3187, D3190) are three `pause.` rows the generic
 // writer names, so the registry and the named half of the allowlist move together
 // and the rows without a writer stay where they were.
+//
+// C8c of docs/forge-authorship-images/ is the last mover, by one row and by one:
+// the project layer's `images.retention_days` (shared-images.md §9) is a row the
+// local config states and no command writes -- `fugaro image prune` reads it --
+// so no name in the allowlist and no prefix of it reaches it.
 const (
-	cfmRegistryRows   = 546
+	cfmRegistryRows   = 547
 	cfmAllowlistNamed = 125
 )
 

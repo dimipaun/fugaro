@@ -33,14 +33,17 @@ func TestScopeOf(t *testing.T) {
 // headroom-compression.md §4, decision P11's fourth edit): the project layer
 // and a profile are the same launcher-writable bucket object agent.oauth_token
 // already distrusts, so neither may set it — and the row must exist at all, or
-// the project layer would treat the key as unknown instead of out of scope.
+// the project layer would treat the key as unknown instead of out of scope. A
+// repository's file is refused too (F16: the launcher's compression gate admits
+// no value but the empty one it defaults to), so the override is the one scope
+// left, which is the direction --no-compression takes (DK1, D3299).
 func TestScopesIncludesCompression(t *testing.T) {
 	i := slices.IndexFunc(Scopes, func(r ScopeRow) bool { return r.Key == "agent.compression" })
 	if i < 0 {
 		t.Fatal("agent.compression has no Scopes row")
 	}
-	if Scopes[i].In != InRepo|InOverride {
-		t.Errorf("agent.compression scope = %v, want InRepo|InOverride", Scopes[i].In)
+	if Scopes[i].In != InOverride {
+		t.Errorf("agent.compression scope = %v, want InOverride", Scopes[i].In)
 	}
 }
 
@@ -241,10 +244,12 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// its row in Task 9, once the shipped shape is documented.
 		"agent.oauth_token": InRepo | InOverride,
 		// Headroom compression plan Task 1 (docs/headroom-compression/spec.md
-		// §4): repo-only for the same reason agent.oauth_token is, and the
-		// override is one-directional (--no-compression only), which the scope
-		// table does not express.
-		"agent.compression": InRepo | InOverride,
+		// §4): the project layer is out for the reason agent.oauth_token's is,
+		// and the override is one-directional (--no-compression only), which the
+		// scope table does not express. A repository's file lost its bit in DK1
+		// (D3299): F16's compression gate refuses it already, so the row names
+		// the one scope that still reaches the key.
+		"agent.compression": InOverride,
 		// The triage stage's switch (docs/post-review-triage, T-TR5, D1854) is
 		// repo-only, and not even a task flag: a launcher writes the task, and
 		// the project layer travels inside it (task.Spec.ProjectLayer), so a

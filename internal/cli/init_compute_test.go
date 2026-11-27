@@ -671,7 +671,7 @@ func TestComputeStageIsBehindItsFlag(t *testing.T) {
 
 // The flag is refused where it could only mislead: with --repo (another
 // root's run) and with every flag that only reads or only stops
-// (--forget, --print-vars, --config-only, --publish-config, --anchor), so a
+// (--forget, --print-vars, --config-only, --publish-config), so a
 // run that named --provision-batch always means the apply it names. The
 // check is asked
 // directly: a --repo run resolves the checkout before it validates anything,
@@ -679,7 +679,7 @@ func TestComputeStageIsBehindItsFlag(t *testing.T) {
 func TestProvisionBatchFlagIsRefusedWhereItCannotApply(t *testing.T) {
 	for _, o := range []*initOptions{{provisionBatch: true, repo: true}, {provisionBatch: true, forget: true},
 		{provisionBatch: true, printVars: true}, {provisionBatch: true, configOnly: true},
-		{provisionBatch: true, publishConfig: true}, {provisionBatch: true, anchor: true}} {
+		{provisionBatch: true, publishConfig: true}} {
 		err := o.check()
 		if err == nil || !strings.Contains(err.Error(), "--provision-batch") {
 			t.Errorf("%+v: err = %v, want it refused", o, err)

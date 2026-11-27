@@ -245,14 +245,13 @@ func updateRetryHint(cmd *cobra.Command, o *initOptions, args []string) {
 
 // updateRetryOffers reports whether this run is one that can offer anything.
 // A run that applied nothing offers nothing: --plan-only, --print-vars,
-// --config-only, --publish-config and --anchor stop before the converge and
-// write a document (or one line of a checkout) rather than bringing the
-// installation up to this release, and --forget takes the installation apart
-// instead. The offer is about a run that has just installed the release that
+// --config-only and --publish-config stop before the converge and write a
+// document rather than bringing the installation up to this release, and
+// --forget takes the installation apart instead. The offer is about a run that has just installed the release that
 // fixed the issue, which is why the list is the one the modes exclude one
 // another by (init.go) and not a set of flags this file invents.
 func updateRetryOffers(o *initOptions) bool {
-	for _, oneShot := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
+	for _, oneShot := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig} {
 		if oneShot {
 			return false
 		}

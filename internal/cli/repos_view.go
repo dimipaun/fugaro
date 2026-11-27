@@ -489,6 +489,13 @@ func reposViewCanonicalOf(canonical string) (string, error) {
 // generation it was read at, and the catalog and image map the node publishes,
 // which are the pair every row's image is resolved against (D1140, D1906).
 //
+// The map is the one the project SERVES and not the member one machine wrote
+// (R2, configImageMap): the file's repo_images first, the node's, then the
+// legacy image_map either place, so a row draws the image a launch of it would
+// run — `project repos add` writes repo_images, and a reader left on the legacy
+// member alone would answer the catalog's default for a repository the command
+// had just mapped.
+//
 // The project's base branch comes back with them: this installation's own
 // top-level base_branch where it names one, else the node's, which is the order
 // projectBaseBranchErr resolves layer 3 in — an installation that names one does

@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
@@ -254,6 +255,11 @@ type doctorOutput struct {
 	// Release is the binary's tag and commit, and the command that checks the
 	// tag still names the commit (no network call here).
 	Release *releaseInfo `json:"release,omitempty"`
+	// Notes are what doctor read and did not refuse: the keys the project now
+	// owns that this checkout's file still writes, the values the merge
+	// dropped, and the recipes cleanup diff. Neither a problem nor a warning,
+	// and each printed once (S2, spec §4).
+	Notes []config.Problem `json:"notes,omitempty"`
 	// Error is why doctor could not run its checks (an unreadable or invalid
 	// local config, no credentials), so --json prints an object on every outcome.
 	Error string `json:"error,omitempty"`
@@ -647,6 +653,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.Checks = append(o.Checks, doctorBaseImage(lc), doctorCosign(lc))
+	if c := doctorSharedImageCap(ctx, lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	// The login unit that runs the orchestrator daemon (O9): the one drift
 	// `fugaro update` re-renders in place, reported here like every other
 	// version drift so the person is told to update rather than handed a second
@@ -753,6 +762,17 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 					Fix:     "run doctor from a checkout with a parseable owner/name origin remote, or check fugaro.yaml and the local config's claude_accounts by hand"})
 			}
 		}
+		// This checkout's own notes, beside the file's check: the keys the
+		// project now owns that its fugaro.yaml still writes, the values the
+		// merge dropped, and the recipes cleanup diff (S2, spec §4, D3296).
+		// rf is the resolution fugaroYAMLCheck made and handed back only for a
+		// file with no problem, so a nil one is a file that did not resolve and
+		// answers no notes; the cleanup diff reaches the project store the way
+		// validate's does and is silence when it cannot.
+		if rf != nil && rf.Cfg != nil {
+			o.Notes = append(o.Notes, resolutionNotes(rf.Res)...)
+			o.Notes = append(o.Notes, recipesCleanupNotes(ctx, co.Root, rf.Cfg, lc, offline)...)
+		}
 	}
 
 	o.OK = !checksFail(o.Checks, strict)
@@ -783,6 +803,37 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
 		Fix:     "fugaro update   # its images stage pins and records this release's base image"}
+}
+
+// doctorSharedImageCap is the image-count cap's warning (design
+// docs/forge-authorship-images/shared-images.md §8): the lock's images pass
+// ImageCap, and the line names the count, the cap and the two remedies. It is
+// a warning and nothing else — nothing is refused and nothing is deleted for
+// being over it — so it fails doctor only under --strict, and an installation
+// under the cap says nothing at all rather than a passing line.
+//
+// It reads the lock, which is the runs bucket's own object, and makes no
+// registry call: whether the registry still holds each entry's digest is §9's
+// other question, and nothing asks it here. The bucket is opened through the
+// seam doctor's other runs-bucket checks use, and skipped when the config's
+// endpoints are fakes, because the gs:// bucket a fake endpoint stands for is
+// not the one a test put the lock in (publishSharedWarn's rule).
+func doctorSharedImageCap(ctx context.Context, lc *localcfg.Config) *doctorCheck {
+	if lc == nil || fakeEndpointsOnGS(lc, lc.BucketURL()) {
+		return nil
+	}
+	b, err := sharedBucketOpener(ctx, lc.BucketURL())
+	if err != nil {
+		return nil
+	}
+	defer b.Close()
+	lock, err := imagecheck.ReadLock(ctx, b)
+	if err != nil || !lock.OverCap() {
+		return nil
+	}
+	return &doctorCheck{ID: "shared-image-cap", OK: false, Severity: "warning",
+		Problem: fmt.Sprintf("this installation's %d shared images are over the cap of %d", len(lock.Images), imagecheck.ImageCap),
+		Fix:     "fugaro image ls lists them; fugaro image prune removes the ones no job uses"}
 }
 
 // doctorOfflineChecks is `fugaro doctor --offline`'s half of the update class:
@@ -2449,6 +2500,13 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool, view doctorView
 			}
 		}
 		printDoctorReport(out, o.Checks, view)
+		// The notes follow the report in every view, as validate prints them:
+		// a key the project now owns or a value the merge dropped is something
+		// the reader acts on, so it is never behind `--all` — and a note is
+		// not a check, so it never moves the verdict above it.
+		for _, n := range o.Notes {
+			fmt.Fprintln(out, "note: "+n.String())
+		}
 		if view.all {
 			if p := o.Project; p != nil {
 				fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)

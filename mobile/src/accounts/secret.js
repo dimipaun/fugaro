@@ -18,6 +18,13 @@
 // that list, and it is the whole of it: `secure-store.js` refuses an item name
 // that is not on it, so a third secret cannot be stored by naming it.
 //
+// **One other value is a `Secret` without being one of D111's two** (M3): the
+// device key's seed (D2790, O6). It is not an account item -- it is one per
+// paired project and it is not reached through `SecretStore` -- so it is a
+// second list (`DEVICE_KEY_ITEM` and `SECRET_KINDS` below) rather than an entry
+// in the first. What it shares with D111's two is the rule this module exists
+// for: it is a credential, so it is wrapped and it cannot be printed.
+//
 // **This module is the "never logged" half of D111, and it is a value rather
 // than a rule.** A bare string cannot be protected: `console.log(token)` is a
 // single keystroke away in any file that holds one, and a `catch` that
@@ -46,6 +53,26 @@
  * reports them in.
  */
 export const SECRET_ITEMS = Object.freeze(['idToken', 'macKey']);
+
+/**
+ * The device key's seed (task M3; D2790, O6). **It is not a third item of
+ * D111**, and that is why it is a separate list rather than an entry in the one
+ * above: D111 answers what an *account* may hold, and the device key belongs to
+ * a project's session -- it is one per paired project, it is keyed by the
+ * project's opaque id, and it is not reached through `SecretStore`, whose every
+ * method is gated on an account id and on `SECRET_ITEMS`. What it shares with
+ * D111's two is the only property that matters here: it is a credential, so it
+ * is a `Secret` and it cannot be printed.
+ */
+export const DEVICE_KEY_ITEM = 'deviceKey';
+
+/**
+ * Every item a `Secret` may wrap: D111's two and the device key's seed. It is
+ * the union rather than a second list, so `Secret` and `secret()` have one rule
+ * to apply, and `isSecretItem` above keeps meaning exactly what `SecretStore`
+ * needs it to mean.
+ */
+export const SECRET_KINDS = Object.freeze([...SECRET_ITEMS, DEVICE_KEY_ITEM]);
 
 /**
  * The longest secret value, in **bytes**: 2048, `expo-secure-store`'s own
@@ -83,9 +110,14 @@ const INSPECT = Symbol.for('nodejs.util.inspect.custom');
 /** The characters a secret value may carry: printable ASCII, no space. */
 const PRINTABLE_ASCII_RE = /^[\x21-\x7e]+$/;
 
-/** Is `name` one of D111's two items? */
+/** Is `name` one of D111's two items? This is the account store's own gate. */
 export function isSecretItem(name) {
   return SECRET_ITEMS.includes(name);
+}
+
+/** Is `name` an item a `Secret` may wrap? D111's two, and the device key's seed. */
+export function isSecretKind(name) {
+  return SECRET_KINDS.includes(name);
 }
 
 /** Is `value` a `Secret` this module built? */
@@ -105,7 +137,7 @@ export class Secret {
   #value;
 
   constructor(item, value) {
-    if (!isSecretItem(item)) throw new TypeError(`unknown secret item: ${String(item)}`);
+    if (!isSecretKind(item)) throw new TypeError(`unknown secret item: ${String(item)}`);
     if (typeof value !== 'string' || value.length === 0) {
       throw new TypeError('a secret value is a non-empty string');
     }
@@ -161,7 +193,7 @@ function refuse(code, field) {
  * repaired credential is a credential that authenticates as something else.
  */
 export function secret(item, value) {
-  if (!isSecretItem(item)) return refuse(SECRET_CODES.BAD_ITEM, 'item');
+  if (!isSecretKind(item)) return refuse(SECRET_CODES.BAD_ITEM, 'item');
   if (typeof value !== 'string') return refuse(SECRET_CODES.BAD_TYPE, 'value');
   if (value.length === 0) return refuse(SECRET_CODES.EMPTY, 'value');
   // The byte ceiling first, so an enormous value is refused without being
