@@ -763,9 +763,10 @@ named it**, on the same bytes, rather than leave an access pointing at nothing.
 serves them.
 
 All three are **offline** — they read and write this config file and reach no bucket, no database
-and no host — and the two writes are the **owner's**: a pool decides where a project's calls may be
-spent, so a coding agent's session is refused, whatever it passes (§7's rule, and the same one
-`fugaro accounts add` states for the token).
+and no host, `ls --json` alone excepted, which reads the project's database for its figures — and
+the two writes are the **owner's**: a pool decides where a project's calls may be spent, so a
+coding agent's session is refused, whatever it passes (§7's rule, and the same one `fugaro accounts
+add` states for the token).
 
 **A pool's members are all served by one half of a run, and a pool may not name members of both.**
 An `openrouter` or `vertex` member is served by the run's own gateway; a `claude-oauth` or

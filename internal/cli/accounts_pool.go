@@ -29,9 +29,10 @@ import (
 // grant, exactly as a credential is (F12, D1628).
 //
 // The three commands are D1631's and the plan's MC5: `ls` reads, `add` declares
-// the whole list and the people it is served to, `rm` removes it. All three are
-// offline: they read and write the installation's own config file and reach no
-// bucket, no database and no host.
+// the whole list and the people it is served to, `rm` removes it. They read and
+// write the installation's own config file and reach no bucket, no database and
+// no host — except `ls --json`, whose figures are the credentials service's and
+// are read from the project's database as the person running it (PL10).
 //
 // The two writes are the shared settings path's (settings plan F4): they resolve
 // their layer through settingsResolveTarget, are judged by settingsLayerGate,
