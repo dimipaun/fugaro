@@ -278,6 +278,7 @@ flag	accounts	bool	-h	--help
 flag	accounts	bool	-v	--verbose
 flag	accounts add	bool		--ask
 flag	accounts add	bool		--claude
+flag	accounts add	bool		--personal
 flag	accounts add	bool	-h	--help
 flag	accounts add	value		--pool
 flag	accounts add	value		--profile
@@ -327,6 +328,7 @@ flag	accounts ls	value		--region
 flag	accounts ls	value		--repo
 flag	accounts pool	bool	-h	--help
 flag	accounts pool	bool	-v	--verbose
+flag	accounts pool add	bool		--personal
 flag	accounts pool add	bool	-h	--help
 flag	accounts pool add	value		--allow-user
 flag	accounts pool add	value		--layer

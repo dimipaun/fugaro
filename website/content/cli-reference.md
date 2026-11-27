@@ -288,6 +288,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--claude` | bool | `false` | no | run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--personal` | bool | `false` | no | with --pool: keep the token in a pool of YOUR OWN, stored in your own container of this project through the intake rather than declared in the config (fugaro accounts pool add --personal declares the pool). Refuses --repos, --profile, --type, --ask and --yes |
 | `--pool` | string | "" | no | put the token in the named pool: declare the pool with this account's credential as its one member, or join the members it already has. Requires --type claude-oauth; without the flag a subscription token goes in a pool of one named after the account, and a key credential in none. The name may not be one a credential of this config holds, unless the pool walks that credential alone |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
@@ -948,6 +949,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
 | `--owner` | string | "" | no | the person the pool is served to, by email: the owner a craft's access is checked against. Left out, a pool that exists keeps the owner it has |
+| `--personal` | bool | `false` | no | record the pool as YOUR OWN, at the installation's credentials service, rather than in this project's config: it is served to the runs you launch and to nobody else, its members are the names of containers of your own, and its flags are --rule and the member list alone |
 | `--rule` | string | "" | no | how the service picks among the members the pool can use (ordered, round-robin, failover). Left out, a pool that exists keeps the rule it has and is served by its strategy |
 | `--service-account` | string | "" | no | the address of the service account this pool belongs to, written as the pool's principal |
 | `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
