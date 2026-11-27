@@ -230,6 +230,17 @@ update)
       exit 2
     fi
     ;;
+  refuse-elsewhere-no-tty)
+    # Exit 1 is what a run left at a step makes, and it is also what an
+    # unrelated refusal makes: this one refuses over a repository this machine
+    # does not have, names no step and leaves the person nothing to answer. A
+    # run nobody is at writes no unit for it too, so the unit alone cannot tell
+    # the fence from this, and the row must read the sentence.
+    if [ ! -t 0 ]; then
+      printf 'fugaro: no fugaro.yaml in this directory: run this in your repository\n' >&2
+      exit 1
+    fi
+    ;;
   *)
     printf 'fake fugaro: unknown update mode\n' >&2
     exit 64
@@ -932,6 +943,24 @@ case_upgrade_boundary_cloud_failure() {
   expect_contains "$out" "1 is the only exit a run left at a step makes" "boundary cloud failure: the exit is not the fence"
 }
 
+# case_upgrade_boundary_refused_elsewhere: exit 1 with no unit written is the
+# fence only when the run was left at the step that needs a person. An
+# unrelated refusal — a missing project config, say — writes no unit either, so
+# reading the unit alone would pass this row for the wrong reason; the row has
+# to read the sentence the step prints.
+case_upgrade_boundary_refused_elsewhere() {
+  setup_case upgrade-boundary-refused-elsewhere
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'refuse-elsewhere-no-tty\n' >"$dir/state/update.mode"
+  run301 upgrade
+  expect_status "$status" 2 "boundary refused elsewhere: the exit"
+  expect_fact boundary FAIL "boundary refused elsewhere: the row"
+  expect_contains "$out" "not for the step that needs a person" "boundary refused elsewhere: the reason"
+  expect_contains "$out" "no fugaro.yaml in this directory" "boundary refused elsewhere: what the run printed instead"
+}
+
 # case_upgrade_boundary_agent_writes_unit: the marker rule broken. An
 # agent-marked run that installs a login unit on a machine that had none is the
 # fence D2700 keeps and the one internal/agentenv's G2 rules on.
@@ -1265,6 +1294,7 @@ t case_upgrade_boundary_no_terminal
 t case_upgrade_boundary_refused_no_terminal
 t case_upgrade_boundary_refused_writes_a_unit
 t case_upgrade_boundary_cloud_failure
+t case_upgrade_boundary_refused_elsewhere
 t case_upgrade_boundary_agent_writes_unit
 t case_upgrade_waits_for_the_human
 t case_upgrade_handover
