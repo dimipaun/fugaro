@@ -1240,23 +1240,32 @@ func catalogIdentitySecretGrant(b tfBlock) bool {
 // rule nobody knows the shape of.
 func TestMountRuleCatchesAFixture(t *testing.T) {
 	fixtures := []struct {
-		name string
-		why  string
-		file tfFile
+		name  string
+		why   string
+		files []tfFile
 	}{
 		{
-			name: "the workflow-secret class mounted whole",
-			why:  "for_each over the fetched class mounts every workflow secret the flip took off the job (IS6, D3324)",
-			file: tfFile{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureWorkflowClassMounted},
+			name:  "the workflow-secret class mounted whole",
+			why:   "for_each over the fetched class mounts every workflow secret the flip took off the job (IS6, D3324)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureWorkflowClassMounted}},
 		},
 		{
-			name: "the installation's fugaro_p_ copy mounted",
-			why:  "the container IS13 retires: a job naming it mounts a secret the run reads from the service (D3323, D3324)",
-			file: tfFile{rel: "deploy/terraform/gcp/modules/repo/check.tf", src: fixtureDeliveryNameMounted},
+			name:  "the installation's fugaro_p_ copy mounted",
+			why:   "the container IS13 retires: a job naming it mounts a secret the run reads from the service (D3323, D3324)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/repo/check.tf", src: fixtureDeliveryNameMounted}},
+		},
+		{
+			name: "the class mounted through a local another module names too",
+			why:  `modules/workflow and modules/project both declare a job_mounts: read as one module the project's definition wins and the workflow job's own rule is never inlined or judged`,
+			files: []tfFile{
+				{rel: "deploy/terraform/gcp/modules/project/sa.tf", src: fixtureOtherModulesLocal},
+				{rel: "deploy/terraform/gcp/modules/workflow/sa.tf", src: fixtureWorkflowLocalAdmitsTheClass},
+				{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureGatedMount},
+			},
 		},
 	}
 	for _, f := range fixtures {
-		if hits := runJobMountHitsInFiles([]tfFile{f.file}); len(hits) == 0 {
+		if hits := runJobMountHitsInFiles(f.files); len(hits) == 0 {
 			t.Errorf("the mount rule passes the fixture %q, and it must fail it: %s", f.name, f.why)
 		}
 	}
@@ -1332,31 +1341,58 @@ type runJobSecretSite struct {
 var tfDynamicRE = regexp.MustCompile(`(?m)^[ \t]*dynamic[ \t]+"([A-Za-z0-9_]+)"[ \t]*\{`)
 
 func runJobSecretSites(files []tfFile) []runJobSecretSite {
-	mod := newTFModule(files)
 	var sites []runJobSecretSite
-	for _, b := range mod.blocks {
-		if b.mode != "resource" {
-			continue
-		}
-		key := b.file + " " + b.typ + "." + b.name
-		rest := b.body
-		for _, loc := range tfDynamicRE.FindAllStringSubmatchIndex(b.body, -1) {
-			inner, ok := terraformBlockBody(b.body, loc[1]-1)
-			if !ok {
+	for _, group := range moduleGroups(files) {
+		mod := newTFModule(group)
+		for _, b := range mod.blocks {
+			if b.mode != "resource" {
 				continue
 			}
-			rest = blankSpan(rest, loc[0], loc[1]+len(inner)+1)
-			if !holdsSecretValue(inner) {
-				continue
+			key := b.file + " " + b.typ + "." + b.name
+			rest := b.body
+			for _, loc := range tfDynamicRE.FindAllStringSubmatchIndex(b.body, -1) {
+				inner, ok := terraformBlockBody(b.body, loc[1]-1)
+				if !ok {
+					continue
+				}
+				rest = blankSpan(rest, loc[0], loc[1]+len(inner)+1)
+				if !holdsSecretValue(inner) {
+					continue
+				}
+				sites = append(sites, runJobSecretSite{key: key, body: inner, expressions: siteExpressions(mod, inner, b.body)})
 			}
-			sites = append(sites, runJobSecretSite{key: key, body: inner, expressions: siteExpressions(mod, inner, b.body)})
-		}
-		if holdsSecretValue(rest) {
-			sites = append(sites, runJobSecretSite{key: key, body: rest, expressions: siteExpressions(mod, rest, b.body)})
+			if holdsSecretValue(rest) {
+				sites = append(sites, runJobSecretSite{key: key, body: rest, expressions: siteExpressions(mod, rest, b.body)})
+			}
 		}
 	}
 	sort.Slice(sites, func(i, j int) bool { return sites[i].key < sites[j].key })
 	return sites
+}
+
+// moduleGroups splits a file set by module directory, and the split is the
+// whole point: a local and a variable belong to the module that declares them,
+// and two modules name different things by one name — modules/workflow and
+// modules/project both hold a `job_mounts`. Read as one module, the second
+// definition wins and the first module's own mount is judged by the other
+// module's rule, so a fetched-class clause put back into
+// modules/workflow/sa.tf would pass a guard that never looked at it.
+func moduleGroups(files []tfFile) [][]tfFile {
+	byDir := map[string][]tfFile{}
+	var dirs []string
+	for _, f := range files {
+		dir := filepath.Dir(f.rel)
+		if _, ok := byDir[dir]; !ok {
+			dirs = append(dirs, dir)
+		}
+		byDir[dir] = append(byDir[dir], f)
+	}
+	sort.Strings(dirs)
+	out := make([][]tfFile, 0, len(dirs))
+	for _, dir := range dirs {
+		out = append(out, byDir[dir])
+	}
+	return out
 }
 
 // siteExpressions are the expressions that decide which secrets reach a mount:
@@ -1851,5 +1887,34 @@ func request(b *cloudbuild.Build, s BuildSpec) {
 	for _, ws := range s.WorkflowSecrets {
 		b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager, &cloudbuild.SecretManagerSecret{Env: ws.Env})
 	}
+}
+`
+
+// fixtureOtherModulesLocal is the shape that makes the module boundary
+// load-bearing: another run-job module's own local, wearing one of the two
+// names modules/workflow declares too. It admits nothing — it is here so that a
+// scan that reads the three modules as one resolves the workflow job's
+// `local.job_mounts` to THIS definition.
+const fixtureOtherModulesLocal = `
+locals {
+  is_served = { for env, logical in var.job.secret_env : env => var.job.credentials_service != null }
+  job_mounts = {
+    for env, logical in var.job.secret_env :
+    env => logical if !local.is_served[env]
+  }
+}
+`
+
+// fixtureWorkflowLocalAdmitsTheClass is the fetched-class clause put the wrong
+// way round: the workflow job's own local ADMITS the class instead of excluding
+// it (IS6's clause is the `!( ... )` form), so the mount keeps every workflow
+// secret the flip took off the job.
+const fixtureWorkflowLocalAdmitsTheClass = `
+locals {
+  vault_secret_names = var.workflow.vault_secret_names
+  job_mounts = {
+    for env, logical in var.workflow.secret_env :
+    env => logical if contains(local.vault_secret_names, logical)
+  }
 }
 `
