@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,7 +12,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -398,72 +396,22 @@ func TestImageMapSetRefusesAMappingNothingWouldRead(t *testing.T) {
 	}
 }
 
-// TestImageMapSetRefusesACodingAgentsSession: in a project this program cannot
-// prove is managed, the command keeps the refusal it has always given a
-// session — nothing is written, the exit class is the user's, and the sentence
-// carries the command a person runs at their own terminal. Which image a
-// project's jobs run is the project's own decision (D1906), and the entry's
-// definition is written beside it by a session's own `fugaro image add`: a
-// session that wrote both would be choosing where the project's code is built
-// from, one ordinary-looking step at a time.
-func TestImageMapSetRefusesACodingAgentsSession(t *testing.T) {
+// TestImageMapSetAdmitsACodingAgentsSession is AG4b's map half (D3425): which
+// image a project's jobs run is written by a session like any other change to
+// the project config, with no gate of its own for a managed project (the map
+// has none any more), and the file holds the mapping afterwards.
+func TestImageMapSetAdmitsACodingAgentsSession(t *testing.T) {
 	catalogFixture(t)
 	path := os.Getenv("FUGARO_CONFIG")
 	before := readFileString(t, path)
 	agentSession(t)
 
 	out, _, err := execute(t, "image", "map", "set", "acme/app", "tools")
-	if err == nil {
-		t.Fatalf("a coding agent's session wrote the project's image map:\n%s", out)
+	if err != nil {
+		t.Fatalf("a coding agent's session was refused the image map: %v\n%s", err, out)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want the user's class: a session asked for a step this program refuses it", ExitCode(err))
-	}
-	if !strings.Contains(err.Error(), "own terminal window") {
-		t.Errorf("the refusal does not say where the write belongs: %v", err)
-	}
-	if !strings.Contains(err.Error(), "fugaro image map set github/acme/app tools") {
-		t.Errorf("the refusal does not name the command to run instead: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("a session's refused write still changed the config")
-	}
-}
-
-// TestImageMapSetManagedRefusesASession: in a managed project the session's
-// write is judged by the project's own gate, refused in the gate's words, and
-// the refusal is recorded — an owner auditing the project reads that a session
-// tried to move where their repositories' images come from, and which rule
-// refused it (D1014, D1025). The file is unchanged, and the rules the record
-// carries are this command's own: what a session may not write here is the
-// mapping itself, because the catalog entry it names is another document.
-func TestImageMapSetManagedRefusesASession(t *testing.T) {
-	r := newSettingsManagedRig(t, settingsMarksManaged)
-	r.managedRunsBucket(t)
-	r.appendConfig(t, catalogYAML)
-	path := os.Getenv("FUGARO_CONFIG")
-	before := readFileString(t, path)
-	agentSession(t)
-
-	out, _, err := execute(t, "image", "map", "set", "acme/app", "tools")
-	if err == nil {
-		t.Fatalf("a managed project's gate admitted a session's map write:\n%s", out)
-	}
-	if !errors.Is(err, managedmode.ErrNotConverged) {
-		t.Fatalf("the map write was not refused by the gate, so nothing says which control refused it: %v", err)
-	}
-	if strings.Contains(err.Error(), "own terminal window") {
-		t.Error("this command's own refusal answered instead of the gate's, so a managed project read no mark")
-	}
-	if readFileString(t, path) != before {
-		t.Error("the file changed under a refused mapping")
-	}
-	recs := r.audits(t)
-	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
-		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
-	}
-	if len(recs[0].Rules) == 0 || !strings.Contains(strings.Join(recs[0].Rules, " "), "another document") {
-		t.Errorf("the refused record's rules (%v) do not say what refused", recs[0].Rules)
+	if readFileString(t, path) == before {
+		t.Error("a session's image map write changed nothing")
 	}
 }
 

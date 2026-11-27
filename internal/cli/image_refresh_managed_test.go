@@ -266,7 +266,7 @@ func TestImageRefreshManagedRefusesABuildThatIsNotTheProjectsOwn(t *testing.T) {
 // it does not write is a project it cannot prove is managed, so the gate's door
 // stays shut and the command is refused exactly as it was before the gate
 // existed — the same sentence, no step run, and nothing written anywhere.
-func TestImageRefreshManagedUnknownMarkerVersionRefuses(t *testing.T) {
+func TestImageRefreshManagedUnknownMarkerVersionGoesOnAsAPersonsRun(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newManagedRefreshRig(t, managedRefreshUnknownVersionMarker())
 	fb := useFakeBuilder(t)
@@ -276,14 +276,14 @@ func TestImageRefreshManagedUnknownMarkerVersionRefuses(t *testing.T) {
 	}
 	ran := fakeSteps(t, "", nil)
 	_, _, err := executeStdin(t, "", "image", "refresh")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: ") {
-		t.Fatalf("exit %d, err %v: want the refusal this command has always printed for a coding agent's session", ExitCode(err), err)
+	if err != nil {
+		t.Fatalf("a session's refresh was refused where no gate read anything: %v", err)
 	}
-	if len(*ran) != 0 {
-		t.Errorf("steps ran for a project the gate could not read: %q", *ran)
+	if got, want := strings.Join(*ran, ","), "base,check job,builds"; got != want {
+		t.Errorf("the steps that ran are %q, want %q: a session goes on as a person's run does (D3425)", got, want)
 	}
 	if len(fb.specs) != 0 {
-		t.Errorf("submitted %d builds for a project the gate could not read", len(fb.specs))
+		t.Errorf("submitted %d builds, and every step here is stubbed", len(fb.specs))
 	}
 	if got := r.audits(t); len(got) != 0 {
 		t.Errorf("the day holds %d records for a project that never was managed", len(got))
@@ -457,7 +457,7 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 		want    []string
 	}{
 		{"the gate is open, so the session reaches the steps", false, []string{"base", "check job", "builds"}},
-		{"the creation fact cannot be read, so nothing runs", true, nil},
+		{"the creation fact cannot be read, so the session goes on as a person's run does", true, []string{"base", "check job", "builds"}},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			r := newManagedRefreshRig(t, managedRefreshMarker(1))
@@ -468,12 +468,8 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 			}
 			ran := fakeSteps(t, "", nil)
 			_, _, err := executeStdin(t, "", "image", "refresh")
-			if tc.want == nil {
-				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: ") {
-					t.Fatalf("exit %d, err %v: want the refusal a coding agent's session has always had", ExitCode(err), err)
-				}
-			} else if err != nil {
-				t.Fatalf("the gate admitted the session and the run failed anyway: %v", err)
+			if err != nil {
+				t.Fatalf("the run failed: %v", err)
 			}
 			if strings.Join(*ran, ",") != strings.Join(tc.want, ",") {
 				t.Errorf("the steps that ran are %q, want %q", *ran, tc.want)
@@ -481,11 +477,8 @@ func TestImageRefreshReadsTheGateBeforeAnyWrite(t *testing.T) {
 			if len(fb.specs) != 0 {
 				t.Errorf("submitted %d builds, and every step here is stubbed", len(fb.specs))
 			}
-			if tc.want == nil {
-				noWriteAcrossFakes(t, r.initRig)
-				if got := r.audits(t); len(got) != 0 {
-					t.Errorf("the day holds %d records for a step that never ran", len(got))
-				}
+			if got := r.audits(t); len(got) != 0 && tc.breakIt {
+				t.Errorf("the day holds %d records for a gate that never read a mark", len(got))
 			}
 		})
 	}

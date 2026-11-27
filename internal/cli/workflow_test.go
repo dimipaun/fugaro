@@ -404,42 +404,41 @@ func TestWorkflowAddRefusesANameTheFileCouldNotDefine(t *testing.T) {
 	}
 }
 
-// TestWorkflowAddIsAllowedInAnAgentSession: a repository's own fugaro.yaml is
-// the one document a coding agent's session may write (the fence's own rule,
-// settings_write.go), and this group writes exactly that document — which is
-// what the plan's §5 row admits.
-func TestWorkflowAddIsAllowedInAnAgentSession(t *testing.T) {
+// TestWorkflowAddIsTheOwnersInAnAgentSession: a block's commands are what runs
+// as shell in the repository's runs, and every block carries them, so the
+// --executable-changes that writing one takes stays a person's (D3455): a
+// coding agent's session is refused it, names no way past, and the repository's
+// fugaro.yaml is left as it was.
+func TestWorkflowAddIsTheOwnersInAnAgentSession(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
 	agentSession(t)
 
 	out, _, err := workflowAddDocs(t)
-	if err != nil {
-		t.Fatalf("a session was refused a repository's own file: %v\n%s", err, out)
+	if err == nil {
+		t.Fatalf("a session wrote a workflow's commands:\n%s", out)
 	}
-	if got := readFileString(t, path); !strings.Contains(got, "build: make docs") {
-		t.Errorf("the session's write did not land:\n%s", got)
+	if got := readFileString(t, path); got != before {
+		t.Errorf("a refused session's write changed the file:\n%s", got)
 	}
 }
 
 // TestWorkflowRepoWriteInAManagedProjectReadsNoMark: in a managed project, a
-// repository-scoped write reads no mark and files no record — the gate is asked
-// about the documents it judges, and a repository's fugaro.yaml is one the
-// fence already decides (settingsGateAsks). The mutation this catches is a gate
-// read bolted onto this group for no reason: it would spend a bucket read on
-// every workflow edit and file verdicts about a document no rule of the gate
-// reads.
+// refused repository-scoped write reads no mark and files no record — the
+// owner's flag is read and refused before the edit is judged at all (D3455), so
+// the gate is never asked about a document no rule of it reads.
 func TestWorkflowRepoWriteInAManagedProjectReadsNoMark(t *testing.T) {
 	r := newSettingsManagedRig(t, settingsMarksManaged)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
+	before := readFileString(t, path)
 	agentSession(t)
 
-	out, _, err := workflowAddDocs(t)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	if out, _, err := workflowAddDocs(t); err == nil {
+		t.Fatalf("a session wrote a workflow's commands:\n%s", out)
 	}
-	if got := readFileString(t, path); !strings.Contains(got, "build: make docs") {
-		t.Errorf("the write did not land:\n%s", got)
+	if got := readFileString(t, path); got != before {
+		t.Errorf("a refused write changed the file:\n%s", got)
 	}
 	if reqs := r.gcs.Requests(); len(reqs) != 0 {
 		t.Errorf("a repository-scoped write paid %d calls to read marks:\n%v", len(reqs), reqs)

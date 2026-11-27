@@ -216,23 +216,18 @@ func TestImageAddDryRunDocument(t *testing.T) {
 func TestImageAddDryRunRefusesAsTheCommandDoes(t *testing.T) {
 	df := entryDockerfile(t, "FROM scratch\n")
 	cases := []struct {
-		name  string
-		args  []string
-		agent bool
+		name string
+		args []string
 	}{
-		{"a name the catalog already has", []string{"image", "add", "base", "--tags", "node", "--dockerfile", "acme/app:.fugaro/base.Dockerfile"}, false},
-		{"a --dockerfile that is not owner/name:path", []string{"image", "add", "bad", "--tags", "node", "--dockerfile", "acme/app"}, false},
-		{"two definitions for one entry", []string{"image", "add", "bad", "--tags", "node", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--image", "docker.io/library/node:22"}, false},
-		{"no definition at all", []string{"image", "add", "bad", "--tags", "node"}, false},
-		{"a branch for an inline definition", []string{"image", "add", "bad", "--tags", "node", "--inline", df, "--branch", "main"}, false},
-		{"an inline definition in an agent's session", []string{"image", "add", "bad", "--tags", "node", "--inline", df}, true},
+		{"a name the catalog already has", []string{"image", "add", "base", "--tags", "node", "--dockerfile", "acme/app:.fugaro/base.Dockerfile"}},
+		{"a --dockerfile that is not owner/name:path", []string{"image", "add", "bad", "--tags", "node", "--dockerfile", "acme/app"}},
+		{"two definitions for one entry", []string{"image", "add", "bad", "--tags", "node", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--image", "docker.io/library/node:22"}},
+		{"no definition at all", []string{"image", "add", "bad", "--tags", "node"}},
+		{"a branch for an inline definition", []string{"image", "add", "bad", "--tags", "node", "--inline", df, "--branch", "main"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			imageAddPlanFixture(t)
-			if tc.agent {
-				t.Setenv("CLAUDECODE", "1")
-			}
 			before := configOnDisk(t)
 
 			_, _, plainErr := execute(t, tc.args...)
