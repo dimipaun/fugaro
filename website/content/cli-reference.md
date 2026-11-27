@@ -2713,7 +2713,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says |
+| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a coding agent's session is refused it |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for publish |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
@@ -4273,12 +4273,9 @@ so no further command is needed. --no-apply saves the entry and leaves those
 steps to fugaro apply. --default marks the entry a job whose repositories
 name no needs runs; a catalog marks one entry, or none.
 
-In a coding agent's session --inline, --image, --default and --branch are
-refused: the first three define executable content the project's jobs run,
-and --branch reads an entry's Dockerfile from a branch no review here has
-vouched for, which a session may have pushed itself. --dockerfile alone is
-allowed there as it is anywhere else: it reads the project's own repository
-at its base branch, where the file was committed and reviewed.
+An entry's source decides where the project's jobs are built from, and a
+coding agent's session may write one like any other (D3425): --inline,
+--image, --default and --branch are all admitted, as --dockerfile is.
 
 --dry-run prints what the add would do and writes nothing: no catalog entry,
 no build, and no step recorded for fugaro apply. --json prints that document,
@@ -4291,7 +4288,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch; a coding agent's session is refused it) |
+| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
 | `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |
@@ -4501,8 +4498,8 @@ of its own takes the map the project publishes into it first — a name the
 migration cannot place is dropped with its line — so a mapping written
 here adds to the project's map rather than replacing it.
 
-This write is a person's own: fugaro update publishes it, and a coding
-agent's session is refused it, in a managed project by that project's gate.
+This write is fugaro update's to publish: it lands in this machine's project
+config, and a coding agent's session may make it like any other (D3425).
 
 Usage: `fugaro image map set <repo> <entry>`
 
@@ -4595,9 +4592,9 @@ This command has no subcommands.
 
 Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 
-Run it in the checkout of an onboarded repository, in your own terminal window:
-every step that asks is confirmed there, and a session with no terminal leaves
-those steps for you.
+Run it in the checkout of an onboarded repository: every step that asks is
+confirmed at a real terminal, and a run with no terminal (a coding agent's
+session, a pipe) needs --yes, which answers those steps itself.
 
 It prints the whole plan first, then, each step with its own confirmation:
 (2) resolves this release's base image of each selected workflow's kind at
@@ -4619,15 +4616,15 @@ A base_images entry that is neither this release's pin nor a release image
 an earlier fugaro copied (a development or hand-pushed image) stops it
 before anything changes, whoever is there: remove the entry from the local
 config, then rerun. It never
-writes fugaro.yaml, never onboards a repository and never runs Terraform. A
-coding agent's session is refused (there is still no --json
-or --plan-only to get around that). A run that stops says which steps
+writes fugaro.yaml, never onboards a repository and never runs Terraform. There
+is still no --json or --plan-only. A run that stops says which steps
 finished and what to rerun; a rerun skips
 what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,
 2 a cloud failure.
 
-No flag confirms the steps that ask — the base pin and the check-job
-update — so a run with no terminal leaves them for you and says so;
+Only --yes confirms the steps that ask — the base pin and the check-job
+update — so a run with no terminal and no --yes leaves them for you and says
+so;
 the billable builds ask nothing in any session, and it is the budget lease
 each of them takes that bounds them, where the installation has a budget
 backend at all (with none, no build leases anything and none is counted).
@@ -4647,7 +4644,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for refresh |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun) |
-| `--on-divergence` | string | "" | no | the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs; refused in a coding agent's session |
+| `--on-divergence` | string | "" | no | the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout) |

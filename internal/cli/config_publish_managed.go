@@ -128,7 +128,7 @@ func configPublishAgentExecutable(marker string, executable bool) error {
 	if marker == "" || !executable {
 		return nil
 	}
-	return userErr("nothing was published: --executable-changes is the project's owner's word for a change to what runs as shell in every repository, so a coding agent's session does not publish one: %s", initflow.AgentRefusal(marker))
+	return userErr("nothing was published: --executable-changes is the owner's word, not a coding agent's: %s", initflow.AgentRefusal(marker))
 }
 
 // configPublishConverge judges the layer document an agent's session is about
