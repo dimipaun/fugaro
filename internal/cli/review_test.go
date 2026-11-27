@@ -638,7 +638,7 @@ func TestReviewRefusesAnImplicitJobTheInstallationDoesNotDeploy(t *testing.T) {
 
 		wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
 			"this installation deploys no implicit review-only job",
-			"fugaro update --repo <owner/name> --github-app-id <id>")
+			"in a checkout of it, fugaro update --repo --github-app-id <id>")
 	})
 }
 

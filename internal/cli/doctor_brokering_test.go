@@ -2516,7 +2516,10 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def,
 			"warning bitbucket-direct: a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.",
-			"update --repo workspace-a/repo-a")
+			"update --repo in workspace-a/repo-a's checkout")
+		if strings.Contains(def, "update --repo workspace-a/repo-a") {
+			t.Errorf("the fix passes the repository as --repo's argument, which takes a checkout's PATH:\n%s", def)
+		}
 		if !strings.Contains(doctorAllOutput(t, o.Checks), job) {
 			t.Errorf("--all does not name the job that still mounts the token")
 		}
