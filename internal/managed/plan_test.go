@@ -1756,9 +1756,10 @@ func TestOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
 // (D1549), and this pins the gate's own set in one place so a later widening of
 // the demotion is caught here rather than assumed away. The cover's integrity
 // half is the managed configuration rule, a bare cover's own rule and the
-// missing cover; the guard's is a D1551 removal — a data-bearing type and a
-// type in neither classification table — beside the classified, non-data-bearing
-// removal D1545 takes as a warning, so the exception is told from the rule.
+// missing cover; the guard's is an irreplaceable removal — a type D1551's table
+// calls data-bearing and the same apply cannot make again, and a type in neither
+// classification table — beside the classified, recreatable removal D1545 takes
+// as a warning, so the exception is told from the rule.
 //
 // The refusals that are not findings about the plan at all — a changed file
 // (ErrPlanChanged), a project the marker read did not say is managed

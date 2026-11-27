@@ -2490,9 +2490,10 @@ func (c Cover) notCoveredIntegrity(rc ResourceChange, imports []ImportKey, creat
 
 // removalContent is whether the arm this cover refuses a removal with — the one
 // it has instead of a delete list — is a CONTENT refusal D1545 records and
-// warns rather than an integrity one D1549 keeps. D1551's rule alone decides
-// it: a delete, or a replace in either of terraform's two orders, of a
-// data-bearing or unclassified type refuses for good (RefusesRemovalType), and
+// warns rather than an integrity one D1549 keeps. D1551's table, read by the
+// class D3430 rules it with, alone decides it: a delete, or a replace in either
+// of terraform's two orders, of an irreplaceable or unclassified type refuses
+// for good (RefusesRemovalType), and
 // one of any other classified type is a removal the managed gate now takes with
 // a warning.
 //

@@ -288,26 +288,29 @@ func guardWalk(p *Plan, judges judge) (refused, warned, refusedAt []string) {
 	return refused, warned, refusedAt
 }
 
-// GuardManaged is the managed apply's delete rule as D1545 and D1551 leave it:
-// the removals it returns are the ones that still REFUSE — a data-bearing type,
-// an unclassified type, an object moved here from another address, a change
-// with no actions or an action the guard does not know — and the removals it
-// returns as warnings are the ones the gate now takes: a delete or a replace of
-// a classified, non-data-bearing type that neither the owner's delete list nor
+// GuardManaged is the managed apply's delete rule as D1545 and D3430 leave it:
+// the removals it returns are the ones that still REFUSE — an irreplaceable
+// type, an unclassified type, an object moved here from another address, a
+// change with no actions or an action the guard does not know — and the
+// removals it returns as warnings are the ones the gate now takes: a delete or
+// a replace of a classified, recreatable type that neither the owner's delete
+// list nor
 // the caller's addresses admit. It is GuardEntriesWithAddresses' own rule — the
 // owner's entries first (Approves), then the caller's addresses — with D1545's
 // ruling on top: a removal neither admits is no longer refused for what the
-// plan contains, so it is warned instead, while D1551 keeps the two directions
-// that do refuse. A data-bearing type's objects are data a delete would destroy
-// (reconciliation's table), and an unclassified type is one nobody has decided
+// plan contains, so it is warned instead, while the removal rule keeps the two
+// directions that do refuse: an irreplaceable type (D3430's class — D1551's
+// table without the two types the same apply makes again — whose objects are
+// data a delete would destroy, reconciliation's table) and an unclassified
+// type, which is one nobody has decided
 // — a type added to allowedTypes later, which RefusesRemovalType refuses until
 // somebody classifies it. warn is set only when neither list admits the
 // removal, so an entry or an address that admits one still admits it whatever
 // its type — and a list that NAMES the address without approving the object the
 // plan removes (an entry bound to another object, a before view that identifies
 // nothing) does not admit it either, which is why the delete rule's own sentence
-// is a warning for a type D1551 leaves to D1545 and a refusal for a type it
-// protects. The cover routes the same sentence the same way (managed_cover.go's
+// is a warning for a type the class leaves to D1545 and a refusal for an
+// irreplaceable one. The cover routes the same sentence the same way (managed_cover.go's
 // addRemoval), so one removal is never refused by this half of the gate and
 // warned about by the other.
 //

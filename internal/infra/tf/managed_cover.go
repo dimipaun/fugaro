@@ -354,9 +354,9 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 // managedGrant), and the delete rule's own reasons — an address the owner's
 // list does not name (notOnDeleteListReason), an action_reason the rule does
 // not know, and an entry that does not approve the object the plan removes —
-// which are content only for a type D1551 takes (a classified, non-data-bearing
-// one) and stay integrity refusals for a data-bearing or unclassified type
-// (RefusesRemovalType).
+// which are content only for a classified, recreatable type and stay integrity
+// refusals for an irreplaceable or unclassified one (RefusesRemovalType,
+// D3430's class over D1551's table).
 //
 // The type table's content arm does not end the chain: a type outside the
 // allowlist is warned about AND still judged by the rules below it
@@ -396,10 +396,10 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 	// nothing — refused, not approved, the limit guard.go's addr records.
 	addIrc := func(rc ResourceChange, why string) { addI(safetext.Field(rc.Address) + " (" + why + ")") }
 	addCrc := func(rc ResourceChange, why string) { addC(safetext.Field(rc.Address) + " (" + why + ")") }
-	// addRemoval routes one of the delete rule's own reasons: content for a type
-	// D1551 takes (a classified, non-data-bearing one, which the gate now
-	// records and warns), and an integrity refusal for a data-bearing or
-	// unclassified type, whose removal the rule still stops.
+	// addRemoval routes one of the delete rule's own reasons: content for a
+	// classified, recreatable type (which the gate now records and warns), and an
+	// integrity refusal for an irreplaceable or unclassified type, whose removal
+	// the rule still stops.
 	addRemoval := func(rc ResourceChange, why string) {
 		if RefusesRemovalType(rc.Type) {
 			addIrc(rc, why)
@@ -443,10 +443,10 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 		// be a way past every rule about the resource, which is the failure
 		// this gate exists to avoid. The same holds for a removal the list does
 		// NOT admit, and for the reasons the delete rule refuses one with: their
-		// answer is about the removal — a refusal, or D1545's warning for a type
-		// D1551 takes — and the resource is judged underneath it all the same.
+		// answer is about the removal — a refusal, or D1545's warning for a classified,
+		// recreatable type — and the resource is judged underneath it all the same.
 		// Only ONE answer ends the walk here: an integrity removal
-		// (RefusesRemovalType's data-bearing or unclassified type), which refuses
+		// (RefusesRemovalType's irreplaceable or unclassified type), which refuses
 		// the change whatever else it does. A removal the list warned about does
 		// not, and neither does a destroy: a destroy has nothing in after for the
 		// created view's rules to read, but the resource it REMOVES is read all
@@ -597,8 +597,8 @@ func removed(rc ResourceChange) ResourceChange {
 // (!managedTypes, managedTypeReason) and the grant table (the *_iam_member arm,
 // managedGrant) — because those judge WHAT a plan contains, which D1545 leaves
 // to record-and-warn, and only while nothing is being removed: for a removal of
-// a data-bearing or unclassified type the two tables' reasons are integrity ones
-// that refuse (removalRefuses, D1551). Every other rule of the chain is an
+// an irreplaceable or unclassified type the two tables' reasons are integrity
+// ones that refuse (removalRefuses, D1551's table read as D3430's class). Every other rule of the chain is an
 // integrity refusal.
 // Returning the classification beside the reason is what lets NotCoveredSplit
 // tell the two kinds apart without matching a reason against its own words, and
@@ -611,9 +611,9 @@ type coverFinding struct {
 	content bool
 }
 
-// removalRefuses is D1551's rule as the two cover tables read it: a delete or a
-// replace of a data-bearing or unclassified type refuses whatever reason is
-// being weighed, so the type table's and the grant table's own reasons — content
+// removalRefuses is D1551's table as the two cover tables read it, by the class
+// D3430 rules it with: a delete or a replace of an irreplaceable or unclassified
+// type refuses whatever reason is being weighed, so the type table's and the grant table's own reasons — content
 // refusals for a create, which D1545 records and warns — are integrity ones for
 // such a removal and are kept as refusals.
 //
@@ -644,7 +644,7 @@ func removalRefuses(rc ResourceChange) bool {
 // about and then applied. The type's own reason is written first, where the
 // chain has always written it, and the deeper one beside it.
 //
-// A type-table finding that is INTEGRITY — a removal of a data-bearing or
+// A type-table finding that is INTEGRITY — a removal of an irreplaceable or
 // unclassified type (removalRefuses) — is the whole answer, because it refuses
 // the change for good whatever the rules below it would say.
 func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) []coverFinding {

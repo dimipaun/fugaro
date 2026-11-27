@@ -13,8 +13,8 @@
 // no task of its own for this rule). D1545 makes the managed gate audit-only
 // for content: a refusal about WHAT a plan contains is recorded and warned
 // rather than stopped (Verdict.Warnings), while the integrity refusals — the
-// plan's own shape (D1549) and a removal of a data-bearing or unclassified
-// type (D1551) — still refuse. The model's review is not part of it: it is
+// plan's own shape (D1549) and a removal of an irreplaceable or unclassified
+// type (D3430's class over D1551's table) — still refuse. The model's review is not part of it: it is
 // advisory, recorded, and can only ever add a refusal (D60).
 package managed
 
@@ -262,12 +262,12 @@ func countChanges(p *tf.Plan) Changes {
 var costFindings = tf.ManagedCosts
 
 // guardManaged is tf.GuardManaged: the managed apply's delete rule as D1545
-// and D1551 leave it, with its two answers told apart — the removals that
-// still REFUSE (a data-bearing type, an unclassified type, an object moved
+// and D3430 leave it, with its two answers told apart — the removals that
+// still REFUSE (an irreplaceable type, an unclassified type, an object moved
 // here from another address, a change with no actions or an action the guard
 // does not know) and, beside them, the content removals the gate now records
-// and warns (a delete or a replace of a classified, non-data-bearing type no
-// list admits). A variable only so a test can make it refuse in words the real
+// and warns (a delete or a replace of a classified, recreatable type no list
+// admits). A variable only so a test can make it refuse in words the real
 // guard never writes.
 //
 // No advice, because the guard's own (tf.AllowDeleteAdvice) names the flag a

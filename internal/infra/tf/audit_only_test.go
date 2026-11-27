@@ -80,9 +80,9 @@ func TestEveryAllowedTypeIsClassifiedDataBearingOrNot(t *testing.T) {
 
 // TestAnUnclassifiedTypeRefusesDelete is D1551's delete rule as the managed
 // apply's guard reads it (GuardManaged): a delete of a type in neither
-// classification table refuses, a delete of a classified, non-data-bearing type
-// is taken with a warning (D1545), and a delete of a data-bearing type still
-// refuses (D1551).
+// classification table refuses, a delete of a classified, recreatable type is
+// taken with a warning (D1545), and a delete of an irreplaceable type still
+// refuses (D3430's class over D1551's table).
 func TestAnUnclassifiedTypeRefusesDelete(t *testing.T) {
 	deletePlan := func(typ string) *Plan {
 		return &Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{{
@@ -109,7 +109,7 @@ func TestAnUnclassifiedTypeRefusesDelete(t *testing.T) {
 	} else if !strings.Contains(warned[0], "google_project_service") {
 		t.Errorf("the warning %q does not name the change", warned)
 	}
-	// A data-bearing type: the delete still refuses (D1551).
+	// An irreplaceable type: the delete still refuses (D3430's class).
 	if refused, warned := GuardManaged(deletePlan("google_storage_bucket"), nil, nil); len(refused) != 1 || len(warned) != 0 {
 		t.Errorf("a delete of google_storage_bucket gives refused %v, warned %v, want one refusal and no warning", refused, warned)
 	}
@@ -525,7 +525,7 @@ func TestAManagedReplaceIsJudgedOnWhatItCreates(t *testing.T) {
 }
 
 // TestDataBearingTypeStaysIntegrityWhenItsRemovalIsListed is D1551 at the
-// cover's type table: a delete of a dropped data-bearing type refuses whatever
+// cover's type table: a delete of a dropped irreplaceable type refuses whatever
 // reason is weighed, so even a LISTED and approved removal — one that passes the
 // delete rule's own sites — comes back in NotCoveredSplit's integrity half for
 // the type-table reason, while the same type CREATED is content (D1545). Without
