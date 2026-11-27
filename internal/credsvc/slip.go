@@ -180,6 +180,18 @@ type SlipGrantRequest struct {
 	// names no pool therefore sends neither member, and the older service reads
 	// exactly the body it read before this route grew them.
 	Sources []creds.GrantSource `json:"sources,omitempty"`
+	// Resumes is the paused run this grant continues (runstore.PauseMemberResumes,
+	// D3185, D3189): the run of the pause the credential service itself wrote,
+	// whose record the launcher of this grant asks it to continue. It is the
+	// one grant an ORCHESTRATOR's class may ask for (noGrantForTheOrchestrator
+	// says why every other grant of it is refused): the resumed run's launcher
+	// and pool are the paused run's own, read from the service's record, and
+	// never anything this ask states.
+	//
+	// It is omitempty for Sources's reason, and it is omitted by every launch
+	// of a release before this route grew it: a grant that names no pause is an
+	// ordinary launch's and is served exactly as it was.
+	Resumes string `json:"resumes,omitempty"`
 	// NamedPool is the pool the launch asked for with `--pool` (C2's
 	// `named_pool`, D3176, CS12), empty when it named none. It is not Pool on
 	// the record either: this is what the flag named, and the slip's Pool is the
@@ -344,9 +356,6 @@ func newSlipID() (string, error) {
 //     is the three classes the identity routes admit (launcherCaller). A refusal
 //     here is typed and has no line — nothing is verified yet, so there is no
 //     caller for a line to name.
-//   - the daemon's class, right after it: admitted, and the one class no slip
-//     can be written for, so its grant is refused here with its one line rather
-//     than carried to a record nothing could serve (noGrantForTheOrchestrator).
 //   - the run identity, refused by NAME if it was presented: a launcher holds
 //     none and the run it is asking for does not exist yet, so a caller
 //     presenting one is a call of a shape this route does not have. It is the
@@ -359,6 +368,12 @@ func newSlipID() (string, error) {
 //     answered ahead of the shared parse that reads them for every other route,
 //     and a stopped service grants nobody anything — the write below is a
 //     lasting one, because an unclaimed slip never expires.
+//   - the daemon's class, once the body is read: a grant that names `resumes` is
+//     the one grant it may ask for and goes to grantResume, which reads the
+//     pause from this service's own record; any other grant of its class is
+//     refused here with its one line rather than carried to a record nothing
+//     could serve (noGrantForTheOrchestrator). The class is decided after the
+//     read because the read is what tells the two apart.
 //   - the owner rule (R7), before the slip is written: a name the launcher may
 //     not be served is a request this contract does not read, and a refused
 //     grant writes nothing at all.
@@ -389,14 +404,6 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 		// The class's own refusal, answered the way the verify route answers a
 		// verifier's and the read mints theirs: a typed refusal and no line.
 		s.refuseLauncher(w, err)
-		return
-	}
-	if caller.Sub == "" {
-		// The daemon's class, which is admitted and cannot be granted a slip:
-		// the caller IS verified, so this refusal is one of the route's and
-		// writes its one line (noGrantForTheOrchestrator says why a slip cannot
-		// be written for it and where a resumed run's grant comes from instead).
-		s.refuseGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+noGrantForTheOrchestrator)
 		return
 	}
 	if id := r.Header.Get(HeaderRunIdentity); id != "" {
@@ -440,6 +447,24 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 	if on {
 		s.refuseGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable,
 			"the credentials service is stopped by the "+which+" kill switch")
+		return
+	}
+	if req.Resumes != "" {
+		// The one grant the daemon's class may ask for (D3185, D3189): a run
+		// that continues a pause, granted from this service's own record of the
+		// paused run and never from the ask. It is read after the stop switches
+		// and answers its own refusals — including the one a person's or a
+		// roster service account's ask meets, which is the class rule below.
+		s.grantResume(ctx, w, caller, req)
+		return
+	}
+	if caller.Sub == "" {
+		// The daemon's class, which is admitted and cannot be granted a slip of
+		// its own: the caller IS verified, so this refusal is one of the route's
+		// and writes its one line (noGrantForTheOrchestrator says why a slip
+		// cannot be written for it and where a resumed run's grant comes from
+		// instead).
+		s.refuseGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+noGrantForTheOrchestrator)
 		return
 	}
 	if err := checkGrantedNames(req.Credentials, caller.Sub); err != nil {
