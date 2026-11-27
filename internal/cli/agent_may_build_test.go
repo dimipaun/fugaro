@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
@@ -16,29 +14,24 @@ import (
 // asserts the build was submitted rather than that nothing refused: "no
 // refusal" is not the acceptance, the submission is.
 //
-// What a build reads is a separate question, and not this lift's: an entry
+// The two check-job subtests are the ones that fail on the refusal this task
+// lifts. `image build` refuses a session for no reason §A gives it any more
+// (the "cloud changes" refusal went with the prompt, T4), so what its subtest
+// holds is that the build really lands in a session, not that something was
+// removed.
+//
+// What a build READS is a separate question, and not this lift's: an entry
 // whose Dockerfile is copied with the person's own credential keeps its
-// refusal in a session (catalog_provider_test.go's "a coding agent's session
-// reads nothing", SECURITY.md), and a repository the installation's
-// credentials service serves is read keylessly instead. Every build here
-// needs no such read: an inline definition is copied with no repository read
-// at all, and the two check jobs rebuild from a definition the runs bucket
-// already holds.
+// refusal in a session (SECURITY.md; catalog_provider_test.go's "a coding
+// agent's session reads nothing"), and a repository the installation's
+// credentials service serves is read keylessly instead. No build here needs
+// that read: this entry is an inline definition, copied with no repository
+// read at all, and the two check jobs rebuild from a definition the runs
+// bucket already holds.
 func TestAgentMayBuild(t *testing.T) {
 	t.Run("a catalog entry's build", func(t *testing.T) {
 		noAgentSession(t)
-		fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-		stubCatalogProvider(t, map[string]string{
-			".fugaro/base.Dockerfile":  catalogBuildFetched,
-			".fugaro/other.Dockerfile": catalogBuildFetched,
-		})
-		// The copy of a repository-sourced entry reads the project's own
-		// credential before it opens the provider, so the fixture holds one:
-		// the stubbed provider is the only part of the copy a test has no
-		// account for. That read is the Secret Manager one, which is served by
-		// the installation's credentials service here, and so is no refusal.
-		f.sm.AllowAccess()
-		putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+		fb, _, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 		t.Setenv("CLAUDECODE", "1")
 
 		_, errOut, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
