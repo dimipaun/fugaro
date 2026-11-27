@@ -94,21 +94,21 @@
 // tick that refuses: the pairing keys (the container is the module's, the grant
 // is the secret row P5.1e added and the reader is keychain.Cloud.Keys, but this
 // service builds none of it and no name in its environment points at the
-// container); the Firebase web API key, which the minted custom token must be
-// exchanged with before it is an identity the rules know, and which is
+// container); and the Firebase web API key, which the minted custom token must
+// be exchanged with before it is an identity the rules know, and which is
 // therefore what keeps a mailbox's writer unbuildable — the service's own
 // environment does not carry it (orchestrator.tf's six names are three of the
 // node's and three of the launch's, and
 // TestOrchestratorServiceEnvIsTheDeploymentsOwn holds that list in both
-// directions); and the database read the inbox itself needs, which is an IAM
-// read from an account section 4.3's table grants no firebasedatabase role —
-// the P5.1c review's finding A, still open, and it fences the read half of this
-// pass exactly as it fences the node read. So the consumer the tick is given is
-// nil on this deployment, and orchestratorNoConsumer below is the line it says
-// so in, once per tick, naming the missing half rather than reporting a mailbox
-// pass that read nothing as if there had been nothing to read. A deployment that
-// has those three facts wires one through orchestratorConfig, which is where
-// every test of this file drives the mailbox half from.
+// directions). The read half's own gap is closed: the inbox read is an IAM read
+// the account may now make, over the same one-permission role the node read
+// uses (orchestrator.tf's binding, P5.1c's finding A). So the consumer the tick
+// is given is nil on this deployment, and orchestratorNoConsumer below is the
+// line it says so in, once per tick, naming the missing half rather than
+// reporting a mailbox pass that read nothing as if there had been nothing to
+// read. A deployment that has those two facts wires one through
+// orchestratorConfig, which is where every test of this file drives the mailbox
+// half from.
 //
 // AND WHAT IT READS IS AN UPPER BOUND, NOT A LIST OF LAUNCHES OWED. The plan is
 // read with an empty RunView (carry): this process reads no run records to
@@ -184,18 +184,15 @@
 // refuses it, every tick, with the command's own sentence
 // (orchestrator_launcher.go's residentLauncher says what a person does about it,
 // and TestResidentLauncherRefusesANamedAccountThisDeploymentCannotSee pins the
-// behaviour); and every read of the database this process makes, which is an IAM
-// read the account holds no permission for yet (the P5.1c review's finding A,
-// orchestratorTest below). All three are the deployment's, and all three are
-// reported with this task rather than papered over: every one of them is a
-// refusal, written to the log as such, and none of them starts the wrong run.
+// behaviour). Both are the deployment's, and both are reported with this task
+// rather than papered over: each is a refusal, written to the log as such, and
+// neither starts the wrong run.
 //
-// THE CONSUMER'S THREE ARE NOT IN THAT LIST, and deliberately: this process
-// serves a tick with a nil consumer rather than one that refuses (the `mc`
-// paragraph above has the whole argument), so there is no refusal here to name —
-// the line is orchestratorNoConsumer, and the three facts a deployment would
-// need to serve a mailbox are the pairing key container, the Firebase web API
-// key and a database read this account may make.
+// THE CONSUMER'S ARE NOT IN THAT LIST, and deliberately: this process serves a
+// tick with a nil consumer rather than one that refuses (the `mc` paragraph
+// above has the whole argument), so there is no refusal here to name — the line
+// is orchestratorNoConsumer, and the facts a deployment would need to serve a
+// mailbox are the pairing key container and the Firebase web API key.
 
 package cli
 
@@ -315,10 +312,10 @@ type orchestratorWiring struct {
 // service account. This is an IAM read and not a rules read (rtdb sends a
 // source as a Bearer header, and an IAM read bypasses the rules entirely), and
 // Realtime Database IAM has no path scope, so it needs
-// firebasedatabase.instances.get. Section 4.3's table has no row granting this
-// account that permission and orchestrator.tf binds it to none, so on a real
-// installation this read is refused: that is the P5.1c review's finding A, and
-// the row is the design's to add rather than a line to slip into a fix.
+// firebasedatabase.instances.get. Section 4.3's table carries that row now
+// (orchestrator.tf binds the one-permission role to this account), so a real
+// installation's read is granted — the P5.1c review's finding A, closed by that
+// binding.
 var orchestratorTest *orchestratorWiring
 
 // orchestratorConfig is one deployment's facts, as the builder below reads
@@ -384,8 +381,8 @@ type orchestratorConsumer struct {
 const orchestratorConsumerHolder = infra.OrchestratorAccountID
 
 // orchestratorNoConsumer is the line a tick says when this deployment was wired
-// with no mailbox consumer at all, and it names the three facts the deployment
-// would need (the header's paragraph).
+// with no mailbox consumer at all, and it names the facts the deployment would
+// need (the header's paragraph).
 //
 // It is said per tick rather than once at start-up because it is a fact about
 // the tick: the numbers a pass reports — no mailbox read, no lease taken, no
@@ -393,7 +390,7 @@ const orchestratorConsumerHolder = infra.OrchestratorAccountID
 // line an operator cannot tell "this phone had nothing to say" from "nothing on
 // this deployment reads a phone at all", which is the same distinction carry
 // makes its switch visible for.
-const orchestratorNoConsumer = "tick consumed no mailbox: this deployment has no mailbox consumer (no pairing key container read, no Firebase web API key in its environment, and no database read the account may make), so a phone's message is read by no one here"
+const orchestratorNoConsumer = "tick consumed no mailbox: this deployment has no mailbox consumer (no pairing key container read and no Firebase web API key in its environment), so a phone's message is read by no one here"
 
 // orchestratorServiceConfig builds the resident orchestrator's configuration
 // out of the deployment's environment, and it is the whole of this task's
@@ -577,7 +574,8 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 	// mode reaches no execution, which is what the field used to be here for
 	// (AB4): while the mode decided the mint, this process had to write the
 	// strict one to keep its launches from reading a policy over an IAM read
-	// this account holds no permission for (finding A).
+	// this account then held no permission for (finding A, since closed by
+	// orchestrator.tf's binding of the state-read role).
 	//
 	// The ceilings are zero and are not a claim about the installation: they
 	// are the gate block's (freshLaunchGates), which a resident launch does not
