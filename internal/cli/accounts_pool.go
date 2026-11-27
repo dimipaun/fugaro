@@ -207,6 +207,15 @@ type accountsPoolFigures struct {
 //
 // The figures are display data and this is a read of it (F19): nothing here
 // decides anything about a run, and nothing here is a value.
+//
+// Who may read them is not this command's to decide, and today only a
+// database-admin identity does: the published rules close creds/ to every
+// client, so a launcher's own ADC is refused this subtree unless it holds
+// firebasedatabase.admin, and every other launcher gets the note with the
+// figures absent — which is the honest answer and not a failure. The grant that
+// would let a person read the figures of their own and the shared pools is
+// still owed, and it is a credentials-rules generation of its own
+// (budget/rules.CredsRulesVersion), not a line here.
 func accountsPoolFiguresOf(ctx context.Context, lc *localcfg.Config, pools []config.Pool) (map[string]accountsPoolFigures, string, error) {
 	members := accountsPoolMembers(pools)
 	if lc == nil || len(members) == 0 {
