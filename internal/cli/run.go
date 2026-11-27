@@ -5800,8 +5800,8 @@ func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int, flag stri
 // adoptStoredProjectLayer peeks at whatever task is already stored for
 // spec's run ID, without writing anything, and when it is spec's own task
 // (repeatTaskBytes equal, ignoring the launcher's own fields), adopts its
-// project layer into spec before the image gate below runs: a repeat whose earlier
-// attempt stored a task but never launched it must be gated on the layer
+// project layer into spec before the image gate below runs: a repeat whose
+// earlier attempt stored a task but never launched it must be gated on the layer
 // that stored task actually carries, since createTask (below) keeps it
 // either way. No stored task (ErrNotFound), or one for a different
 // request, leaves spec untouched: createTask is still the one that refuses
