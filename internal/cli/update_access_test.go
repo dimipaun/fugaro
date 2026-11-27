@@ -305,9 +305,10 @@ func TestADeclinedRunMigratesNoNode(t *testing.T) {
 	// The plan has changes, so the run reaches its confirmation instead of
 	// reporting an installation that already matches.
 	updating(t, r)
-	out, errOut, err := executeStdin(t, "", "update")
+	// --ask: a managed project's gate answers the ordinary steps for a session nobody is at (#4170); the declined confirmation this pins is the owner's asked one, with no terminal to answer it.
+	out, errOut, err := executeStdin(t, "", "update", "--ask")
 	all := accessOut(out, errOut, err)
-	if err == nil || !strings.Contains(all, "real terminal") {
+	if err == nil || !(strings.Contains(all, "real terminal") || strings.Contains(all, "no terminal on its input")) {
 		t.Fatalf("a run whose confirmation was not given did not stop: %v\n%s", err, all)
 	}
 	if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {

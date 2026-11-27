@@ -30,7 +30,7 @@
 # and audited by TestWriterConformanceStrict, which reads every line's claim
 # against the registry.
 ab.rate	open:no-writer
-agent.compression	open:writer-unproven
+agent.compression	open:no-writer
 agent.crafts.coder.access	open:no-writer
 agent.crafts.coder.model	open:no-writer
 agent.crafts.merge-judge.access	open:no-writer

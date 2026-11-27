@@ -247,7 +247,9 @@ func TestLiftStageSaysFirst(t *testing.T) {
 
 	// The same run with nobody at the terminal: the migration is THIS run's own
 	// write, so a session that cannot answer the gate is refused rather than
-	// asked — and nothing of the migration is written.
+	// asked — and nothing of the migration is written. The refusal is the
+	// first step that still wants a typed confirmation (the plugin's: a managed
+	// project's gate answers the ordinary steps, #4170).
 	t.Run("a session that cannot answer is refused", func(t *testing.T) {
 		r := newLayerRig(t, testProjectLayer)
 		f := newLiftFixture(t, []lift.Repo{{Repo: "acme/one", Provider: "github"}})
@@ -260,8 +262,8 @@ func TestLiftStageSaysFirst(t *testing.T) {
 		if err == nil {
 			t.Fatalf("the run migrated with nobody to confirm it:\n%s%s", out, errOut)
 		}
-		if got := out + errOut; !strings.Contains(got, "the confirmation of this step") {
-			t.Errorf("the refusal does not name the confirmation:\n%s", got)
+		if got := out + errOut + ErrorText(err); !strings.Contains(got, "needs a real terminal") {
+			t.Errorf("the refusal does not say a real terminal is needed:\n%s", got)
 		}
 		if _, ok := localLayerText(t); ok {
 			t.Error("the layer file was written with nobody to confirm the write")
