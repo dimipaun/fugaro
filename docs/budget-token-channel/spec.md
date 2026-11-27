@@ -150,16 +150,17 @@ than a proposal for it, and they supersede the pre-seal shape wherever one is na
 premise the four candidates were priced against (the token object under the `runs/` prefix, a
 readable plaintext token, a take that deletes), and it is the premise, not the shipped code.
 
-**Since 0.30.0 these five steps are what a launch does only where it signs the token itself** (LM6
-and LM7 of [docs/launcher-does-not-mint/](../launcher-does-not-mint/implementation-plan.md)): where
+**Since 0.29.0 these five steps are what a launch does only where it signs the token itself** (LM6
+and LM7 of [docs/launcher-does-not-mint/](../launcher-does-not-mint/implementation-plan.md), the
+release `internal/cli/recipes_skew.go`'s `identitySince` names): where
 the installation's credentials service serves the ticket route, the launcher asks the service for the
 run's identity, puts the ticket it answers on the execution, and **signs nothing and writes no
 object** — the run claims the identity back with its own Google ID token and a nonce. What is left
 of this channel there is the bridge (R7): the three answers on which a launch still signs locally —
 no service configured, the service's own "not served", and a release-behind service's answer — and
-the runner of the release behind, which opens the sealed object an older launch left. `fugaro update`
-moves the signing row to the service in the same release, so a bridged launch is the one release the
-row is still there for.
+the runner of the release behind, which opens the sealed object an older launch left. The row itself
+moves a release later: `fugaro update` takes it off launchers and operators and gives it to the
+service in 0.30.0 (LM14, D3121), so a bridged launch is what the row is still there for until then.
 
 | step | where |
 | --- | --- |
