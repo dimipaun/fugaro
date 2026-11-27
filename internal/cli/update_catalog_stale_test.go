@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/catalog"
@@ -43,15 +45,46 @@ const catalogStaleYAML = `image_catalog:
       source: { kind: dockerfile, repo: acme/sandbox, path: images/worker.Dockerfile }
 `
 
+// catalogBuild is what a test's fixture says one entry's build record states:
+// the epoch the build ran under (0 is a record written before the field
+// existed — no epoch stated, which is stale), how long ago it ran, and the
+// base it names. The last is carried and never read: a record names a base,
+// and a test that puts a release behind's base there is the one that pins the
+// run's answer against it (TestReleaseAloneIsNotStale).
+type catalogBuild struct {
+	base  string
+	epoch int
+	age   time.Duration
+}
+
+// thisReleaseBuild is an entry built under this binary's epoch and recently:
+// current on both counts, so the run says nothing about it.
+func thisReleaseBuild() catalogBuild {
+	return catalogBuild{base: pinnedRef(config.BaseKind, convergeRelease), epoch: imagecheck.BaseEpoch}
+}
+
+// releaseBehindBuild is the record the release before VS3a wrote: built FROM
+// its own base image and stating no epoch at all. It is release A's eager
+// rebuild (D3445), and the release in its base ref is not what makes it stale.
+func releaseBehindBuild() catalogBuild {
+	return catalogBuild{base: pinnedRef(config.BaseKind, convergePrev)}
+}
+
+// oldBuild is an entry built under this binary's epoch, past its rebuild age:
+// current and merely old, which is the nightly rebuild's (D3444).
+func oldBuild() catalogBuild {
+	return catalogBuild{base: pinnedRef(config.BaseKind, convergeRelease), epoch: imagecheck.BaseEpoch, age: config.DefaultMaxAge + time.Hour}
+}
+
 // catalogStaleRig is the converge rig in that state, with each entry's build
-// record saying it was built FROM the base image the test passes: the release
-// behind's (stale), this release's (current), or anything else.
+// record the test passes for it.
 //
 // The rebuilds are recorded rather than submitted — a hermetic test has no
 // Cloud Build account, and the decision is what this file is about — and the
 // returned value is the entries the run rebuilt, in order, with the options
-// each rebuild was handed.
-func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig, *[]string, *[]imageBuildOptions) {
+// each rebuild was handed. The recorder is guarded: four rebuilds run at once,
+// and one test drives that.
+func catalogStaleRig(t *testing.T, server, worker catalogBuild) (*convergeRig, *[]string, *[]imageBuildOptions) {
 	t.Helper()
 	useSelf(t)
 	r := newConvergeRig(t, currentNode())
@@ -72,12 +105,15 @@ func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig,
 		"images/server.Dockerfile": "FROM example.invalid/base\nRUN true\n",
 		"images/worker.Dockerfile": "FROM example.invalid/base\nRUN true\n",
 	}})
-	putCatalogRecord(t, mustSlug("github", "acme/app"), "server", serverBase)
-	putCatalogRecord(t, mustSlug("bitbucket", "acme/sandbox"), "worker", workerBase)
+	putCatalogRecord(t, mustSlug("github", "acme/app"), "server", server)
+	putCatalogRecord(t, mustSlug("bitbucket", "acme/sandbox"), "worker", worker)
+	var mu sync.Mutex
 	var built []string
 	var opts []imageBuildOptions
 	prev := catalogRebuild
 	catalogRebuild = func(_ *cobra.Command, entry string, o imageBuildOptions) error {
+		mu.Lock()
+		defer mu.Unlock()
 		built = append(built, entry)
 		opts = append(opts, o)
 		return nil
@@ -86,18 +122,24 @@ func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig,
 	return r, &built, &opts
 }
 
-// putCatalogRecord stores one entry's build record, built FROM base, in the
-// bucket this rig's records are read through.
-func putCatalogRecord(t *testing.T, slug, entry, base string) {
+// putCatalogRecord stores one entry's build record in the bucket this rig's
+// records are read through, as the fixture states it.
+func putCatalogRecord(t *testing.T, slug, entry string, b catalogBuild) {
 	t.Helper()
 	key, err := gcp.CatalogRecordKey(slug, entry)
 	if err != nil {
 		t.Fatal(err)
 	}
+	at := time.Now()
+	if b.age > 0 {
+		at = at.Add(-b.age)
+	}
 	rec, err := json.Marshal(imagecheck.CatalogRecordState{
 		Version: imagecheck.CatalogRecordVersion, Entry: entry,
 		DefinitionSHA256: strings.Repeat("b", 64),
-		BaseRef:          base, BaseDigest: "sha256:" + strings.Repeat("c", 64),
+		Epoch:            b.epoch,
+		BaseRef:          b.base, BaseDigest: "sha256:" + strings.Repeat("c", 64),
+		BuiltAt: at,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -106,24 +148,25 @@ func putCatalogRecord(t *testing.T, slug, entry, base string) {
 }
 
 // TestUpdateRebuildsTheStaleCatalogImageOfThisCheckout: an installation whose
-// catalog entry of the checkout the run is in was last built FROM the release
-// behind's base image reaches this release with `fugaro update` alone — the
-// run rebuilds it, says so, and leaves nothing for the user.
+// catalog entry of the checkout the run is in carries a build record from
+// before the epoch existed — the state every entry is in on the release that
+// introduces it (D3445) — reaches this release with `fugaro update` alone: the
+// run rebuilds it here, waits for it, says so, and leaves nothing for the user.
 //
 // This is the owner's failure: before the images stage read the catalog's
 // records, this run printed "No changes" over an entry whose image the
 // launcher refuses, because the entry's build is a nightly job's and nothing
 // in this run built one.
 func TestUpdateRebuildsTheStaleCatalogImageOfThisCheckout(t *testing.T) {
-	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+	_, built, _ := catalogStaleRig(t, releaseBehindBuild(), thisReleaseBuild())
 
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
-		t.Fatalf("a catalog entry on the previous release's base image does not reach this release with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
+		t.Fatalf("an entry whose record states no epoch does not reach this release with `fugaro update` alone (exit %d):\n%s\n%s", ExitCode(err), out, errOut)
 	}
 	if got := strings.Join(*built, ","); got != "server" {
-		t.Errorf("the run rebuilt %q, want the stale entry of this checkout alone: `worker` is on this release's base", got)
+		t.Errorf("the run rebuilt %q, want the stale entry of this checkout alone: `worker` needs no rebuild", got)
 	}
 	if want := "rebuilt 1 catalog image(s) FROM this release's base image: server"; !strings.Contains(out, want) {
 		t.Errorf("the run does not say it rebuilt the entry:\n%s\nwant %q in it", out, want)
@@ -133,20 +176,20 @@ func TestUpdateRebuildsTheStaleCatalogImageOfThisCheckout(t *testing.T) {
 	}
 }
 
-// TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout: an entry whose build
-// belongs to another repository of the installation cannot be built from this
-// checkout — a catalog build runs as the build account of the repository it is
+// TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout: an entry behind this
+// release's base image whose build belongs to another repository of the
+// installation cannot be built from this checkout — a catalog build runs as the build account of the repository it is
 // submitted from, with that repository's credential and secrets — so the run
 // must NOT pass it over in silence and must not claim the installation is
 // done: it prints the entry, the checkout and the exact command, and it ends
 // not finished (exit 1).
 func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
-	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergePrev))
+	_, built, _ := catalogStaleRig(t, thisReleaseBuild(), releaseBehindBuild())
 
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
-		t.Fatalf("a run that did not rebuild a stale catalog image of this installation reported success:\n%s", out)
+		t.Fatalf("a run that did not rebuild a catalog image behind this release's base reported success:\n%s", out)
 	}
 	if got := ExitCode(err); got != 1 {
 		t.Errorf("exit %d, want 1: the run leaves a step for the user and must not read as done:\n%s\n%s", got, out, errOut)
@@ -167,7 +210,7 @@ func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
 		// could, so its own line is a success line and not one — the catalog
 		// half sets this itself (catalogLeftFor), and the loop takes no reason
 		// from an applying stage's detail.
-		"    not covered: 1 catalog image(s) are on a base older than this release's and this run did not rebuild them",
+		"    not covered: 1 catalog image(s) this run did not rebuild",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the run does not name %q, so the entry is passed over in silence:\n%s", want, all)
@@ -188,7 +231,7 @@ func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
 // would be one rebuilding images that are current, which is a billable build
 // the user did not ask for.
 func TestUpdateSaysNothingAboutACatalogOnThisReleaseBase(t *testing.T) {
-	_, built, _ := catalogStaleRig(t, pinnedRef(config.BaseKind, convergeRelease), pinnedRef(config.BaseKind, convergeRelease))
+	_, built, _ := catalogStaleRig(t, thisReleaseBuild(), thisReleaseBuild())
 
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
@@ -222,7 +265,7 @@ func TestUpdateSaysNothingAboutACatalogOnThisReleaseBase(t *testing.T) {
 // there (`fugaro image build` never gets there either: runImageBuild refuses
 // --json for a Cloud Build before this machinery is reached).
 func TestUpdateJSONDoesNotReachTheCatalogRebuild(t *testing.T) {
-	_, built, opts := catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+	_, built, opts := catalogStaleRig(t, releaseBehindBuild(), thisReleaseBuild())
 
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update", "--json")
@@ -243,7 +286,7 @@ func TestUpdateJSONDoesNotReachTheCatalogRebuild(t *testing.T) {
 // then fugaro update again", a command that fails the same way and says nothing
 // about what to change.
 func TestUpdateSaysWhyACatalogRebuildDidNotFinish(t *testing.T) {
-	_, _, _ = catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+	_, _, _ = catalogStaleRig(t, oldBuild(), thisReleaseBuild())
 	catalogRebuild = func(_ *cobra.Command, entry string, _ imageBuildOptions) error {
 		return errors.New("the catalog entry " + entry + ": line 31 of its Dockerfile asks for a secret")
 	}
@@ -276,7 +319,7 @@ func TestUpdateSaysWhyACatalogRebuildDidNotFinish(t *testing.T) {
 // command may well work where this run's did not.
 func TestUpdateOffersNoCommandThatWouldRefuse(t *testing.T) {
 	const refusal = "the catalog entry server: line 31 of its Dockerfile asks for a secret; a catalog entry carries no secret of its own — the clone step supplies the checkout — so remove it (read from acme/app at legacy)"
-	_, _, _ = catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+	_, _, _ = catalogStaleRig(t, oldBuild(), thisReleaseBuild())
 	catalogRebuild = func(_ *cobra.Command, entry string, _ imageBuildOptions) error {
 		if entry != "server" {
 			t.Fatalf("the run rebuilt %q, want the stale entry of this checkout alone", entry)

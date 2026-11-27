@@ -174,24 +174,30 @@ the same question the service's own stage answers with its skip.
 **A job image older than the node is refused at the launch, not by the update.**
 The update rebuilds the derived images of the checkout it runs in, and — for a
 catalog project, whose catalog image *is* the image its jobs run (D1900) — the
-catalog entries of that checkout whose own build record says they were built
-FROM a base image older than this release's. A catalog entry is otherwise built
-by the daily check job and by `fugaro image build`, so an installation whose
+catalog entries of that checkout whose own build record states another
+base-image epoch, or none at all (`imagecheck.BaseEpoch`, D3446): the base
+image's own files have changed under those, and release A's own case is every
+entry the release before it built, which is D3445's one eager rebuild. Those it
+rebuilds and waits for, four at a time. A catalog entry is otherwise built by
+the daily check job and by `fugaro image build`, so an installation whose
 schedule is paused, or whose entry nobody pushed, kept an image the launcher
 refuses while the stage that had just pinned the new base reported nothing to
 do: that is the failure of 2026-11-14, and the record read is what closes it
-(`internal/cli/init_images_catalog.go`). What it does not rebuild is anything
-else: a repository of the project on another checkout's image keeps the image it
-had, and so does a catalog entry whose build runs as another repository's build
-account — a catalog build holds the submitting checkout's credential and
-secrets, so this run cannot submit it. That one is never passed over in silence:
+(`internal/cli/init_images_catalog.go`). An entry merely past
+`config.DefaultMaxAge` is current and is not this run's to wait for: the stage
+submits its rebuild with `--no-wait` and goes on, which is the nightly rebuild's
+work (D3444). What it does not rebuild is anything else: a repository of the
+project on another checkout's image keeps the image it had, and so does a
+catalog entry whose build runs as another repository's build account — a catalog
+build holds the submitting checkout's credential and secrets, so this run cannot
+submit it. That one, while its epoch is behind, is never passed over in silence:
 the images stage prints one line per such entry naming the entry, its checkout
 and the exact command (`fugaro image build <entry>`), ends with a line saying
 what it did not cover, and leaves the command as a step for the user (exit 1)
 rather than reporting a stage that skipped half of itself as done. An entry
 whose own definition its rebuild refused — a pinned branch that mounts a
 secret — is the one exception, and it is the reader's: the command reads those
-same bytes and refuses them the same way, so the step prints the refusal, which
+same bytes and refuses them the same way, so the line prints the refusal, which
 names the line and the change, and no command at all.
 
 A run of that repository, started on an image it kept, would halt at bootstrap
