@@ -353,6 +353,7 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsTheBuildIdentity(t *testing.T) 
 		Bucket:                "gs://" + catalogBuildBucket,
 		CredentialsServiceURL: catalogCheckServiceURL,
 		TemplateSalt:          gcp.TemplateSalt(Version),
+		Epoch:                 imagecheck.BaseEpoch,
 		Selftest:              catalogCheckSelftest(t, "acme/other", catalogCheckCommit),
 	})
 	if err != nil {
@@ -1085,6 +1086,7 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 		Bucket:                "gs://" + catalogBuildBucket,
 		CredentialsServiceURL: catalogCheckServiceURL,
 		TemplateSalt:          gcp.TemplateSalt(Version),
+		Epoch:                 imagecheck.BaseEpoch,
 		Selftest:              catalogCheckSelftest(t, "acme/app", stagedCommit),
 	})
 	if err != nil {

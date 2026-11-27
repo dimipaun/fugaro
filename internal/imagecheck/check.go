@@ -281,14 +281,20 @@ type CatalogRecordState struct {
 	// holds. The check compares it with its own, so a release that changes the
 	// build reaches the entries built by the release behind (F33, D1402). It is
 	// "" on a record whose build stated none.
-	TemplateSalt string    `json:"template_salt"`
-	BaseRef      string    `json:"base_ref"`
-	BaseDigest   string    `json:"base_digest"`
-	Image        string    `json:"image"`
-	ContentTag   string    `json:"content_tag"`
-	ImageDigest  string    `json:"image_digest"`
-	BuildID      string    `json:"build_id"`
-	BuiltAt      time.Time `json:"built_at"`
+	TemplateSalt string `json:"template_salt"`
+	// Epoch is the base-image epoch (BaseEpoch) the build ran under, as the
+	// binary that submitted it stated it: an entry whose record carries
+	// another epoch was built from base image files that have changed since,
+	// and is stale (D3446). It is 0 on a record written before the field
+	// existed — no epoch stated, which is stale too (D3445).
+	Epoch       int       `json:"epoch"`
+	BaseRef     string    `json:"base_ref"`
+	BaseDigest  string    `json:"base_digest"`
+	Image       string    `json:"image"`
+	ContentTag  string    `json:"content_tag"`
+	ImageDigest string    `json:"image_digest"`
+	BuildID     string    `json:"build_id"`
+	BuiltAt     time.Time `json:"built_at"`
 }
 
 // CatalogRecordVersion is the CatalogRecordState schema version the catalog

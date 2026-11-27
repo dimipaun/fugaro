@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagebake"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -2146,5 +2148,31 @@ func TestCommitOnRemoteAnswersFromTheRefsAndThenTheRemote(t *testing.T) {
 	wip := testutil.Git(t, dir, "rev-parse", "HEAD")
 	if found, known := commitOnRemote(ctx, dir, wip); found || !known {
 		t.Errorf("the wip commit %s is read as found=%v known=%v, want found=false known=true", wip, found, known)
+	}
+}
+
+// TestCatalogBuildRecordsTheEpoch: the build this command submits states the
+// base-image epoch its binary builds under, which the record then carries
+// (D3446). That record is what update and the nightly check read to tell an
+// image built from the base image as it is now from one built before it
+// changed, so a submission that states no epoch leaves every entry looking
+// stale for ever.
+func TestCatalogBuildRecordsTheEpoch(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+
+	if _, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	step := catalogBuildStep(t, fb, "catalog-record")
+	if step == nil {
+		t.Fatal("the request has no catalog-record step")
+	}
+	env, _ := step["env"].([]any)
+	want := "EPOCH=" + strconv.Itoa(imagecheck.BaseEpoch)
+	if !slices.ContainsFunc(env, func(v any) bool { s, _ := v.(string); return s == want }) {
+		t.Fatalf("the record step's env %v does not carry %s, so the record says nothing about the epoch it was built from", env, want)
 	}
 }

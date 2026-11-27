@@ -541,6 +541,9 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 		// The rebuild records the template it ran, which is this job's own: the
 		// entry it rebuilds stops firing the template trigger (F33, D1402).
 		TemplateSalt: gcp.TemplateSalt(Version),
+		// And the epoch it ran under, so a rebuild this job submits is not a
+		// record update rebuilds again for an epoch it never left (D3446).
+		Epoch: imagecheck.BaseEpoch,
 	}
 	if e.Source.Context != "" {
 		commit = ev.contextCommit
