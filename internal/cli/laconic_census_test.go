@@ -71,7 +71,7 @@ const maxMessageChars = 140
 // TestLaconicAllowlistOnlyShrinks: it comes down with the list and never goes
 // up, so a message that would have to be added is a message to shorten
 // instead.
-const laconicAllowlistMax = 1357
+const laconicAllowlistMax = 1350
 
 // laconicCalls are the calls whose string argument is a message, and which
 // argument it is: this package's own refusal builder and fmt.Errorf, whose
