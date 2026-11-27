@@ -935,7 +935,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 			// The lease's own notes — no budget backend, an unpriced build, a
 			// reclaimed lease — are the submission's, and they print here, in
 			// the catalog's order, once each.
-			fmt.Fprint(cmd.ErrOrStderr(), sub.notes)
+			fmt.Fprint(cmd.ErrOrStderr(), sub.notes.String())
 			switch {
 			case sub.err != nil:
 				// The lease is taken before the submission, so a cap with no

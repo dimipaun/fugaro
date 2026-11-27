@@ -109,9 +109,8 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		"images.retention_days": func() string {
 			return strconv.Itoa((&localcfg.Config{}).ImageRetentionDays())
 		},
-		// The two schedules (R13): a layer that states nothing reads as
-		// paused, which is the default the rows claim and the direction that
-		// never starts a job by omission.
+		// The two schedules (R13), with the defaults the rows claim (D3444):
+		// the reports job paused, the catalog check not.
 		"layer.jobs.reports.paused":       func() string { return strconv.FormatBool((&config.ProjectLayer{}).ReportsPaused()) },
 		"layer.jobs.catalog_check.paused": func() string { return strconv.FormatBool((&config.ProjectLayer{}).CatalogCheckPaused()) },
 		// The level-3 switch (D1517, SC8): a layer with no security: block —

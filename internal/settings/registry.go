@@ -963,7 +963,9 @@ var layerRows = []Row{
 	layerRow("ab.judge_model", "the A/B design's own judge", "models", docModels),
 	layerRow("ab.exchange_rate", "the A/B design's own rate", "models", docModels),
 
-	// The two schedules (R13). They are the installation's only keys in this
+	// The two schedules (R13), whose defaults differ (D3444): the catalog
+	// check's nightly rebuild runs unless the layer stops it, and the reports
+	// job stays paused. They are the installation's only keys in this
 	// table whose loosening direction starts something: paused: false is what
 	// makes a job run, so the key is the operator's own and a repository writes
 	// no jobs: block at all. Owner `settings set` (R1 of docs/config-ownership):
@@ -974,7 +976,7 @@ var layerRows = []Row{
 	// write meets and the coding agent's session's own refusal are what stand
 	// in front of starting a job.
 	layerValueRow("jobs.reports.paused", "true", "settings set", docPeriodicReviews),
-	layerValueRow("jobs.catalog_check.paused", "true", "settings set", docPeriodicReviews),
+	layerValueRow("jobs.catalog_check.paused", "false", "settings set", docPeriodicReviews),
 
 	// The project layer's own half of the security list (D1501) and the switch
 	// that is its alone (D1517, D1503): the rows the layer adds for every
