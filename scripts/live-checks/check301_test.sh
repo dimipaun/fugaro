@@ -209,6 +209,18 @@ update)
     # check that ran it.
     if [ -t 0 ]; then render_unit; fi
     ;;
+  refuse-no-tty)
+    # A run nobody is at, on a machine whose update has a step to confirm: the
+    # CLI is left at that step and exits nonzero rather than carrying it
+    # through, and no flag stands in for the person. The fence is the same one
+    # read from a refused run instead of from a converged one. The marker file
+    # is the mutation: a refused run that wrote the unit anyway.
+    if [ -f "$D/refuse-writes-unit" ]; then render_unit; fi
+    if [ ! -t 0 ]; then
+      printf 'the confirmation of this step needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe\n' >&2
+      exit 1
+    fi
+    ;;
   *)
     printf 'fake fugaro: unknown update mode\n' >&2
     exit 64
@@ -861,6 +873,41 @@ case_upgrade_boundary_no_terminal() {
   expect_fact human-install INFO "boundary without a terminal: the command to run"
 }
 
+# case_upgrade_boundary_refused_no_terminal: the same fence read from a run the
+# CLI REFUSED. A run nobody is at is left at the step that needs a person and
+# exits nonzero, so the row has to read that exit as the fence rather than as a
+# run that did not finish — and it still has to be true of the unit that
+# nothing was written.
+case_upgrade_boundary_refused_no_terminal() {
+  setup_case upgrade-boundary-refused
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'refuse-no-tty\n' >"$dir/state/update.mode"
+  run301 upgrade
+  expect_status "$status" 2 "boundary refused without a terminal: the exit"
+  expect_fact terminal INFO "boundary refused without a terminal: the row"
+  expect_fact boundary PASS "boundary refused without a terminal: the fence"
+  expect_contains "$out" "left at the step that needs a person" "boundary refused without a terminal: what the row read"
+  expect_fact human-install INFO "boundary refused without a terminal: the command to run"
+}
+
+# case_upgrade_boundary_refused_writes_a_unit: the mutation of that fence. A
+# refused run that still left a unit behind is the write this check exists to
+# rule out, whatever the exit said.
+case_upgrade_boundary_refused_writes_a_unit() {
+  setup_case upgrade-boundary-refused-writes
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'refuse-no-tty\n' >"$dir/state/update.mode"
+  : >"$dir/state/refuse-writes-unit"
+  run301 upgrade
+  expect_status "$status" 2 "refused run wrote a unit: the exit"
+  expect_fact boundary FAIL "refused run wrote a unit: the row"
+  expect_contains "$out" "a login unit is now at" "refused run wrote a unit: what happened"
+}
+
 # case_upgrade_boundary_agent_writes_unit: the marker rule broken. An
 # agent-marked run that installs a login unit on a machine that had none is the
 # fence D2700 keeps and the one internal/agentenv's G2 rules on.
@@ -1191,6 +1238,8 @@ t case_second_instance_other_holder
 t case_upgrade_boundary
 t case_upgrade_boundary_no_install
 t case_upgrade_boundary_no_terminal
+t case_upgrade_boundary_refused_no_terminal
+t case_upgrade_boundary_refused_writes_a_unit
 t case_upgrade_boundary_agent_writes_unit
 t case_upgrade_waits_for_the_human
 t case_upgrade_handover
