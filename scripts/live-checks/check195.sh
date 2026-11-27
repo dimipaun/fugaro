@@ -9,8 +9,11 @@
 # metadata server of a real build, and only Cloud Run can say whether the grant
 # admits the call. So this check makes the whole path by hand, with throwaways —
 # a Cloud Run service deployed WITH IAM REQUIRED, a build account granted
-# roles/run.invoker ON THAT SERVICE ALONE, and a Cloud Build whose step runs as
-# that account, fetches the token and calls the service — and reads the answer
+# roles/run.invoker ON THAT SERVICE ALONE AND the one role Cloud Build reads
+# before it serves a build an ID token at all
+# (roles/iam.serviceAccountOpenIdTokenCreator, on the account's OWN account),
+# and a Cloud Build whose step runs as that account, fetches the token and calls
+# the service — and reads the answer
 # back from TWO places that are not the log: the build's OWN RECORD, where the
 # step's exit code ends (one code per outcome, see write_build_config), and an
 # OBJECT the step writes its one line into, in a throwaway bucket this check
@@ -28,8 +31,9 @@
 #             and calls NOTHING: no gcloud, no fugaro, no curl)
 # Needs:      bash, mktemp, date, gcloud (authenticated as you, as an account that
 #             can create a service account, a Cloud Run service, a bucket and a
-#             build, add and remove one project-level IAM binding and one
-#             bucket-level one, read the bucket's own policy and an object in it,
+#             build, add and remove one project-level IAM binding, one
+#             bucket-level one and one on the account's own account, read the
+#             bucket's own policy, the account's own policy and an object in it,
 #             and read the build's own record and its lines — a project Owner
 #             can), curl (one unauthenticated request, to find a project-level
 #             public invoker the service's own IAM policy cannot show) and fugaro
@@ -44,7 +48,12 @@
 # Creates:    one throwaway Cloud Run service (fugaro-chk195), deployed from a
 #             stock public container image and left IAM-only; one throwaway
 #             service account (fugaro-chk195-caller); the roles/run.invoker
-#             binding on that service which admits it; one throwaway Cloud
+#             binding on that service which admits it; the
+#             roles/iam.serviceAccountOpenIdTokenCreator binding on that
+#             account's own account, which is what Cloud Build reads before it
+#             serves the build an ID token from the metadata server (without it
+#             the identity endpoint answers 404 — the owner's run of 2026-11-27
+#             — and the step never calls the service at all); one throwaway Cloud
 #             Storage bucket (fugaro-dev-chk195-<the moment this run started>),
 #             which the build's step writes its one line into and this check reads
 #             it back out of, with the account granted roles/storage.objectCreator
@@ -63,7 +72,9 @@
 #             first, then the service (which takes the invoker binding with it),
 #             the bucket (which takes the object the step wrote and the
 #             bucket-level grant with it), the project-level binding, and the
-#             throwaway account — and that
+#             throwaway account — which takes the grant on its OWN account with
+#             it, whose policy is read back after the deletion rather than
+#             assumed to have gone — and that
 #             last one is RETRIED, because the binding removal and the account
 #             deletion are ordered IAM writes that IAM's own consistency can put
 #             out of order: the owner's run of 2026-11-24 ended with the binding
@@ -72,10 +83,10 @@
 #             re-read covers both ways that happens: a delete refused as still
 #             referenced by a policy binding, and a delete that landed whose
 #             account the list had not stopped naming yet. The bucket goes ahead
-#             of both, so its own binding never outlives its member. Each of the four
+#             of both, so its own binding never outlives its member. Each of the five
 #             is READ BACK rather than assumed — the `service-deleted`,
-#             `account-deleted`, `bucket-deleted` and `binding-removed` rows are
-#             that reading. The
+#             `account-deleted`, `bucket-deleted`, `openid-grant-removed` and
+#             `binding-removed` rows are that reading. The
 #             build's own RECORD stays in the project's Cloud Build history: it
 #             is the project's log of what ran, not a resource this check made.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 195 RESULT,
@@ -108,9 +119,10 @@
 # CHECK195_LINE_TRIES (how many times the step itself retries that write, and
 # CHECK195_LINE_RETRY_SECONDS the pause between attempts: IAM is eventually
 # consistent, and a build that starts inside the window is refused the write),
-# CHECK195_GRANTS_WAIT_SECONDS (the bound on re-reading the project's own policy
-# and the bucket's until the roles/logging.logWriter and
-# roles/storage.objectCreator bindings this check added are in them) and
+# CHECK195_GRANTS_WAIT_SECONDS (the bound on re-reading the project's own policy,
+# the bucket's and the throwaway account's own until the roles/logging.logWriter,
+# roles/storage.objectCreator and roles/iam.serviceAccountOpenIdTokenCreator
+# bindings this check added are in them) and
 # CHECK195_GRANTS_SETTLE_SECONDS (the one short fixed settle given to those
 # bindings before the build, so the propagation has happened whatever the
 # read-back said). None of them can point this check at another project, another
@@ -160,6 +172,19 @@ L=us-east5
 SVC=fugaro-chk195
 CALLER=fugaro-chk195-caller
 CALLER_EMAIL="${CALLER}@${P}.iam.gserviceaccount.com"
+# The one role a build's own account must hold ON ITSELF for Cloud Build to
+# serve the build's step an ID token out of the metadata server: without it the
+# identity endpoint answers 404 and the step can never call the service, which
+# is how the owner's run of 2026-11-27 came back `status=notoken`. It is read
+# off the installation's own catalog build identity, where the same role is
+# granted on the same account's own path and nowhere else
+# (deploy/terraform/gcp/modules/installation/build_identity.tf,
+# google_service_account_iam_member.build_identity_openid_token), and it is a
+# CONSTANT here for the reason the two names are: the reading is one role, on
+# the throwaway account's own account. check195_test.sh reads it back out of
+# that file, so a rename there breaks here instead of leaving this check
+# measuring a role nobody holds.
+OPENID_ROLE=roles/iam.serviceAccountOpenIdTokenCreator
 # The bucket the step writes its one line into, and the object in it. This is the
 # one name here that is NOT a constant, and it cannot be: bucket names are global
 # to all of Google Cloud, so a fixed one either already belongs to somebody or is
@@ -364,6 +389,7 @@ restore_run() {
     fact restore PASS "nothing of this check's was created, so there is nothing to delete"
     fact service-deleted PASS "this run deployed no service, so there is none to delete"
     fact account-deleted PASS "this run created no service account, so there is none to delete"
+    fact openid-grant-removed PASS "this run created no service account, so there is no ${OPENID_ROLE} binding on one to remove"
     fact binding-removed PASS "this run added no project-level binding, so there is none to remove"
     fact bucket-deleted PASS "this run created no bucket, so there is none to delete"
     return 0
@@ -445,11 +471,12 @@ restore_run() {
   if [ -f "$ACCOUNT_MINE" ]; then
     delete_account_retrying || true
   fi
-  local st ac bind bst left=""
+  local st ac bind bst og left=""
   st=$(service_state)
   ac=$(account_state)
   bind=$(project_naming_account)
   bst=$(bucket_state)
+  og=$(account_openid_grant_state)
   if [ ! -f "$SERVICE_MINE" ]; then
     fact service-deleted PASS "this run deployed no service, so there is none to delete"
   elif [ "$st" = not-there ]; then
@@ -495,6 +522,19 @@ restore_run() {
     left="$left whether the account ${CALLER_EMAIL} is gone;"
     fact account-deleted FAIL "whether ${CALLER_EMAIL} is gone cannot be read (the list failed), so nothing is claimed about it: check it with gcloud iam service-accounts list --project=${P} --filter=email:${CALLER}@"
   fi
+  if [ ! -f "$ACCOUNT_MINE" ]; then
+    fact openid-grant-removed PASS "this run created no service account, so there is no ${OPENID_ROLE} binding on one to remove"
+  elif [ "$og" = gone ]; then
+    fact openid-grant-removed PASS "${CALLER_EMAIL} is gone and its own IAM policy with it (its policy could not be read over an account the list says is not there), so the ${OPENID_ROLE} binding this run added on it went with the account"
+  elif [ "$og" = clean ]; then
+    fact openid-grant-removed PASS "${CALLER_EMAIL}'s own IAM policy names ${OPENID_ROLE} in no binding any more (read back from the policy itself)"
+  elif [ "$og" = named ]; then
+    left="$left the ${OPENID_ROLE} binding on ${CALLER_EMAIL}'s own account;"
+    fact openid-grant-removed FAIL "${CALLER_EMAIL} is still there holding ${OPENID_ROLE} ON ITSELF (read back from its own IAM policy), which is what the metadata server reads before it serves a build an ID token: remove it by hand with gcloud iam service-accounts remove-iam-policy-binding ${CALLER_EMAIL} --project=${P} --member=serviceAccount:${CALLER_EMAIL} --role=${OPENID_ROLE} --quiet"
+  else
+    left="$left whether the ${OPENID_ROLE} binding on ${CALLER_EMAIL}'s own account is gone;"
+    fact openid-grant-removed FAIL "whether ${CALLER_EMAIL}'s own IAM policy still names ${OPENID_ROLE} cannot be read (the policy read failed over an account the list does not say is gone), so nothing is claimed about it: read it with gcloud iam service-accounts get-iam-policy ${CALLER_EMAIL} --project=${P} --format=json (the refusal was $(last_lines "$SCRATCH/account-policy.err"))"
+  fi
   case "$bind" in
   clean) fact binding-removed PASS "${P}'s own IAM policy names ${CALLER_EMAIL} in no binding any more (read back from the policy itself)" ;;
   named)
@@ -507,10 +547,10 @@ restore_run() {
     ;;
   esac
   if [ -z "$left" ]; then
-    local gone="the service (and the invoker binding with it), the project-level roles/logging.logWriter binding, and the account"
+    local gone="the service (and the invoker binding with it), the project-level roles/logging.logWriter binding, and the account (and with it the ${OPENID_ROLE} binding it held on its own account)"
     local kept=""
     if [ "$bucket_deleted" = yes ]; then
-      gone="the service (and the invoker binding with it), the bucket (and with it the object the step wrote its one line into and the bucket-level roles/storage.objectCreator binding), the project-level roles/logging.logWriter binding, and the account"
+      gone="the service (and the invoker binding with it), the bucket (and with it the object the step wrote its one line into and the bucket-level roles/storage.objectCreator binding), the project-level roles/logging.logWriter binding, and the account (and with it the ${OPENID_ROLE} binding it held on its own account)"
     elif [ -f "$BUCKET_MINE" ]; then
       kept=" gs://${BUCKET} was NOT deleted and is not this check's: it does not carry this run's own label, and this check deletes only its own bucket"
     fi
@@ -575,6 +615,10 @@ guard_constants() {
   case "$L" in "" | /* | */) stop "the region this check runs in must be a region name and it is '${L}'" ;; esac
   case "$SVC" in "" | /* | */) stop "the throwaway service's name must be a name and it is '${SVC}'" ;; esac
   case "$CALLER" in "" | /* | */) stop "the throwaway account's name must be a name and it is '${CALLER}'" ;; esac
+  case "$OPENID_ROLE" in
+  roles/*) ;;
+  *) stop "the role a build's own account must hold on itself is '${OPENID_ROLE}', which is not a role path: it is a constant read off deploy/terraform/gcp/modules/installation/build_identity.tf, so edit it back" ;;
+  esac
   # The bucket is the one name here that is built rather than written, so it is
   # checked for the two ways a shell can leave it empty or shaped like a path: an
   # empty BUCKET would make the create, the grant and the delete all read as a
@@ -674,6 +718,44 @@ project_naming_account() {
     return 0
   fi
   if grep -q -- "${CALLER_EMAIL:?}" "$doc"; then printf 'named'; else printf 'clean'; fi
+}
+
+# account_naming_openid_token: the same three answers for the THROWAWAY ACCOUNT's
+# own IAM policy, which is where the grant Cloud Build reads before it serves a
+# build an ID token lives (roles/iam.serviceAccountOpenIdTokenCreator, on the
+# account itself). Read as a document and searched for the account's address AND
+# the role: the one reading this is, is "does this account hold this role on
+# itself", so a policy that named somebody else, or the account under another
+# role, is not the grant. A read that failed is not the answer "it is not there".
+account_naming_openid_token() {
+  local doc="$SCRATCH/account-policy.json"
+  if ! gcloud iam service-accounts get-iam-policy "${CALLER_EMAIL:?}" --project="${P:?}" \
+    --format=json >"$doc" 2>"$SCRATCH/account-policy.err"; then
+    printf 'unread'
+    return 0
+  fi
+  if grep -q -- "${CALLER_EMAIL:?}" "$doc" && grep -q -- "${OPENID_ROLE:?}" "$doc"; then
+    printf 'named'
+  else
+    printf 'clean'
+  fi
+}
+
+# account_openid_grant_state: what the Restore knows about the grant on the
+# throwaway account's OWN account after the deletion — `named`, `clean`, `gone`
+# or `unread`, the same vocabulary the other read-backs use. The account's own
+# policy is READ here and now, which is the brief's read-back: the deletion is
+# what removes the grant (a policy cannot outlive the account that holds it), and
+# the reading says which half answered — `clean` for a policy read that no longer
+# names the binding, `gone` when the policy could not be read over an account the
+# list says is not there, `unread` when neither reading could be made. A read
+# that FAILED is never read as `gone`.
+account_openid_grant_state() {
+  local pol
+  pol=$(account_naming_openid_token)
+  if [ "$pol" = named ] || [ "$pol" = clean ]; then printf '%s' "$pol"; return 0; fi
+  if [ "$(account_state)" = not-there ]; then printf 'gone'; return 0; fi
+  printf 'unread'
 }
 
 # bucket_naming_account: the same three answers for the BUCKET's own IAM policy,
@@ -954,6 +1036,25 @@ step_service() {
   esac
 }
 
+# grant_retrying ERR_FILE CMD...: runs one IAM grant, retrying only while the
+# refusal is IAM's own "the account does not exist yet". A service account that
+# was created a moment ago is not yet visible to every IAM front end, and a
+# grant added in that window is refused for a few seconds — a refusal that would
+# otherwise read as a denied setIamPolicy. Any other refusal is the caller's and
+# is returned at once; the last one is left in ERR_FILE for the row.
+grant_retrying() {
+  local errf=$1
+  shift
+  local try=0
+  while [ "$try" -lt 8 ]; do
+    try=$((try + 1))
+    if "$@" >&2 2>"$errf"; then return 0; fi
+    grep -q 'does not exist' "$errf" || return 1
+    sleep_bg "${CHECK195_GRANT_RETRY_SECONDS:-5}"
+  done
+  return 1
+}
+
 step_caller() {
   # The throwaway build account, and the ONE grant this check is about. It is
   # created here rather than borrowed from the installation: the reading is that
@@ -978,21 +1079,9 @@ step_caller() {
 
   # The grant this check exists for: on the SERVICE, never on the project, and
   # read back from the service's own policy just below.
-  # A service account that was just created is not yet visible to every IAM
-  # front end: the grant answers "does not exist" for a few seconds. That answer
-  # is waited out and retried; any other refusal (a denied setIamPolicy) is not.
-  local grant_try=0 grant_ok=no
-  while [ "$grant_try" -lt 8 ]; do
-    grant_try=$((grant_try + 1))
-    if gcloud run services add-iam-policy-binding "${SVC:?}" --project="${P:?}" --region="${L:?}" \
-      --member="serviceAccount:${CALLER_EMAIL}" --role=roles/run.invoker --quiet >&2 2>"$SCRATCH/invoker.err"; then
-      grant_ok=yes
-      break
-    fi
-    grep -q 'does not exist' "$SCRATCH/invoker.err" || break
-    sleep_bg "${CHECK195_GRANT_RETRY_SECONDS:-5}"
-  done
-  if [ "$grant_ok" != yes ]; then
+  if ! grant_retrying "$SCRATCH/invoker.err" gcloud run services add-iam-policy-binding "${SVC:?}" \
+    --project="${P:?}" --region="${L:?}" --member="serviceAccount:${CALLER_EMAIL}" \
+    --role=roles/run.invoker --quiet; then
     fact invoker-grant FAIL "${CALLER_EMAIL} could not be granted roles/run.invoker on ${SVC}: $(last_lines "$SCRATCH/invoker.err")"
     stop "${CALLER_EMAIL} could not be granted roles/run.invoker on this check's own service ${SVC}, so the build's step would be refused at the front end and nothing about the grant could be measured. YOUR account needs run.services.setIamPolicy on it (an Owner has it). Nothing was built; the account and the service are deleted by this run's Restore"
   fi
@@ -1021,6 +1110,20 @@ step_caller() {
     stop "${CALLER_EMAIL} could not be granted roles/storage.objectCreator on gs://${BUCKET}, so the step could not write its one line there and the reading would fall back on the step's exit code alone. YOUR account needs storage.buckets.setIamPolicy on that bucket (an Owner has it). Nothing was built; the bucket, the account and the service are deleted by this run's Restore"
   fi
 
+  # The grant Cloud Build itself reads before it serves this build an ID token,
+  # and the reason the owner's run of 2026-11-27 came back `status=notoken`: the
+  # metadata server's identity endpoint serves a build its identity only when the
+  # account the build runs as holds this role ON ITSELF. It is the same role, on
+  # the same own path, that the installation's catalog build identity holds
+  # (build_identity.tf), and it is granted here rather than taken on trust: an
+  # account that holds it on another account, or on the project, mints nothing.
+  say "granting ${CALLER_EMAIL} ${OPENID_ROLE} on its own account (what Cloud Build reads before it serves the build an ID token)"
+  if ! grant_retrying "$SCRATCH/openid.err" gcloud iam service-accounts add-iam-policy-binding "${CALLER_EMAIL:?}" \
+    --project="${P:?}" --member="serviceAccount:${CALLER_EMAIL}" --role="${OPENID_ROLE}" --quiet; then
+    fact openid-grant FAIL "${CALLER_EMAIL} could not be granted ${OPENID_ROLE} on its own account: $(last_lines "$SCRATCH/openid.err")"
+    stop "${CALLER_EMAIL} could not be granted ${OPENID_ROLE} on its own account, so Cloud Build would serve the build's step no ID token and the step would end 14 (notoken) with the grant unmeasured. YOUR account needs iam.serviceAccounts.setIamPolicy on that account (an Owner has it). Nothing was built; the account and the service are deleted by this run's Restore"
+  fi
+
   # The grant, read back from the service's own IAM policy: exactly one member,
   # the throwaway account, with the invoker role — which is what "on it alone"
   # means. This is read BEFORE the build, so a binding that did not land stops
@@ -1037,7 +1140,7 @@ step_caller() {
   members=$(printf '%s' "$pol" | grep -o '"serviceAccount:[^"]*"' | tr -d '"' | sort -u | tr '\n' ' ' || true)
   case "$members" in
   *"serviceAccount:${CALLER_EMAIL}"*)
-    fact invoker-grant PASS "the service's own IAM policy names ${CALLER_EMAIL} with roles/run.invoker, and the only member it names is ${members% } — one grant, on this service alone: ${CALLER_EMAIL} may invoke ${SVC} and nothing else. It also holds roles/logging.logWriter on ${P} (which Cloud Build requires of a build's own service account to write its log) and roles/storage.objectCreator on gs://${BUCKET} alone (which is what lets the step write its one line, and nothing else, there); the Restore removes each of those and deletes the account"
+    fact invoker-grant PASS "the service's own IAM policy names ${CALLER_EMAIL} with roles/run.invoker, and the only member it names is ${members% } — one grant, on this service alone: ${CALLER_EMAIL} may invoke ${SVC} and nothing else. It also holds roles/logging.logWriter on ${P} (which Cloud Build requires of a build's own service account to write its log), roles/storage.objectCreator on gs://${BUCKET} alone (which is what lets the step write its one line, and nothing else, there) and ${OPENID_ROLE} on its OWN account (which is what the metadata server reads before it mints the build an ID token); the Restore removes each of those and deletes the account"
     ;;
   *)
     fact invoker-grant FAIL "the service's own IAM policy does not name ${CALLER_EMAIL} after the binding was added (it names: ${members:-nobody}), so the build's step would be refused whatever the grant call said"
@@ -1051,52 +1154,60 @@ step_caller() {
     owner "waiting ${GRANT_SECONDS} s for the grant to take effect"
     sleep_bg "$GRANT_SECONDS"
   fi
-  wait_for_write_grants
+  wait_for_grants
 }
 
-# wait_for_write_grants: the two bindings the build's own WRITES need, and neither
-# of them is what this check measures. A build that names its own service account
-# writes its log with that account's credentials, which is the project-level
-# roles/logging.logWriter binding just added; the step writes its one line into the
-# bucket's object with the same account's token, which is the bucket-level
-# roles/storage.objectCreator binding just added. IAM is eventually consistent and
-# a build that starts inside the window writes neither: that is how the owner's run
-# of 2026-11-24 came back with a build record that said FAILURE and a `gcloud
-# builds log` that printed an empty body, on a binding granted seconds earlier. So
-# each binding is read back out of the policy that holds it — the project's own, and
-# the bucket's own — re-read while it is not there, and then given ONE short fixed
+# wait_for_grants: the three bindings the build needs, each read back out of the
+# policy that holds it before the build starts. Two are what the build's own
+# WRITES need, and neither is what this check measures: a build that names its own
+# service account writes its log with that account's credentials, which is the
+# project-level roles/logging.logWriter binding just added, and the step writes its
+# one line into the bucket's object with the same account's token, which is the
+# bucket-level roles/storage.objectCreator binding just added. The third IS what
+# this check measures, and it is read back for the same reason: Cloud Build serves
+# a build its ID token only when the account the build runs as holds
+# roles/iam.serviceAccountOpenIdTokenCreator ON ITSELF, so an account whose own
+# policy does not name it is a build that ends 14 (notoken) whatever the grant call
+# said. IAM is eventually consistent and a build that starts inside the window
+# writes neither and mints nothing: that is how the owner's run of 2026-11-24 came
+# back with a build record that said FAILURE and a `gcloud builds log` that printed
+# an empty body, on a binding granted seconds earlier. So each binding is read back
+# out of the policy that holds it — the project's own, the bucket's own, and the
+# account's own — re-read while it is not there, and then given ONE short fixed
 # settle before the build starts. The wait is BOUNDED (CHECK195_GRANTS_WAIT_SECONDS,
-# and CHECK195_GRANTS_SETTLE_SECONDS for the settle) and the row says how long each
-# was waited for and what each read back. Nothing rests on it: a build whose writes
-# did not land is read from its own step's exit code, so a wait that runs out costs
-# this run the email claim's text, never the reading.
-wait_for_write_grants() {
-  local waited=0 pol="" bpol="" pol_at="" bpol_at=""
+# and CHECK195_GRANTS_SETTLE_SECONDS for the settle) and the rows say how long each
+# was waited for and what each read back. Nothing rests on the two write grants: a
+# build whose writes did not land is read from its own step's exit code, so a wait
+# that runs out costs this run the email claim's text, never the reading.
+wait_for_grants() {
+  local waited=0 pol="" bpol="" opol="" pol_at="" bpol_at="" opol_at=""
   while :; do
     pol=$(project_naming_account)
     bpol=$(bucket_naming_account)
+    opol=$(account_naming_openid_token)
     # When each policy was READ, whether it named the account or not: the row says
     # how long the read-back took for the naming case and for the case where the
     # binding never landed, and neither may be quoted as a time that was never
     # waited.
     if [ "$pol" != unread ] && [ -z "$pol_at" ]; then pol_at=$waited; fi
     if [ "$bpol" != unread ] && [ -z "$bpol_at" ]; then bpol_at=$waited; fi
-    if [ "$pol" = named ] && [ "$bpol" = named ]; then break; fi
+    if [ "$opol" != unread ] && [ -z "$opol_at" ]; then opol_at=$waited; fi
+    if [ "$pol" = named ] && [ "$bpol" = named ] && [ "$opol" = named ]; then break; fi
     if [ "$waited" -ge "$GRANTS_WAIT_SECONDS" ]; then break; fi
     sleep_bg "$GRANTS_POLL_SECONDS"
     waited=$((waited + GRANTS_POLL_SECONDS))
   done
-  # What the row says about the settle, per reading: only the two policies READ and
-  # both naming the account can be settled. A policy that could not be read says
-  # nothing either way, and the row for it may not claim the binding is absent.
-  local settle="no settle, because whether both policies name the account was not read"
-  if [ "$pol" = named ] && [ "$bpol" = named ]; then
+  # What the rows say about the settle, per reading: only the policies READ and
+  # naming the account can be settled. A policy that could not be read says nothing
+  # either way, and the row for it may not claim the binding is absent.
+  local settle="no settle, because whether all three policies name the account was not read"
+  if [ "$pol" = named ] && [ "$bpol" = named ] && [ "$opol" = named ]; then
     settle="${GRANTS_SETTLE_SECONDS} s of settle"
     if [ "$GRANTS_SETTLE_SECONDS" -gt 0 ]; then
-      owner "waiting ${GRANTS_SETTLE_SECONDS} s for the roles/logging.logWriter and roles/storage.objectCreator grants to propagate"
+      owner "waiting ${GRANTS_SETTLE_SECONDS} s for the roles/logging.logWriter, roles/storage.objectCreator and ${OPENID_ROLE} grants to propagate"
       sleep_bg "$GRANTS_SETTLE_SECONDS"
     fi
-  elif [ "$pol" = clean ] || [ "$bpol" = clean ]; then
+  elif [ "$pol" = clean ] || [ "$bpol" = clean ] || [ "$opol" = clean ]; then
     settle="no settle, because a binding that never landed is not in its policy to settle"
   fi
   # Each side read on its own, so a row names only what it read: a policy that
@@ -1130,8 +1241,25 @@ wait_for_write_grants() {
   if [ -z "$bad" ]; then
     fact write-grants PASS "${readback}. The build was then held back a fixed ${settle}, and ${bounded}. Nothing rests on either write: the object the step writes carries the reading as text, and the build's own record carries it as its step's exit code"
   else
-    fact write-grants FAIL "${readback}: ${bad}. ${settle}, and ${bounded}. The build runs either way and its step's exit code still carries the reading; read the two policies by hand with gcloud projects get-iam-policy ${P} --format=json and gcloud storage buckets get-iam-policy gs://${BUCKET} --format=json"
+    fact write-grants FAIL "${readback}: ${bad}. ${settle}, and ${bounded}. The build runs either way and its step's exit code still carries the reading; read the policies by hand with gcloud projects get-iam-policy ${P} --format=json and gcloud storage buckets get-iam-policy gs://${BUCKET} --format=json"
   fi
+  # The third grant, and the one this check is about: the account's OWN policy
+  # naming the account with the role Cloud Build reads before it serves the build
+  # an ID token. Read back before the build for the same reason the invoker grant
+  # is, and reported in a row of its own: the two rows above are about writes the
+  # reading does not rest on, and this one is about the mint, so a FAIL here and a
+  # `call: FAIL status=notoken` below are the same fact read twice.
+  case "$opol" in
+  named)
+    fact openid-grant PASS "${OPENID_ROLE} is on ${CALLER_EMAIL}'s OWN account: its own IAM policy named it ${opol_at} s after the binding was added (read back from that policy, not assumed), with the same fixed ${settle} given to it. It is the grant the installation's own catalog build identity holds on itself (deploy/terraform/gcp/modules/installation/build_identity.tf), and nothing else is added to that account's policy: the throwaway account may mint an identity token as itself and as no other account. It goes with the account, which the Restore reads back"
+    ;;
+  clean)
+    fact openid-grant FAIL "${CALLER_EMAIL}'s own IAM policy names ${OPENID_ROLE} in no binding ${opol_at} s after it was reported added: Cloud Build serves a build its ID token only when the account it runs as holds that role on itself, so the step below would end 14 (notoken) with the mint unmeasured"
+    ;;
+  *)
+    fact openid-grant FAIL "whether ${CALLER_EMAIL}'s own IAM policy names ${OPENID_ROLE} could not be read, so nothing is claimed about the mint: read it by hand with gcloud iam service-accounts get-iam-policy ${CALLER_EMAIL} --project=${P} --format=json"
+    ;;
+  esac
 }
 
 # write_build_config: the one step — mint an ID token for this service's URL out
@@ -1538,9 +1666,10 @@ print_plan() {
   say "  [network, writes] gcloud run services add-iam-policy-binding ${SVC} --project=${P} --region=${L} --member=serviceAccount:${CALLER_EMAIL} --role=roles/run.invoker  (on THIS service alone)"
   say "  [network, writes] gcloud projects add-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=roles/logging.logWriter --condition=None  (which Cloud Build requires of a build's own service account to write its log — the log this check reads the token's email claim out of when it arrives)"
   say "  [network, writes] gcloud storage buckets add-iam-policy-binding gs://${BUCKET} --member=serviceAccount:${CALLER_EMAIL} --role=roles/storage.objectCreator  (on THIS bucket alone: it is what lets the step write its one line into ${LINE_URI}, which is the reading that needs no Cloud Logging at all)"
+  say "  [network, writes] gcloud iam service-accounts add-iam-policy-binding ${CALLER_EMAIL} --project=${P} --member=serviceAccount:${CALLER_EMAIL} --role=${OPENID_ROLE}  (on the throwaway account's OWN account: Cloud Build serves a build its ID token from the metadata server only when the account the build runs as holds this role on itself, which is the same grant, on the same own path, that the installation's catalog build identity holds — deploy/terraform/gcp/modules/installation/build_identity.tf. Without it the identity endpoint answers 404 and the step ends 14, which is how the owner's run of 2026-11-27 came back)"
   say "  [network] gcloud run services get-iam-policy ${SVC} --format=json  (read back: the account, and nobody else, may invoke it)"
   say "  [local] a ${GRANT_SECONDS} s wait for the grant to take effect"
-  say "  [network, local] gcloud projects get-iam-policy ${P} --format=json and gcloud storage buckets get-iam-policy gs://${BUCKET} --format=json, each re-read until it names ${CALLER_EMAIL}, bounded at ${GRANTS_WAIT_SECONDS} s (CHECK195_GRANTS_WAIT_SECONDS), then one fixed ${GRANTS_SETTLE_SECONDS} s settle (CHECK195_GRANTS_SETTLE_SECONDS): the roles/logging.logWriter and roles/storage.objectCreator grants are what let the build write its own line and IAM is eventually consistent, so a build started in the window writes neither — the write-grants row records what was waited for and what each policy read back"
+  say "  [network, local] gcloud projects get-iam-policy ${P} --format=json, gcloud storage buckets get-iam-policy gs://${BUCKET} --format=json and gcloud iam service-accounts get-iam-policy ${CALLER_EMAIL} --project=${P} --format=json, each re-read until it names ${CALLER_EMAIL}, bounded at ${GRANTS_WAIT_SECONDS} s (CHECK195_GRANTS_WAIT_SECONDS), then one fixed ${GRANTS_SETTLE_SECONDS} s settle (CHECK195_GRANTS_SETTLE_SECONDS): the roles/logging.logWriter and roles/storage.objectCreator grants are what let the build write its own line, the ${OPENID_ROLE} grant is what lets it mint its token at all, and IAM is eventually consistent, so a build started in the window writes neither and mints nothing — the write-grants and openid-grant rows record what was waited for and what each policy read back"
   say "  [network, writes] gcloud builds submit --project=${P} --no-source --config=${SCRATCH}/cloudbuild.yaml --service-account=projects/${P}/serviceAccounts/${CALLER_EMAIL} --async (nothing is staged anywhere: the build has no source, and the installation's gs://${P}_cloudbuild is not touched)"
   say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends, then once more for its serviceAccount field and once more for steps[0].exitCode — the account field is a RESOURCE NAME, and this reading reduces it to the account it ends in (the bare address, or the account's numeric uniqueId, which then costs one gcloud iam service-accounts describe) so that a build that ran as somebody else still fails and a build that ran as this check's own account is not reported as another identity"
   say "  [network] gcloud storage cat gs://${BUCKET}/${LINE_OBJECT}  (the step's own line, OUT of the object it wrote it into: re-read for up to ${LINE_WAIT_SECONDS} s (CHECK195_LINE_WAIT_SECONDS) — this is the reading that needs no Cloud Logging)"
@@ -1552,8 +1681,8 @@ print_plan() {
   say "  [network, deletes] gcloud run services delete ${SVC} --project=${P} --region=${L}  (which takes the roles/run.invoker binding with it)"
   say "  [network, deletes] gcloud storage rm --recursive gs://${BUCKET} --quiet  (--recursive because the step's object is in it, and a bucket holding an object is not deleted by buckets delete; it takes the object and the bucket-level roles/storage.objectCreator binding with it, and runs only when the bucket carries this run's own label chk195=${BUCKET_NONCE} — a bucket that does not is never touched)"
   say "  [network, deletes] gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${CALLER_EMAIL} --role=roles/logging.logWriter --condition=None"
-  say "  [network, deletes] gcloud iam service-accounts delete ${CALLER_EMAIL} --project=${P}, re-reading the project policy first and retrying up to ${ACCOUNT_DELETE_TRIES} times: the binding removal and the account deletion are ordered IAM writes that IAM's own consistency can put out of order — the owner's run of 2026-11-24 came back with the account still there and the refusal was not captured, so the re-read covers both causes: a delete refused as still referenced by a policy binding, and a delete that landed whose account the list was still naming"
-  say "  [network] four reads that say the service, the bucket, the account and the project binding are gone"
+  say "  [network, deletes] gcloud iam service-accounts delete ${CALLER_EMAIL} --project=${P}, re-reading the project policy first and retrying up to ${ACCOUNT_DELETE_TRIES} times: the binding removal and the account deletion are ordered IAM writes that IAM's own consistency can put out of order — the owner's run of 2026-11-24 came back with the account still there and the refusal was not captured, so the re-read covers both causes: a delete refused as still referenced by a policy binding, and a delete that landed whose account the list was still naming. It takes the ${OPENID_ROLE} binding this check added on that account's own policy with it — no other call removes it, which is why the row below reads that policy back rather than assuming it went"
+  say "  [network] five reads that say the service, the bucket, the account, the ${OPENID_ROLE} binding on the account's own account and the project binding are gone — the account's own policy is read again after the deletion (gcloud iam service-accounts get-iam-policy ${CALLER_EMAIL} --project=${P} --format=json), and the account's own state is what answers when the policy cannot be read at all"
   say "What is left behind either way: the build's own RECORD, in the project's Cloud Build history. It is the project's log of what ran rather than a resource this check made, and nothing here deletes it."
 }
 
@@ -1583,8 +1712,8 @@ main() {
 # FAIL — not reached, and any other recorded key follows, in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(fugaro-version project-region image deploy-iam-only baseline scratch line-bucket service
-  iam-policy unauthenticated-request invoker-grant write-grants build line-object call
-  service-deleted bucket-deleted account-deleted binding-removed restore scratch-removed)
+  iam-policy unauthenticated-request invoker-grant openid-grant write-grants build line-object call
+  service-deleted bucket-deleted account-deleted openid-grant-removed binding-removed restore scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2

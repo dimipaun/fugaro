@@ -139,6 +139,13 @@ ALLOWED = {
     ("iam", "service-accounts", "describe"): ("--project", "--format"),
     ("iam", "service-accounts", "create"): ("--project", "--display-name", "--quiet"),
     ("iam", "service-accounts", "delete"): ("--project", "--quiet"),
+    # The grant Cloud Build reads before it serves a build an ID token, on the
+    # throwaway account's OWN account, and the read of that account's own policy
+    # that is its read-back. There is no `remove-iam-policy-binding` here on
+    # purpose: the check never removes that binding by hand — deleting the
+    # account is what takes it, which is why the read-back exists.
+    ("iam", "service-accounts", "get-iam-policy"): ("--project", "--format"),
+    ("iam", "service-accounts", "add-iam-policy-binding"): ("--project", "--member", "--role", "--quiet"),
     ("projects", "get-iam-policy"): ("--format",),
     ("projects", "add-iam-policy-binding"): ("--member", "--role", "--condition", "--quiet"),
     ("projects", "remove-iam-policy-binding"): ("--member", "--role", "--condition", "--quiet"),
@@ -276,11 +283,11 @@ def service_members():
     return [member] if member and member != "0" else []
 
 
-def policy_json(members):
+def policy_json(members, role="roles/run.invoker"):
     if not members:
         return '{"bindings": [], "etag": "BwYfake="}'
     body = ", ".join('"%s"' % m for m in members)
-    return '{"bindings": [{"role": "roles/run.invoker", "members": [%s]}], "etag": "BwYfake="}' % body
+    return '{"bindings": [{"role": "%s", "members": [%s]}], "etag": "BwYfake="}' % (role, body)
 
 
 if sub == ("run", "deploy"):
@@ -354,6 +361,36 @@ elif sub == ("iam", "service-accounts", "delete"):
         state_set("delete_tries", "1")
         die("FAILED_PRECONDITION: Service account %s is still referenced by a policy binding" % CALLER)
     state_set("account", "0")
+    # A service account's own IAM policy is deleted with the account, which is
+    # what removes the open-id-token binding this check added on it.
+    state_set("openidgrant", "0")
+elif sub == ("iam", "service-accounts", "get-iam-policy"):
+    # The account's OWN policy: where the grant Cloud Build reads before it
+    # serves a build an ID token lives. A policy cannot outlive its account, so
+    # once the account is gone this is a NOT_FOUND — the same failure an expired
+    # session gives, and the reason the check reads the account's own state
+    # beside it rather than calling either one "gone".
+    if mode == "account-policy-unreadable":
+        die("iam.serviceAccounts.getIamPolicy was refused: the session has expired")
+    if state_get("account") != "1":
+        die("NOT_FOUND: Unknown service account %s" % CALLER)
+    if positionals[3] != CALLER:
+        die("this check reads the throwaway account's own policy")
+    member = state_get("openidgrant")
+    emit(policy_json(["serviceAccount:" + member] if member and member != "0" else [],
+                     role="roles/iam.serviceAccountOpenIdTokenCreator"))
+elif sub == ("iam", "service-accounts", "add-iam-policy-binding"):
+    if mode == "openid-fails":
+        die("iam.serviceAccounts.setIamPolicy denied on resource")
+    if mode == "openid-not-visible-once" and state_get("openid_tries") != "1":
+        state_set("openid_tries", "1")
+        die("INVALID_ARGUMENT: Service account " + CALLER + " does not exist.")
+    if flag("--role") != "roles/iam.serviceAccountOpenIdTokenCreator":
+        die("this check grants the open-id-token role and nothing else on the account's own account")
+    if positionals[3] != CALLER or flag("--member") != "serviceAccount:" + CALLER:
+        die("the open-id-token grant is the account's own, on itself and on no other account")
+    if mode != "openid-ignored":
+        state_set("openidgrant", CALLER)
 elif sub == ("projects", "get-iam-policy"):
     if mode == "project-policy-unreadable":
         die("resourcemanager.projects.getIamPolicy was refused: the session has expired")
@@ -950,6 +987,12 @@ test_dry_run() {
   expect_contains "$err" "metadata.google.internal" "dry run: the plan names the metadata server"
   expect_contains "$err" "--no-source" "dry run: the plan says the build has no source"
   expect_contains "$err" "roles/run.invoker" "dry run: the plan says what is granted"
+  # The owner's run of 2026-11-27 read a plan that named neither of these and then
+  # 404'd at the metadata server: the plan of a passing dry run has to carry every
+  # grant the real run makes, this one included, or it settles nothing about it.
+  expect_contains "$err" "iam service-accounts add-iam-policy-binding fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/iam.serviceAccountOpenIdTokenCreator" "dry run: the plan carries the open-id-token grant on the account's own account"
+  expect_contains "$err" "build_identity.tf" "dry run: the plan says where that grant's role comes from"
+  expect_contains "$err" "openid-grant" "dry run: the plan says the grant is read back before the build"
 
   local calls
   calls=$(cat "$dir/logs/gcloud.calls" "$dir/logs/fugaro.calls" "$dir/logs/curl.calls")
@@ -1747,6 +1790,137 @@ test_a_logwriter_grant_that_does_not_land_is_reported() {
   expect_contains "$out" "FACT restore: PASS" "no logWriter: everything is still restored"
 }
 
+# THE GRANT THE OWNER'S RUN OF 2026-11-27 CAME BACK 404 WITHOUT, pinned to where
+# it comes from. Cloud Build serves a build an ID token out of the build's own
+# metadata server only when the account the build runs as holds
+# roles/iam.serviceAccountOpenIdTokenCreator ON ITSELF; the real catalog build
+# identity got that grant in #3989, and this check's throwaway account never got
+# it, so the identity endpoint answered 404 and the step ended 14 (`notoken`).
+# The role is read OUT OF THE MODULE THAT GRANTS IT — not out of the check, which
+# would only prove the check agrees with itself — because a rename there has to
+# break here rather than leave the check granting a role nobody holds.
+test_the_openid_grant_is_the_one_the_build_identity_holds() {
+  local root tf role
+  root=$(cd "$here/../.." && pwd)
+  tf=$root/deploy/terraform/gcp/modules/installation/build_identity.tf
+  if [ ! -f "$tf" ]; then
+    fail "the open-id-token role: $tf is not there, so this test reads nothing"
+    return 0
+  fi
+  # The role of the build identity's own open-id-token grant: the resource's
+  # block, taken to the next `resource` at column 0.
+  role=$(awk '/^resource /{ if (f) exit } /^resource "google_service_account_iam_member" "build_identity_openid_token"/{ f = 1 } f && /^[[:space:]]*role[[:space:]]*=/{ print; exit }' "$tf" \
+    | sed -E 's/.*=[[:space:]]*"([^"]+)".*/\1/')
+  if [ -z "$role" ]; then
+    fail "the open-id-token role: build_identity.tf's build_identity_openid_token resource names no role"
+    return 0
+  fi
+  expect_contains "$(cat "$script")" "OPENID_ROLE=$role" "the open-id-token role: the check's own constant is the role build_identity.tf grants the build identity on itself ($role)"
+}
+
+# The grant is made ON THE ACCOUNT'S OWN ACCOUNT — the service account's own
+# path, held by it alone, which is the shape #3989 gave the real build identity —
+# and it is READ BACK from that account's own policy BEFORE the build: a build
+# started over a binding that had not propagated mints nothing, and would report
+# the same `notoken` the missing grant reported.
+test_the_openid_grant_is_on_the_accounts_own_account_and_read_back_before_the_build() {
+  local dir=$work/openid
+  prepare "$dir"
+  run195 "$dir"
+  expect_status "$status" 0 "the open-id-token grant: the verdict"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "iam service-accounts add-iam-policy-binding fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/iam.serviceAccountOpenIdTokenCreator" "the open-id-token grant: on the account's own account, for the account itself"
+  expect_contains "$calls" "iam service-accounts get-iam-policy fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev" "the open-id-token grant: read back from the account's own policy"
+  expect_contains "$out" "FACT openid-grant: PASS" "the open-id-token grant: the row"
+  expect_contains "$out" "its own IAM policy named it 0 s after the binding was added (read back from that policy, not assumed)" "the open-id-token grant: the row says which policy it read and when"
+  expect_contains "$out" "roles/iam.serviceAccountOpenIdTokenCreator is on fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com's OWN account" "the open-id-token grant: the row names the role and whose account holds it"
+  local add_line read_line build_line
+  add_line=$(grep -n 'iam service-accounts add-iam-policy-binding' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
+  read_line=$(grep -n 'iam service-accounts get-iam-policy' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
+  build_line=$(grep -n 'builds submit' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
+  [ -n "$add_line" ] && [ -n "$read_line" ] && [ -n "$build_line" ] \
+    && [ "$add_line" -lt "$read_line" ] && [ "$read_line" -lt "$build_line" ] \
+    || fail "the open-id-token grant must be added, read back from the account's own policy, and only then built on (add at $add_line, read at $read_line, build at $build_line)"
+}
+
+# The removal, READ BACK rather than assumed: deleting the account takes the
+# policy that holds the grant, so the account's own policy is read again AFTER
+# the deletion and the row says what that read answered.
+test_the_restore_reads_back_that_the_openid_grant_went_with_the_account() {
+  local dir=$work/openidgone
+  prepare "$dir"
+  run195 "$dir"
+  expect_status "$status" 0 "the open-id-token removal: the verdict"
+  expect_contains "$out" "FACT openid-grant-removed: PASS" "the open-id-token removal: the row"
+  expect_contains "$out" "is gone and its own IAM policy with it" "the open-id-token removal: the row says what the read-back read"
+  expect_contains "$out" "the account (and with it the roles/iam.serviceAccountOpenIdTokenCreator binding it held on its own account)" "the open-id-token removal: the Restore row names it among what it deleted"
+  local delete_line read_line
+  delete_line=$(grep -n 'iam service-accounts delete' "$dir/logs/gcloud.calls" | head -n 1 | cut -d: -f1)
+  read_line=$(grep -n 'iam service-accounts get-iam-policy' "$dir/logs/gcloud.calls" | tail -n 1 | cut -d: -f1)
+  [ -n "$delete_line" ] && [ -n "$read_line" ] && [ "$delete_line" -lt "$read_line" ] \
+    || fail "the open-id-token removal: the account's own policy must be read back after the deletion (delete at $delete_line, last policy read at $read_line)"
+}
+
+# And the reading that matters when the deletion does NOT take: the account
+# survives, so its own policy is read, it still names the grant, and the row
+# FAILs with the one command that removes it. A row that claimed the grant went
+# with an account still holding it is the false pass this exists to prevent.
+test_an_openid_grant_left_behind_by_a_surviving_account_is_a_failure() {
+  local dir=$work/openidleft
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=account-delete-fails
+  expect_status "$status" 1 "the surviving account's grant: the verdict"
+  expect_contains "$out" "FACT openid-grant-removed: FAIL" "the surviving account's grant: the row"
+  expect_contains "$out" "still there holding roles/iam.serviceAccountOpenIdTokenCreator ON ITSELF" "the surviving account's grant: why it is still there"
+  expect_contains "$out" "gcloud iam service-accounts remove-iam-policy-binding fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev --member=serviceAccount:fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --role=roles/iam.serviceAccountOpenIdTokenCreator" "the surviving account's grant: how to remove it by hand"
+  expect_contains "$out" "FACT restore: FAIL" "the surviving account's grant: the Restore row"
+}
+
+# A grant that was reported added and is not in the account's own policy: the
+# build still runs — the exit code carries the reading either way — and the row
+# says the mint below cannot have happened, which is what the owner's run saw as
+# `status=notoken` with no reason.
+test_an_openid_grant_that_does_not_land_is_reported() {
+  local dir=$work/openidignored
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=openid-ignored
+  expect_status "$status" 1 "no open-id-token grant: the verdict"
+  expect_contains "$out" "FACT openid-grant: FAIL" "no open-id-token grant: the row"
+  expect_contains "$out" "names roles/iam.serviceAccountOpenIdTokenCreator in no binding" "no open-id-token grant: what the policy read said"
+  expect_contains "$out" "the step below would end 14 (notoken) with the mint unmeasured" "no open-id-token grant: the row names what the build's step can only do without it"
+  expect_contains "$out" "FACT build: PASS" "no open-id-token grant: the build still ran"
+  expect_contains "$out" "FACT call: PASS" "no open-id-token grant: the call is still measured out of the exit code"
+  expect_contains "$out" "FACT restore: PASS" "no open-id-token grant: everything is still restored"
+}
+
+# A policy read that FAILED is not the answer "the grant is not there", on this
+# policy as on the other two.
+test_an_openid_policy_that_cannot_be_read_is_reported() {
+  local dir=$work/openidunread
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=account-policy-unreadable
+  expect_status "$status" 1 "the account policy unreadable: the verdict"
+  expect_contains "$out" "FACT openid-grant: FAIL" "the account policy unreadable: the row"
+  expect_contains "$out" "whether fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com's own IAM policy names roles/iam.serviceAccountOpenIdTokenCreator could not be read" "the account policy unreadable: the row claims nothing either way"
+  expect_contains "$out" "gcloud iam service-accounts get-iam-policy fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com --project=fugaro-dev --format=json" "the account policy unreadable: how to read it by hand"
+}
+
+# A refusal at the grant itself stops the run before the build: the step could
+# only end 14, and a `notoken` read out of a build nobody granted the role to is
+# not a statement about anything.
+test_an_openid_grant_that_fails_stops_before_the_build() {
+  local dir=$work/openidfails
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=openid-fails
+  expect_status "$status" 1 "the open-id-token grant refused: the verdict"
+  expect_contains "$out" "FACT openid-grant: FAIL" "the open-id-token grant refused: the row"
+  expect_contains "$err" "roles/iam.serviceAccountOpenIdTokenCreator" "the open-id-token grant refused: the stop names the role"
+  expect_contains "$err" "iam.serviceAccounts.setIamPolicy" "the open-id-token grant refused: the stop names the permission this needs"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "builds submit" "the open-id-token grant refused: no build was submitted"
+  expect_contains "$out" "FACT restore: PASS" "the open-id-token grant refused: everything created was deleted and read back"
+}
+
 # A service account created a moment ago is not visible to every IAM front end:
 # the first grant answers "does not exist", the retry lands, and the run goes on.
 test_a_grant_for_a_not_yet_visible_account_is_retried() {
@@ -1755,6 +1929,18 @@ test_a_grant_for_a_not_yet_visible_account_is_retried() {
   run195 "$dir" FAKE_GCLOUD_MODE=grant-not-visible-once CHECK195_GRANT_RETRY_SECONDS=0
   expect_contains "$out" "FACT invoker-grant: PASS" "a not-yet-visible account: the grant landed on the retry"
   expect_absent "$out" "FACT invoker-grant: FAIL" "a not-yet-visible account: no failed grant row"
+}
+
+# And the open-id-token grant is made through the same retry: the account is
+# newest at that point, and a grant refused as "does not exist" is a binding that
+# never landed, not a project that refuses it.
+test_an_openid_grant_for_a_not_yet_visible_account_is_retried() {
+  local dir=$work/openidretry
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=openid-not-visible-once CHECK195_GRANT_RETRY_SECONDS=0
+  expect_status "$status" 0 "the open-id-token retry: the verdict"
+  expect_contains "$out" "FACT openid-grant: PASS" "the open-id-token retry: the grant landed on the retry"
+  expect_absent "$out" "FACT openid-grant: FAIL" "the open-id-token retry: no failed grant row"
 }
 
 # A refusal on the way in is a stop with the reason named, not a run that goes on
@@ -2044,6 +2230,14 @@ t test_the_steps_own_not_written_marker_is_never_read_as_the_line
 t test_a_delete_that_fails_once_is_retried
 t test_a_logwriter_grant_that_does_not_land_is_reported
 t test_a_grant_for_a_not_yet_visible_account_is_retried
+t test_an_openid_grant_for_a_not_yet_visible_account_is_retried
+t test_the_openid_grant_is_the_one_the_build_identity_holds
+t test_the_openid_grant_is_on_the_accounts_own_account_and_read_back_before_the_build
+t test_the_restore_reads_back_that_the_openid_grant_went_with_the_account
+t test_an_openid_grant_left_behind_by_a_surviving_account_is_a_failure
+t test_an_openid_grant_that_does_not_land_is_reported
+t test_an_openid_policy_that_cannot_be_read_is_reported
+t test_an_openid_grant_that_fails_stops_before_the_build
 t test_a_grant_that_fails_stops_before_the_build
 t test_a_service_that_cannot_be_deleted_is_a_failure
 t test_a_bucket_that_is_not_this_runs_is_left_alone
