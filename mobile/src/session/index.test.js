@@ -142,6 +142,19 @@ test('idToken() refreshes through the project and stores the successor token', a
   assert.equal(state.refreshes, 1);
 });
 
+test('a refresh whose answer carries a policy the port refuses does not install it', async () => {
+  const { built } = await build({
+    fetch: fetchOf({ status: 200, body: refreshAnswer({ policy: { ...POLICY, compact_threshold_percent: 100 } }) }),
+  });
+  // The percent maps to a fraction of 1, which the port refuses: a refresh
+  // installs the policy it read without a second port check, so the refusal has
+  // to happen where the policy is read.
+  await assert.rejects(() => built.session.idToken(), (error) => error.code === REFRESH_CODES.BAD_RESPONSE);
+  // The policy the session paired with is still the one it carries: the refused
+  // one was never a value the port describes.
+  assert.equal(built.session.policy.compaction_threshold, 0.4);
+});
+
 test('a held token near its hour is refreshed rather than trusted', async () => {
   let now = 1_000_000;
   const { fetch, state } = countingFetch();
