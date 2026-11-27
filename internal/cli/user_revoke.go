@@ -22,10 +22,16 @@ package cli
 // THE RECORD IS A SIBLING NODE OF THE ROSTER. It sits at PathRemoved, beside
 // access.PathNode and access.PathMigrated, under the same fence config/admin
 // carries (read and write denied to every client token, reached over IAM), and
-// it holds the canonical `user:<address>` members that have been removed. It is
-// the one thing DG0's classifier reads as `people []string`: an IAM removal of a
-// person's grant is admitted only when the record names that person, and refused
-// in one line naming the command to re-run otherwise.
+// it holds the `user:<address>` members that have been removed, in the spelling
+// the command that removed each took (a command keeps the case its argument was
+// written with, because the list it also edits holds that spelling and an exact
+// match against it is what removes the member). The READERS are what make one
+// address one person — every one of them folds the case (RemovalRecorded,
+// dropMemberFromBindings) — so the record needs no canonicalisation of its own,
+// and none is done to it. It is the one thing DG0's classifier reads as
+// `people []string`: an IAM removal of a person's grant is admitted only when
+// the record names that person, and refused in one line naming the command to
+// re-run otherwise.
 //
 // WHAT IS REACHED, AND WHAT IS NOT. A command revokes a person's grants on the
 // project ITS OWN CONFIG names — the installation for `fugaro user …`, the
@@ -49,7 +55,6 @@ import (
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 
-	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -68,10 +73,11 @@ const PathRemoved = "config/admin/access_removed"
 const removalRecordAttempts = 3
 
 // removalDoc is the record's wire shape: one object with one `removed` array of
-// canonical members. The name is new (CLAUDE.md, "a field never changes
-// meaning"): `removed` is neither `grants` nor `grants_removed`, and the record
-// is its own node rather than a fourth field of the grants node, whose own
-// reader refuses a document it does not know whole.
+// `user:<address>` members, folded on read rather than written folded. The name
+// is new (CLAUDE.md, "a field never changes meaning"): `removed` is neither
+// `grants` nor `grants_removed`, and the record is its own node rather than a
+// fourth field of the grants node, whose own reader refuses a document it does
+// not know whole.
 type removalDoc struct {
 	Removed []string `json:"removed"`
 }
@@ -82,18 +88,6 @@ type removalDoc struct {
 // test needs a live Resource Manager call — and a test that wants the real
 // function drives it against internal/gcpfake (TestUserRmRevokesAtOnce).
 var revokeMemberGrants = revokeMemberGrantsOn
-
-// membershipMember is the canonical `user:<address>` a membership argument names,
-// read through accesslib.Member — the same fold a grant is written and read by —
-// so the record and the IAM policy cannot disagree about who was removed
-// (F17.4).
-func membershipMember(address string) (string, error) {
-	member, err := accesslib.Member(address)
-	if err != nil {
-		return "", userErr("%s is not a member a removal can name: %v", safetext.Field(address), err)
-	}
-	return member, nil
-}
 
 // memberRevokeAtOnce is the one sequence every membership command runs, in the
 // order the acceptance pins: the reachable IAM grants first, and the roster's
