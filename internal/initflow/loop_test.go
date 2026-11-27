@@ -1931,7 +1931,7 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	// The stage behind the one the user owes is not a line of its own: the
 	// steps a run never reached are one line, counting them and naming what
 	// they wait for (the brief's item 6, and the owner's layout of 2026-11-22).
-	if !strings.Contains(got[3], "1 step not run") || !strings.Contains(got[3], Secrets) || strings.Contains(got[3], Repository) {
+	if !strings.Contains(got[3], "1 step not run") || !strings.Contains(got[3], DisplayName(Secrets)) || strings.Contains(got[3], DisplayName(Repository)) {
 		t.Errorf("the steps the run never reached are %q, want one line counting them and naming what they wait for, and not the stages:\n%s", got[3], out.String())
 	}
 	if strings.Contains(strings.Join(got, "\n"), "[") || strings.Contains(out.String(), ": result") {
@@ -2052,7 +2052,7 @@ func TestLoopFailureShowsContextAndFix(t *testing.T) {
 		"raise the quota, then rerun fugaro update",
 		// And the command that picks the run up where it stopped, as the
 		// closing line — a stopped run says it once.
-		"Failed in 0.0s. Rerun " + defaultProgram + " to resume at " + Installation + ".",
+		"Failed in 0.0s. Rerun " + defaultProgram + " to resume at " + DisplayName(Installation) + ".",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the failure block lost %q:\n%s", want, got)
@@ -2382,7 +2382,9 @@ func (s *logSink) Close() error { return nil }
 // and the stage's own ID stays where the run records it — the log a reader
 // goes back to, and the result --json and --events carry (D3435, F21, spec
 // §4). What a person watching reads is the plain words on both lines of the
-// step: the line in flight and the result that replaces it.
+// step: the line in flight and the result that replaces it. The two lines the
+// steps are read beside name a stage the same way: the one the stages behind a
+// stop wait for, and the closing line's "resume at".
 func TestStageDisplayNames(t *testing.T) {
 	seen := map[string]string{}
 	for _, name := range Names() {
@@ -2400,7 +2402,7 @@ func TestStageDisplayNames(t *testing.T) {
 	var log []string
 	var out bytes.Buffer
 	var sink logSink
-	stages := fakes(&log, Preflight, Installation)
+	stages := fakes(&log, Preflight, Installation, Secrets)
 	stages[1].(*fake).applyErr = errors.New("the apply failed")
 	opts := yesOpts()
 	opts.Out = &out
@@ -2433,5 +2435,20 @@ func TestStageDisplayNames(t *testing.T) {
 	}
 	if f := res.Failed; f == nil || f.Stage != Installation {
 		t.Errorf("the failure is %+v, want it named by the stage's ID %q", f, Installation)
+	}
+
+	// The waiting line and the closing line are read under those step lines, so
+	// they name the stage the same way the screen does — and the log, which is
+	// what a reader greps afterwards, keeps the ID on both.
+	for _, want := range []struct{ screen, log, what string }{
+		{"1 step not run (it needs " + DisplayName(Installation) + ")", "1 step not run (it needs " + Installation + ")", "the stages behind the stop"},
+		{"to resume at " + DisplayName(Installation) + ".", "to resume at " + Installation + ".", "the closing line"},
+	} {
+		if !strings.Contains(out.String(), want.screen) {
+			t.Errorf("%s does not name the stage in plain words %q:\n%s", want.what, want.screen, out.String())
+		}
+		if !strings.Contains(sink.String(), want.log) {
+			t.Errorf("%s does not keep the stage's own ID %q in the log:\n%s", want.what, want.log, sink.String())
+		}
 	}
 }

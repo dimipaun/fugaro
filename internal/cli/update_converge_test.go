@@ -1984,8 +1984,9 @@ func stoppedStage(out string) string {
 			return strings.TrimSpace(rest)
 		}
 		// The closing line is the run's own: "Failed in 2.2s. Rerun fugaro
-		// update to resume at policy." The stage is what follows "to resume
-		// at", and it is the name the loop's own stages carry.
+		// update to resume at Publishing the policy." The stage is what
+		// follows "to resume at", named there in plain words (D3435), and is
+		// read back as the ID the loop's own stages carry.
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Failed in ")
 		if !ok {
 			continue
@@ -1995,7 +1996,11 @@ func stoppedStage(out string) string {
 			continue
 		}
 		if _, stage, ok := strings.Cut(resume, " to resume at "); ok {
-			return strings.TrimSuffix(stage, ".")
+			stage = strings.TrimSuffix(stage, ".")
+			if name, ok := stageNameOf(stage); ok {
+				return name
+			}
+			return stage
 		}
 	}
 	return "(the summary names no failed stage)"

@@ -451,7 +451,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 		"Error: quota exceeded",
 		"with google_project_service.quota",
 		"Log:  " + path,
-		"to resume at installation.",
+		"to resume at " + initflow.DisplayName(initflow.Installation) + ".",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the failure block does not print %q:\n%s", want, all)

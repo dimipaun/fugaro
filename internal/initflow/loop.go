@@ -1104,9 +1104,10 @@ func waitingState(s State) bool {
 
 // flushWaits prints the buffered waiting stages as one line per run of them
 // that waits for the same thing: the stage names and what they wait for. The
-// loop's own detail names it ("waits for installation"), and the line reads
-// "… wait for installation"; billing, which the loop records as its own
-// state, is the one wait that is not a stage.
+// loop's own detail names it ("waits for installation"), the line a person
+// reads says "… wait for Applying infrastructure changes" (D3435) and the log
+// keeps the ID; billing, which the loop records as its own state, is the one
+// wait that is not a stage.
 func (l *loop) flushWaits() {
 	if len(l.waits) == 0 {
 		return
@@ -1123,13 +1124,14 @@ func (l *loop) flushWaits() {
 		for _, r := range waits[:n] {
 			names = append(names, r.Name)
 		}
-		l.o.Report.Waits(names, target)
+		l.o.Report.WaitsShown(names, target, DisplayName(target))
 		waits = waits[n:]
 	}
 }
 
-// waitTarget is what a waiting stage says it waits for, in the words the
-// account's waiting line uses.
+// waitTarget is what a waiting stage says it waits for, as the log and the run
+// record name it: a stage by its own name, which DisplayName is what a person
+// reads it as.
 func waitTarget(r StageResult) string {
 	if t, ok := strings.CutPrefix(r.Detail, "waits for "); ok {
 		return t
@@ -1434,7 +1436,7 @@ func (l *loop) finish() {
 			// once, and its fix is in the error the caller prints (res.Failed,
 			// --json) rather than on a line of its own. The error block above
 			// already says what went wrong and where the whole of it is.
-			l.o.Report.RerunFrom(l.program(), f.Stage)
+			l.o.Report.RerunFromShown(l.program(), f.Stage, DisplayName(f.Stage))
 		}
 		// Last, so the closing line is the last thing the run says: the
 		// reporter counts the steps it was given and names the outcome.

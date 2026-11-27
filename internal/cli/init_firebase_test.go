@@ -2211,7 +2211,7 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	}
 	// And it is the rules step's own: the run reaches this stage's
 	// confirmation and stops there, not at a step of a stage before it.
-	if !strings.Contains(out, "to resume at "+initflow.Rules+".") {
+	if !strings.Contains(out, "to resume at "+initflow.DisplayName(initflow.Rules)+".") {
 		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
 	}
 	if db.RulePuts() != puts {
