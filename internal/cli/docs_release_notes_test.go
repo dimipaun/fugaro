@@ -476,13 +476,19 @@ func notesFlag(flag string) string {
 // `fugaro upgrade --local` resolves to the bare `fugaro update`, and the loop
 // above holds it to that flag's absence rather than to a lookup that could only
 // fail. The notes' own spelling stays theirs (D9), the same way notesCommand
-// and notesFlag leave `fugaro init` and `--firebase` in the document.
+// and notesFlag leave `fugaro init` and `--firebase` in the document. `--managed`
+// is the second flag that translation drops: every creating run records its
+// budget now, so the flag is gone (D2214) and the step that named
+// `fugaro init --managed` is the bare `fugaro setup` it sits on.
 func notesStep(path, flag string) (string, string) {
 	if path == "upgrade" {
 		path = "update"
 		if flag == "local" {
 			flag = ""
 		}
+	}
+	if path == "init" && flag == "managed" {
+		flag = ""
 	}
 	return path, flag
 }
