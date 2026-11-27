@@ -92,6 +92,12 @@
 //               D161's `agent` too: the brief is the front agent's own text,
 //               and a brief with no agent is a brief from nobody.
 //
+//               The phone is behind, and deliberately: `shared/command`'s
+//               `jobWrite` composes a launch with no brief, so the app's two
+//               launch tests stay red until P5.4.7's conversation screen shapes
+//               one. That side is the app's, and this task does not reach into
+//               it.
+//
 // **A new kind moves no version constant, because there is none to move.** The
 // field set IS the version (below), so a reader that predates this kind refuses
 // a registration message as an unknown kind and a writer that predates it

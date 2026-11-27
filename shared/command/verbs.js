@@ -173,6 +173,11 @@ export function maySend(session, verb) {
  * through as its builder built it, uncopied: the client's schema validation
  * deep-freezes it before anything is written.
  *
+ * **A launch carries no `brief` yet.** P5.4.2 requires one on every launch, so
+ * `client.sendJob({verb: 'launch'})` is refused with `missing-field`/`brief`
+ * until P5.4.7's conversation screen shapes one and this module passes it on:
+ * the brief is the app's to write, and P5.4.2 does not reach into it.
+ *
  * @param {unknown} session one paired project's session (C2's port value)
  * @param {unknown} request `{ verb, text, record }`
  * @returns {{ok: true, verb: string, text: string, options: object}

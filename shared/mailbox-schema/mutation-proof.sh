@@ -7,7 +7,7 @@
 # `npm test` fail. A guard whose mutation survives is a guard no test defends,
 # which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
 # difference between a fence and a comment. Section 6 is the group about the
-# bounds: nineteen of its twenty-four rows move a comparison by one, which is the
+# bounds: twenty-one of its twenty-six rows move a comparison by one, which is the
 # mutation this module has actually been wrong about; four more narrow a rule by
 # removing one of its terms instead (the carriage return from the line-break
 # rule, DEL from the two character rules, and the second head-SHA length from the
@@ -523,7 +523,7 @@ run "canonicalBytes: -0 is refused" \
 #
 # Every guard above is DISABLED: a check deleted, a pattern replaced by `false`.
 # None of them moves a comparison by one, and that is the mutation this module
-# was actually wrong about. Nineteen of the twenty-four rows below move one
+# was actually wrong about. Twenty-one of the twenty-six rows below move one
 # instead. Four more drop a term of a rule without moving anything: `string: a
 # body loses the carriage return` drops the `code === 0x0d` term of the
 # line-break rule, `string: DEL is no longer refused` and `id: DEL is no longer
