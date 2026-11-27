@@ -293,22 +293,10 @@ func TestImageAddNoApplyLeavesPending(t *testing.T) {
 	}
 }
 
-// TestImageAddRefusesExecutableContentForAnAgent is D1573's red step: the entry
-// an agent's session may not write is the one whose content it also writes —
-// `--inline` (a Dockerfile out of the session's own hands), `--image` (a
-// reference nothing here built) and `--default` (the entry every job that
-// names no needs runs) are executable content the project's jobs run, so each
-// is a person's own entry. The refusal is the command's own and not the
-// managed gate's: this project is not managed at all, no gate is read, and
-// nothing is written either way.
-//
-// `--dockerfile` alone is deliberately not among them: it names a Dockerfile in
-// one of the project's own repositories, committed and reviewed there. `--branch`
-// is, and it is the arm that closes the route --dockerfile would otherwise leave
-// open: with it the entry reads that Dockerfile from a branch no review has
-// vouched for, which the session may have pushed itself, so the build a person's
-// next `fugaro apply` runs would bake content no person wrote.
-func TestImageAddRefusesExecutableContentForAnAgent(t *testing.T) {
+// TestAgentMayEditImages is AG4b's image half (D3425): an entry's source decides
+// where the project's jobs are built from, and a coding agent's session writes
+// one like any other, so no flag draws the agent refusal.
+func TestAgentMayEditImages(t *testing.T) {
 	df := entryDockerfile(t, catalogBuildInline)
 	for _, tc := range []struct {
 		name string
@@ -321,27 +309,12 @@ func TestImageAddRefusesExecutableContentForAnAgent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			catalogFixture(t)
-			before := configOnDisk(t)
 			t.Setenv("CLAUDECODE", "1") // a coding agent's session
 
 			out, errOut, err := execute(t, tc.args...)
-			if err == nil {
-				t.Fatalf("an agent's session wrote %s:\n%s", strings.Join(tc.args, " "), out)
-			}
-			if got := ExitCode(err); got != ExitUserError {
-				t.Errorf("exit %d, want %d", got, ExitUserError)
-			}
 			got := out + errOut + ErrorText(err)
-			for _, want := range []string{imageAddAgentClause, initflow.AgentRefusal("CLAUDECODE")} {
-				if !strings.Contains(got, want) {
-					t.Errorf("the refusal lacks %q:\n%s", want, got)
-				}
-			}
-			if after := configOnDisk(t); after != before {
-				t.Errorf("the project config changed under a refusal:\n%s", after)
-			}
-			if p := record(t); len(p.Steps) != 0 {
-				t.Errorf("the refusal queued %v", p.Names())
+			if strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
+				t.Errorf("an agent's session was refused %s:\n%s", strings.Join(tc.args, " "), got)
 			}
 		})
 	}

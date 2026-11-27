@@ -587,7 +587,7 @@ func newImageRefreshCmd() *cobra.Command {
 // managed gate's admission of each build, asked where the build is
 // (announceBuild). There is still no --json or --plan-only.
 func refreshNeedsATerminal(cmd *cobra.Command, yes bool) error {
-	if yes {
+	if yes || agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) != "" {
 		return nil
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {

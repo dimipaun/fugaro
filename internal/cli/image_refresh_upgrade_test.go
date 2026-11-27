@@ -86,12 +86,9 @@ func inProcessCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 	return cmd, &out
 }
 
-// The agent refusal holds on the in-process path too (dir, rerun, onPlan:
-// a caller's), --yes included: nothing is read, no hook fires, no
-// step runs and nothing is written.
-// Mutation (run, restore): skip refuseRefreshHere when o.dir or o.rerun is
-// set, and every row fails (the hook fires).
-func TestRefreshInProcessRefusedInAgentSession(t *testing.T) {
+// The agent refusal is gone on the in-process path too (dir, rerun, onPlan: a
+// caller's), --yes included (D3425): a session is admitted like any other run.
+func TestRefreshInProcessIsNotRefusedForBeingASession(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	for _, marker := range agentMarkers {
@@ -99,18 +96,12 @@ func TestRefreshInProcessRefusedInAgentSession(t *testing.T) {
 			r := newAnchorModeRig(t, refreshYAML, true)
 			t.Setenv(marker, "1")
 			t.Chdir(t.TempDir())
-			ran := fakeSteps(t, "", nil)
-			noRecordReads(t)
-			cmd, out := inProcessCmd(t)
-			hooked := false
-			err := runImageRefresh(cmd, refreshOptions{dir: r.dir, yes: true, rerun: "fugaro update --yes --repo " + quoteWord(r.root), onPlan: func(*refreshPlan) { hooked = true }})
-			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal(marker)) {
-				t.Fatalf("exit %d, err %v", ExitCode(err), err)
+			fakeSteps(t, "", nil)
+			cmd, _ := inProcessCmd(t)
+			err := runImageRefresh(cmd, refreshOptions{dir: r.dir, yes: true, rerun: "fugaro update --yes --repo " + quoteWord(r.root), onPlan: func(*refreshPlan) {}})
+			if err != nil && strings.Contains(err.Error(), initflow.AgentRefusal(marker)) {
+				t.Fatalf("a session was refused for being one: %v", err)
 			}
-			if hooked || len(*ran) != 0 || out.Len() != 0 {
-				t.Fatalf("hook %v, steps %v, output %q", hooked, *ran, out)
-			}
-			r.check(t, refreshYAML)
 		})
 	}
 }
