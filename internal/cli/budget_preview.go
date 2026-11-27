@@ -343,6 +343,9 @@ func previewComputeCeilings(cfg *config.Config, p backend.Prices, region string)
 		return out
 	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		// w.Resources is the profile's, not a repository's: a repository's
+		// workflows.*.resources is read and ignored (D3421), so the figure is
+		// the sizing a run of this workflow really gets.
 		w := cfg.Workflows[name]
 		c := previewCompute{Workflow: name, VCPU: w.Resources.CPU, Memory: w.Resources.Memory,
 			TotalS: w.Timeouts.Total.Duration.Seconds()}

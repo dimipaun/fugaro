@@ -1814,13 +1814,20 @@ func TestBudgetPreviewSaysTheCeilingIsNotCapped(t *testing.T) {
 }
 
 // TestBudgetPreviewComputeCeilingFollowsTheWorkflowsResources: the figure is
-// the workflow's own requested machine over its own timeouts.total, so a
-// heavier workflow costs more and the preview prints one line for each.
+// the machine the workflow really runs with — the profile's, a repository's
+// workflows.*.resources being read and ignored (D3421) — over its own
+// timeouts.total, so a workflow starting from a heavier profile costs more and
+// the preview prints one line for each.
 func TestBudgetPreviewComputeCeilingFollowsTheWorkflowsResources(t *testing.T) {
-	newBudgetFixture(t, "")
+	f := newBudgetFixture(t, "")
+	f.PublishLayer(t, strings.Replace(previewLayerNoMode,
+		"  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n",
+		"  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n"+
+			"  sized:\n    commands: { build: sh build.sh, test: sh test.sh }\n    resources: { cpu: 8, memory: 32Gi }\n", 1))
 	checkoutWorkflows(t, "  max_budget_usd: 0.5\n",
 		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"+
-			"  render: { commands: { build: sh build.sh, test: sh test.sh }, resources: { cpu: 8, memory: 32Gi }, timeouts: { total: 2h } }\n")
+			"  render: { profile: sized, commands: { build: sh build.sh, test: sh test.sh }, timeouts: { total: 2h } }\n")
+	anchorCheckoutFile(t)
 	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
 	if err != nil {
 		t.Fatal(err)

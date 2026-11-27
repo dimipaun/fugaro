@@ -88,6 +88,35 @@ func batchValidateConfig(t *testing.T, yaml string) *config.Config {
 	return cfg
 }
 
+// batchValidateSizedConfig is the rig's fugaro.yaml with the workflow's sizing
+// stated where it decides: the profile the workflow starts from. A
+// repository's workflows.*.resources is read and ignored (D3421), so a case
+// about a size a backend accepts or refuses writes it in the project layer's
+// profile and has the file name that profile — a file that wrote the size
+// itself would be sized by Fugaro's defaults whatever the case says.
+func batchValidateSizedConfig(t *testing.T, resources string) *config.Config {
+	t.Helper()
+	layer, ps := config.ParseProjectLayer([]byte("version: 1\nproject: aurora\ngcp_project: proj-1234\n"+
+		"profiles:\n  sized:\n    commands: { build: \"true\", test: \"true\" }\n    resources: "+resources+"\n"),
+		config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatalf("the rig's project layer has problems: %v", ps)
+	}
+	cfg, _, ps := config.Resolve([]byte(`version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: github }
+workflows:
+  web:
+    profile: sized
+    commands: { build: "true", test: "true" }
+`), layer)
+	if len(ps) > 0 {
+		t.Fatalf("the rig's fugaro.yaml has problems: %v", ps)
+	}
+	return cfg
+}
+
 const batchValidateYAML = `version: 1
 project: aurora
 git: { provider: github }
@@ -440,24 +469,18 @@ func TestValidateRefusesABackendNameWithNoOpener(t *testing.T) {
 	}
 }
 
-// TestComputeProblemsUsesTheBackendsOwnLimits: the resources of a workflow are
-// checked against the backend the installation selects, and the two backends
-// have different answers (design §4.4 item 3). 8 CPUs are a Cloud Run job
-// task's; on e2-standard-4 they are more than the share of the machine type a
-// Batch task gets, so the same fugaro.yaml is refused on one and accepted on
-// the other.
+// TestComputeProblemsUsesTheBackendsOwnLimits: the resources a workflow runs
+// with — the profile's, a repository's workflows.*.resources being read and
+// ignored (D3421) — are checked against the backend the installation selects,
+// and the two backends have different answers (design §4.4 item 3). 8 CPUs are
+// a Cloud Run job task's; on e2-standard-4 they are more than the share of the
+// machine type a Batch task gets, so the same sizing is refused on one and
+// accepted on the other.
 //
 // Mutation (call gcp.CheckResources for both, or batch.CheckResources for
 // both): one of the two assertions fails.
 func TestComputeProblemsUsesTheBackendsOwnLimits(t *testing.T) {
-	cfg := batchValidateConfig(t, `version: 1
-project: aurora
-git: { provider: github }
-workflows:
-  web:
-    commands: { build: "true", test: "true" }
-    resources: { cpu: 8, memory: 32Gi }
-`)
+	cfg := batchValidateSizedConfig(t, "{ cpu: 8, memory: 32Gi }")
 	cr := computeProblems(cfg, batchValidateRig(t, "", backend.CloudRun))
 	if len(cr) != 0 {
 		t.Errorf("8 CPUs/32Gi is a Cloud Run job task and is refused there: %v", cr)
@@ -485,34 +508,16 @@ workflows:
 // Mutation (drop the `lc != nil && lc.Name != cfg.Project` early return): the
 // foreign-project cases below fail.
 func TestComputeProblemsJudgeOnlyTheFilesOwnProject(t *testing.T) {
-	// One config per backend, each refused on that backend and accepted on the
+	// One sizing per backend, each refused on that backend and accepted on the
 	// other, so the "own project" arm is a case the check really does fire on:
 	// 8 CPUs/32Gi is a Cloud Run job task and more than an e2-standard-4's task
 	// share (TestComputeProblemsUsesTheBackendsOwnLimits), and 3 CPUs is not
 	// one of Cloud Run's sizes while being inside an e2-standard-8's share.
-	const (
-		batchRefused = `version: 1
-project: aurora
-git: { provider: github }
-workflows:
-  web:
-    commands: { build: "true", test: "true" }
-    resources: { cpu: 8, memory: 32Gi }
-`
-		cloudRunRefused = `version: 1
-project: aurora
-git: { provider: github }
-workflows:
-  web:
-    commands: { build: "true", test: "true" }
-    resources: { cpu: 3, memory: 4Gi }
-`
-	)
-	for _, tc := range []struct{ backendName, machineType, yaml string }{
-		{backend.CloudBatch, "e2-standard-4", batchRefused},
-		{backend.CloudRun, "", cloudRunRefused},
+	for _, tc := range []struct{ backendName, machineType, resources string }{
+		{backend.CloudBatch, "e2-standard-4", "{ cpu: 8, memory: 32Gi }"},
+		{backend.CloudRun, "", "{ cpu: 3, memory: 4Gi }"},
 	} {
-		cfg := batchValidateConfig(t, tc.yaml)
+		cfg := batchValidateSizedConfig(t, tc.resources)
 		if ps := computeProblems(cfg, batchValidateRig(t, tc.machineType, tc.backendName)); len(ps) == 0 {
 			t.Fatalf("backend %q: the rig's own project accepts these resources, so this case proves nothing", tc.backendName)
 		}
