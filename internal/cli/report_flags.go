@@ -65,10 +65,17 @@ var jsonNeedsFlag = map[string]string{
 // the two are two answers to one question. An agent that passed one asked for
 // that answer, so the flag is left alone and the run reads what was asked for
 // rather than a complaint about a flag nobody gave (agent_json_test.go).
+//
+// A command that already declares its own list keeps it: run's is
+// changeSetExcludes, which an ee build refuses --json from, and the entry here
+// is that list's own fact rather than a second copy of it (agent_json_test.go
+// pins the two together).
 var jsonRefusedWith = map[string][]string{
 	"fugaro logs":        {"url"},
+	"fugaro run":         {"change-set"},
 	"fugaro runs digest": {"stdout", "submit-draft"},
 	"fugaro update":      {"check"},
+	"fugaro watch":       {"plain"},
 }
 
 // agentJSON turns --json on for a coding agent's session (D3437, spec §4: "when

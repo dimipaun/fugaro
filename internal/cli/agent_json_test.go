@@ -61,12 +61,15 @@ var jsonNeedsFlagArgs = map[string][]string{
 }
 
 // jsonRefusedWithArgs is each of those commands' own way to its refusal: the
-// reference `logs` reads, and nothing for the other two, whose refusal is the
-// first thing they reach.
+// reference `logs` reads, the repository `watch` resolves before it judges the
+// pair, and nothing for the others, whose refusal is the first thing they
+// reach.
 var jsonRefusedWithArgs = map[string][]string{
 	"fugaro logs":        {"logs", "abcd-1234"},
+	"fugaro run":         {"run"},
 	"fugaro runs digest": {"runs", "digest"},
 	"fugaro update":      {"update"},
+	"fugaro watch":       {"watch", "--repo", "acme/app"},
 }
 
 // TestAgentSessionGetsJSON: a command that has --json writes its result
@@ -138,9 +141,26 @@ func TestAgentSessionGetsJSON(t *testing.T) {
 				t.Fatalf("%s is not in the tree: %v", path, err)
 			}
 			for _, flag := range jsonRefusedWith[path] {
-				out, errOut, err := execute(t, append(slices.Clone(argv), "--"+flag, "--json")...)
-				if err == nil || !strings.Contains(err.Error(), "--json") {
-					t.Fatalf("%s --%s --json = %v, want the refusal naming --json (stdout %q, stderr %q)", path, flag, err, out, errOut)
+				// The pair's own refusal, run. run's is behind the edition
+				// check — a core build refuses --change-set itself before it
+				// judges the pair, and this test binary is core whatever tag it
+				// carries (run.go) — so there the command's own list is what
+				// has to say so, and the two are pinned to each other.
+				if path == "fugaro run" {
+					refused := false
+					for _, x := range changeSetExcludes {
+						if x.name == jsonFlag {
+							refused = true
+						}
+					}
+					if !refused {
+						t.Fatalf("changeSetExcludes no longer refuses --json beside a change set, so jsonRefusedWith --%s names a pair that is not one", flag)
+					}
+				} else {
+					out, errOut, err := execute(t, append(slices.Clone(argv), "--"+flag, "--json")...)
+					if err == nil || !strings.Contains(err.Error(), "--json") {
+						t.Fatalf("%s --%s --json = %v, want the refusal naming --json (stdout %q, stderr %q)", path, flag, err, out, errOut)
+					}
 				}
 				asked, _, _ := NewRootCmd().Find(argv)
 				_ = asked.Flags().Set(flag, "true")
