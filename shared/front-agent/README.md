@@ -150,9 +150,13 @@ literal transcripts. A source-level scan holds both files to no clock, no random
 and no `process`.
 
 `bounds.test.js` sweeps every `REFUSAL` code against a probe, proves a getter is refused **without
-ever being called**, and holds every bound from both sides.
+ever being called**, holds every bound from both sides, and reaches the encoding branches — an id's
+control characters, an id's or a text's lone surrogate, and the line separators U+2028 and U+2029 —
+**each by its own value** rather than through another field's refusal. The separators are refused
+where P6.3's readers refuse them, because the two charsets must not disagree and because the title
+goes into the read-back verbatim.
 
-`mutation-proof.sh` plants 30 one-line bugs in `turn.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 36 one-line bugs in `turn.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. Its
