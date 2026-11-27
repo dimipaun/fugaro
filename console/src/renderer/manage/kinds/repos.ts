@@ -68,11 +68,11 @@ import type { ManageAction, ManageColumn, ManageKind, ManageRow } from '../types
  * reworded.
  */
 
-/** reposRemovalTakes is the four stores a removal takes away, from the agent
- * refusal in `project_repos_rm.go` -- the sentence that names them as the things
- * "which are what admit a repository to the project and what run it". */
+/** reposRemovalTakes is the three stores a removal takes away beside the
+ * allow-list entry, as `project_repos_rm.go` names them when a removal stops
+ * half way. */
 export const reposRemovalTakes =
-  "removes the published allow-list entry, this machine's config entry, the repository's published admission and its Cloud Run jobs, which are what admit a repository to the project and what run it"
+  "this machine's config entry, the published admission and the Cloud Run jobs"
 
 /**
  * reposLeaves is what `rm` deliberately leaves (D2406), in the order
@@ -241,7 +241,7 @@ export function reposRemovalConsequence(
       : `removing ${name} from the allow-list, but ${by} still admits it: its runs are not refused, and a run in flight keeps the policy until it finishes`
   return [
     `${stops}.`,
-    `It ${reposRemovalTakes}.`,
+    `It removes the published allow-list entry, ${reposRemovalTakes}.`,
     `It leaves, and nothing here touches: ${reposLeaves.join('; ')}.`,
     `It keeps ${reposKeeps[0]} ${reposKeeps[1]}.`,
     `${reposKeeps[2]}.`,
