@@ -888,13 +888,13 @@ func doctorSharedImageDigests(ctx context.Context, lc *localcfg.Config) []doctor
 		case !ok:
 			out = append(out, doctorCheck{ID: "shared-image-missing-" + shortHash(key), OK: false, Severity: "warning",
 				Problem: fmt.Sprintf("image lock entry %s is not in the registry: digest %s is gone, so a job on it cannot start", shortHash(key), shortDigest(img.Digest)),
-				Fix:     "fugaro image prune finishes removing an entry no job points at; an image a job still points at has to be rebuilt"})
+				Fix:     "fugaro image prune removes it once no job points at it and it is past images.retention_days; an image a job points at must be rebuilt"})
 		}
 	}
 	if len(unread) > 0 {
 		out = append(out, doctorCheck{ID: "shared-image-unread", Severity: "info", unread: true,
-			Problem: fmt.Sprintf("could not read %d shared image(s) in the registry, so whether each digest is still there is unknown, not fine: ", len(unread)) + strings.Join(unread, ", "),
-			Fix:     "rerun fugaro doctor with access to the registry, or as an operator"})
+			Problem: fmt.Sprintf("unchecked: cannot read %d shared image(s) in the registry, so whether each digest is still there is not known: %s", len(unread), strings.Join(unread, ", ")),
+			Fix:     "rerun fugaro doctor with registry access, which can read it"})
 	}
 	return out
 }
