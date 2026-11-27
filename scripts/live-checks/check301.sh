@@ -1099,14 +1099,17 @@ phase_upgrade() {
         # rather than carried through it: no flag stands in for the person any
         # more, so exit 1 here is the fence itself and not a failure of the run.
         # Exit 2 is a cloud failure and stays a failure whatever it wrote.
-        # What the fence is read for is the unit: nothing was written.
+        # What the fence is read for is the unit: nothing was written. The exit
+        # is kept before the unit is read, because reading it runs the CLI and
+        # that run's own exit would stand in for this one's.
+        local update_exit=$BOUNDED_STATUS
         read_unit unit-status-3
-        if [ "$BOUNDED_STATUS" -ne 1 ]; then
-          fact boundary FAIL "fugaro update exited $BOUNDED_STATUS with no terminal at it, and 1 is the only exit a run left at a step makes (0 done, 1 a refusal or a step left for you, 2 a cloud failure): this is the run failing rather than the fence holding. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+        if [ "$update_exit" -ne 1 ]; then
+          fact boundary FAIL "fugaro update exited $update_exit with no terminal at it, and 1 is the only exit a run left at a step makes (0 done, 1 a refusal or a step left for you, 2 a cloud failure): this is the run failing rather than the fence holding. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
         elif [ "$UNIT_STATE" = none ]; then
           fact boundary PASS "fugaro update exited 1 with no terminal at it and wrote no login unit at $UNIT_PATH: a run nobody is at is left at the step that needs a person, so the write happens only where one is — the fence F48 kept. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
         else
-          fact boundary FAIL "fugaro update exited $BOUNDED_STATUS with no terminal at it, and a login unit is now at $UNIT_PATH: a run nobody is at writes none — the step that writes it needs a person at the terminal, and no flag stands in for one"
+          fact boundary FAIL "fugaro update exited $update_exit with no terminal at it, and a login unit is now at $UNIT_PATH: a run nobody is at writes none — the step that writes it needs a person at the terminal, and no flag stands in for one"
         fi
       fi
     else
