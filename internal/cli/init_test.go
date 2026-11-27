@@ -2279,7 +2279,7 @@ func TestInitAppPreCheckRefusesOnGrantMismatch(t *testing.T) {
 	}
 	// The fix line names the door the run is at: the rig's options carry no
 	// door, so the held build names the fallback doorName documents (W2.1).
-	if out := g.out.String(); !strings.Contains(out, " "+g.run.o.doorName()+" --repo acme/sandbox") || !strings.Contains(out, "not offered") {
+	if out := g.out.String(); !strings.Contains(out, " "+g.run.o.doorName()+" --repo in acme/sandbox's checkout") || !strings.Contains(out, "not offered") {
 		t.Fatalf("the hold names no fix:\n%s", out)
 	}
 	if g.readID != "" || len(*g.auth) != 0 {
