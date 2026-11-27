@@ -1,17 +1,23 @@
 package terraform
 
 import (
+	"bytes"
+	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // The guard D499 asks for: every reader of a Secret Manager value in Fugaro's
@@ -1036,3 +1042,1138 @@ func scanGoFile(rel, src string) []string {
 	}
 	return nil
 }
+
+// ---------------------------------------------------------------------------
+// The mount rule: no run job mounts a workflow or build secret (IS7, D3331, T3)
+// ---------------------------------------------------------------------------
+//
+// The guard above audits who may READ a secret: a grant, a project role, an
+// availableSecrets, the API. This one audits what a RUN JOB MOUNTS, because a
+// mount is the one place a class of secret reaches a job's container without a
+// per-secret grant of its own — and D3331 rules that after the flip no run job
+// mounts a workflow secret or a build secret, in Terraform or in the Go that
+// writes the tfvars it is planned from. T3 scopes it to those two classes:
+// every other class keeps its secret-readers.md row and the plan that ends it
+// (vertex repositories keep their git and model mounts, the image-check job
+// and unserved builds keep the git credential, per-repository provider keys
+// still mount).
+
+// runJobModules are the module directories a RUN JOB is defined in (D3321): a
+// repository's workflow job, a shared project job, and the repository's own
+// build and check jobs. An installation SERVICE — the coordinator, the licence
+// renewal, the orchestrator, the voice hop — is not a run job: it is long-lived
+// infrastructure of the installation's own, and the classes it reads are its
+// own rows in secret-readers.md.
+var runJobModules = []string{
+	"deploy/terraform/gcp/modules/workflow",
+	"deploy/terraform/gcp/modules/project",
+	"deploy/terraform/gcp/modules/repo",
+}
+
+// runJobWorkflowModule is the module the flip emptied: its job's mounts are
+// enumerated from the workflow's own secret_env, so the exclusion has to be
+// read OFF that enumeration and not only off the class reference inside it —
+// deleting the clause leaves a mount that names no class at all.
+var runJobWorkflowModule = "deploy/terraform/gcp/modules/workflow"
+
+// runJobMountClassTokens are T3's two classes in the tree's own spelling. The
+// workflow-secret class is the one IS6's flip took off every job spec, which
+// modules/workflow/sa.tf reads as local.vault_secret_names; the build-secret
+// class is the one modules/repo/build.tf drops as local.build_mounts_served
+// over var.repo.build_secrets (D2077). A mount may reach either only to EXCLUDE
+// it — every drop in this tree is written as `!( ... )`, see ungatedClassRef —
+// so a reference outside an exclusion is a mount that admits the class.
+var runJobMountClassTokens = []string{"vault_secret_names", "build_secrets"}
+
+// runJobMountUntilRows are T1's two until-rows, and the whole of what this
+// rule allows: the classes a shared job still mounts and this plan's flip does
+// not end, each with the task whose pull request deletes its row. T3 scopes the
+// rule to the workflow-secret and build-secret classes, so neither row is a hit
+// today — they are held here, and checked below, because a rule that never
+// names the two debts is a rule a later reader cannot see them in. Nothing else
+// may be added: a class that mounts is either one of these two, with the plan
+// that ends it, or a hit.
+var runJobMountUntilRows = []struct {
+	id    string
+	class string
+	key   string
+	task  string
+}{
+	{
+		id:    "U1",
+		class: "the shared jobs' GitHub App key",
+		key:   "deploy/terraform/gcp/modules/project/job.tf google_cloud_run_v2_job.this",
+		task:  "C2.3",
+	},
+	{
+		id:    "U2",
+		class: "the shared jobs' provider keys",
+		key:   "deploy/terraform/gcp/modules/project/job.tf google_cloud_run_v2_job.this",
+		task:  "KS16",
+	},
+}
+
+// goRunJobBuilders are the Go files that write a run job's or a build's spec —
+// the per-repository job and its build request, the shared project job, and the
+// catalog entry's build. They are scanned by what they DO: a delivery name
+// derived here is one a run job would mount, and a mount written from the
+// workflow's own secrets is the defect the Terraform half refuses.
+var goRunJobBuilders = []string{
+	"internal/infra/spec.go",
+	"internal/infra/projectjobs.go",
+	"internal/backend/gcp/build.go",
+	"internal/backend/gcp/catalog.go",
+}
+
+// goMountFields are the fields a spec mounts a secret IN. VaultSecretNames is
+// deliberately not one: it is the record of a mount IS6 took AWAY, written
+// where the drop happens, and a guard that read it as a mount would fail on the
+// flip itself.
+var goMountFields = []string{"SecretEnv", "AvailableSecrets", "SecretVariables", "BuildSecrets"}
+
+// goMountClassRefs are where the workflow's OWN secrets are read in these
+// builders: `w` is the config.Workflow whose `secrets:` these are, and `s` is
+// the BuildSpec carrying the same list for the build. Named, and not a bare
+// ".Secrets": the same field name is worn by rs.Secrets and pr.Secrets, which
+// are maps of secret IDs and project-wide names and not the class at all. A
+// statement that reaches the class under another receiver is not seen — this
+// half is a tripwire on the flip being written back, and the delivery-name half
+// below is the one that carries the defect D3324 fixed.
+var goMountClassRefs = []string{"w.Secrets", "s.WorkflowSecrets"}
+
+// goVaultDropFile is the builder that mounts the class by a route no statement
+// names: spec.go builds its mounts in SecretMounts and appends the workflow's
+// own secrets to them, and dropVaultMounts under the address gate is what takes
+// them off again. A gate turned into `if false`, or the call deleted, is the
+// flip undone in the one place the statement-level half reads nothing.
+const (
+	goVaultDropFile = "internal/infra/spec.go"
+	goVaultDropCall = "dropVaultMounts("
+)
+
+// goServeGateWords are the words the flip's gates are written with in these
+// builders: `served` (buildMountsServed, s.served(), projectJobMounts' served),
+// `serves` (CredentialsServiceServes, projectJobServesTheCredentialsService)
+// and `addressed` (credentialsServiceAddressed, the one class whose drop is the
+// address's and not the service's). A statement that mounts the class under one
+// of them is the flip; the same statement without one is a hit.
+var goServeGateWords = []string{"served", "serves", "addressed"}
+
+// runJobMountHits is every way the tree mounts a workflow or build secret in a
+// run job: the modules' own text, and the Go that writes their tfvars.
+func runJobMountHits(t *testing.T) []string {
+	t.Helper()
+	var files []tfFile
+	for _, dir := range runJobModules {
+		files = append(files, moduleFiles(t, dir)...)
+	}
+	hits := runJobMountHitsInFiles(files)
+	for _, rel := range goRunJobBuilders {
+		src, err := os.ReadFile(filepath.Join("..", "..", rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		hits = append(hits, goMountHits(t, rel, string(src))...)
+	}
+	sort.Strings(hits)
+	return hits
+}
+
+func TestRunJobsMountNoWorkflowSecret(t *testing.T) {
+	hits := runJobMountHits(t)
+	if len(hits) > 0 {
+		t.Errorf("a run job mounts a class D3331's rule takes off every job spec (T3, IS6, IS8):\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	// T1: exactly two until-rows, each naming a class the shared jobs really
+	// mount and the task whose pull request deletes it. A third row is the
+	// widening T1 refuses, and a row whose class this rule claims is the
+	// contradiction T3 refuses.
+	if len(runJobMountUntilRows) != 2 {
+		t.Fatalf("the guard allows exactly two until-rows (T1), and this table has %d", len(runJobMountUntilRows))
+	}
+	var files []tfFile
+	for _, dir := range runJobModules {
+		files = append(files, moduleFiles(t, dir)...)
+	}
+	mounting := map[string]bool{}
+	for _, site := range runJobSecretSites(files) {
+		mounting[site.key] = true
+	}
+	for _, row := range runJobMountUntilRows {
+		if !mounting[row.key] {
+			t.Errorf("until-row %s names %s, which mounts no secret at all: the class left that job, so delete the row in the task that ended it (%s)", row.id, row.key, row.task)
+		}
+		if row.task == "" {
+			t.Errorf("until-row %s names no task: the row is the debt, and the task that ends it is what a reader has to find (T1)", row.id)
+		}
+		if strings.Contains(row.class, "workflow secret") || strings.Contains(row.class, "build secret") {
+			t.Errorf("until-row %s holds %q, and T3 scopes the rule to the workflow-secret and build-secret classes: the rule must catch that mount, not allow it", row.id, row.class)
+		}
+	}
+}
+
+// TestCatalogIdentityHoldsNoSecretAccessor is the installation half of the
+// same rule (D3330, IS8): the one account a catalog entry's build runs as reads
+// its credentials from the credentials service, so it holds no accessor on any
+// secret — the git credential's grant is the one IS8 removed, and a new one
+// would hand a build the container the flip took away.
+func TestCatalogIdentityHoldsNoSecretAccessor(t *testing.T) {
+	files := moduleFiles(t, "deploy/terraform/gcp/modules/installation")
+	for _, hit := range catalogIdentitySecretHits(files) {
+		t.Errorf("%s", hit)
+	}
+}
+
+// catalogIdentitySecretGrant reports whether a block whose member is the build
+// identity hands it a secret: a secretmanager grant of any shape, or a
+// project-level role whose role string is a secretmanager one. The role is read
+// as written — a quoted literal — and unquoted before it is judged: judged
+// quoted, the prefix test matches nothing and every project-level accessor on
+// this identity passes.
+func catalogIdentitySecretGrant(b tfBlock) bool {
+	switch b.typ {
+	case "google_secret_manager_secret_iam_member", "google_secret_manager_secret_iam_binding", "google_secret_manager_secret_iam_policy":
+		return true
+	case "google_project_iam_member", "google_project_iam_binding":
+		return projectRoleReadsSecrets(unquotedRole(terraformAttrExpr(b.body, "role")))
+	}
+	return false
+}
+
+func unquotedRole(expr string) string {
+	if s, err := strconv.Unquote(expr); err == nil {
+		return s
+	}
+	return expr
+}
+
+// catalogIdentitySecretHits is the installation half's scan: the retired grant
+// by name, and every block that hands the catalog build identity a secret.
+func catalogIdentitySecretHits(files []tfFile) []string {
+	var hits []string
+	mod := newTFModule(files)
+	for _, f := range files {
+		if strings.Contains(f.src, "build_identity_git_secret") {
+			hits = append(hits, fmt.Sprintf("%s names google_secret_manager_secret_iam_member.build_identity_git_secret: IS8 removed that grant, and the build identity reads the git credential at the credentials service's /v1/build/token (D3330)", f.rel))
+		}
+	}
+	for _, b := range mod.blocks {
+		if b.mode != "resource" || !strings.Contains(b.body, "google_service_account.build_identity") {
+			continue
+		}
+		if catalogIdentitySecretGrant(b) {
+			hits = append(hits, fmt.Sprintf("%s %s.%s grants the catalog build identity a secret: the identity reads every credential it needs from the credentials service (D3330, IS8), and a secretmanager accessor here is one no run asks for", b.file, b.typ, b.name))
+		}
+	}
+	sort.Strings(hits)
+	return hits
+}
+
+// TestMountRuleCatchesAFixture is the rule's own red step (spec §6): the
+// scanner is handed a fixture that mounts a workflow secret, one that mounts a
+// delivery name, and one Go builder that does each, and each has to be caught;
+// the shape IS6 and IS8 leave has to pass. A rule nobody has seen fail is a
+// rule nobody knows the shape of.
+func TestMountRuleCatchesAFixture(t *testing.T) {
+	fixtures := []struct {
+		name  string
+		why   string
+		files []tfFile
+	}{
+		{
+			name:  "the workflow-secret class mounted whole",
+			why:   "for_each over the fetched class mounts every workflow secret the flip took off the job (IS6, D3324)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureWorkflowClassMounted}},
+		},
+		{
+			name:  "the installation's fugaro_p_ copy mounted",
+			why:   "the container IS13 retires: a job naming it mounts a secret the run reads from the service (D3323, D3324)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/repo/check.tf", src: fixtureDeliveryNameMounted}},
+		},
+		{
+			name: "the exclusion deleted from the mount's own enumeration",
+			why:  `the class is mounted again and named nowhere: reading only the class reference sees nothing, so the for_each over secret_env has to be held to the exclusion (IS6's clause deleted)`,
+			files: []tfFile{
+				{rel: "deploy/terraform/gcp/modules/workflow/sa.tf", src: fixtureWorkflowLocalDropsTheClause},
+				{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureGatedMount},
+			},
+		},
+		{
+			name: "the class mounted through a local another module names too",
+			why:  `modules/workflow and modules/project both declare a job_mounts: read as one module the project's definition wins and the workflow job's own rule is never inlined or judged`,
+			files: []tfFile{
+				{rel: "deploy/terraform/gcp/modules/project/sa.tf", src: fixtureOtherModulesLocal},
+				{rel: "deploy/terraform/gcp/modules/workflow/sa.tf", src: fixtureWorkflowLocalAdmitsTheClass},
+				{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureGatedMount},
+			},
+		},
+	}
+	for _, f := range fixtures {
+		if hits := runJobMountHitsInFiles(f.files); len(hits) == 0 {
+			t.Errorf("the mount rule passes the fixture %q, and it must fail it: %s", f.name, f.why)
+		}
+	}
+
+	good := []tfFile{
+		{rel: "deploy/terraform/gcp/modules/workflow/sa.tf", src: fixtureServeGatedDrop},
+		{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureGatedMount},
+	}
+	if hits := runJobMountHitsInFiles(good); len(hits) > 0 {
+		t.Errorf("the mount rule fails the shape IS6 leaves, and that shape is the rule's own subject:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	goFixtures := []struct {
+		name string
+		src  string
+	}{
+		{"a builder mounting the workflow's own secrets with no serve gate", fixtureGoMountsTheClass},
+		{"a build builder mounting the same list", fixtureGoMountsTheBuildClass},
+		{"a builder deriving the installation's fugaro_p_ copy", fixtureGoDerivesDeliveryName},
+	}
+	for _, f := range goFixtures {
+		if hits := goMountHits(t, f.name, f.src); len(hits) == 0 {
+			t.Errorf("the mount rule passes a fixture that must fail it: %s", f.name)
+		}
+	}
+	if hits := goMountHits(t, "the gated shape", fixtureGoServeGatedMount); len(hits) > 0 {
+		t.Errorf("the mount rule fails the gated shape IS6 leaves:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	// spec.go mounts the class through SecretMounts' return rather than writing
+	// a mount field in the statement that names it, so the file is held to the
+	// drop as well as to the shape.
+	if hits := goMountHits(t, goVaultDropFile, fixtureGoMountsAndNeverDrops); len(hits) == 0 {
+		t.Errorf("the mount rule passes a spec that mounts the workflow's own secrets and never drops them: the drop is what makes the mount IS6 takes away, and a gate turned into `if false` has to fail the rule")
+	}
+	if hits := goMountHits(t, goVaultDropFile, fixtureGoDropsUnderTheAddress); len(hits) > 0 {
+		t.Errorf("the mount rule fails the shape IS6 leaves in spec.go:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	catalogFixtures := []struct {
+		name  string
+		why   string
+		files []tfFile
+	}{
+		{
+			name:  "the build identity handed a project-level secretmanager role",
+			why:   "read as written the role keeps its quotes, the prefix test matches nothing, and the accessor IS8 removed comes back unnoticed (D3330, IS8)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/installation/build_identity.tf", src: fixtureCatalogIdentityGrantedASecret}},
+		},
+		{
+			name:  "the build identity's git-secret grant put back",
+			why:   "the grant IS8 deleted by name is one no test of its own name should pass (D3330, IS8)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/installation/build_identity.tf", src: fixtureCatalogIdentityGrantedTheGitSecret}},
+		},
+	}
+	for _, f := range catalogFixtures {
+		if hits := catalogIdentitySecretHits(f.files); len(hits) == 0 {
+			t.Errorf("the catalog rule passes the fixture %q, and it must fail it: %s", f.name, f.why)
+		}
+	}
+	catalogGood := []tfFile{
+		{rel: "deploy/terraform/gcp/modules/installation/catalog.tf", src: fixtureCatalogIdentityWithoutASecret},
+	}
+	if hits := catalogIdentitySecretHits(catalogGood); len(hits) > 0 {
+		t.Errorf("the catalog rule fails the shape IS8 leaves:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+}
+
+func moduleFiles(t *testing.T, dir string) []tfFile {
+	t.Helper()
+	const root = "../.."
+	abs := filepath.Join(root, dir)
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	var files []tfFile
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		p := filepath.Join(abs, e.Name())
+		src, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		rel, err := repoRel(root, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, tfFile{rel: rel, src: string(src)})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].rel < files[j].rel })
+	return files
+}
+
+// runJobSecretSite is one place a run-job module mounts a secret value: the
+// resource it is declared in, by the key the reader table uses too, and the
+// expressions that decide which secrets reach it.
+type runJobSecretSite struct {
+	key         string
+	module      string
+	forEach     string
+	expressions []string
+	body        string
+}
+
+// runJobSecretSites is every place a run-job module mounts a secret VALUE: a
+// resource block, or a dynamic block inside one, that holds a secret_key_ref or
+// a secret volume. A resource that only GRANTS the class — build.tf's accessor
+// on var.repo.build_secrets, sa.tf's per-container grant — is not a mount, and
+// neither is a locals definition: the rule is about what reaches a container.
+var tfDynamicRE = regexp.MustCompile(`(?m)^[ \t]*dynamic[ \t]+"([A-Za-z0-9_]+)"[ \t]*\{`)
+
+func runJobSecretSites(files []tfFile) []runJobSecretSite {
+	var sites []runJobSecretSite
+	for _, group := range moduleGroups(files) {
+		mod := newTFModule(group)
+		for _, b := range mod.blocks {
+			if b.mode != "resource" {
+				continue
+			}
+			key := b.file + " " + b.typ + "." + b.name
+			rest := b.body
+			for _, loc := range tfDynamicRE.FindAllStringSubmatchIndex(b.body, -1) {
+				inner, ok := terraformBlockBody(b.body, loc[1]-1)
+				if !ok {
+					continue
+				}
+				rest = blankSpan(rest, loc[0], loc[1]+len(inner)+1)
+				if !holdsSecretValue(inner) {
+					continue
+				}
+				sites = append(sites, newRunJobSecretSite(key, filepath.Dir(b.file), mod, inner, b.body))
+			}
+			if holdsSecretValue(rest) {
+				sites = append(sites, newRunJobSecretSite(key, filepath.Dir(b.file), mod, rest, b.body))
+			}
+		}
+	}
+	sort.Slice(sites, func(i, j int) bool { return sites[i].key < sites[j].key })
+	return sites
+}
+
+// moduleGroups splits a file set by module directory, and the split is the
+// whole point: a local and a variable belong to the module that declares them,
+// and two modules name different things by one name — modules/workflow and
+// modules/project both hold a `job_mounts`. Read as one module, the second
+// definition wins and the first module's own mount is judged by the other
+// module's rule, so a fetched-class clause put back into
+// modules/workflow/sa.tf would pass a guard that never looked at it.
+func moduleGroups(files []tfFile) [][]tfFile {
+	byDir := map[string][]tfFile{}
+	var dirs []string
+	for _, f := range files {
+		dir := filepath.Dir(f.rel)
+		if _, ok := byDir[dir]; !ok {
+			dirs = append(dirs, dir)
+		}
+		byDir[dir] = append(byDir[dir], f)
+	}
+	sort.Strings(dirs)
+	out := make([][]tfFile, 0, len(dirs))
+	for _, dir := range dirs {
+		out = append(out, byDir[dir])
+	}
+	return out
+}
+
+func newRunJobSecretSite(key, module string, mod *tfModule, block, resourceBody string) runJobSecretSite {
+	return runJobSecretSite{
+		key:         key,
+		module:      module,
+		forEach:     siteForEach(mod, block, resourceBody),
+		expressions: siteExpressions(mod, block, resourceBody),
+		body:        block,
+	}
+}
+
+// siteForEach is the mount's own for_each, inlined: the one expression that
+// says which entries reach it, and the one a deleted exclusion leaves with
+// nothing to read.
+func siteForEach(mod *tfModule, block, resourceBody string) string {
+	for _, body := range []string{block, resourceBody} {
+		if expr := terraformAttrExpr(body, "for_each"); expr != "" {
+			return inlineTerraformExpr(mod, expr, 0)
+		}
+	}
+	return ""
+}
+
+// siteExpressions are the expressions that decide which secrets reach a mount:
+// the container's own for_each, the secret it names, and the value it carries,
+// each read off the block and off the resource around it, and each with its
+// locals and variables inlined (a mount that reaches the class through a local
+// is the same mount).
+func siteExpressions(mod *tfModule, block, resourceBody string) []string {
+	var out []string
+	for _, body := range []string{block, resourceBody} {
+		for _, attr := range []string{"for_each", "secret", "value"} {
+			if expr := terraformAttrExpr(body, attr); expr != "" {
+				out = append(out, inlineTerraformExpr(mod, expr, 0))
+			}
+		}
+	}
+	return out
+}
+
+// inlineTerraformExpr replaces every var.x and local.x with the expression it
+// is defined as, in place and in parentheses. In place, and not as a list of
+// expansions, because that is what keeps an exclusion an exclusion: the class
+// modules/workflow/sa.tf drops sits inside `!( ... )`, and a reference that is
+// only ever reached from within that span must not be read as one the mount
+// admits. The depth bound stops a local that names itself.
+func inlineTerraformExpr(mod *tfModule, expr string, depth int) string {
+	if expr == "" || depth > 4 {
+		return expr
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range tfRefRE.FindAllStringSubmatchIndex(expr, -1) {
+		var def string
+		switch expr[m[2]:m[3]] {
+		case "var":
+			def = mod.vars[expr[m[4]:m[5]]]
+		case "local":
+			def = mod.locals[expr[m[4]:m[5]]]
+		}
+		if def == "" {
+			continue
+		}
+		b.WriteString(expr[last:m[0]])
+		b.WriteString("(" + inlineTerraformExpr(mod, def, depth+1) + ")")
+		last = m[1]
+	}
+	if last == 0 {
+		return expr
+	}
+	b.WriteString(expr[last:])
+	return b.String()
+}
+
+// ungatedClassRef returns the class token this expression admits, or "": a
+// reference to the class that is not inside a `!( ... )`. Every drop in this
+// tree is written that way — job_mounts and job_secret_names in
+// modules/workflow/sa.tf, is_shared_job_served_model in modules/project/sa.tf,
+// build_mounts_served in modules/repo/build.tf — so a reference outside one is
+// a mount that keeps the class rather than one that excludes it.
+func ungatedClassRef(expr string) string {
+	spans := negatedSpans(expr)
+	for _, token := range runJobMountClassTokens {
+		for at := 0; at < len(expr); {
+			j := strings.Index(expr[at:], token)
+			if j < 0 {
+				break
+			}
+			at += j
+			if !insideSpans(spans, at) {
+				return token
+			}
+			at += len(token)
+		}
+	}
+	return ""
+}
+
+// classDroppedInNegation reports whether an expression drops the class: a
+// class reference that sits inside a `!( ... )`. A mount whose for_each ranges
+// over the workflow's own secret_env and holds no such reference is one that
+// mounts the class — either because the exclusion was never written, or because
+// it was deleted, and the two are the same mount.
+func classDroppedInNegation(expr string) bool {
+	spans := negatedSpans(expr)
+	for _, token := range runJobMountClassTokens {
+		for at := 0; at < len(expr); {
+			j := strings.Index(expr[at:], token)
+			if j < 0 {
+				break
+			}
+			at += j
+			if insideSpans(spans, at) {
+				return true
+			}
+			at += len(token)
+		}
+	}
+	return false
+}
+
+// negatedSpans is every `!( ... )` in an expression, by the offsets of its
+// parentheses.
+func negatedSpans(s string) [][2]int {
+	var spans [][2]int
+	for i := 0; i < len(s); i++ {
+		if s[i] != '!' {
+			continue
+		}
+		j := i + 1
+		for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+			j++
+		}
+		if j >= len(s) || s[j] != '(' {
+			continue
+		}
+		if end, ok := matchingParen(s, j); ok {
+			spans = append(spans, [2]int{j, end})
+		}
+	}
+	return spans
+}
+
+func matchingParen(s string, open int) (int, bool) {
+	depth := 0
+	inString := false
+	for i := open; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			switch c {
+			case '\\':
+				i++
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func insideSpans(spans [][2]int, at int) bool {
+	for _, span := range spans {
+		if span[0] < at && at < span[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// blankSpan replaces a byte range with spaces, keeping the newlines so the
+// line-anchored patterns still see the same lines.
+func blankSpan(s string, start, end int) string {
+	b := []byte(s)
+	for i := start; i < end && i < len(b); i++ {
+		if b[i] != '\n' {
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
+// deliveryGrammarRef returns the delivery prefix a mount names, or "": a job
+// that names fugaro_p_<name> or fugaro_u_<sub>_<name> mounts the installation's
+// own copy, which D3324 stopped deriving and IS13 retires — the run reads that
+// value from the credentials service instead (D3323).
+func deliveryGrammarRef(s string) string {
+	for _, prefix := range []string{secretname.ProjectPrefix, secretname.UserPrefix} {
+		if strings.Contains(s, prefix) {
+			return prefix
+		}
+	}
+	return ""
+}
+
+func runJobMountHitsInFiles(files []tfFile) []string {
+	var hits []string
+	for _, site := range runJobSecretSites(files) {
+		for _, expr := range site.expressions {
+			if token := ungatedClassRef(expr); token != "" {
+				hits = append(hits, fmt.Sprintf("%s mounts the %s class (%s): a run job reads that class from the credentials service (D3331, T3)", site.key, runJobClassWord(token), token))
+			}
+		}
+		// The flip also disappears by DELETION: drop the clause from
+		// job_mounts and the class is mounted again without its name being
+		// written anywhere a reference could be read, which is why the
+		// enumeration is held to the exclusion rather than the exclusion to
+		// the enumeration.
+		if site.module == runJobWorkflowModule && strings.Contains(site.forEach, "secret_env") && !classDroppedInNegation(site.forEach) {
+			hits = append(hits, fmt.Sprintf("%s takes its mounts from the workflow's own secret_env and excludes no workflow-secret entry: IS6's clause deleted puts every workflow secret back on the job (D3323, T3)", site.key))
+		}
+		if prefix := deliveryGrammarRef(site.body); prefix != "" {
+			hits = append(hits, fmt.Sprintf("%s mounts a %s container: the installation's copy is not a run job's to mount (D3324)", site.key, prefix))
+		}
+	}
+	return hits
+}
+
+func runJobClassWord(token string) string {
+	switch token {
+	case "vault_secret_names":
+		return "workflow-secret"
+	case "build_secrets":
+		return "build-secret"
+	}
+	return token
+}
+
+// goMountHits is the rule's Go half: a run job's or a build's spec is written
+// by these builders, so a mount of the class here is the same defect the
+// Terraform half refuses — and a delivery name derived here is one no run job
+// has any business naming.
+func goMountHits(t *testing.T, rel, src string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, rel, src, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", rel, err)
+	}
+	var hits []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.BasicLit:
+			if x.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(x.Value)
+			if err != nil {
+				return true
+			}
+			if prefix := deliveryGrammarRef(value); prefix != "" {
+				hits = append(hits, fmt.Sprintf("%s:%d names a %s container: the installation's copy is not a run job's to mount (D3324)", rel, fset.Position(x.Pos()).Line, prefix))
+			}
+		case *ast.CallExpr:
+			sel, ok := x.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if ok && pkg.Name == "secretname" && (sel.Sel.Name == "Project" || sel.Sel.Name == "User") {
+				hits = append(hits, fmt.Sprintf("%s:%d derives a delivery name with secretname.%s: no run job mounts the installation's copy (D3324)", rel, fset.Position(x.Pos()).Line, sel.Sel.Name))
+			}
+		}
+		return true
+	})
+	walk := &goMountWalk{fset: fset, rel: rel, seen: map[*ast.FuncLit]bool{}}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+			walk.stmts(fn.Body.List, goGate{})
+		}
+	}
+	// A mount the statement-level half cannot see is the one spec.go makes: the
+	// class reaches SecretEnv through SecretMounts' return, so nothing in the
+	// statement that writes the field names it. The drop is the other half of
+	// that mount — a mount and an accessor are one answer — and the file is held
+	// to it under the same address gate.
+	if rel == goVaultDropFile && !walk.vaultDropped {
+		hits = append(hits, fmt.Sprintf("%s mounts the workflow's own secrets and never drops them: the drop under the address gate is the other half of the mount IS6 takes away (D3326, D3331)", rel))
+	}
+	hits = append(hits, walk.hits...)
+	return hits
+}
+
+// goMountWalk carries two facts down a function's statements: whether the
+// statement is under a serve gate, and whether the workflow's own secrets are
+// in scope. A mount written from the class with neither is the defect; both
+// flags are inherited, because the gate is an enclosing `if !served()` and the
+// class is an enclosing `for _, s := range w.Secrets`.
+type goMountWalk struct {
+	fset         *token.FileSet
+	rel          string
+	hits         []string
+	seen         map[*ast.FuncLit]bool
+	vaultDropped bool
+}
+
+// goGate is what a statement inherits from the statements around it: whether a
+// serve gate encloses it, whether the workflow's own secrets are in scope, and
+// whether a live address gate encloses it. The first two answer the mount half
+// and are simply ORed down the walk — the gate is an enclosing `if !served()`
+// and the class an enclosing `for _, s := range w.Secrets` — while the third is
+// the drop's own: only an `if` whose CONDITION names the address counts, so a
+// condition carrying a `false` is a gate somebody turned off and holds nothing.
+type goGate struct {
+	served    bool
+	class     bool
+	addressed bool
+}
+
+func (g goGate) under(text string) goGate {
+	g.served = g.served || mentionsAnyFold(text, goServeGateWords)
+	g.class = g.class || mentionsAny(text, goMountClassRefs)
+	return g
+}
+
+// gatedBy folds an if statement's condition into the gate its body inherits.
+func (g goGate) gatedBy(cond string) goGate {
+	if !strings.Contains(cond, "false") {
+		g.addressed = g.addressed || mentionsAnyFold(cond, goServeGateWords)
+	}
+	return g
+}
+
+func (w *goMountWalk) stmts(list []ast.Stmt, g goGate) {
+	for _, st := range list {
+		w.stmt(st, g)
+	}
+}
+
+func (w *goMountWalk) stmt(st ast.Stmt, g goGate) {
+	if st == nil {
+		return
+	}
+	text := w.text(st)
+	if strings.Contains(text, goVaultDropCall) && g.addressed {
+		w.vaultDropped = true
+	}
+	g = g.under(text)
+	if writesMountField(st) && g.class && !g.served {
+		w.hits = append(w.hits, fmt.Sprintf("%s:%d mounts the workflow's own secrets with no serve gate: the mount and its accessor are one answer (D3331, C2.3)", w.rel, w.fset.Position(st.Pos()).Line))
+	}
+	ast.Inspect(st, func(n ast.Node) bool {
+		lit, ok := n.(*ast.FuncLit)
+		if !ok || w.seen[lit] {
+			return true
+		}
+		w.seen[lit] = true
+		w.stmts(lit.Body.List, g)
+		return true
+	})
+	switch x := st.(type) {
+	case *ast.BlockStmt:
+		w.stmts(x.List, g)
+	case *ast.IfStmt:
+		w.stmt(x.Init, g)
+		inner := g.gatedBy(w.text(x.Cond))
+		w.stmts(x.Body.List, inner)
+		if x.Else != nil {
+			w.stmt(x.Else, inner)
+		}
+	case *ast.ForStmt:
+		w.stmts(x.Body.List, g)
+	case *ast.RangeStmt:
+		w.stmts(x.Body.List, g)
+	case *ast.SwitchStmt:
+		for _, c := range x.Body.List {
+			w.stmt(c, g)
+		}
+	case *ast.TypeSwitchStmt:
+		for _, c := range x.Body.List {
+			w.stmt(c, g)
+		}
+	case *ast.SelectStmt:
+		for _, c := range x.Body.List {
+			w.stmt(c, g)
+		}
+	case *ast.CaseClause:
+		w.stmts(x.Body, g)
+	case *ast.CommClause:
+		w.stmts(x.Body, g)
+	case *ast.LabeledStmt:
+		w.stmt(x.Stmt, g)
+	}
+}
+
+func (w *goMountWalk) text(n ast.Node) string {
+	var b bytes.Buffer
+	if err := printer.Fprint(&b, w.fset, n); err != nil {
+		return ""
+	}
+	return b.String()
+}
+
+// writesMountField reports whether a statement writes a secret INTO a spec: an
+// assignment whose target is a mount field, through an index or directly.
+// delete(ws.SecretEnv, ...) is not one — the drop is the rule, not the defect.
+func writesMountField(st ast.Stmt) bool {
+	as, ok := st.(*ast.AssignStmt)
+	if !ok {
+		return false
+	}
+	for _, lhs := range as.Lhs {
+		for e := lhs; ; {
+			switch x := e.(type) {
+			case *ast.IndexExpr:
+				e = x.X
+			case *ast.SelectorExpr:
+				if slices.Contains(goMountFields, x.Sel.Name) {
+					return true
+				}
+				e = x.X
+			default:
+				e = nil
+			}
+			if e == nil {
+				break
+			}
+		}
+	}
+	return false
+}
+
+func mentionsAny(text string, words []string) bool {
+	for _, word := range words {
+		if strings.Contains(text, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionsAnyFold is mentionsAny without case: the gates are spelled
+// buildMountsServed, CredentialsServiceServes, credentialsServiceAddressed and
+// the bare `served` a parameter carries, so the words have to match whatever
+// case the identifier wears.
+func mentionsAnyFold(text string, words []string) bool {
+	lower := strings.ToLower(text)
+	for _, word := range words {
+		if strings.Contains(lower, word) {
+			return true
+		}
+	}
+	return false
+}
+
+// The fixtures the rule is shown to fail on (spec §6): the fetched class
+// mounted whole, the installation's own fugaro_p_ copy named by a job, and the
+// flip written three other ways — the exclusion deleted from the enumeration,
+// the clause reversed, and the class reached through a local another module
+// declares under the same name. The good fixtures, below those, are the shape
+// IS6 and IS8 leave.
+const fixtureWorkflowClassMounted = `
+locals {
+  vault_secret_names = var.workflow.vault_secret_names
+}
+
+resource "google_cloud_run_v2_job" "this" {
+  template {
+    template {
+      containers {
+        dynamic "env" {
+          for_each = toset(local.vault_secret_names)
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = var.secrets[env.key]
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const fixtureDeliveryNameMounted = `
+resource "google_cloud_run_v2_job" "this" {
+  template {
+    template {
+      containers {
+        dynamic "env" {
+          for_each = var.repo.check.secret_env
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = "fugaro_p_${env.value}"
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const fixtureServeGatedDrop = `
+locals {
+  service_addressed  = var.credentials_service != null
+  vault_secret_names = var.workflow.vault_secret_names
+  job_mounts = {
+    for env, logical in var.workflow.secret_env :
+    env => logical if !(local.service_addressed && contains(local.vault_secret_names, logical))
+  }
+}
+`
+
+const fixtureGatedMount = `
+resource "google_cloud_run_v2_job" "this" {
+  template {
+    template {
+      containers {
+        dynamic "env" {
+          for_each = local.job_mounts
+          content {
+            name = env.key
+            value_source {
+              secret_key_ref {
+                secret  = var.secrets[env.value]
+                version = "latest"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+const fixtureGoMountsTheClass = `
+package gcp
+
+func mount(ws *WorkflowSpec, w config.Workflow) {
+	for _, s := range w.Secrets {
+		ws.SecretEnv[s.Env] = s.Name
+	}
+}
+`
+
+const fixtureGoDerivesDeliveryName = `
+package gcp
+
+func mount(ws *WorkflowSpec, name string) {
+	id, err := secretname.Project(name)
+	if err != nil {
+		return
+	}
+	ws.SecretEnv["BUILD_TOKEN"] = id
+}
+`
+
+const fixtureGoServeGatedMount = `
+package gcp
+
+func mount(ws *WorkflowSpec, w config.Workflow, c *ctx) {
+	if !c.buildMountsServed() {
+		for _, s := range w.Secrets {
+			ws.SecretEnv[s.Env] = s.Name
+		}
+	}
+}
+`
+
+const fixtureGoMountsTheBuildClass = `
+package gcp
+
+func request(b *cloudbuild.Build, s BuildSpec) {
+	for _, ws := range s.WorkflowSecrets {
+		b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager, &cloudbuild.SecretManagerSecret{Env: ws.Env})
+	}
+}
+`
+
+// fixtureGoMountsAndNeverDrops is spec.go's mount route with the drop taken
+// out: the class reaches the spec's mount field through a helper's return, so
+// no statement names it and nothing but the missing drop says the flip is gone.
+const fixtureGoMountsAndNeverDrops = `
+package infra
+
+func fill(c *ctx, ws *WorkflowSpec, w config.Workflow) {
+	mounts, err := SecretMounts(c.gitSecret, w)
+	if err != nil {
+		return
+	}
+	for _, m := range mounts {
+		ws.SecretEnv[m.Env] = m.Logical
+	}
+}
+`
+
+// fixtureGoDropsUnderTheAddress is the shape IS6 leaves in spec.go.
+const fixtureGoDropsUnderTheAddress = `
+package infra
+
+func fill(c *ctx, ws *WorkflowSpec, w config.Workflow) {
+	mounts, err := SecretMounts(c.gitSecret, w)
+	if err != nil {
+		return
+	}
+	for _, m := range mounts {
+		ws.SecretEnv[m.Env] = m.Logical
+	}
+	if c.credentialsServiceAddressed {
+		dropVaultMounts(&ws, w)
+	}
+}
+`
+
+// fixtureCatalogIdentityGrantedASecret is the project-level accessor IS8
+// removed, written the way the tree writes a role: a quoted literal.
+const fixtureCatalogIdentityGrantedASecret = `
+resource "google_project_iam_member" "catalog_build_secrets" {
+  project = var.project
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.build_identity[0].member}"
+}
+`
+
+// fixtureCatalogIdentityGrantedTheGitSecret is the retired per-container grant
+// under the name IS8 deleted.
+const fixtureCatalogIdentityGrantedTheGitSecret = `
+resource "google_secret_manager_secret_iam_member" "build_identity_git_secret" {
+  secret_id = var.git_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.build_identity[0].member}"
+}
+`
+
+// fixtureCatalogIdentityWithoutASecret is the shape IS8 leaves: the identity
+// holds a project role that reads no secret.
+const fixtureCatalogIdentityWithoutASecret = `
+resource "google_project_iam_member" "catalog_build" {
+  project = var.project
+  role    = "roles/run.developer"
+  member  = "serviceAccount:${google_service_account.build_identity[0].member}"
+}
+`
+
+// fixtureOtherModulesLocal is the shape that makes the module boundary
+// load-bearing: another run-job module's own local, wearing one of the two
+// names modules/workflow declares too. It admits nothing — it is here so that a
+// scan that reads the three modules as one resolves the workflow job's
+// `local.job_mounts` to THIS definition.
+const fixtureOtherModulesLocal = `
+locals {
+  is_served = { for env, logical in var.job.secret_env : env => var.job.credentials_service != null }
+  job_mounts = {
+    for env, logical in var.job.secret_env :
+    env => logical if !local.is_served[env]
+  }
+}
+`
+
+// fixtureWorkflowLocalDropsTheClause is the other way the flip comes back: the
+// exclusion is DELETED rather than reversed, so the mount over the workflow's
+// own secret_env names the class nowhere and the enumeration is the only thing
+// left to read. It is the shape the rule's second half exists for.
+const fixtureWorkflowLocalDropsTheClause = `
+locals {
+  service_addressed = var.credentials_service != null
+  is_service_held   = { for env, logical in var.workflow.secret_env : env => startswith(env, "FUGARO_") }
+  job_mounts = {
+    for env, logical in var.workflow.secret_env :
+    env => logical if !(local.service_addressed && local.is_service_held[env])
+  }
+}
+`
+
+// fixtureWorkflowLocalAdmitsTheClass is the fetched-class clause put the wrong
+// way round: the workflow job's own local ADMITS the class instead of excluding
+// it (IS6's clause is the `!( ... )` form), so the mount keeps every workflow
+// secret the flip took off the job.
+const fixtureWorkflowLocalAdmitsTheClass = `
+locals {
+  vault_secret_names = var.workflow.vault_secret_names
+  job_mounts = {
+    for env, logical in var.workflow.secret_env :
+    env => logical if contains(local.vault_secret_names, logical)
+  }
+}
+`
