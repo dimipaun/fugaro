@@ -147,7 +147,10 @@ type reposEnrolment struct {
 // the budget and the project's admin gate, the deployed-rules read, then the
 // reads the plan is made of, then the one question. A coding agent's session
 // carries no refusal of its own here — D3425 lifted it, the write being an edit
-// (D3424) — and the confirmation is what it meets.
+// (D3424) — and the confirmation is what it meets. The one exception is the
+// starter: it opens a pull request in the operator's own repository, and this
+// confirmation is never reached on that path, so it keeps a refusal of its own
+// (enrolOpenStarter).
 func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg string) error {
 	ctx := cmd.Context()
 	// `*` is the allow-list's own entry for every repository and not a
