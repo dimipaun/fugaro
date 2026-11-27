@@ -63,6 +63,33 @@ func TestDocsMobileFrontAgentDesignIsWritten(t *testing.T) {
 	}
 }
 
+// TestDocsMobileFrontAgentAttributesTheGoesRulesCorrectly (review finding on
+// PR #4180): D128's amendment of 2026-10-17 is the owner's ruling that a spoken
+// confirmation is allowed with a read-back and an explicit "confirm" — its own
+// utterance, the fixed phrase, one action. The replayed "go", the unresolved
+// target and the conversation's timeout are P6.2's other rules, not the
+// amendment's, and §3.4 must not hang a parenthetical over the whole list and
+// claim otherwise. The wording is pinned to the plan's P5.4.4 and
+// shared/front-agent/README.md, which name the amendment for the same three
+// clauses and nothing else.
+func TestDocsMobileFrontAgentAttributesTheGoesRulesCorrectly(t *testing.T) {
+	const path = "docs/mobile/design/front-agent.md"
+	flat := flattenDoc(readDoc(t, path))
+	for _, want := range []string{
+		"**D128's amendment of 2026-10-17** gives a spoken confirmation its shape — its **own utterance**, recognised as the fixed phrase, and **one \"go\" authorises exactly one run**",
+		"P6.2's other rules come with it",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s lacks %q: §3.4 attributes the go's rules", path, want)
+		}
+	}
+	// The old shape put the amendment at the end of the sentence, where it
+	// reached the timeout and unresolved-target refusals too.
+	if strings.Contains(flat, "refused (D128's amendment of 2026-10-17)") {
+		t.Errorf("%s still hangs D128's amendment over the whole list of the go's refusals", path)
+	}
+}
+
 // TestDocsMobileFrontAgentStatesItsFourRecommendations: the whole point of
 // P5.4.1 is that the owner ratifies or amends a written design rather than
 // answering into a blank, so each of the plan's four questions is answered with
