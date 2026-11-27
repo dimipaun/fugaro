@@ -1401,7 +1401,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	if want := []string{"id", "sender", "text", "at"}; !slices.Equal(required, want) {
 		t.Errorf("the schema's REQUIRED_FIELDS = %v, want %v", required, want)
 	}
-	if want := []string{"id", "sender", "text", "at", "mac", "sig", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}; !slices.Equal(fields, want) {
+	if want := []string{"id", "sender", "text", "at", "mac", "sig", "acked", "agent", "kind", "options", "reply_to", "action", "brief", "token", "platform", "prefs"}; !slices.Equal(fields, want) {
 		t.Errorf("the schema's FIELDS = %v, want %v", fields, want)
 	}
 
@@ -1424,10 +1424,14 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		{`mailbox/$mb/inbox/$msg/options/$i`, `newData.val().length <= ` + strconv.Itoa(MaxOptionLength)},
 		{`mailbox/$mb/inbox/$msg/options/$i`, `$i.matches(` + indexPattern(MaxOptions) + `)`},
 		{`mailbox/$mb/inbox/$msg/action/target/run`, `newData.val().length <= ` + strconv.Itoa(MaxTargetLength)},
+		// P5.4.2's brief, the schema's BRIEF_MAX: the rules bound the shaped
+		// task a launch carries exactly as the schema does.
+		{`mailbox/$mb/inbox/$msg/brief`, `newData.val().length <= ` + strconv.Itoa(MaxBriefLength)},
 		{`mailbox/$mb/outbox/$msg`, `$msg.length <= ` + strconv.Itoa(MaxKeyLength)},
 		{`mailbox/$mb/outbox/$msg/text`, `newData.val().length <= ` + strconv.Itoa(MaxText)},
 		{`mailbox/$mb/outbox/$msg/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
 		{`mailbox/$mb/outbox/$msg/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
+		{`mailbox/$mb/outbox/$msg/brief`, `newData.val().length <= ` + strconv.Itoa(MaxBriefLength)},
 		{`mailbox/$mb/heartbeat/at`, `newData.val() <= ` + strconv.FormatInt(MaxTimestamp, 10)},
 		{`mailbox/$mb/heartbeat/mac`, `newData.val().length == ` + strconv.Itoa(MaxMacLength)},
 		{`mailbox/$mb/heartbeat/agents/$i`, `$i.matches(` + indexPattern(MaxAgents) + `)`},
@@ -1442,6 +1446,25 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		v, _ := attrs[".validate"].(string)
 		if !strings.Contains(v, c.frag) {
 			t.Errorf("/%s .validate = %q, want it to carry the schema's own bound (%q)", c.path, v, c.frag)
+		}
+	}
+
+	// The brief's own coupling, which the schema states and no bound above can
+	// show: a brief with no agent is a turn the consumer has nothing to route by
+	// (P5.4.2, D161), and a message the database stores and the consumer refuses
+	// is one the write-once inbox can never retire. The fragment is a pin rather
+	// than read from the schema, which exports no rule text — the same way the
+	// action record's required set is pinned below — and it is the reason the two
+	// brief nodes carry a clause beyond the bound.
+	for _, p := range []string{`mailbox/$mb/inbox/$msg/brief`, `mailbox/$mb/outbox/$msg/brief`} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, "newData.parent().child('agent').exists()") {
+			t.Errorf("/%s .validate = %q, want the schema's rule that a brief carries the agent it is for", p, v)
 		}
 	}
 
@@ -1555,8 +1578,8 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		path string
 		want []string
 	}{
-		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
-		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "agent", "kind", "options", "reply_to", "action", "brief", "token", "platform", "prefs"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "acked", "agent", "kind", "options", "reply_to", "action", "brief", "token", "platform", "prefs"}},
 	} {
 		if _, ok := paths[c.path]; !ok {
 			t.Errorf("the template does not generate /%s", c.path)
@@ -2380,6 +2403,15 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 			t.Errorf("the generated rules carry no /%s node: the tag a device signs with, and the mode a typed launch carries, are the whole of what J5r adds", p)
 		}
 	}
+	// And P5.4.2's, per node: the brief the schema names on both messages.
+	for _, p := range []string{
+		"mailbox/$mb/inbox/$msg/brief",
+		"mailbox/$mb/outbox/$msg/brief",
+	} {
+		if _, ok := after[p]; !ok {
+			t.Errorf("the generated rules carry no /%s node: the shaped task a launch carries is what P5.4.2 adds", p)
+		}
+	}
 }
 
 // outcomeStatusPath is the one existing rule this branch changes, spelled as
@@ -2762,11 +2794,20 @@ func isNewSignaturePath(p string) bool {
 		p == "mailbox/$mb/outbox/$msg/action/mode"
 }
 
+// isNewBriefPath reports whether p is one of the two nodes the shaped task a
+// launch carries adds (P5.4.2): the schema's optional `brief` on each of the
+// two messages. Both are equalities, for isNewSignaturePath's reason: the brief
+// is one field on the message and nothing under it, and a path *under* it would
+// be a record this document does not model.
+func isNewBriefPath(p string) bool {
+	return p == "mailbox/$mb/inbox/$msg/brief" || p == "mailbox/$mb/outbox/$msg/brief"
+}
+
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
 		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p) ||
-		isNewRoutePath(p) || isNewLaunchPath(p) || isNewSignaturePath(p)
+		isNewRoutePath(p) || isNewLaunchPath(p) || isNewSignaturePath(p) || isNewBriefPath(p)
 }
 
 // isNewLaunchPath reports whether p is one of the four nodes the launch
@@ -3160,7 +3201,16 @@ func isNewCredsPath(p string) bool {
 //     refuses to write (RC3) and Caps.RepoPerRun clamps on the run's own side
 //     (RC1). `fugaro update`'s rules stage publishes it either way, as it does
 //     every generation, and `fugaro doctor` reports policy-rules-skew until it
-//     has.
+//     has. P5.4.2 (the mobile plan's front agent, the owner's ruling of
+//     2026-11-27 that the brief is optional) adds the `brief` to that same
+//     generation instead of taking one of its own: it is a **field a client
+//     writes**, which is J5r's own reason, but generation 11 is in no release —
+//     no shipped binary deploys a generation-11 document without the field — so
+//     nothing on an installation is refused by the addition, and the next
+//     generation is the front agent's own turn (P5.4.3). An installation that
+//     already carries a generation-11 document converges the way any document
+//     difference does: `fugaro update`'s rules stage redeploys when the marker
+//     is this generation and the document is not this binary's.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -3180,7 +3230,7 @@ func isNewCredsPath(p string) bool {
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
 	if projectpolicy.RulesVersion != 11 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 11: the generation that carries the device's signature in place of the tag and the typed launch action (mobile identity-pairing tasks J5r, O6 and O10)", projectpolicy.RulesVersion)
+		t.Errorf("projectpolicy.RulesVersion = %d, want 11: the optional `brief` a launch may carry joins generation 11's own content rather than taking a generation (mobile plan task P5.4.2; version.go's generation-11 block says why)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

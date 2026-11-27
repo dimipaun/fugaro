@@ -127,13 +127,26 @@ test('the bound vectors the module refuses are refused with the code and the fie
     assert.equal(verdict.field, row.field, `${row.name}: the field`);
   }
   // The two mutants this file exists for, named so that dropping either row
-  // fails here rather than silently narrowing what the file checks.
+  // fails here rather than silently narrowing what the file checks — and the
+  // brief's own (P5.4.2), which is the row that tells a brief WITH an agent
+  // from one without.
   const names = bounds.refusals.map((row) => row.name).join(' | ');
-  for (const required of ['a repository one code unit past its bound', 'a sender carrying U+001F']) {
+  for (const required of [
+    'a repository one code unit past its bound',
+    'a sender carrying U+001F',
+    'a brief with no agent',
+  ]) {
     assert.ok(names.includes(required), `the file refuses "${required}": ${names}`);
   }
   const accepts = bounds.accepts.map((row) => row.name).join(' | ');
-  for (const required of ['a repository of exactly TARGET_MAX', 'a body carrying a carriage return']) {
+  for (const required of [
+    'a repository of exactly TARGET_MAX',
+    'a body carrying a carriage return',
+    'a brief of exactly BRIEF_MAX',
+    // The owner's ruling of 2026-11-27: a launch with no brief is accepted, so
+    // the file pins the OPTIONAL side beside the brief's own bound.
+    'a launch with no brief',
+  ]) {
     assert.ok(accepts.includes(required), `the file accepts "${required}": ${accepts}`);
   }
 });

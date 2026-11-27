@@ -329,6 +329,7 @@
               },
               "$other": { ".validate": false }
             },
+            "brief": { ".validate": "PARENTKIND == 'action' && BRIEFOK" },
             "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && (PARENTMACOK || PARENTSIGOK)" },
             "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && (PARENTMACOK || PARENTSIGOK)" },
             "prefs": {
@@ -389,6 +390,7 @@
               },
               "$other": { ".validate": false }
             },
+            "brief": { ".validate": "PARENTKIND == 'action' && BRIEFOK" },
             "token": { ".validate": "PARENTKIND == 'registration' && TOKENOK && (PARENTMACOK || PARENTSIGOK)" },
             "platform": { ".validate": "PARENTKIND == 'registration' && PLATFORMOK && (PARENTMACOK || PARENTSIGOK)" },
             "prefs": {

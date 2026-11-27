@@ -621,10 +621,12 @@ const PolicyRulesVersion = 1
 // records, its ledger and its counters, and every write it makes still lands
 // (docs/design/update-in-flight.md).
 //
-// Generation 11 is the mailbox's signature and the typed launch (mobile
-// identity-pairing plan tasks J5r, O6 and O10 — the owner's answer of
-// 2026-11-21 that a device signs with Ed25519 rather than an HMAC tag, amending
-// D171). It carries two shapes, and each is a *write* a client holds.
+// Generation 11 is the mailbox's signature, the typed launch and the shaped
+// task a launch may carry (mobile identity-pairing plan tasks J5r, O6 and O10 —
+// the owner's answer of 2026-11-21 that a device signs with Ed25519 rather than
+// an HMAC tag, amending D171 — and mobile plan task P5.4.2, the owner's ruling
+// of 2026-11-27). It carries three shapes, and each is a *write* a client
+// holds.
 //
 // The first is the tag: a message and the heartbeat carry exactly one of `mac`
 // and `sig`, where `sig` is the unpadded base64url encoding of a 64-byte
@@ -647,6 +649,22 @@ const PolicyRulesVersion = 1
 // with no error. Which modes need a read-back before they run is the launch
 // gate's (J5a, D2786) and not this document's: the rules see a bounded string
 // and the action's shape, and a plain start needs no confirmation at all.
+//
+// The third is the shaped task a `launch` may carry (mobile plan task P5.4.2):
+// `brief`, the text a "go" starts a run from, a bounded string beside the action
+// record and never inside it, accepted on `launch` alone. It is OPTIONAL,
+// because the app's existing typed start carries its task in the message's own
+// `text` and a launch with no brief must keep validating; a brief on any other
+// verb, or on a kind that cannot carry one, is refused as the shared schema
+// refuses it (shared/mailbox-schema, which the rules are held to field for field
+// by TestMailboxRulesAgreeWithTheSharedSchema). It takes no generation of its
+// own: generation 11 is in no release, so no shipped binary deploys a
+// generation-11 document without the field, and the next generation is the front
+// agent's own turn (mobile plan task P5.4.3, which states the number it took).
+// An installation that already carries a generation-11 document converges the
+// same way any document difference does — `fugaro update`'s rules stage
+// redeploys when the marker is this generation and the document is not this
+// binary's (rulesSkewDocument).
 //
 // What the bump does to an existing installation is what every bump does, and
 // it is met the same way: `fugaro doctor` reports policy-rules-skew until the

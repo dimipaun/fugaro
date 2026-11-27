@@ -693,6 +693,22 @@ func wordMacro(m string, depth int) (string, error) {
 		// is a well-formed short string — a bound rather than a list, because a
 		// sixth rigor mode must not be a rules generation.
 		return boundedMatch(MaxModeLength, patternIdentity), nil
+	case "BRIEFOK":
+		// The shaped task a launch's "go" carries (P5.4.2): the shared schema's
+		// optional `brief`, a bounded non-empty string like the message's own
+		// `text` and for its reason — the schema states no character class for a
+		// task, so this gates the bound and non-emptiness and the characters
+		// stay the schema's. It is a launch's field alone: the schema refuses a
+		// brief beside any other verb, and a field on a kind that cannot carry
+		// one is refused on its own node (PARENTKIND, at the template).
+		//
+		// The message carries the agent the brief is for, which the schema and
+		// internal/mailbox refuse a brief without (D161, and the rule the
+		// schema's own comment gives it): a brief from nobody is a turn the
+		// consumer has nothing to route by, and the inbox is write-once, so a
+		// launch the database stores and the consumer refuses is one nobody can
+		// retire — the fence has to be the same one the reader holds.
+		return fmt.Sprintf("(newData.parent().child('agent').exists() && newData.parent().child('action').child('verb').val() == 'launch' && newData.isString() && newData.val().length > 0 && newData.val().length <= %d)", MaxBriefLength), nil
 	case "AGENTID":
 		// An agent id: the schema's identity, at most AGENT_MAX.
 		return boundedMatch(MaxAgentLength, patternIdentity), nil
@@ -1232,12 +1248,18 @@ const patternZone = `/^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-]
 // heard of is refused there, at the gate J5a owns, so a sixth rigor mode is not
 // a rules generation — which is the whole reason this is a bound.
 //
+// MaxBriefLength bounds a launch's `brief`, the shaped task a "go" carries
+// (P5.4.2): the schema's BRIEF_MAX, four times MaxText because a brief is the
+// document a run is started from rather than a spoken turn, and the same 16 KiB
+// internal/task allows a spec a run works from.
+//
 // They sit below the macro table with the protection above them, for that
 // comment's reason: a constant added above those citations moves the lines the
 // tests that resolve them read.
 const (
-	MaxSigLength  = 86
-	MaxModeLength = 64
+	MaxSigLength   = 86
+	MaxModeLength  = 64
+	MaxBriefLength = 16384
 )
 
 // patternSignature is the character set of a device signature: unpadded
