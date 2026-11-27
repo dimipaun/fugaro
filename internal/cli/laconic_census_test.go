@@ -8,21 +8,28 @@ package cli
 //
 // A message is a string a command says to a person: a refusal, a warning, a
 // notice, a step reason, a caveat. The census reads the package's own syntax
-// tree for two kinds of them:
+// tree for them wherever they are said:
 //
 //   - the string values it binds to a name, wherever it binds them -- package
 //     level or inside a function, as a const, a var or a `:=`;
 //   - the first string argument of the calls that say a refusal -- userErr and
 //     fmt.Errorf -- where the sentence is written at the call site rather than
 //     bound to a name. Most of this package's refusals are written that way,
-//     and a refusal at a call site is as much a message as one bound to a name.
+//     and a refusal at a call site is as much a message as one bound to a name;
+//   - the second argument of fmt's print family, which is the sentence a person
+//     reads and whose first argument is only the writer it goes to;
+//   - the first argument of the calls that warn -- this package's own warn and
+//     warnf, whatever receiver they hang off, log.Warn among them.
 //
 // The literals a value or an argument is built from are folded, so a message
 // written as `"a" + "b"` is measured whole, and one written across several
-// lines is measured whole too. The sentences internal/initflow builds at run
-// time -- assembled from a marker or a flag, so no walk of its source can see
-// them -- are read from the functions that build them, which is how the
-// update-only test held them.
+// lines is measured whole too.
+//
+// Two tables beside the census hold the messages no walk of the source can see,
+// and each of their texts is held to the bound and to one line, which is what
+// the update-only test held: the sentences internal/initflow assembles at run
+// time from a marker or a flag, and the ones this package builds from a format
+// and its arguments, read from the same format with one sample set of them.
 //
 // A value bound to a help field -- cobra's Use, Short, Long and Example, or the
 // door structs' own lower-case spelling of them -- is a help screen rather than
@@ -64,12 +71,39 @@ const maxMessageChars = 140
 // TestLaconicAllowlistOnlyShrinks: it comes down with the list and never goes
 // up, so a message that would have to be added is a message to shorten
 // instead.
-const laconicAllowlistMax = 1135
+const laconicAllowlistMax = 1357
 
-// laconicCalls are the calls whose first string argument is a message: this
-// package's own refusal builder, and fmt.Errorf, which a caller reads as the
-// reason its command stopped.
-var laconicCalls = map[string]bool{"userErr": true, "fmt.Errorf": true}
+// laconicCalls are the calls whose string argument is a message, and which
+// argument it is: this package's own refusal builder and fmt.Errorf, whose
+// first argument is the sentence a caller reads as the reason its command
+// stopped, and fmt's print family, whose second is (the first is the writer the
+// sentence goes to).
+var laconicCalls = map[string]int{
+	"userErr":      0,
+	"fmt.Errorf":   0,
+	"fmt.Fprint":   1,
+	"fmt.Fprintf":  1,
+	"fmt.Fprintln": 1,
+}
+
+// laconicWarnCalls are the methods that warn, by the method's own name so that
+// whatever the receiver is spelled as -- warn, r.warn, log.Warn -- is the same
+// call: what one says is a message like any other.
+var laconicWarnCalls = map[string]bool{"warn": true, "warnf": true}
+
+// laconicCalleeArg is the argument of a call that carries the message, and
+// whether the call is one that says one.
+func laconicCalleeArg(fun ast.Expr) (int, bool) {
+	name := calleeName(fun)
+	if i, ok := laconicCalls[name]; ok {
+		return i, true
+	}
+	last := name[strings.LastIndex(name, ".")+1:]
+	if laconicWarnCalls[strings.ToLower(last)] {
+		return 0, true
+	}
+	return 0, false
+}
 
 // cobraHelpFields are the help fields a help screen is bound to: cobra spells
 // them Use, Short, Long and Example, and this package's own door structs spell
@@ -98,6 +132,19 @@ func TestMessagesAreLaconic(t *testing.T) {
 	msgs := censusMessages(t)
 	if len(msgs) < 2000 {
 		t.Fatalf("the census found %d messages, and this package carries far more: a census that walks nothing passes everything", len(msgs))
+	}
+	// The hand-held tables are not allowlistable: a message built at run time
+	// has no line in the tree to fail, so this is the whole of the hold on it.
+	for _, m := range handHeldMessages() {
+		n := len([]rune(m.text))
+		switch {
+		case m.text == "":
+			t.Errorf("%s %s says nothing: %q", m.where, m.name, m.text)
+		case strings.ContainsAny(m.text, "\r\n"):
+			t.Errorf("%s %s is not one line: %q", m.where, m.name, m.text)
+		case n > maxMessageChars:
+			t.Errorf("%s %s is %d characters, over the %d a message gets: %q", m.where, m.name, n, maxMessageChars, m.text)
+		}
 	}
 	if *updateLaconicAllowlist {
 		laconicAllowlistWrite(t, msgs)
@@ -187,17 +234,17 @@ func censusMessages(t *testing.T) []laconicMessage {
 					}
 				}
 			case *ast.CallExpr:
-				if len(node.Args) == 0 {
+				i, ok := laconicCalleeArg(node.Fun)
+				if !ok || len(node.Args) <= i {
 					return true
 				}
-				if name := calleeName(node.Fun); laconicCalls[name] {
-					add(file, node.Pos(), name, node.Args[0])
-				}
+				add(file, node.Pos(), calleeName(node.Fun), node.Args[i])
 			}
 			return true
 		})
 	}
 	out = append(out, initflowMessages()...)
+	out = append(out, filledMessages()...)
 	slices.SortFunc(out, func(a, b laconicMessage) int {
 		if a.where != b.where {
 			return strings.Compare(a.where, b.where)
@@ -246,6 +293,34 @@ func initflowMessages() []laconicMessage {
 		{where: "internal/initflow", name: "AskUnmanaged", text: initflow.AskUnmanaged()},
 		{where: "internal/initflow", name: "AskNoGate", text: initflow.AskNoGate()},
 	}
+}
+
+// filledMessages are the messages this package writes from a format and its
+// arguments: the walk sees the format -- and the bound on a format is not the
+// bound on the sentence a person reads -- so each is read here from its own
+// format with one sample set of arguments, the shape it is read in.
+func filledMessages() []laconicMessage {
+	r := &initRun{o: &initOptions{door: "update"}}
+	return []laconicMessage{
+		{where: "internal/cli", name: "accessStale", text: fmt.Sprintf(accessStale, "operators list", "a@example.com", "b@example.com")},
+		{where: "internal/cli", name: "accessDropped", text: fmt.Sprintf(accessDropped, "a@example.com", "operator")},
+		{where: "internal/cli", name: "accessAdded", text: fmt.Sprintf(accessAdded, "a@example.com")},
+		{where: "internal/cli", name: "gateNamesAnIAMCall", text: r.gateNamesAnIAMCall("gs://fugaro-runs-aurora")},
+		{where: "internal/cli", name: "reindexNotMarked", text: fmt.Sprintf(reindexNotMarked, "the budget database could not be opened: firestore 404")},
+		{where: "internal/cli", name: "routingNoCheckoutWarn", text: fmt.Sprintf(routingNoCheckoutWarn, "acme/api, acme/web")},
+		{where: "internal/cli", name: "routingUnwrittenWarn", text: fmt.Sprintf(routingUnwrittenWarn, "invalid_credentials")},
+		{where: "internal/cli", name: "routingUnreadableWarn", text: fmt.Sprintf(routingUnreadableWarn, "/home/u/.config/fugaro/projects/aurora.yaml", "permission denied")},
+		{where: "internal/cli", name: "routingWriteFailedWarn", text: fmt.Sprintf(routingWriteFailedWarn, "/home/u/.config/fugaro/projects/aurora.yaml", "permission denied")},
+		{where: "internal/cli", name: "routingUnpublishedWarn", text: fmt.Sprintf(routingUnpublishedWarn, "team")},
+		{where: "internal/cli", name: "routingFallbackAutoLine", text: routingFallbackAutoLine},
+	}
+}
+
+// handHeldMessages are the messages the census reads from a table rather than
+// from the source itself, so a test can hold each of their texts to the bound
+// and to one line: a message built at run time has no line in the tree to fail.
+func handHeldMessages() []laconicMessage {
+	return append(initflowMessages(), filledMessages()...)
 }
 
 // foldMessageString is the text a value holds, when the value is a string
