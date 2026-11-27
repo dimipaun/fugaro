@@ -306,7 +306,7 @@ func poolOfServiceAccount(shared *projectpolicy.Policy, principal routing.Princi
 	}
 	for _, pool := range launcherPoolsOf(shared) {
 		own := principalOfPool(pool)
-		if own.Kind == routing.PrincipalServiceAccount && serviceAccountIs(own.ID, principal.ID) {
+		if own.Kind == routing.PrincipalServiceAccount && sameAccount(own.ID, principal.ID) {
 			return pool, true
 		}
 	}
@@ -335,12 +335,12 @@ func poolServesPrincipal(pool config.Pool, principal routing.Principal) bool {
 		return true
 	}
 	if own.Kind == routing.PrincipalServiceAccount && principal.Kind == routing.PrincipalServiceAccount {
-		// The two addresses are compared folded (serviceAccountIs), because
-		// that is how the roster admits the account's own token in the first
-		// place: a pool written with the address spelled otherwise is the same
-		// account's, and failing to see that would fall a run back to a paid
-		// source over the case of a letter.
-		return serviceAccountIs(own.ID, principal.ID)
+		// The two addresses are compared folded (sameAccount), because that is
+		// how the roster admits the account's own token in the first place: a
+		// pool written with the address spelled otherwise is the same account's,
+		// and failing to see that would fall a run back to a paid source over
+		// the case of a letter.
+		return sameAccount(own.ID, principal.ID)
 	}
 	return own == principal
 }
