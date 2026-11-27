@@ -38,6 +38,11 @@ func computeProblems(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 	var ps []config.Problem
 	onBatch := lc != nil && lc.Backend() == backend.CloudBatch
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		// The workflow's own resources are the profile's: a repository's
+		// workflows.*.resources is read and ignored (D3421), so what stands here
+		// is the profile the workflow starts from (SourceOf says so), or
+		// Fugaro's defaults where it starts from none. The path stays the
+		// workflow's, as every profile-supplied value's does.
 		res := cfg.Workflows[name].Resources
 		path := "workflows." + name + ".resources."
 		if onBatch {

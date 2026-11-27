@@ -136,6 +136,15 @@ export const SETUP_REFUSED_LINES: readonly JSONObject[] = Object.freeze([
   {"type":"error","stage":"","error":"fugaro setup does not take --check: that is fugaro update's (it reports what a converge that has already run would do, and a first run has nothing to report: fugaro setup --check has no installation to read)","fix":"","exit_code":1},
 ])
 
+/** SETUP_HEARTBEAT_LINE is the `heartbeat` line the feed will carry once a step
+ * has been running a while (D3436, D3453): liveness, not a stage of the run.
+ * The console accepts it and draws nothing for it, and CO2c is the CLI task that
+ * starts writing it -- so no recording carries one yet, and `type` is the only
+ * member the console may rely on. A fixture with members is the shape CO2c's own
+ * golden will fix, and `new-ops.test.ts` reads one with members the reader does
+ * not know to pin that they ride along. */
+export const SETUP_HEARTBEAT_LINE: JSONObject = Object.freeze({ type: 'heartbeat' })
+
 /** WHOAMI_DOCUMENT is `user ls --me --json`'s answer, as written: the caller's
  * role, the scope it reaches and the repositories that scope covers. */
 const WHOAMI_DOCUMENT: JSONObject = Object.freeze({

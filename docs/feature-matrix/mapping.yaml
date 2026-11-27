@@ -344,6 +344,8 @@ excluded:
     reason: "An internal move of code between directories, with nothing a user sees."
   - spec: feature-matrix
     reason: "This matrix's own spec: internal, and excluded from its own rows (R4)."
+  - spec: ground-rules
+    reason: "Cross-cutting rules (an agent's commands, step output, the versioned loader, the version stamp) applied across features that ship already, not a capability of its own."
   - spec: gitlab-support
     reason: "Parked by the owner and not built: GitLab support waits on a named need, with no plan, no reconciliation and no code."
   - spec: go-to-market

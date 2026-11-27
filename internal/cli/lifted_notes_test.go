@@ -21,6 +21,39 @@ import (
 // refuses (spec §4), and until then the reader is told what the file still
 // writes and what the project now decides.
 
+// TestValidateNotesIgnoredWorkflowResources: a repository's
+// workflows.*.resources is read and ignored (D3421), so the file is valid —
+// release A refuses nothing a repository wrote — and the note names the
+// profile that decides the sizing instead, once, on stderr and in --json's
+// notes.
+func TestValidateNotesIgnoredWorkflowResources(t *testing.T) {
+	attachLayer(t, "aurora", testProjectLayer)
+	body := strings.Replace(cliMinimalYAML, "  app: { commands:",
+		"  app: { profile: svc, resources: { cpu: 16, memory: 32Gi }, commands:", 1)
+	path := writeRawConfig(t, anchoredText(body))
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("a file that writes workflows.app.resources must validate: %v\n%s%s", err, out, errOut)
+	}
+	if n := strings.Count(errOut, "note: workflows.app.resources is ignored"); n != 1 {
+		t.Errorf("validate printed %d notes for the ignored block, want 1:\n%s", n, errOut)
+	}
+	if !strings.Contains(errOut, "profile svc sizes this workflow") {
+		t.Errorf("the note does not name the profile that decides the sizing:\n%s", errOut)
+	}
+	out, _, err = execute(t, "validate", "--json", path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var got validateOutput
+	if jerr := json.Unmarshal([]byte(out), &got); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if n := strings.Count(notesText(got.Notes), "workflows.app.resources is ignored"); n != 1 {
+		t.Errorf("--json named the ignored block %d times, want 1: %+v", n, got.Notes)
+	}
+}
+
 // TestValidateNamesLiftedKeys: a file that still writes two of the keys the
 // project now owns is valid — release A refuses nothing a repository wrote —
 // and each of them is named once, with the fix C1's sentence carries, on

@@ -10,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -183,7 +184,7 @@ func TestUpdateDefaultProfileIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the second update did not converge: %v\n%s\n%s", err, out, errOut)
 	}
-	if !strings.Contains(out+errOut, "✔ repository") {
+	if !strings.Contains(out+errOut, markDone+" "+initflow.DisplayName(initflow.Repository)) {
 		t.Errorf("the second update's account says nothing about the repository stage having run, so this test may not have run the door whole:\n%s%s", out, errOut)
 	}
 	if after := updatedConfig(t).Profiles; !reflect.DeepEqual(before, after) {
@@ -334,10 +335,10 @@ func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T)
 	if err != nil {
 		t.Fatalf("the repository stage refused an update of an installation that converges today, so it needs a second command: %v\n%s", err, s)
 	}
-	if !strings.Contains(s, "\u2714 repository") {
+	if !strings.Contains(s, "\u2714 "+initflow.DisplayName(initflow.Repository)) {
 		t.Errorf("the run's account says nothing about the repository stage having run, so this test may not have run the stage it is about:\n%s", s)
 	}
-	if !strings.Contains(s, "✔ installation") {
+	if !strings.Contains(s, markDone+" "+initflow.DisplayName(initflow.Installation)) {
 		t.Errorf("the run's account says nothing about the installation stage having planned, so this test may not have run the converge it is about:\n%s", s)
 	}
 	kept := installationProjectJobs(t, r)

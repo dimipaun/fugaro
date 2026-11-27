@@ -62,10 +62,12 @@ in the table's third column.
 They are defaults and not ceilings. The number a run actually runs comes from the
 precedence first — the task's own override, then the recipe's `max_rounds`, then
 the repository's `agent.first_line_rounds` and `agent.review_rounds`, then the
-project layer's — and the mode's row supplies the number only where none of those
-four set one, up or down. A repository that asks for eight senior rounds gets
-eight at `poc`; the recipe's own bounds are the only ceiling either number is
-held under.
+project layer's — and the mode's row supplies the number where none of those
+four set one. A repository's number the project layer says nothing about is
+judged against the row: one that tightens it — more rounds — stands, and a
+looser one reads as unwritten, so the row supplies the number there too. A
+repository that asks for eight senior rounds gets eight at `poc`; the recipe's
+own bounds are the only ceiling either number is held under.
 
 The levels themselves are a second set the mode supplies: `poc` runs the
 first-line level and turns the senior one off, `startup` and `pro` run the senior

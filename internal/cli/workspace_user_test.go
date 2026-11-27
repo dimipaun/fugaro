@@ -165,6 +165,7 @@ type wu7Members struct {
 	calls      []string
 	offboarded []string
 	audited    []string
+	recorded   []string
 	writeErr   error
 	offErr     error
 }
@@ -228,6 +229,12 @@ func (m *wu7Members) Bindings(context.Context, workspace.MemberTarget) ([]worksp
 
 func (m *wu7Members) PendingApply(context.Context, workspace.MemberTarget, workspace.ApplyWant) (workspace.Pending, error) {
 	return workspace.Pending{}, nil
+}
+
+func (m *wu7Members) RecordRemoval(_ context.Context, t workspace.MemberTarget, member string) error {
+	m.call("record-removal", t.Project)
+	m.recorded = append(m.recorded, t.Project+" "+member)
+	return nil
 }
 
 func (m *wu7Members) Offboard(_ context.Context, t workspace.MemberTarget, address string) error {

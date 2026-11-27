@@ -17,9 +17,12 @@ import (
 //
 // The release before this one is in the tree as a plan of it: the embedded root
 // with this task's one module file removed (state_read.tf, the two resources
-// that are the whole of O16b's plan change), which is the installation that
-// holds the front door's account, its store, its service and the runs bucket's
-// read, and holds no database grant for that account at all.
+// that are the whole of O16b's plan change) and with orchestrator.tf's binding
+// of that role dropped with it, because the resident orchestrator's own read of
+// the same node (P5.1c's finding A) names the file's role and local and a tree
+// that kept the binding while the file went would not plan at all. That
+// installation holds the front door's account, its store, its service and the
+// runs bucket's read, and holds no database grant for that account at all.
 //
 // Four claims, and each is a real comparison of the two plans rather than a
 // restatement of the file:
@@ -58,7 +61,7 @@ func TestUpdateGrantsTheStateReadFromThePreviousRelease(t *testing.T) {
 
 	spec := specWithTheFrontDoor(t)
 	afterPlan, after := installationPlan(t, spec)
-	before := installationPlanFor(t, spec, "state_read.tf")
+	before := installationPlanFor(t, spec, "state_read.tf", "orchestrator.tf:google_project_iam_member.orchestrator_state_read")
 
 	var added []string
 	for addr, rc := range after {

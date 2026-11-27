@@ -749,7 +749,7 @@ func TestUpdateClearsOnlyTheStagesItRan(t *testing.T) {
 	owed(t, apply.CatalogBuild, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage})
 
 	got, err := updateRun(t, r, "update")
-	if !strings.Contains(got, markDone+" "+initflow.Installation) {
+	if !strings.Contains(got, markDone+" "+initflow.DisplayName(initflow.Installation)) {
 		t.Fatalf("the run did not answer the installation step (%v):\n%s", err, got)
 	}
 	p := record(t)
@@ -783,7 +783,7 @@ func TestUpdateKeepsAStepQueuedWhileItsRunWasGoing(t *testing.T) {
 	})
 
 	got, err := updateRun(t, r, "update")
-	if !strings.Contains(got, markDone+" "+initflow.Installation) || !strings.Contains(got, markDone+" "+initflow.Plugin) {
+	if !strings.Contains(got, markDone+" "+initflow.DisplayName(initflow.Installation)) || !strings.Contains(got, markDone+" "+initflow.DisplayName(initflow.Plugin)) {
 		t.Fatalf("the run did not answer the steps this test owes (%v):\n%s", err, got)
 	}
 	steps := pendingSteps(record(t))
@@ -812,7 +812,7 @@ func TestUpdateKeepsAStepRequeuedWithTheSameKeyWhileItsRunWasGoing(t *testing.T)
 	})
 
 	got, err := updateRun(t, r, "update")
-	if !strings.Contains(got, markDone+" "+initflow.Installation) || !strings.Contains(got, markDone+" "+initflow.Installation2) {
+	if !strings.Contains(got, markDone+" "+initflow.DisplayName(initflow.Installation)) || !strings.Contains(got, markDone+" "+initflow.DisplayName(initflow.Installation2)) {
 		t.Fatalf("the run did not answer the steps this test owes (%v):\n%s", err, got)
 	}
 	steps := pendingSteps(record(t))

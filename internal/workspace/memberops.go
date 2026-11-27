@@ -144,6 +144,16 @@ type MemberOps interface {
 	// what is pending (D2818, D1940).
 	Offboard(ctx context.Context, m MemberTarget, address string) error
 
+	// RecordRemoval writes a person's removal into the MEMBER's own record of
+	// removed people (DG5, D3454), which is what the member's own `fugaro update`
+	// reads to admit the removal of a grant the workspace cannot reach: the
+	// workspace admin whose grant comes off the member's derived admin list
+	// (D2818) is dropped by the member's update, and that update refuses a grant
+	// removal the roster does not record. It is the member's record and not an
+	// IAM write, so it is not the workspace's own binding and not a member's
+	// policy (D2801): a person already recorded is left as the record is.
+	RecordRemoval(ctx context.Context, m MemberTarget, member string) error
+
 	// Audit creates one entry in the member's trail at PathMemberAudit, under id,
 	// and never updates one (D2811): a second write of an id is a refusal the
 	// caller sees. The event is C1's AuditEvent as JSON and this contract reads

@@ -195,6 +195,11 @@ func (h *RunHandle) MarkCancelled() bool                { return h.r.markCancell
 func (h *RunHandle) Stage() string                      { return h.r.rec.Stage }
 func (h *RunHandle) IsCancelled() bool                  { return h.r.isCancelled() }
 
+// Budget is the run's own time budget as bootstrap built it, read once the run
+// is over: what the run really holds, so a case about R20's baseline asks this
+// and not a copy of the reader's own arithmetic.
+func (h *RunHandle) Budget() Budget { return h.r.budget }
+
 // Halted reports whether a halt has been recorded yet, which marks the instant
 // a governance halt's own stop of the stage's checkpointer begins to wait.
 func (h *RunHandle) Halted() bool { return h.r.haltValue() != nil }

@@ -298,7 +298,15 @@ func installationPlanAgainst(t *testing.T, spec InstallationSpec, extra map[stri
 // planned the same way — a copy in a temp directory, a fake access token, a
 // dead proxy, a local backend — so the roots' tests share one body rather than
 // one each.
-func rootPlanAgainst(t *testing.T, rootName string, vars []byte, extra map[string]any, state func(vars map[string]any) map[string]any, override string, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
+//
+// A drop entry takes a file out of the copied tree, which is how a test plans
+// the release before a change: a module file's name, or "file:type.name" for
+// one resource block inside a file. The block form exists for the file another
+// file's resource references — the previous release has neither the file nor
+// the row, and a tree that kept the row while the file went would not plan at
+// all (state_read.tf's role is named by orchestrator.tf's binding, so the whole
+// file cannot go while that binding stays).
+func rootPlanAgainst(t *testing.T, rootName string, vars []byte, extra map[string]any, state func(vars map[string]any) map[string]any, override string, drop ...string) (*tf.Plan, map[string]plannedResource) {
 	t.Helper()
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
@@ -323,8 +331,20 @@ func rootPlanAgainst(t *testing.T, rootName string, vars []byte, extra map[strin
 	if err := os.RemoveAll(filepath.Join(root, "tests")); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range dropModule {
-		if err := os.Remove(filepath.Join(dir, "gcp", "modules", "installation", name)); err != nil {
+	for _, name := range drop {
+		file, block, hasBlock := strings.Cut(name, ":")
+		path := filepath.Join(dir, "gcp", "modules", "installation", file)
+		if !hasBlock {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(dropResourceBlock(t, string(src), block)), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -404,6 +424,43 @@ func rootPlanAgainst(t *testing.T, rootName string, vars []byte, extra map[strin
 		}
 	}
 	return &plan, out
+}
+
+// dropResourceBlock removes the resource block named by "type.name" from a
+// module file's source, and the blank line it leaves: the block form of a drop
+// entry, used to plan a release in which one row of a file another file
+// references did not exist yet. The braces are counted rather than the block
+// matched by a pattern, because a block's own nested blocks (lifecycle,
+// precondition) and its interpolations would otherwise end it early; a `${...}`
+// in a string is balanced, so counting braces inside strings is the same count.
+func dropResourceBlock(t *testing.T, src, block string) string {
+	t.Helper()
+	typ, name, ok := strings.Cut(block, ".")
+	if !ok {
+		t.Fatalf("the block to drop is %q, want type.name", block)
+	}
+	header := `resource "` + typ + `" "` + name + `"`
+	start := strings.Index(src, header)
+	if start < 0 {
+		t.Fatalf("the file it is dropped from declares no %s", header)
+	}
+	depth := 0
+	for i := start + len(header); i < len(src); i++ {
+		switch src[i] {
+		case '{':
+			depth++
+		case '}':
+			if depth--; depth == 0 {
+				end := i + 1
+				for end < len(src) && src[end] == '\n' {
+					end++
+				}
+				return src[:start] + src[end:]
+			}
+		}
+	}
+	t.Fatalf("%s is never closed", header)
+	return src
 }
 
 // theRunsConfirmation is the cover the run's one confirmation judges this

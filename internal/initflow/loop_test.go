@@ -187,12 +187,14 @@ func (m marks) isStep(line string) bool {
 }
 
 // line is the step line a stage's own result was printed on, or "" when the
-// view has none. The name is matched whole, so a stage is never found by
-// another one's prefix (installation2 is not installation).
+// view has none. The stage is matched by the plain-words name its step line
+// carries (DisplayName), which is what a person reads there, and whole, so a
+// stage is never found by another one's prefix (installation-2 is not
+// installation).
 func (m marks) line(view, stage string) string {
 	for _, l := range m.steps(view) {
 		for _, mark := range []string{m.done, m.skipped, m.failed, m.left, m.waiting} {
-			rest, ok := strings.CutPrefix(l, mark+" "+stage)
+			rest, ok := strings.CutPrefix(l, mark+" "+DisplayName(stage))
 			if ok && (rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, ":")) {
 				return l
 			}
@@ -1913,7 +1915,7 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 		t.Fatalf("the account is %d step lines, want the stages that printed one and the one line the stages behind them share:\n%s", len(got), out.String())
 	}
 	for i, name := range []string{Preflight, Installation, Secrets} {
-		if !strings.Contains(got[i], name) {
+		if !strings.Contains(got[i], DisplayName(name)) {
 			t.Errorf("step %d is %q, want the stage %s:\n%s", i, got[i], name, out.String())
 		}
 	}
@@ -1929,7 +1931,7 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	// The stage behind the one the user owes is not a line of its own: the
 	// steps a run never reached are one line, counting them and naming what
 	// they wait for (the brief's item 6, and the owner's layout of 2026-11-22).
-	if !strings.Contains(got[3], "1 step not run") || !strings.Contains(got[3], Secrets) || strings.Contains(got[3], Repository) {
+	if !strings.Contains(got[3], "1 step not run") || !strings.Contains(got[3], DisplayName(Secrets)) || strings.Contains(got[3], DisplayName(Repository)) {
 		t.Errorf("the steps the run never reached are %q, want one line counting them and naming what they wait for, and not the stages:\n%s", got[3], out.String())
 	}
 	if strings.Contains(strings.Join(got, "\n"), "[") || strings.Contains(out.String(), ": result") {
@@ -1970,7 +1972,7 @@ func TestAStepLineIsOnScreenBeforeTheNextStageRuns(t *testing.T) {
 	}
 	// The stage's own failure is on the screen with it: the run does not wait
 	// for the end of a three-minute apply to say it stopped.
-	if line := m.line(out.String(), Installation); !strings.HasPrefix(line, m.failed+" "+Installation) {
+	if line := m.line(out.String(), Installation); !strings.HasPrefix(line, m.failed+" "+DisplayName(Installation)) {
 		t.Errorf("the failing stage's line is %q, want the failure marker:\n%s", line, out.String())
 	}
 }
@@ -1993,7 +1995,7 @@ func TestLoopLeftForYouIsNotATick(t *testing.T) {
 	}
 	m := reporterMarks(t)
 	line := m.line(out.String(), Secrets)
-	if !strings.HasPrefix(line, m.left+" "+Secrets) {
+	if !strings.HasPrefix(line, m.left+" "+DisplayName(Secrets)) {
 		t.Errorf("the stage the user owes is %q, want the reporter's left-for-you marker:\n%s", line, out.String())
 	}
 	if strings.HasPrefix(line, m.done) {
@@ -2036,7 +2038,7 @@ func TestLoopFailureShowsContextAndFix(t *testing.T) {
 	m := reporterMarks(t)
 	got := out.String()
 	line := m.line(got, Installation)
-	if line != m.failed+" "+Installation {
+	if line != m.failed+" "+DisplayName(Installation) {
 		t.Errorf("the failed stage is %q, want the reporter's cross and the stage alone, with the error on the line under it:\n%s", line, got)
 	}
 	for _, want := range []string{
@@ -2050,7 +2052,7 @@ func TestLoopFailureShowsContextAndFix(t *testing.T) {
 		"raise the quota, then rerun fugaro update",
 		// And the command that picks the run up where it stopped, as the
 		// closing line — a stopped run says it once.
-		"Failed in 0.0s. Rerun " + defaultProgram + " to resume at " + Installation + ".",
+		"Failed in 0.0s. Rerun " + defaultProgram + " to resume at " + DisplayName(Installation) + ".",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the failure block lost %q:\n%s", want, got)
@@ -2123,7 +2125,7 @@ func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
 	m := reporterMarks(t)
 	got := out.String()
 	line := m.line(got, Checkout)
-	if !strings.HasPrefix(line, m.left+" "+Checkout) {
+	if !strings.HasPrefix(line, m.left+" "+DisplayName(Checkout)) {
 		t.Errorf("the stage that left something is %q, want the left-for-you marker:\n%s", line, got)
 	}
 	if strings.HasPrefix(line, m.done) {
@@ -2160,7 +2162,7 @@ func TestLoopRefusalPrintsNoClosingLine(t *testing.T) {
 	}
 	got := out.String()
 	m := reporterMarks(t)
-	if steps := m.steps(got); len(steps) != 1 || !strings.Contains(steps[0], Preflight) {
+	if steps := m.steps(got); len(steps) != 1 || !strings.Contains(steps[0], DisplayName(Preflight)) {
 		t.Errorf("the account is %q, want the one stage that ran:\n%s", steps, got)
 	}
 	for _, closing := range []string{"Done in ", "Failed in ", "Left for you in "} {
@@ -2339,17 +2341,17 @@ func TestLoopBillingStagesAreNotTicks(t *testing.T) {
 	}
 	for _, stage := range []string{Preflight, Project, Plugin} {
 		line := m.line(got, stage)
-		if !strings.Contains(line, stage) {
+		if !strings.Contains(line, DisplayName(stage)) {
 			t.Errorf("no line for %s:\n%s", stage, got)
 		}
 	}
-	if line := m.line(got, Project); !strings.HasPrefix(line, m.left+" "+Project) {
+	if line := m.line(got, Project); !strings.HasPrefix(line, m.left+" "+DisplayName(Project)) {
 		t.Errorf("%s is %q, want the reporter's left-for-you marker:\n%s", Project, line, got)
 	}
-	if line := m.line(got, Preflight); !strings.HasPrefix(line, m.done+" "+Preflight) {
+	if line := m.line(got, Preflight); !strings.HasPrefix(line, m.done+" "+DisplayName(Preflight)) {
 		t.Errorf("%s is %q, want the tick:\n%s", Preflight, line, got)
 	}
-	if line := m.line(got, Plugin); !strings.HasPrefix(line, m.done+" "+Plugin) {
+	if line := m.line(got, Plugin); !strings.HasPrefix(line, m.done+" "+DisplayName(Plugin)) {
 		t.Errorf("the stage that needs no billing is %q, want the tick:\n%s", line, got)
 	}
 	// The stages behind the billing account are one line, not four, and the
@@ -2366,5 +2368,87 @@ func TestLoopBillingStagesAreNotTicks(t *testing.T) {
 	}
 	if lines := outputLines(got); !strings.HasPrefix(lines[len(lines)-1], "Left for you in ") {
 		t.Errorf("the account does not end in a left-for-you closing line:\n%s", got)
+	}
+}
+
+// logSink is a run's log in a test: the file a reader goes back to for the
+// whole of a run (report.Sink).
+type logSink struct{ bytes.Buffer }
+
+func (s *logSink) Path() string { return "test.log" }
+func (s *logSink) Close() error { return nil }
+
+// TestStageDisplayNames: a stage's step line names the work in plain words,
+// and the stage's own ID stays where the run records it — the log a reader
+// goes back to, and the result --json and --events carry (D3435, F21, spec
+// §4). What a person watching reads is the plain words on both lines of the
+// step: the line in flight and the result that replaces it. The two lines the
+// steps are read beside name a stage the same way: the one the stages behind a
+// stop wait for, and the closing line's "resume at".
+func TestStageDisplayNames(t *testing.T) {
+	seen := map[string]string{}
+	for _, name := range Names() {
+		plain := DisplayName(name)
+		if plain == "" || plain == name {
+			t.Errorf("the stage %s has no plain-words name: its step line prints the ID (D3435)", name)
+			continue
+		}
+		if other, dup := seen[plain]; dup {
+			t.Errorf("%s and %s both print %q: a reader cannot tell the two steps apart", other, name, plain)
+		}
+		seen[plain] = name
+	}
+
+	var log []string
+	var out bytes.Buffer
+	var sink logSink
+	stages := fakes(&log, Preflight, Installation, Secrets)
+	stages[1].(*fake).applyErr = errors.New("the apply failed")
+	opts := yesOpts()
+	opts.Out = &out
+	opts.Report = reporterTo(&out, report.Options{Sink: &sink})
+	res, err := Run(context.Background(), stages, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := reporterMarks(t)
+	logStep := func(stage string) string {
+		for _, l := range outputLines(sink.String()) {
+			if strings.HasPrefix(l, m.done+" "+stage) || strings.HasPrefix(l, m.failed+" "+stage) {
+				return l
+			}
+		}
+		return ""
+	}
+	for _, stage := range []string{Preflight, Installation} {
+		if line := m.line(out.String(), stage); line == "" {
+			t.Errorf("the run printed no step line for %s under its plain-words name %q:\n%s", stage, DisplayName(stage), out.String())
+		} else if strings.Contains(line, stage) {
+			t.Errorf("the step line %q names the stage by its ID, want %q", line, DisplayName(stage))
+		}
+		if l := logStep(stage); !strings.Contains(l, stage) {
+			t.Errorf("the log's step line for %s is %q, want the stage's own ID in it: the log is what a reader greps afterwards:\n%s", stage, l, sink.String())
+		}
+	}
+	if got := res.Stages[1].Name; got != Installation {
+		t.Errorf("the result names the failed stage %q, want its ID %q: --json and --events are the ID's", got, Installation)
+	}
+	if f := res.Failed; f == nil || f.Stage != Installation {
+		t.Errorf("the failure is %+v, want it named by the stage's ID %q", f, Installation)
+	}
+
+	// The waiting line and the closing line are read under those step lines, so
+	// they name the stage the same way the screen does — and the log, which is
+	// what a reader greps afterwards, keeps the ID on both.
+	for _, want := range []struct{ screen, log, what string }{
+		{"1 step not run (it needs " + DisplayName(Installation) + ")", "1 step not run (it needs " + Installation + ")", "the stages behind the stop"},
+		{"to resume at " + DisplayName(Installation) + ".", "to resume at " + Installation + ".", "the closing line"},
+	} {
+		if !strings.Contains(out.String(), want.screen) {
+			t.Errorf("%s does not name the stage in plain words %q:\n%s", want.what, want.screen, out.String())
+		}
+		if !strings.Contains(sink.String(), want.log) {
+			t.Errorf("%s does not keep the stage's own ID %q in the log:\n%s", want.what, want.log, sink.String())
+		}
 	}
 }

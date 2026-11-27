@@ -40,6 +40,7 @@ type CRM struct {
 	names    map[string]string // the display name, as the v1 API answers it under "name"
 	named    map[string]bool   // whether the fake knows a name; a project only added answers its ID
 	policies map[string][]Binding
+	audits   map[string][]AuditConfig // a project's audit-logging configuration
 	states   map[string]string
 	noGet    map[string]bool // projects whose plain read answers 403 (the policy stays readable)
 	noUpdate map[string]bool // projects whose update answers 403 (the plain read stays readable)
@@ -150,7 +151,7 @@ var (
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
 	f := &CRM{projects: map[string]int64{}, labels: map[string]map[string]string{}, names: map[string]string{}, named: map[string]bool{},
-		policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
+		policies: map[string][]Binding{}, audits: map[string][]AuditConfig{}, noGet: map[string]bool{}, states: map[string]string{},
 		noPolicy: map[string]bool{}, held: map[string][]string{}, noUpdate: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{},
 		folders: map[string]gcpFolder{}, folderPolicies: map[string][]Binding{}, folderAudits: map[string][]AuditConfig{}, parents: map[string]string{},
 		nextProj: FirstCreatedProjectNumber - 1, nextFolder: FirstCreatedFolderNumber - 1}
@@ -295,6 +296,25 @@ func (f *CRM) SetPolicy(project string, bindings ...Binding) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.policies[project] = bindings
+}
+
+// SetAuditConfigs sets the audit-logging configuration of project's IAM policy,
+// which a policy write carries back whole alongside its bindings: the real
+// projects.setIamPolicy replaces the WHOLE policy, so a writer that sent a
+// policy built from its bindings alone takes the project's data-access logging
+// off it.
+func (f *CRM) SetAuditConfigs(project string, configs ...AuditConfig) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.audits[project] = configs
+}
+
+// AuditConfigs is project's audit-logging configuration as the fake holds it
+// now: empty when a write did not carry back what the read answered.
+func (f *CRM) AuditConfigs(project string) []AuditConfig {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]AuditConfig(nil), f.audits[project]...)
 }
 
 // DenyGet makes the plain read of project (its number, say) answer 403 while

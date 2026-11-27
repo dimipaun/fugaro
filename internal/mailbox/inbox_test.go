@@ -128,8 +128,8 @@ func TestReadInboxOfAnAbsentNodeIsNoItemsAndNoError(t *testing.T) {
 // TestReadInboxHandsBackAReadFailure is the other half: a read that FAILED is an
 // error and never an empty inbox. A pass that could not tell those apart would
 // report a database it cannot reach as a phone with nothing to say — and for the
-// resident consumer that is also the difference between "no message" and "the
-// IAM read this deployment cannot make" (the P5.1c review's finding A).
+// resident consumer that is also the difference between "no message" and a read
+// the account was refused.
 func TestReadInboxHandsBackAReadFailure(t *testing.T) {
 	want := errors.New("permission denied")
 	store := &inboxStore{err: want}

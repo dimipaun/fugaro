@@ -1,17 +1,23 @@
-# The state readers' reach into the installation's database: the front door's
-# (O16b, D2020 (a)) and the voice hop's (P5.3.3). It is the ONE role that lets
-# a process read the orchestrator's node, and the ONE permission that role may
-# carry.
+# The state readers' reach into the installation's database: the resident
+# orchestrator's own (P5.1c's finding A), the front door's (O16b, D2020 (a))
+# and the voice hop's (P5.3.3). It is the ONE role that lets a process read the
+# orchestrator's node, and the ONE permission that role may carry.
 #
-# WHO READS THROUGH IT. The front door serves get_state and get_events as its
-# own account `fugaro-mcp` (ee/coordinator/cli/coordinator_serve.go registers
-# them over mcpauth's own reach, over internal/rtdb), and the state they answer
-# with lives in the project's Firebase Realtime Database under
-# orchestrator/<id>/{state,lease,audit} (D1220). The voice hop (voice.tf) reads
-# the device node config/admin/devices/$uid (D166) and the project's voice
-# policy node before a phone's speech leaves it. Until this file the account
-# held no database grant at all, so a turned-on front door could serve the two
-# tools and read nothing.
+# WHO READS THROUGH IT. The resident orchestrator (orchestrator.tf) reads
+# orchestrator/<id>/{state,lease} on every tick as its own account
+# `fugaro-orch`, and that read is an IAM one: the rules fence a client's write
+# and a service-account bearer never passes them, so without a grant on the
+# database the account reaches nothing and every tick answers 503 ("rtdb: GET
+# /orchestrator/<id>/state: 401: Unauthorized request."). The front door serves
+# get_state and get_events as its own account `fugaro-mcp`
+# (ee/coordinator/cli/coordinator_serve.go registers them over mcpauth's own
+# reach, over internal/rtdb), and the state they answer with lives in the
+# project's Firebase Realtime Database under orchestrator/<id>/{state,lease,audit}
+# (D1220). The voice hop (voice.tf) reads the device node
+# config/admin/devices/$uid (D166) and the project's voice policy node before a
+# phone's speech leaves it. Until this file the front door's account held no
+# database grant at all, so a turned-on front door could serve the two tools and
+# read nothing.
 #
 # Why the role is ONE permission, and why it is a role of its own. Realtime
 # Database IAM has NO path-level scope: a binding is per instance and reaches
@@ -26,32 +32,38 @@
 # to reach for. state_read_test.go's
 # TestFrontDoorStateRoleHoldsNoDatabaseWrite fails first if one is added back.
 #
-# WHY THE TWO READERS SHARE THE ONE ROLE, and why that is not a widening. They
+# WHY THE READERS SHARE THE ONE ROLE, and why that is not a widening. They
 # read the same instance, so a second role could only differ by holding a
 # permission the first does not — which is exactly the write this file exists to
-# withhold. What the hop may reach is therefore the same whole-instance read the
-# front door already has, and what narrows each reader to its own nodes is its
-# own code and not the grant: internal/voicesvc's own paths for the hop
-# (voice.tf's header states the reach and its cost), mcpauth's and
-# ee/coordinator's for the door. That is also why there is no path-prefix
-# condition here: RTDB cannot express one, and the credentials service's
-# database binding states the same reasoning.
+# withhold. What the orchestrator may reach is therefore the same whole-instance
+# read the front door already has, and what narrows each reader to its own nodes
+# is its own code and not the grant: internal/orchestrator's own paths for the
+# tick (orchestrator.tf's header states the reach and its cost),
+# internal/voicesvc's own paths for the hop (voice.tf's header states the reach
+# and its cost), mcpauth's and ee/coordinator's for the door. That is also why
+# there is no path-prefix condition here: RTDB cannot express one, and the
+# credentials service's database binding states the same reasoning.
 #
 # It is a file of its own, beside the store's, for the store's own reason: the
 # front door's account may be named by exactly one grant in coordinator.tf (the
 # count TestCoordinatorServiceHasItsOwnAccount reads that file alone), so each
-# of the account's other grants lives beside the resource it binds.
+# of the account's other grants lives beside the resource it binds. The
+# resident orchestrator's binding is the one exception, and it is
+# orchestrator.tf's on purpose: section 4.3's table is that file's alone, so a
+# grant to that account written anywhere else is one the table's own test
+# cannot see.
 #
 # The role is declared in the FIREBASE project — the one the database belongs
 # to (D6) — and not in var.project, and the local below names that project. It
 # cannot be a bare var.coordinator.firebase_project: this file is created when
-# EITHER reader is on, and an installation that turned the hop on and never
+# ANY reader is on, and an installation that turned the hop on and never
 # asked for a front door has no var.coordinator at all, so the attribute would
-# be an attribute of null. The two variables name the same database in any real
-# installation (the coordinator's Firebase project and the credentials
-# service's are the installation's one Firebase project), and the coordinator's
-# wins when both are set, so an installation that already runs the front door
-# plans the value it always planned.
+# be an attribute of null. The three variables name the same database in any
+# real installation (the coordinator's Firebase project, the credentials
+# service's and the orchestrator's are the installation's one Firebase
+# project), and the coordinator's wins when more than one is set, so an
+# installation that already runs the front door plans the value it always
+# planned.
 #
 # coalesce and not a nested ternary alone, because a coordinator block this
 # module is handed need not name a firebase_project at all (an installation
@@ -59,9 +71,10 @@
 # and a root whose front door is on can carry such a block): a null there is a
 # value and not an error, so a ternary alone would pick it and the role would be
 # created in no project. coalesce skips it for the credentials service's own
-# member, which names the same database. try() over the two is what keeps a
-# hand-written document carrying one block and not the other from failing as
-# "attempt to get attribute from null value" — and the case where neither names
+# member, which names the same database, and for the orchestrator's block, whose
+# firebase_project is the same name again. try() over the three is what keeps a
+# hand-written document carrying one block and not the others from failing as
+# "attempt to get attribute from null value" — and the case where none names
 # a project at all, which coalesce refuses outright because every argument it
 # was given is empty, is the role's own precondition below, whose sentence an
 # operator can act on (voice.tf's service precondition is the same guard for the
@@ -70,6 +83,7 @@ locals {
   state_read_firebase_project = try(coalesce(
     local.mcp_server_on ? var.coordinator.firebase_project : null,
     local.voice_on ? var.credentials_service.firebase_project : null,
+    local.orchestrator_on ? var.orchestrator.firebase_project : null,
   ), "")
 }
 
@@ -82,7 +96,7 @@ locals {
 # firebasedatabase.instances.get on the database's own project, and a widened
 # role is refused by that cover rather than invisible to it.
 resource "google_project_iam_custom_role" "state_read" {
-  count = local.mcp_server_on || local.voice_on ? 1 : 0
+  count = local.mcp_server_on || local.voice_on || local.orchestrator_on ? 1 : 0
 
   project = local.state_read_firebase_project
   role_id = "fugaroStateRead"
@@ -91,14 +105,14 @@ resource "google_project_iam_custom_role" "state_read" {
     "firebasedatabase.instances.get", # read: the orchestrator's state and audit nodes, and nothing this role could change
   ]
 
-  # A reader is on and neither block names the database's project: that is a
+  # A reader is on and none of the blocks names the database's project: that is a
   # plan that cannot apply (a role is created in a project, and "" is none), so
   # it is refused here with the sentence an operator needs rather than as an
   # unusable project further down.
   lifecycle {
     precondition {
       condition     = local.state_read_firebase_project != ""
-      error_message = "the state readers' role is created when the front door or the voice hop is on, and neither block this module reads the database's project from names one: var.coordinator.firebase_project (the front door's, where the coordinator's node lives) and var.credentials_service.firebase_project (the voice hop's) are both unset or empty. Write the block of the reader this installation runs — every 'fugaro update' writes them — and apply again."
+      error_message = "the state readers' role is created when the resident orchestrator, the front door or the voice hop is on, and none of the blocks this module reads the database's project from names one: var.orchestrator.firebase_project (the resident orchestrator's, whose node the tick reads), var.coordinator.firebase_project (the front door's, where the coordinator's node lives) and var.credentials_service.firebase_project (the voice hop's) are all unset or empty. Write the block of the reader this installation runs — every 'fugaro update' writes them — and apply again."
     }
   }
 }
@@ -125,11 +139,13 @@ resource "google_project_iam_member" "state_read" {
 }
 
 # ... and the voice hop's binding of the same role to the hop's own account
-# (voice.tf), which is the second half of the pair the role is made for. It is
-# a binding of its own rather than an entry in the one above because the two
-# arrive on different switches and name different accounts: the front door's is
-# created only with the door, and this one only with the hop, so an
-# installation with one of the two plans one member and not both.
+# (voice.tf), which is the second of the three bindings the role is made for
+# (the resident orchestrator's is orchestrator.tf's). It is a binding of its own
+# rather than an entry in the one above because the readers arrive on different
+# switches and name different accounts: the front door's is created only with
+# the door, this one only with the hop, and the orchestrator's only with the
+# orchestrator, so an installation with one of the three plans one member and
+# not the others.
 #
 # It reaches what the front door's binding reaches and no more (the
 # instance-wide read, which is the whole grant), and voice.tf's header and

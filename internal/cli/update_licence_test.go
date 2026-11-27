@@ -122,7 +122,7 @@ func TestASecondUpdateLeavesTheLicenceJobAlone(t *testing.T) {
 	// stage this test is about, and what it wrote is what is asserted.
 	fakeTerminal(t)
 	out, _, _ := executeStdin(t, "", "update")
-	if !strings.Contains(out, "✔ installation No changes") {
+	if !strings.Contains(out, markDone+" "+initflow.DisplayName(initflow.Installation)+" No changes") {
 		t.Errorf("the second update did not leave the installation root with nothing to change:\n%s", out)
 	}
 	if second := licenceBlock(t, r); second != first {

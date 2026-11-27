@@ -53,7 +53,7 @@ import {
 } from '../../src/shared/new-ops'
 import type { NewOperationName } from '../../src/shared/new-ops'
 import { newOpsFrom } from '../../src/renderer/new-bridge'
-import { NEW_OP_ANSWERS, newOpAnswersBridge } from '../support/newOpAnswers'
+import { NEW_OP_ANSWERS, SETUP_HEARTBEAT_LINE, newOpAnswersBridge } from '../support/newOpAnswers'
 
 /** THE_NINE is the plan's own list, in its own order: the names this contract
  * exists for, spelled as the CLI's operations are. */
@@ -193,6 +193,38 @@ describe('the fixtures answer every operation with a value that decodes', () => 
     document.lines = [...document.lines, { type: 'progress' }]
     const last = document.lines.length - 1
     expect(refusalOf('setup.plan', plan)).toBe(`lines[${String(last)}].type: unknown-value`)
+  })
+
+  it('accepts a heartbeat event and ignores it', () => {
+    // D3453: the feed carries a `heartbeat` line a minute for a step still
+    // running, and the console accepts it and draws nothing -- it is liveness
+    // and not a stage of the run. The unknown kind above is still refused, so
+    // this is the kind the reader knows and drops rather than a door left open.
+    const plan = clone(NEW_OP_ANSWERS['setup.plan']) as Record<string, unknown>
+    const document = plan['document'] as { lines: readonly unknown[] }
+    const lines = [...document.lines]
+    // One bare and one with a member the reader does not know, on either side
+    // of the first stage: CO2c is where the line's own members are fixed, and
+    // the reader reads none of them, so both ride along unchanged.
+    document.lines = [
+      lines[0]!,
+      SETUP_HEARTBEAT_LINE,
+      { ...SETUP_HEARTBEAT_LINE, elapsed_s: 61 },
+      ...lines.slice(1),
+    ]
+    const decoded = decodeNewOperationAnswer('setup.plan', plan)
+    expect(decoded.ok, refusalOf('setup.plan', plan)).toBe(true)
+    if (decoded.ok) {
+      const feed = decoded.value as {
+        done: boolean
+        failure: unknown
+        events: readonly { readonly type: string }[]
+      }
+      expect(feed.done).toBe(true)
+      expect(feed.failure).toBeNull()
+      expect(feed.events.length).toBe(lines.length)
+      expect(feed.events.some((event) => event.type === 'heartbeat')).toBe(false)
+    }
   })
 })
 

@@ -1005,12 +1005,17 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	// every launch of this installation mints and is judged by the seal's gate
 	// (AB4, F7).
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseL8)
+	// The memory the caps are judged against is the profile's — a repository's
+	// workflows.*.resources is read and ignored (D3421) — so the layer carries
+	// both sizes this test needs and the file starts from one of them.
+	publishedLayer(t, f, layerWithProfiles(t,
+		"  sized:\n    commands: { build: sh build.sh, test: sh test.sh }\n    resources: { memory: 2Gi }\n"+
+			"  roomy:\n    commands: { build: sh build.sh, test: sh test.sh }\n    resources: { memory: 8Gi }\n"))
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\n" +
-		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n" +
-		"    resources: { memory: 2Gi }\n"
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: develop }\n" +
+		"workflows:\n  svc:\n    profile: sized\n    commands: { build: sh build.sh, test: sh test.sh, render: sh render.sh }\n"
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	t.Chdir(dir)
 	repoRecipeCopy(t, f, "acme/other", "sizzle", projectSizzle)
@@ -1031,7 +1036,7 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	}
 	// A workflow whose memory holds the set launches (the same checkout, one
 	// key changed): the refusal is the arithmetic, not artifact recipes.
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": strings.Replace(yaml, "memory: 2Gi", "memory: 8Gi", 1)})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": strings.Replace(yaml, "profile: sized", "profile: roomy", 1)})
 	if _, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel"); err != nil {
 		t.Fatalf("a workflow with room for the set: %v", err)
 	}

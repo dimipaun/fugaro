@@ -137,7 +137,9 @@ func leftFor(got, stage string, kind initflow.LeftKind) string {
 // stepLineInLog is a step's own line as the log holds it, whole: the terminal
 // gets the brief account (report.Brief), one clause of a reason, and the log
 // the step points at holds the rest — so a test asserting what a refusal says
-// reads it there, on the same step's line.
+// reads it there, on the same step's line. The head names the stage by its ID
+// here: the log line carries the ID while the account's own carries the stage's
+// plain-words name (D3435), which is reachedLeftStep's other half.
 func stepLineInLog(t *testing.T, got, head string) string {
 	t.Helper()
 	log := namedLog(t, got)
@@ -148,6 +150,19 @@ func stepLineInLog(t *testing.T, got, head string) string {
 	}
 	t.Fatalf("the log holds no line starting %q, so the step's whole sentence is out of reach:\n%s", head, log)
 	return ""
+}
+
+// reachedLeftStep is the whole line of a step the gate left for the owner. The
+// account names the stage in plain words and the log the line is read from
+// carries its ID, so the two are spelled apart here (D3435) — and a run whose
+// account does not hold the line is failed on, because that is what says the
+// run reached the stage at all.
+func reachedLeftStep(t *testing.T, got, stage string) string {
+	t.Helper()
+	if !strings.Contains(got, markLeft+" "+initflow.DisplayName(stage)+":") {
+		t.Fatalf("the run did not reach the %s stage, so nothing here was judged:\n%s", stage, got)
+	}
+	return stepLineInLog(t, got, markLeft+" "+stage+":")
 }
 
 // T9's red step (D1545), and the one that says what this gate is now: a
@@ -1471,10 +1486,10 @@ func TestUpdateManagedDefaultViewShowsTheStepsOnly(t *testing.T) {
 	// The other half of the promise: the steps and the closing line are what is
 	// left on the screen.
 	lines := reportLines(out)
-	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" installation ") {
+	if l := stepLineOf(lines, initflow.Installation); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Installation)+" ") {
 		t.Errorf("the applied step is not on the screen: %q\n%s", l, got)
 	}
-	if l := stepLineOf(lines, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+	if l := stepLineOf(lines, initflow.Preflight); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Preflight)) {
 		t.Errorf("the run's first step is not on the screen: %q\n%s", l, got)
 	}
 	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Done in ") && !strings.HasPrefix(last, "Failed in ") {
@@ -2160,11 +2175,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	// The step's own line is what is read here and not the whole account: this
 	// run also notes that the shared config was not published, which is another
 	// step's refusal in the session's words and has nothing to do with the node.
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Policy)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2230,11 +2241,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session set the accounts the review credential goes out on:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Policy)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2292,11 +2299,7 @@ func TestUpdateManagedPolicyStageRefusesTheCraftGrants(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session published the crafts' credentials and pools:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Policy)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2341,8 +2344,7 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the first policy node:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
+	if !strings.Contains(got, markLeft+" "+initflow.DisplayName(initflow.Policy)+":") {
 		t.Fatalf("the run did not stop at the policy stage, so nothing here was judged:\n%s", got)
 	}
 	if v := db.Value(projectpolicy.PathShared()); v != nil {
@@ -2675,11 +2677,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session admitted a member to the workspace:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Workspace + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Workspace)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the workspace step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2734,11 +2732,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the workspace's first record:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Workspace + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Workspace)
 	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the first record: %s", line)
 	}

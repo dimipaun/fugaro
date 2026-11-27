@@ -1110,11 +1110,11 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) error {
 		// image_map" means in a file that held one: the map is stated once, under
 		// the member every reader of this release reads first (R2, S3).
 		//
-		// The node keeps its own legacy member until U1b publishes repo_images
-		// (D3376 as amended, R14), so the map this write states reaches a job
-		// through this machine's file and the readers that take repo_images first
-		// (configImageMap) — another machine, and the credentials service, still
-		// read the node's map until that step lands.
+		// The publish this command runs carries repo_images (U1b, R14), so the
+		// mapping reaches the node every teammate and the credentials service
+		// read. The node's own legacy member is kept there until the step after
+		// the credentials service takes it away (D3376), and the two name the
+		// same repository: the key carries the provider the file now does.
 		next.ImageMap = nil
 		// The bytes the first write left, re-read rather than re-marshalled:
 		// userSave's old is the file the write replaces, and a marshal of the

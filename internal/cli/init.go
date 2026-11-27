@@ -1402,6 +1402,17 @@ func runInit(r *initRun) error {
 		return err
 	}
 	if o.printVars {
+		// The run's own lines go through the reporter like every other shape's
+		// (D3438), so what it says beside the document is in its log too. It is
+		// the log alone that is asked for here and not the reporter's stream: a
+		// warning is a warning whether or not --verbose was passed, and stdout
+		// is the document — loggedOut is the writer these lines went to before
+		// there was a reporter, with the run's log beside it.
+		_, sink := convergeReporter(cmd, o.doorName(), nil)
+		if sink != nil {
+			defer func() { _ = sink.Close() }()
+		}
+		said := loggedOut(cmd.ErrOrStderr(), sink)
 		data, err := infra.InstallationVars(spec)
 		if err != nil {
 			return err
@@ -1457,20 +1468,20 @@ func runInit(r *initRun) error {
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
 		// the tfvars alone.
-		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedInstallation)
+		fmt.Fprintln(said, "warning: "+printVarsUngatedInstallation)
 		if spec.Budget == nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsNoBudget)
+			fmt.Fprintln(said, "warning: "+printVarsNoBudget)
 		}
 		if o.firebase != "" {
 			if data, err = r.firebaseVars(data, spec, lc); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedFirebase)
+			fmt.Fprintln(said, "warning: "+printVarsUngatedFirebase)
 			// The database's row of the mapping, and the one thing this
 			// document cannot answer: an instance that is already there keeps
 			// the location it was created in (LP2, D3091). Discovery, which
 			// would find it, is exactly what --print-vars does not run.
-			fmt.Fprintln(cmd.ErrOrStderr(), "note: "+databaseRegionNote(spec.Region))
+			fmt.Fprintln(said, "note: "+databaseRegionNote(spec.Region))
 		}
 		_, err = cmd.OutOrStdout().Write(data)
 		return err
@@ -1481,6 +1492,16 @@ func runInit(r *initRun) error {
 	// (update_repos.go), and the result reads them where it is printed
 	// (collectNotices): this is where the run is handed the way to.
 	r.repoNotices = e.notices
+	// This run's account and log are one reporter's (CL5b), and every shape
+	// that reaches a stage has it (D3438): the converge prints the steps the
+	// loop hands it, and --forget and --config-only plan and apply the
+	// installation root themselves, so their Terraform progress needs the log
+	// for the same reason — there is nowhere else it may go. The log is closed
+	// here, on the run's way out, so its last partial line is written.
+	r.rep, r.repLog = convergeReporter(cmd, o.doorName(), e.redaction())
+	if r.repLog != nil {
+		defer func() { _ = r.repLog.Close() }()
+	}
 	if !o.forget && !o.configOnly {
 		// The default and --firebase-project modes: the converge loop over the
 		// engines (init_stages.go), whose own outcome records the creation
@@ -1488,15 +1509,6 @@ func runInit(r *initRun) error {
 		// outcome), whatever the loop's outcome — which the run still
 		// returns.
 		//
-		// This run's account and log are the converge's (CL5b): the reporter
-		// prints the steps the loop hands it, and every stage's Terraform
-		// progress goes to its Stream — the log always, the terminal under
-		// --verbose. The log is closed here, on the run's way out, so its last
-		// partial line is written.
-		r.rep, r.repLog = convergeReporter(cmd, o.doorName(), e.redaction())
-		if r.repLog != nil {
-			defer func() { _ = r.repLog.Close() }()
-		}
 		// The run's stderr is the reporter's too, from here on: a stage that
 		// selects the project config for its own checkout prints the header and
 		// the selection's notes while a step is in flight, and a frame and a
@@ -1944,32 +1956,21 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 	return wd, t, nil
 }
 
-// progress is where a stage's own output goes: Terraform's progress, and the
-// children that print like it. Under the converge it is the reporter's stream —
-// the log always, the terminal under --verbose — so the default view stays one
-// line per stage and the full output is kept (D1352). A run with no reporter
-// (--forget, --config-only, --print-vars) writes to stderr, which is what every
-// run did before CL5b — and so does a converge whose log could not be opened at
-// all (a state directory that is a link, foreign-owned or read-only, G5): the
-// stream goes nowhere else, and the output that explains a failure is the last
-// thing a run may swallow (G8).
-//
-// --plan-only keeps stderr besides the log, which is the path it took before the
-// converge had a reporter: the plan the run prints IS what the command is for,
-// and a plan-only run that succeeds names no log path the way a failure does, so
-// the stream alone would put the one thing somebody asked for out of reach
-// (CL5b: --plan-only takes the path it takes today). The log is written all the
-// same, so a plan-only run that fails still points at a log that holds what it
-// printed.
+// progress is where a stage's own raw output goes: Terraform's progress, and
+// the children that print like it. It is the run's log and nothing else
+// (D3438): the screen carries one line per step and the plan in plain words,
+// and a raw stream on it is what the owner ruled out in every state it used to
+// reach one — under --verbose, under --plan-only, for a run with no reporter
+// and for one whose log could not be opened. A run with no log has nowhere to
+// keep it, so it is dropped: what explains a failure on the screen is the
+// failure block, which names the log when there is one (G5, G8). --plan-only
+// prints the plan in plain words and the path of the log the rest of it is in,
+// which is what replaced the stream it used to take.
 func (r *initRun) progress() io.Writer {
-	verbose := boolFlag(r.cmd, verboseFlag)
-	if r.rep != nil && (r.repLog != nil || verbose) {
-		if r.o.planOnly && !verbose {
-			return io.MultiWriter(r.cmd.ErrOrStderr(), r.rep.Stream())
-		}
-		return r.rep.Stream()
+	if r.rep == nil {
+		return io.Discard
 	}
-	return r.cmd.ErrOrStderr()
+	return r.rep.Log()
 }
 
 // stageDetail is where a refresh stage's own lines go: the lines reporting what
@@ -2030,8 +2031,7 @@ func (r *initRun) accountWriter() io.Writer {
 // whole of it for the run's own record: the counts and the changes they must
 // look at first, in Fugaro's words, on the terminal (tf.Brief), and Terraform's
 // own account of every change — its addresses and the attribute paths an
-// update moves — in the log and on the terminal under --verbose, which is the
-// reporter's Stream exactly (D1352).
+// update moves — in the log alone (D3438).
 //
 // So no `module.` address, no attribute path and no resource type reaches the
 // terminal from a plan, in any state and refused or not: what a person reads
@@ -2039,16 +2039,15 @@ func (r *initRun) accountWriter() io.Writer {
 // the address they may need — --allow-delete takes one — is in the log beside
 // what refused it (the owner's feedback of 2026-11-09).
 //
-// A run with no log is a run with nowhere to keep Terraform's own account: it
-// could not open one (CL3's OpenLog: a state directory that is a link,
-// foreign-owned or read-only, G5), or it never had a reporter at all (an engine
-// a test drove by hand). There the whole plan goes to the terminal exactly as
-// it always did: it is the person's own plan, --allow-delete and
-// --allow-job-delete take the addresses it names, and a screen with nowhere
-// else to send them must not swallow them.
+// A run with no log has nowhere to keep Terraform's own account: it could not
+// open one (CL3's OpenLog: a state directory that is a link, foreign-owned or
+// read-only, G5), or it never had a reporter at all (an engine a test drove by
+// hand). There only the brief plan prints — the counts and the changes to look
+// at first, which is what the person is confirming (D3438) — and the addresses
+// go with the stream, which no state puts on a screen any more.
 func (r *initRun) planBlock(plan *tf.Plan) {
 	if r.rep == nil || r.repLog == nil {
-		fmt.Fprint(r.w, tf.Summary(plan))
+		fmt.Fprint(r.w, tf.Brief(plan))
 		return
 	}
 	if r.repoDoor {
@@ -2061,11 +2060,25 @@ func (r *initRun) planBlock(plan *tf.Plan) {
 		// (guard), and a plan that is not refused is confirmed by the counts
 		// this line carries.
 		r.rep.Step("repository " + r.res.Repo).DoneWhole(tf.Counts(plan) + " (log: " + r.repLog.Path() + ")")
-		fmt.Fprint(r.rep.Stream(), tf.Brief(plan)+tf.Summary(plan))
+		fmt.Fprint(r.rep.Log(), tf.Brief(plan)+tf.Summary(plan))
 		return
 	}
 	fmt.Fprint(r.w, tf.Brief(plan))
-	fmt.Fprint(r.rep.Stream(), tf.Summary(plan))
+	fmt.Fprint(r.rep.Log(), tf.Summary(plan))
+}
+
+// planOnlyLine is the line a --plan-only run stops on: that it applied
+// nothing, where the plan Terraform saved is, and — when the run kept one —
+// the path of its log. The log is named because the plan's own account, every
+// `module.` address and attribute path, is in it and on no screen any more
+// (D3438): the person who wants to read the plan whole is sent to the file
+// that holds it, and --allow-delete takes the address it names from there.
+func (r *initRun) planOnlyLine(plan string) string {
+	line := "--plan-only: nothing applied; the plan is " + plan
+	if r.repLog != nil {
+		line += "; the log is " + r.repLog.Path()
+	}
+	return line
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
@@ -4023,7 +4036,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 			r.res.Changes = &counts
 			if r.o.planOnly {
-				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				fmt.Fprintln(r.w, r.planOnlyLine(filepath.Join(wd.Root, infra.PlanFile)))
 				stop = true
 				return plan, nil
 			}
@@ -6781,7 +6794,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			}
 			r.res.Changes = &counts
 			if r.o.planOnly {
-				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				fmt.Fprintln(r.w, r.planOnlyLine(filepath.Join(wd.Root, infra.PlanFile)))
 				stop = true
 				return plan, nil
 			}

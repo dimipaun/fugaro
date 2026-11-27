@@ -161,12 +161,13 @@ func clampWarning(ig policy.Ignored) config.Problem {
 
 // resolutionNotes are the notes the resolution itself carries (S2, spec §4):
 // every lifted key the file writes, with C1's sentence naming its new home and
-// its fix, then every tighten-only value RT1's merge dropped, with the
-// project's value that stands in its place. Both are the file's own lines that
-// a run no longer honours, and neither is a refusal — release A reads a lifted
-// key and does not honour it, and a value that does not tighten is one the
-// merge is right to drop — so validate and doctor print them as notes and
-// never as problems.
+// its fix, then every ignored key, with the sentence naming what decides its
+// value instead (D3421), then every tighten-only value RT1's merge dropped,
+// with the project's value that stands in its place. All three are the file's
+// own lines that a run no longer honours, and none is a refusal — release A
+// reads a lifted key and does not honour it, an ignored key is read and decides
+// nothing, and a value that does not tighten is one the merge is right to drop
+// — so validate and doctor print them as notes and never as problems.
 //
 // A nil resolution (a file that did not resolve) answers none: the file's own
 // problem is what the reader fixes first, and the notes are about keys a drop
@@ -181,6 +182,10 @@ func resolutionNotes(res *config.Resolution) []config.Problem {
 		// alone and takes no Path of its own: the line reads "note: <the key>
 		// is the project's choice…", not the key twice (LiftedKey.Why).
 		notes = append(notes, config.Problem{Message: n.Why})
+	}
+	for _, ig := range res.IgnoredKeys {
+		// The same shape as C1's, for the same reason (IgnoredKeyNote.Why).
+		notes = append(notes, config.Problem{Message: ig.Why})
 	}
 	for _, ig := range res.Ignored {
 		// The path is the key in the file the reader edits, which is why this
