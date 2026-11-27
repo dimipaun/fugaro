@@ -7888,6 +7888,7 @@
         "internal/budget/rules/harness_test.go",
         "internal/budget/rules/rules.go",
         "internal/budget/rules/rules.json.tmpl",
+        "internal/budget/rules/testdata/rules.generation11.json",
         "internal/budget/rules/testdata/rules.generation6.json",
         "internal/budget/rules/testdata/rules.golden.json",
         "internal/budget/sweep.go",
