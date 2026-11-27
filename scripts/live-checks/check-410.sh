@@ -317,9 +317,9 @@ step_project() {
 # about — the run has opened its log by then, and the log is what the diagnosis
 # reads.
 step_update() {
-  say "the probe: fugaro update --name $NAME --gcp-project $P --region $REGION --yes, in a scratch home"
+  say "the probe: fugaro update --name $NAME --gcp-project $P --region $REGION, in a scratch home"
   run_bounded "$UPDATE_TIMEOUT" probe probe_env "$FUGARO_BIN" update \
-    --name "$NAME" --gcp-project "$P" --region "$REGION" --yes
+    --name "$NAME" --gcp-project "$P" --region "$REGION"
   UPDATE_STATUS=$BOUNDED_STATUS
   UPDATE_TIMED_OUT=$BOUNDED_TIMED_OUT
   if [ "$UPDATE_TIMED_OUT" = yes ]; then
@@ -481,7 +481,7 @@ step_no_setup() {
 plan() {
   say "CHECK 410 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [network, read] gcloud projects describe ${P} — it must come back NOT FOUND, which is what makes the probe harmless"
-  say "  [network] fugaro update --name ${NAME} --gcp-project ${P} --region ${REGION} --yes — a real failed update against a project that does not exist; it opens its log and fails inside its own converge"
+  say "  [network] fugaro update --name ${NAME} --gcp-project ${P} --region ${REGION} — a real failed update against a project that does not exist; it opens its log and fails inside its own converge"
   say "  [read] the log store under <scratch>/state/fugaro/logs — the run ID of the failed run"
   say "  [read] the failed run's own output — the 'Help: fugaro troubleshoot <id>' line (T-DG9)"
   if [ -n "$SKIP_DIAGNOSIS" ]; then

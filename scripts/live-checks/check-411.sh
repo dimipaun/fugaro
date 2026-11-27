@@ -388,9 +388,9 @@ step_noaccount() {
 # with an update failing against a project that does not exist, and the premise
 # this check is about is the diagnosis's, not the probe's.
 step_update() {
-  say "the probe: fugaro update --name $NAME --gcp-project $P --region $REGION --yes, in a scratch home"
+  say "the probe: fugaro update --name $NAME --gcp-project $P --region $REGION, in a scratch home"
   run_bounded "$UPDATE_TIMEOUT" probe probe_env "$FUGARO_BIN" update \
-    --name "$NAME" --gcp-project "$P" --region "$REGION" --yes
+    --name "$NAME" --gcp-project "$P" --region "$REGION"
   UPDATE_STATUS=$BOUNDED_STATUS
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured update-failed "the probe's fugaro update did not finish within ${UPDATE_TIMEOUT}s and was ended: this check cannot say what a failed update printed. Nothing it reached could create anything (the project does not exist), and its output is in $SCRATCH/probe.err"
@@ -496,7 +496,7 @@ step_diagnosis_outcome() {
 plan() {
   say "CHECK 411 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [network, read] gcloud projects describe ${P} — it must come back NOT FOUND, which is what makes the probe harmless"
-  say "  [network] fugaro update --name ${NAME} --gcp-project ${P} --region ${REGION} --yes — a real failed update against a project that does not exist; the run the diagnosis reads"
+  say "  [network] fugaro update --name ${NAME} --gcp-project ${P} --region ${REGION} — a real failed update against a project that does not exist; the run the diagnosis reads"
   say "  [local] mirror your PATH into one scratch directory with git left out, then ask that PATH for git"
   say "  [network, ONE MODEL CALL on your own credential] fugaro troubleshoot <id> with PATH=<the git-less PATH>, GH_TOKEN/GITHUB_TOKEN/GH_CONFIG_DIR unset, and a scratch source cache — so the tarball of the installed version is fetched now"
   say "  [read] <scratch>/cache/fugaro/source/record.json — kind=tarball, version=$(fugaro version 2>/dev/null | head -n 1 || true), may_not_match=false — and the tree beside it"
