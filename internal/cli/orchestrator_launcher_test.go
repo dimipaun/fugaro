@@ -1303,7 +1303,7 @@ func TestResidentRunIsTheItemsAcceptsTheFieldsTheLaunchItselfResolves(t *testing
 func TestResidentTaskFieldsAreAllClassified(t *testing.T) {
 	compared := []string{"repo", "task", "title", "plan_task", "tier", "external", "recipe"}
 	resolved := []string{"version", "run_id", "ref", "base_branch", "workflow", "requested_by",
-		"mode", "oauth_token", "overrides", "project_layer", "author", "digest_runs"}
+		"mode", "oauth_token", "overrides", "project_layer", "author", "digest_runs", "cli_version"}
 	refused := []string{"branch", "pr", "previous_run", "resumes", "owner_ruled", "context_repos", "review_prs",
 		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "promote", "batch", "review_levels",
 		"expected_scope", "follow_up_of", "model_grade", "review_class", "compression_off", "debt", "security",
