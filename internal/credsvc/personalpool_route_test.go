@@ -146,6 +146,36 @@ func TestAPersonalPoolServesItsOwnersRun(t *testing.T) {
 	}
 }
 
+// TestAPersonalPoolCannotShadowAPublishedName pins the boundary between the two
+// stores: a personal pool whose name the published block ALSO holds is not
+// served. The block's pool of that name is another launcher's, so the lookup
+// refuses it (D3176) — and it must not fall through to the store for it, because
+// the chain re-reads the published block by NAME and would serve that other
+// pool's members instead of the person's own container.
+func TestAPersonalPoolCannotShadowAPublishedName(t *testing.T) {
+	s := newLauncherPools(t, true, lpPools()...)
+	// lpOtherPool is the other person's published pool, and this launcher
+	// declares a pool of their own under the same name.
+	resp, body := personalPost(t, s, PersonalPoolPath,
+		mustBody(t, PersonalPoolRequest{Pool: lpOtherPool, Members: []string{testPoolCredential}}))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the honest declare is %d, want it written: %s", resp.StatusCode, body)
+	}
+	lookup := launcherPools{s: s.server}
+	ref, found, err := lookup.LauncherPool(context.Background(), lpLauncher(), lpOtherPool)
+	if err != nil || found {
+		t.Fatalf("the lookup answered (%+v, %v, %v), want none: the published pool of that name is not this launcher's", ref, found, err)
+	}
+	// And a designation of it is refused for the same reason: the route reads
+	// the block before the store.
+	if resp, body := s.lpDesignate(t, mustBody(t, PoolDesignateRequest{Pool: lpOtherPool})); resp.StatusCode == http.StatusOK {
+		t.Errorf("a designation of another person's pool was written: %s", body)
+	}
+	// The run that names it with --pool falls back rather than being served that
+	// pool's member.
+	wantFallback(t, s.walk(t, callBody("pool-shadow"), lpBinding(lpLauncher(), lpCoverage(), lpOtherPool)))
+}
+
 // TestAPersonalPoolIsKeyedOnTheVerifiedSubject is PL9's service half: the pool a
 // person declares is written under the subject the service verified, its members
 // are the names of containers of their OWN (a name outside the grammar a

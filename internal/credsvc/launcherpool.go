@@ -104,10 +104,19 @@ func (l launcherPools) LauncherPool(ctx context.Context, principal routing.Princ
 		return poolRef(pool, project), true, nil
 	}
 	// PL9: a person's own pool is not a pool this project PUBLISHES, so a name
-	// the node holds none of may still be one this launcher owns. The store is
+	// the node holds NONE of may still be one this launcher owns. The store is
 	// keyed on the subject this service verified, so the read below can reach a
-	// pool of the caller's own alone (R9, R26), and it is made only where the
-	// node holds no pool of that name — a published pool is never shadowed.
+	// pool of the caller's own alone (R9, R26).
+	//
+	// The two reasons poolForLauncher answers false are told apart here, and it
+	// is what keeps a personal pool from shadowing a name the block owns: a pool
+	// the block HOLDS and this launcher is not served by is a refusal (D3176),
+	// and falling through to the store for it would answer a pool the chain then
+	// re-reads out of the published block by NAME — serving that pool's members
+	// and not the person's own (chain.go's planSource).
+	if _, held := namedLauncherPool(poolName, shared); held {
+		return none, false, nil
+	}
 	return personalPoolRef(ctx, l.s, poolName, principal, project)
 }
 
