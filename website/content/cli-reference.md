@@ -6239,13 +6239,13 @@ to review and commit, which is where agent.recipe and a level's effort
 still live. layer.claude_models, the Claude models a project's routes may
 serve, is written as provider=anthropic/<id> at --layer project alone.
 
-A switch is judged the way a launch judges it: the project's routing table
-must route the model to a source the repository may use, a route of the
-project config must claim the model and its allow_data_to must name the
-repository (every repository the project onboards, for a project-layer
-write), the model must be priced, and budget.allowed_models must admit it.
-A failure is a refusal with nothing written, and the message names the
-`fugaro routing set` or `fugaro models add` that would fix a missing entry,
+A switch is judged the way a launch judges it: where the project's routing table
+governs the repository it must route the model to a source the repository may
+use, a route of the project config must claim the model and its allow_data_to
+must name the repository (every repository the project onboards, for a
+project-layer write), the model must be priced, and budget.allowed_models must
+admit it. A failure is a refusal with nothing written, and the message names
+the `fugaro routing set` or `fugaro models add` that would fix a missing entry,
 claim or price.
 
 The command never commits, pushes or opens a pull request — a repository's

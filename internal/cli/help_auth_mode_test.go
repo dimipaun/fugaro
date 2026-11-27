@@ -71,12 +71,17 @@ func TestNoHelpTextNamesARepositoryAuthMode(t *testing.T) {
 				t.Fatalf("no `fugaro %s` in this CLI: %v", tc.path, err)
 			}
 			help := helpTextOf(cmd)
+			// The phrases are read off the text with every run of whitespace
+			// collapsed, so a phrase the help wraps across two lines -- "routing
+			// table" at a line break, say -- is still one phrase here, and the
+			// check does not turn on where the text happens to wrap.
+			flat := strings.Join(strings.Fields(help), " ")
 			for _, phrase := range authModeHelpPhrases {
-				if strings.Contains(help, phrase) {
+				if strings.Contains(flat, phrase) {
 					t.Errorf("`fugaro %s`'s help still names a repository's auth mode (%q): it says where a model's calls go out -- the chain of the project's routing table -- or it says nothing:\n%s", tc.path, phrase, help)
 				}
 			}
-			if !strings.Contains(help, tc.names) {
+			if !strings.Contains(flat, tc.names) {
 				t.Errorf("`fugaro %s`'s help names no source a model goes out on (no %q):\n%s", tc.path, tc.names, help)
 			}
 		})
