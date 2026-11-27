@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -420,7 +421,7 @@ func TestComputeStageRerunRecordsNothing(t *testing.T) {
 	// stage's longer sentence is the run's account and lands in the log
 	// whenever the run keeps one (init_compute_test.go's no-changes case reads
 	// it there), while the step's line is on the screen on both paths.
-	if !strings.Contains(out, markDone+" compute No changes") {
+	if !strings.Contains(out, markDone+" "+initflow.DisplayName(initflow.Compute)+" No changes") {
 		t.Errorf("the second run did not report the compute stage's no-changes path:\n%s", out)
 	}
 	if after := readFileString(t, r.cfg); after != before {

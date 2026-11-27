@@ -88,7 +88,11 @@ func waitsFor(got, target string) bool {
 		strings.Contains(got, "step not run (it needs "+target+")")
 }
 
-// stepName is the stage a step line names, or "" for a line that is not one.
+// stepName is the ID of the stage a step line names, or "" for a line that is
+// not a step: a stage's own line carries the stage's plain-words name
+// (initflow.DisplayName, D3435) and is named back to its ID here, while a line
+// of another family — a step of `accounts add`, an image refresh's build —
+// carries the one word it was given.
 func stepName(line string) string {
 	for _, m := range []string{markDone, markFailed, markLeft, markSkipped} {
 		rest, ok := strings.CutPrefix(line, m+" ")
@@ -97,6 +101,9 @@ func stepName(line string) string {
 		}
 		if waitsRE.MatchString(rest) {
 			return ""
+		}
+		if name, ok := stageNameOf(rest); ok {
+			return name
 		}
 		name, _, _ := strings.Cut(rest, ":")
 		if i := strings.IndexByte(name, ' '); i >= 0 {
@@ -107,11 +114,34 @@ func stepName(line string) string {
 	return ""
 }
 
-// stepLineOf is the one line of account that is the named stage's step.
+// stageNameOf is the stage a step line opens with the name of, when it opens
+// with one's plain-words name: the line is the plain name and then a detail, a
+// colon or nothing.
+func stageNameOf(rest string) (string, bool) {
+	for _, name := range initflow.Names() {
+		shown := initflow.DisplayName(name)
+		r, ok := strings.CutPrefix(rest, shown)
+		if ok && (r == "" || strings.HasPrefix(r, " ") || strings.HasPrefix(r, ":")) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// stepLineOf is the one line of account that is the named stage's step. The
+// stage is named by its ID here, and its line carries the plain-words name.
 func stepLineOf(account []string, name string) string {
+	shown := initflow.DisplayName(name)
 	for _, l := range account {
-		if stepName(l) == name {
-			return l
+		for _, m := range []string{markDone, markFailed, markLeft, markSkipped} {
+			rest, ok := strings.CutPrefix(l, m+" ")
+			if !ok {
+				continue
+			}
+			r, ok := strings.CutPrefix(rest, shown)
+			if ok && (r == "" || strings.HasPrefix(r, " ") || strings.HasPrefix(r, ":")) {
+				return l
+			}
 		}
 	}
 	return ""
@@ -252,12 +282,12 @@ func TestUpdateDefaultOutputIsShort(t *testing.T) {
 		}
 		seen[name] = true
 	}
-	if !seen["installation"] || !seen["preflight"] {
+	if !seen[initflow.Installation] || !seen[initflow.Preflight] {
 		t.Errorf("the account does not name the stages the run ran: %v\n%s", seen, out)
 	}
 	// The rig has something to apply, so the installation's step is a tick
 	// carrying what it did, not a skip or a plan.
-	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" installation ") || !strings.Contains(l, "creates") {
+	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Installation)+" ") || !strings.Contains(l, "creates") {
 		t.Errorf("the stage that applied does not say so: %q\n%s", l, out)
 	}
 	path, log := onlyLog(t, "update")
@@ -412,7 +442,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 	all := out + errOut
 	path, log := onlyLog(t, "update")
 	for _, want := range []string{
-		markFailed + " installation",
+		markFailed + " " + initflow.DisplayName(initflow.Installation),
 		"Error: quota exceeded",
 		"with google_project_service.quota",
 		"Log:  " + path,
@@ -447,7 +477,7 @@ func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 	if !strings.Contains(all, convergeNoise) {
 		t.Errorf("the run opened no log and dropped its own output with it:\n%s", all)
 	}
-	if !strings.Contains(all, markDone+" installation") {
+	if !strings.Contains(all, markDone+" "+initflow.DisplayName(initflow.Installation)) {
 		t.Errorf("the run with no log lost its account too:\n%s", all)
 	}
 	if strings.Contains(all, "Log:  ") {
@@ -645,7 +675,7 @@ func TestUpdateJSONUnchanged(t *testing.T) {
 	if len(res.Stages) == 0 || res.state("installation") == "" {
 		t.Errorf("the document does not carry the run's stages: %+v", res.Stages)
 	}
-	if !strings.Contains(errOut, markDone+" installation") {
+	if !strings.Contains(errOut, markDone+" "+initflow.DisplayName(initflow.Installation)) {
 		t.Errorf("the account is not on stderr under --json:\n%s", errOut)
 	}
 	if log := newestLog(t, "update"); !strings.Contains(log, convergeNoise) {

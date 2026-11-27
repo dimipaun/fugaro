@@ -2167,7 +2167,7 @@ func TestUpdateConvergesACachePriceWrittenTheOldWay(t *testing.T) {
 	// (the assertion stops where the screen cuts a long step line — the whole
 	// of it is in the run's log, and what is asserted past that point is the
 	// file itself).
-	if want := "✔ model-prices renamed model_prices.deepseek/deepseek-v4.1-flash.cache_read ->"; !strings.Contains(out, want) {
+	if want := markDone + " " + initflow.DisplayName(initflow.ModelPrices) + " renamed model_prices.deepseek/deepseek-v4.1-flash.cache_read ->"; !strings.Contains(out, want) {
 		t.Errorf("the run did not print %q:\n%s", want, out)
 	}
 	// And the warning names both prices: the rename is not silent, and the
