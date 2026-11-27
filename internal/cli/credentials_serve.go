@@ -997,6 +997,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// admitted by, read over the same client and the same service identity
 		// as the record above.
 		ProjectSecrets: credsvc.RTDBProjectSecrets{DB: db},
+		// The code host a repository's own fugaro.yaml is read through (UO7,
+		// D3459): the workflow-secrets route and a repository build's secret
+		// read resolve the names they serve out of that file at the repository's
+		// default branch, with the credentials this service's bundle already
+		// holds. It is wired with the loader and the routes' own client, so a
+		// read reaches the host as the service's own identity and the App ID a
+		// call carries.
+		RepoFiles: credsvc.NewRepoFiles(loader, nil),
 		// Every audited act goes to the process's log, which is the stream
 		// Cloud Logging reads; the one auditor that redacts is built inside
 		// NewServer (NewProbeAuditor arms it with this service's loader).

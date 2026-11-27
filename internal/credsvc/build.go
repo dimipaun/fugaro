@@ -323,25 +323,51 @@ func (s *Server) buildCredentials(ctx context.Context, w http.ResponseWriter, r 
 	s.answerBuildCredentials(ctx, w, row, purpose, credential, BuildCredentialsResponse{Git: git, Secrets: secrets})
 }
 
-// buildSecretValues reads the workflow secrets the call asked for, out of
-// B3.1's record for the CALLER'S OWN repository through B3.2's reader
-// (D2077 (a)).
+// buildSecretContainers resolves every variable the call names to the container
+// its value is read from: the names the CALLER'S OWN repository's fugaro.yaml
+// declares at its default branch (UO7, D3459), or, when the code host could not
+// be reached, the record `fugaro update` wrote for the same repository.
 //
-// It answers ok=false when it has already refused the call, which is every
-// branch below: an absent reader, an absent record, a record this release does
-// not know the version of, a workflow the record does not hold, a variable the
-// workflow is not recorded under, an entry that is not a container ID, and a
-// container that could not be read or is not there. Each of them is a typed
-// refusal and none is a fallback: a service that answered a value the record
-// does not name would be serving a credential this repository's own record
-// never put here.
+// The file is the authority for which names exist, exactly as it is on the
+// workflow-secrets route: a name it declares is built into the project
+// container the grammar spells, and the value read below is fenced by
+// projectSecretReadable (grammarName sees a `fugaro_p_` container and the fence
+// applies). A host that ANSWERED — a file this release cannot read, a file that
+// does not declare the workflow — is a refusal and never the record: a record
+// read beside a file that changed would serve a name the repository's own file
+// no longer writes.
 //
-// The list is read in the ORDER the call asked for it, so a client can map the
-// answer onto its own request without a second lookup, and a call that asked for
-// nothing is answered an empty list without the record being read at all.
-func (s *Server) buildSecretValues(ctx context.Context, w http.ResponseWriter, row RepoBuildAccount, purpose, credential string, req BuildCredentialsRequest, b *Bundle) ([]BuildSecretValue, bool) {
-	if len(req.Secrets) == 0 {
-		return nil, true
+// The record path is what this route did before a file was read, kept whole for
+// the two states that reach it — the door D2313 keeps being open (G9) and a
+// code host that could not be reached — and it goes when the record does
+// (UO7b).
+func (s *Server) buildSecretContainers(ctx context.Context, w http.ResponseWriter, row RepoBuildAccount, purpose, credential string, req BuildCredentialsRequest) (map[string]string, bool) {
+	if config.RepoSecretsOff && s.cfg.RepoFiles != nil {
+		secrets, declared, err := s.repoWorkflowSecrets(ctx, row.Repo, req.Workflow, req.AppID)
+		switch {
+		case errors.Is(err, ErrRepoFileUnreachable):
+			s.logRepoFileFallback(row.Slug, err)
+		case err != nil:
+			s.refuseBuildCredentials(ctx, w, row, purpose, credential, StatusUnavailable, ErrorStateUnavailable, buildCredentialsUnreadable)
+			return nil, false
+		case !declared:
+			s.refuseBuildCredentials(ctx, w, row, purpose, credential, StatusUnavailable, ErrorStateUnavailable, buildCredentialsOtherWorkflow)
+			return nil, false
+		default:
+			byEnv := make(map[string]string, len(secrets))
+			for _, sec := range secrets {
+				container, err := secretname.Project(sec.Name)
+				if err != nil {
+					// A file whose own entry names no container this service
+					// builds is a file this release cannot read, and it is the
+					// same refusal the parse's own failure gets.
+					s.refuseBuildCredentials(ctx, w, row, purpose, credential, StatusUnavailable, ErrorStateUnavailable, buildCredentialsUnreadable)
+					return nil, false
+				}
+				byEnv[sec.Env] = container
+			}
+			return byEnv, true
+		}
 	}
 	if s.cfg.WorkflowSecrets == nil {
 		s.refuseBuildCredentials(ctx, w, row, purpose, credential, StatusUnavailable, ErrorStateUnavailable, buildCredentialsNoReader)
@@ -367,11 +393,37 @@ func (s *Server) buildSecretValues(ctx context.Context, w http.ResponseWriter, r
 	for _, r := range rows {
 		byEnv[r.Env] = r.ID
 	}
+	return byEnv, true
+}
+
+// buildSecretValues reads the workflow secrets the call asked for, out of the
+// CALLER'S OWN repository's fugaro.yaml at its default branch (UO7, D3459), or
+// out of B3.1's record for it when the code host could not be reached
+// (D2077 (a)).
+//
+// It answers ok=false when it has already refused the call, which is every
+// branch below: no name the workflow's own file (or record) holds the variable
+// under, an entry that is not a container ID, and a container that could not be
+// read or is not there. Each of them is a typed refusal and none is a fallback:
+// a service that answered a value the repository's own file does not name would
+// be serving a credential this repository never put here.
+//
+// The list is read in the ORDER the call asked for it, so a client can map the
+// answer onto its own request without a second lookup, and a call that asked for
+// nothing is answered an empty list without anything being read at all.
+func (s *Server) buildSecretValues(ctx context.Context, w http.ResponseWriter, row RepoBuildAccount, purpose, credential string, req BuildCredentialsRequest, b *Bundle) ([]BuildSecretValue, bool) {
+	if len(req.Secrets) == 0 {
+		return nil, true
+	}
+	byEnv, ok := s.buildSecretContainers(ctx, w, row, purpose, credential, req)
+	if !ok {
+		return nil, false
+	}
 	// Every container is resolved BEFORE any is read, so a call that names one
-	// variable the workflow is not recorded under is refused whole rather than
-	// half answered: the answer is one act and an operator's line for it is one
-	// line, and a partial answer would be a credential handed over for a call
-	// this service refused.
+	// variable the workflow's file (or record) does not hold is refused whole
+	// rather than half answered: the answer is one act and an operator's line
+	// for it is one line, and a partial answer would be a credential handed over
+	// for a call this service refused.
 	containers := make([]string, 0, len(req.Secrets))
 	for _, env := range req.Secrets {
 		container, ok := byEnv[env]

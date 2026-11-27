@@ -45,6 +45,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -1067,5 +1068,48 @@ func TestFallsBackToV1WhenNotInRecord(t *testing.T) {
 	}
 	if want := `{"env":"` + secretEnvVar + `"}`; calls[1].body != want {
 		t.Errorf("the fallback call carried %q, want the version-1 body %q", calls[1].body, want)
+	}
+}
+
+// TestFetchWorkflowSecretsCarriesTheAppID: every call the runner makes carries
+// the GitHub App ID the service reads the repository's own fugaro.yaml as (UO7,
+// D3459), on BOTH versions -- the version-2 question and the version-1 fallback
+// it may be followed by. The service holds no App ID of its own (Global
+// Constraint 12), so a call that does not carry one cannot be served out of the
+// file, and the field is what the runner half of that contract is.
+//
+// Hand mutation this fails on: dropping AppID from either request literal, which
+// leaves the service unable to read the file for the run's repository.
+func TestFetchWorkflowSecretsCarriesTheAppID(t *testing.T) {
+	const appID = "1234567"
+	// The name is not in the record and the variable is: the version-2 call is
+	// refused and the same secret is asked again as version 1, so both bodies
+	// are on the wire.
+	svc := &secretsService{envs: map[string]string{secretEnvVar: fetchedSecretValue}}
+	b := secretsRun(t, "  first_line_review: off\n", nil, svc)
+	b.deps.Env = append(b.deps.Env, providers.EnvGitHubAppID+"="+appID)
+
+	var seen string
+	rec, err := b.run(t,
+		func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			seen = envValue(req.Env, secretEnvVar)
+			return implement("feature")(t, ctx, req)
+		},
+		review("ship", 0))
+	mustReady(t, rec, err)
+	if seen != fetchedSecretValue {
+		t.Errorf("the agent's environment carries %s=%q, want the value the service answered", secretEnvVar, seen)
+	}
+	calls := svc.callsOf()
+	if len(calls) != 2 {
+		t.Fatalf("%d calls, want two: version 2, then the same secret's variable", len(calls))
+	}
+	for i, want := range []string{
+		`{"name":"` + secretName + `","version":2,"app_id":"` + appID + `"}`,
+		`{"env":"` + secretEnvVar + `","app_id":"` + appID + `"}`,
+	} {
+		if calls[i].body != want {
+			t.Errorf("call %d carried %q, want %q", i, calls[i].body, want)
+		}
 	}
 }

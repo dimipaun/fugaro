@@ -11581,6 +11581,7 @@
         "internal/credsvc/github.go",
         "internal/credsvc/githubread.go",
         "internal/credsvc/scope_workspace.go",
+        "internal/credsvc/workflowsecrets.go",
         "internal/diagnoseagent/**",
         "internal/digest/**",
         "internal/escalation/**",
