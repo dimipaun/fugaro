@@ -676,6 +676,18 @@ type Config struct {
 	// allowed" (fail closed, G19). *RTDBProjectSecrets is the implementation a
 	// deployment wires (internal/cli/credentials_serve.go).
 	ProjectSecrets ProjectSecretRecords
+	// RepoFiles reads a repository's own fugaro.yaml at its default branch
+	// through the code host, which is where a workflow's `secrets:` are
+	// declared (UO7, D3459): the workflow-secrets route and a repository
+	// build's secret read both resolve the names they serve out of it, with the
+	// credentials the bundle already holds. It may be nil, and nil is the state
+	// of a deployment that reads no file: the routes then serve from the record
+	// exactly as they did before this reader existed, which is why this is not
+	// required at construction — a repository whose own root was never
+	// re-applied with the switch on keeps its record and its mounts (G9).
+	// *repoFiles, built by NewRepoFiles, is the implementation a deployment
+	// wires (internal/cli/credentials_serve.go).
+	RepoFiles RepoFileReader
 	// AuditLog is where the service's audited acts are written (C1.13): every
 	// line this service writes, the mint's (C2.1) and the probe's (C1.12)
 	// included. There is one writer and one handler — Server.audit is the ONLY

@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -33,6 +34,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
 // The two workflows of the fixture's own repository, and the two variables
@@ -63,6 +65,11 @@ const (
 const (
 	testSharedName      = "deploy-token"
 	testSharedContainer = "fugaro_p_deploy-token"
+	// testOtherName is a logical name the fixture's project record does not admit
+	// the fixture's repository to (D3459): a file that declares it is refused by
+	// the allow-list, which is what tells a read of the repository's default
+	// branch from a read of any other ref.
+	testOtherName = "other-token"
 )
 
 // fakeWorkflowRecords is the record reader the fixture serves: a map of slug to
@@ -130,6 +137,59 @@ func workflowRecord() creds.WorkflowSecrets {
 	}
 }
 
+// fakeRepoFiles is the code host, stood in for (UO7, D3459): what a repository's
+// own fugaro.yaml holds at its default branch, and what a read at any OTHER ref
+// answers with. It is a fake of the SEAM and not of GitHub: what this file's
+// tests hold is which repository, which file and which ref the service asks for,
+// and that a file which cannot be read is a refusal rather than the record.
+type fakeRepoFiles struct {
+	// yaml is the default branch's fugaro.yaml, by the canonical repository name
+	// the read names. A repository not in the map is one whose file is not
+	// there.
+	yaml map[string][]byte
+	// refYAML is what a read at a ref other than the default branch answers: a
+	// test that let the service name the run's own branch would be served this
+	// file instead of the repository's.
+	refYAML []byte
+	// unreachable makes every read answer the code host not answering, which is
+	// the one answer the record is a fallback for (D3459) — and the state every
+	// test that is not about the file read is in.
+	unreachable bool
+	// err is any other failure a read answers with: a file that is not there, a
+	// host that refused the credential.
+	err error
+	// reads is every read this host was asked for, in order, which is what makes
+	// "the repository is the run's and the ref is the default branch" a fact
+	// rather than an inference.
+	reads []RepoFileQuery
+}
+
+func (f *fakeRepoFiles) Read(_ context.Context, q RepoFileQuery) ([]byte, error) {
+	f.reads = append(f.reads, q)
+	if f.unreachable {
+		return nil, fmt.Errorf("%w: this test's code host is down", ErrRepoFileUnreachable)
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	if q.Ref != "" && f.refYAML != nil {
+		return f.refYAML, nil
+	}
+	data, ok := f.yaml[q.Repo]
+	if !ok {
+		return nil, errors.New("the repository holds no " + q.Path)
+	}
+	return data, nil
+}
+
+// repoYAML is a repository's own fugaro.yaml as these tests write it: one
+// workflow and the secrets it declares, in the spelling config.RepoOf reads. The
+// file carries the logical NAME and the variable a job mounts it under, and
+// never a value (G18).
+func repoYAML(workflow, env, name string) []byte {
+	return []byte("workflows:\n  " + workflow + ":\n    secrets:\n      - name: " + name + "\n        env: " + env + "\n")
+}
+
 // workflowReads is the three things this route reads, stood in for: the record,
 // the container reader and the two values. It is separate from workflowFixture
 // because two of the class tests wire it into a fixture of ANOTHER class — a
@@ -138,6 +198,11 @@ func workflowRecord() creds.WorkflowSecrets {
 type workflowReads struct {
 	records *fakeWorkflowRecords
 	dyn     *dynReader
+	// files is the code host the repository's own fugaro.yaml is read through
+	// (UO7, D3459), unreachable until a test says otherwise: the record below is
+	// then the fallback every test that is not about the file read is served
+	// from, exactly as it was before this route read a file at all.
+	files *fakeRepoFiles
 	// projects is the project record a version-2 call is admitted by (IS1), and
 	// sharedValue is what the project's own container holds. The two are on this
 	// type rather than on a fixture of their own because the version-1 and
@@ -166,6 +231,7 @@ func newWorkflowReads(t *testing.T) *workflowReads {
 	r := &workflowReads{
 		records:     &fakeWorkflowRecords{},
 		dyn:         &dynReader{values: map[string]string{}, marked: map[string]bool{}},
+		files:       &fakeRepoFiles{unreachable: true},
 		projects:    &fakeProjectRecords{rec: projectRecord(testRepoPath), found: true},
 		value:       fakeCred(t, "workflow-secret"),
 		otherValue:  fakeCred(t, "other-workflow-secret"),
@@ -191,6 +257,7 @@ func newWorkflowReads(t *testing.T) *workflowReads {
 func (r *workflowReads) wire(_ *svc, cfg *Config) {
 	cfg.WorkflowSecrets = r.records
 	cfg.ProjectSecrets = r.projects
+	cfg.RepoFiles = r.files
 	cfg.Bundles = &BundleLoader{Source: r.dyn}
 }
 
@@ -257,6 +324,21 @@ func workflowBody(env string) string { return `{"env":"` + env + `"}` }
 // and the version that says which shape this is, and no variable at all.
 func workflowBodyV2(name string) string { return `{"name":"` + name + `","version":2}` }
 
+// workflowBodyApp is version 1's body with the App ID a GitHub repository's call
+// carries (UO7, D3459). The App ID is the one thing a caller supplies to a GitHub
+// App mint and it is not a secret (githubread.go), and it is what the service
+// signs the read of the repository's own fugaro.yaml as: without it a GitHub
+// repository's file cannot be read at all, which is a refused request and never
+// the record.
+func workflowBodyApp(env, appID string) string {
+	return `{"env":"` + env + `","app_id":"` + appID + `"}`
+}
+
+// workflowBodyV2App is the same for version 2's shape.
+func workflowBodyV2App(name, appID string) string {
+	return `{"name":"` + name + `","version":2,"app_id":"` + appID + `"}`
+}
+
 // openTheDoor opens the installation's repository-secrets door for one test and
 // puts it back (G9, F24): `config.RepoSecretsOff` false is D2313 reversed, the
 // state a repository's own copies are in force in, and it is the state version 2
@@ -303,6 +385,30 @@ func (f *workflowFixture) fetch(t *testing.T, env string) (*http.Response, []byt
 func (f *workflowFixture) fetchV2(t *testing.T, name string) (*http.Response, []byte) {
 	t.Helper()
 	return fetchWorkflowSecretsBody(t, f.svc, workflowBodyV2(name), f.runToken(), f.jobToken(), f.job)
+}
+
+// fetchApp is one version-1 call as the fixture's own job, carrying the App ID a
+// GitHub repository's read is signed as (UO7, D3459).
+func (f *workflowFixture) fetchApp(t *testing.T, env, appID string) (*http.Response, []byte) {
+	t.Helper()
+	return fetchWorkflowSecretsBody(t, f.svc, workflowBodyApp(env, appID), f.runToken(), f.jobToken(), f.job)
+}
+
+// fetchV2App is the same for version 2's shape.
+func (f *workflowFixture) fetchV2App(t *testing.T, name, appID string) (*http.Response, []byte) {
+	t.Helper()
+	return fetchWorkflowSecretsBody(t, f.svc, workflowBodyV2App(name, appID), f.runToken(), f.jobToken(), f.job)
+}
+
+// served is one served call: the answer's value and the variable or name it
+// echoed, which is what a test that is about WHERE a value came from has to read
+// and nothing else.
+func served(t *testing.T, who string, resp *http.Response, body []byte) WorkflowSecretsResponse {
+	t.Helper()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("%s was refused: %d %s", who, resp.StatusCode, body)
+	}
+	return workflowAnswer(t, body)
 }
 
 // fetchAs is fetch with the job token given rather than minted, for the calls
@@ -1286,4 +1392,209 @@ func TestWorkflowSecretsAuditNamesOneContainer(t *testing.T) {
 			assertNoValue(t, f.svc, f.workflowReads, nil)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The repository's own fugaro.yaml (UO7, D3459)
+// ---------------------------------------------------------------------------
+
+// TestWorkflowSecretsFromDefaultBranch is UO7's red step: before it the route
+// read only the record `fugaro update` wrote, so the names a call was served were
+// that record's — and D3459 makes the repository's own fugaro.yaml at its default
+// branch the authority, with the record a fallback for a code host that cannot be
+// reached and nothing else.
+//
+// The fixture's record and the file name DIFFERENT containers for the same
+// variable, so an answer is never ambiguous about which of the two it came from:
+// the record names the repository's own copy and the file names the project's
+// shared one, and what a call must be served is the file's.
+func TestWorkflowSecretsFromDefaultBranch(t *testing.T) {
+	f := newWorkflowSvc(t)
+	f.files.unreachable = false
+	f.files.yaml = map[string][]byte{testRepo: repoYAML(testWorkflow, testWorkflowEnv, testSharedName)}
+
+	resp, body := f.fetchApp(t, testWorkflowEnv, testAppID)
+	ans := served(t, "a job of a repository whose own file declares the variable", resp, body)
+	if ans.Env != testWorkflowEnv {
+		t.Errorf("the answer echoed %q, want the variable the call named", ans.Env)
+	}
+	if ans.Value != f.sharedValue {
+		t.Errorf("the call was served the record's value; the repository's own file is the authority (D3459)")
+	}
+	if len(f.records.reads) != 0 {
+		t.Errorf("the record was read (%v); a call whose file can be read is not served from the record", f.records.reads)
+	}
+	if len(f.files.reads) != 1 {
+		t.Fatalf("the code host was read %d times, want one", len(f.files.reads))
+	}
+	q := f.files.reads[0]
+	if q.Provider != gitprov.KindGitHub || q.Repo != testRepo || q.Path != fugaroYAMLPath || q.Ref != "" {
+		t.Errorf("the read named %+v, want the calling repository's own %s at its default branch", q, fugaroYAMLPath)
+	}
+	if q.AppID != testAppID {
+		t.Errorf("the read named the App ID %q, want the call's own %q: a GitHub read is signed as the App", q.AppID, testAppID)
+	}
+	if !slices.Equal(f.dyn.reads, []string{testSharedContainer}) {
+		t.Errorf("the containers read were %v, want the file's own %q", f.dyn.reads, testSharedContainer)
+	}
+	if !slices.Equal(f.dyn.markerReads, []string{testSharedContainer}) {
+		t.Errorf("the markers read were %v, want the file's own container: a name the file declares is fenced like any other (D3333)", f.dyn.markerReads)
+	}
+	if line := f.onlyAuditLine(t); auditField(line, "credential") != testSharedContainer {
+		t.Errorf("the audit line names %q, want the container the value was read from", auditField(line, "credential"))
+	}
+}
+
+// TestWorkflowSecretsIgnoreRunBranch is D3459's other half: the file is read at
+// the repository's DEFAULT branch and never at the branch the run itself pushes
+// (Identity.Branch, the fb claim).
+//
+// The fake answers a read at any other ref with a file that declares the same
+// variable under a name the owner's record does not admit, so a service that let
+// the run's branch reach the read would refuse this call instead of serving it —
+// which is what makes this a test of the ref rather than of a comment.
+func TestWorkflowSecretsIgnoreRunBranch(t *testing.T) {
+	f := newWorkflowSvc(t)
+	f.files.unreachable = false
+	f.files.yaml = map[string][]byte{testRepo: repoYAML(testWorkflow, testWorkflowEnv, testSharedName)}
+	f.files.refYAML = repoYAML(testWorkflow, testWorkflowEnv, testOtherName)
+
+	// The run identity carries the branch this run may push, which is a branch
+	// of the repository and not its default one (G6).
+	tok := f.runToken(func(c map[string]any) { c["fb"] = "fugaro/" + f.run })
+	resp, body := fetchWorkflowSecretsBody(t, f.svc, workflowBodyApp(testWorkflowEnv, testAppID), tok, f.jobToken(), f.job)
+	ans := served(t, "a run whose identity names the branch it pushes", resp, body)
+	if ans.Value != f.sharedValue {
+		t.Errorf("the call was served the value of another ref; a workflow secret is read at the repository's default branch")
+	}
+	if len(f.files.reads) != 1 {
+		t.Fatalf("the code host was read %d times, want one", len(f.files.reads))
+	}
+	if ref := f.files.reads[0].Ref; ref != "" {
+		t.Errorf("the read named the ref %q; the empty ref IS the default branch, and the run's own branch is never read", ref)
+	}
+}
+
+// TestWorkflowSecretsRepoFromRunToken is D3459's first clause: the repository the
+// file is read for is the signed run token's, paired with the verified job
+// account, and never text a call carries — the contract has no field for one.
+//
+// The call is made as the OTHER repository's job presenting the OTHER
+// repository's run identity, and the file it must be read for is that one.
+func TestWorkflowSecretsRepoFromRunToken(t *testing.T) {
+	f := newWorkflowSvc(t)
+	f.files.unreachable = false
+	f.files.yaml = map[string][]byte{
+		testRepo:      repoYAML(testWorkflow, testWorkflowEnv, testSharedName),
+		testOtherRepo: repoYAML(testWorkflow, testWorkflowEnv, testSharedName),
+	}
+	// The project record admits the OTHER repository to the name and not the
+	// fixture's own, so a service that read the file for, or fenced the name
+	// against, anything but the calling run token's repository would refuse
+	// this call instead of serving it.
+	f.projects.rec = projectRecord(testOtherRepoPath)
+	resp, body := fetchWorkflowSecretsBody(t, f.svc, workflowBodyApp(testWorkflowEnv, testAppID),
+		f.runTokenOf(testSlug(t, testOtherRepoPath)), f.otherJobToken(), f.job)
+	ans := served(t, "the other repository's job", resp, body)
+	if ans.Value != f.sharedValue {
+		t.Errorf("the call was served %q, want the file's own container", ans.Value)
+	}
+	if len(f.files.reads) != 1 {
+		t.Fatalf("the code host was read %d times, want one", len(f.files.reads))
+	}
+	if got := f.files.reads[0].Repo; got != testOtherRepo {
+		t.Errorf("the read named the repository %q, want the run token's own %q", got, testOtherRepo)
+	}
+	if len(f.records.reads) != 0 {
+		t.Errorf("the record was read (%v); the repository's own file is the authority", f.records.reads)
+	}
+}
+
+// TestWorkflowSecretsBoundedByAllowList is D3459's third clause: a name the
+// repository's own file declares is still bounded by the project's `secrets
+// allow` record and by the marker, exactly as a version-2 call is (F13, D3328,
+// D3333).
+//
+// The file is the repository's own text and it is still not a grant: a file that
+// declares a name the owner's record does not admit this repository to is refused
+// with the command that fixes it, and a container with no marker is refused
+// rather than read.
+func TestWorkflowSecretsBoundedByAllowList(t *testing.T) {
+	t.Run("a name the record admits another repository to", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.files.unreachable = false
+		f.files.yaml = map[string][]byte{testRepo: repoYAML(testWorkflow, testWorkflowEnv, testSharedName)}
+		f.projects.rec = projectRecord(testOtherRepoPath)
+		resp, body := f.fetchApp(t, testWorkflowEnv, testAppID)
+		assertRefused(t, "a file that declares a name the record does not admit this repository to",
+			resp, body, f.svc, f.workflowReads, 1, ErrorWorkflowSecretNotAllowed)
+		if len(f.files.reads) != 1 {
+			t.Errorf("the code host was read %d times, want one", len(f.files.reads))
+		}
+	})
+	t.Run("a container that carries no marker", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.files.unreachable = false
+		f.files.yaml = map[string][]byte{testRepo: repoYAML(testWorkflow, testWorkflowEnv, testSharedName)}
+		f.dyn.marked[testSharedContainer] = false
+		resp, body := f.fetchApp(t, testWorkflowEnv, testAppID)
+		assertRefused(t, "a file that declares a name whose container carries no marker",
+			resp, body, f.svc, f.workflowReads, 1, ErrorWorkflowSecretUnmarked)
+	})
+	t.Run("a version-2 call names a secret the file does not declare", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.files.unreachable = false
+		f.files.yaml = map[string][]byte{testRepo: repoYAML(testWorkflow, testWorkflowEnv, testOtherName)}
+		resp, body := f.fetchV2App(t, testSharedName, testAppID)
+		// The refusal is the one answer the runner falls back to version 1 on
+		// (workflowsecrets.go's header), so a name the file does not declare is
+		// refused with it rather than served.
+		assertRefusedV2(t, "a version-2 call naming a secret the repository's own file does not declare",
+			resp, body, f.svc, f.workflowReads, http.StatusForbidden, 1, ErrorWorkflowSecretNotAllowed)
+	})
+}
+
+// TestRecordFallbackOnlyWhenUnreachable is D3459's fourth clause, in both
+// directions: the record is read when the code host cannot be reached, and it is
+// NOT read when the host answered — a file this release cannot read and a file
+// that does not declare the variable are both refusals, because a record read
+// beside a file that changed would serve a name the repository's own file no
+// longer writes.
+func TestRecordFallbackOnlyWhenUnreachable(t *testing.T) {
+	t.Run("the host does not answer", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		resp, body := f.fetch(t, testWorkflowEnv)
+		ans := served(t, "a job whose code host cannot be reached", resp, body)
+		if ans.Value != f.value {
+			t.Errorf("the call was served %q, want the record's own value: the record is the fallback", ans.Value)
+		}
+		if len(f.files.reads) != 1 {
+			t.Errorf("the code host was read %d times, want one: the fallback is reached from a read that failed", len(f.files.reads))
+		}
+		if !slices.Equal(f.records.reads, []string{f.slug}) {
+			t.Errorf("the records read were %v, want the calling repository's own", f.records.reads)
+		}
+	})
+	t.Run("the host answers with a file this release cannot read", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.files.unreachable = false
+		f.files.yaml = map[string][]byte{testRepo: []byte("workflows:\n  " + testWorkflow + ":\n    secrets: [")}
+		resp, body := f.fetchApp(t, testWorkflowEnv, testAppID)
+		assertRefused(t, "a job whose repository's own file cannot be read",
+			resp, body, f.svc, f.workflowReads, 1, ErrorStateUnavailable)
+		if len(f.records.reads) != 0 {
+			t.Errorf("the record was read (%v) after a file that could not be read: a parse error is never the fallback (D3459)", f.records.reads)
+		}
+	})
+	t.Run("the host answers with a file that does not declare the variable", func(t *testing.T) {
+		f := newWorkflowSvc(t)
+		f.files.unreachable = false
+		f.files.yaml = map[string][]byte{testRepo: repoYAML(testWorkflow, testOtherWorkflowEnv, testSharedName)}
+		resp, body := f.fetchApp(t, testWorkflowEnv, testAppID)
+		assertRefused(t, "a job whose repository's own file declares no such variable",
+			resp, body, f.svc, f.workflowReads, 1, ErrorRequestRefused)
+		if len(f.records.reads) != 0 {
+			t.Errorf("the record was read (%v) beside a file that answered: the record is the fallback for an unreachable host alone", f.records.reads)
+		}
+	})
 }

@@ -49,6 +49,31 @@ package credsvc
 // own value, so the door that keeps that from happening has to be shut before
 // this version serves anything.
 //
+// # Where the names come from (D3459)
+//
+// The repository's own `fugaro.yaml` at its DEFAULT branch is the authority for
+// which names exist, on both versions: it is read at call time through the code
+// host (RepoFileReader), with the credentials this service already holds — the
+// bundle's App key, minted as the App ID the call carries, or the bundle's
+// Bitbucket credential — and the variables and names it declares are the ones a
+// call is answered with. Nothing of the call names a repository, a workflow or a
+// ref: the repository is the verified run identity's, the workflow is the job
+// account's (which is the launcher-written task's, JobAccount), and the ref is
+// the default branch and never the branch the run itself pushes.
+//
+// The record above is then a FALLBACK, and for one state only: a code host that
+// could not be reached. A host that answered — with a file this release cannot
+// read, with a file that does not declare what the call named, or with a 404 —
+// is a refusal and never the fallback, because a record read beside a file that
+// changed would serve a name the repository's own file no longer writes. The
+// fallback goes when the record does (UO7b), and until then it is what keeps a
+// repository whose host is briefly unreachable working.
+//
+// The names stay bounded exactly as version 2's always were: a name the file
+// declares is served only from the project container the grammar builds and only
+// through `projectSecretReadable` (the owner's allow-list and the marker), on
+// BOTH versions (F13, D3328, D3333).
+//
 // # Who it serves, and who it refuses
 //
 // The call is a per-repository job's, and the repository, the workflow and the
@@ -104,9 +129,14 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
@@ -174,6 +204,195 @@ func readWorkflowSecretsRequest(r *http.Request) (WorkflowSecretsRequest, error)
 // could point at something else. A record that fails this is a record this
 // release does not serve, which is the fail-closed answer.
 var secretIDRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,255}$`)
+
+// fugaroYAMLPath is the repository's own configuration file, and the one this
+// route reads a workflow's `secrets:` out of (D3459). It is the same path the
+// CLI reads a repository's config from, spelled here rather than imported
+// because internal/repofiles consumes internal/config and this package reads
+// the file through the code host, not through that reader.
+const fugaroYAMLPath = "fugaro.yaml"
+
+// repoFileBudget bounds one repository-file read, the way workflowSecretsBudget
+// bounds the runner's fetch: the read is on the path of a call whose caller has
+// already waited for two identity verifications, and a code host that has not
+// answered in this long is the state the record is the fallback for.
+const repoFileBudget = 20 * time.Second
+
+// RepoFileQuery names one file of one repository at one ref, as the service
+// asks the code host for it (UO7, D3459).
+//
+// It carries no credential: what signs the read is the bundle's own App key or
+// Bitbucket token, held by the reader below and by nothing a caller can reach.
+// AppID is the one thing the CALLER supplies, and it is not a secret
+// (githubread.go): a GitHub read is signed as the App the call names, and the
+// service's environment does not hold that ID.
+type RepoFileQuery struct {
+	// Provider is the git provider kind the repository is held at
+	// (gitprov.KindGitHub or gitprov.KindBitbucket), read from the verified
+	// job account's canonical repository name.
+	Provider string
+	// Repo is the canonical provider/owner/name of the repository the file is
+	// read for: the calling job account's own, never text a call carries.
+	Repo string
+	// AppID is the GitHub App ID the read is signed as. It is empty for a
+	// Bitbucket repository, where no App signs anything.
+	AppID string
+	// Path is the file to read.
+	Path string
+	// Ref is the ref to read it at. The empty string is the repository's
+	// DEFAULT branch, which is the only ref this route ever names (D3459): the
+	// branch a run itself pushes is not one its own secrets are declared at.
+	Ref string
+}
+
+// ErrRepoFileUnreachable is the one failure of a repository-file read that a
+// caller may fall back from: the code host could not be reached at all — a
+// transport failure, a timeout, or a 5xx. Every other failure is an ANSWER (a
+// 4xx, a file that is not there, a body this release cannot read) and is a
+// refusal, never the fallback: a record read beside a file that changed would
+// serve a name the repository's own file no longer writes (D3459).
+var ErrRepoFileUnreachable = errors.New("credsvc: the code host could not be reached")
+
+// errRepoFileAppID is a GitHub read whose call carries no App ID this code can
+// sign as. It is not ErrRepoFileUnreachable: the host is fine and the CALL is
+// one this route cannot perform, so it is refused as a request and never
+// answered out of the record.
+var errRepoFileAppID = errors.New("credsvc: a GitHub repository's file is read as the App ID the call carries, and this call carries none")
+
+// RepoFileReader reads one file of one repository through the code host, with
+// the credentials the service already holds (U4, D3459). It is an interface so
+// a test can stand the code host in for, and repoFiles is the only
+// implementation the service deploys.
+type RepoFileReader interface {
+	Read(ctx context.Context, q RepoFileQuery) ([]byte, error)
+}
+
+// repoFiles reads a repository's own file through the host it is held at: a
+// GitHub App installation token minted from the bundle's key, or the bundle's
+// Bitbucket credential. It is the launcher's own read (D915) moved into the
+// service, and it adds no access: both credentials are the ones the runs'
+// git calls already use, and the token a GitHub read is made with asks for
+// github.BuildTokenPermissions — contents and metadata, read — which is the
+// narrowest set that reads a file and reaches nothing that writes.
+type repoFiles struct {
+	bundles *BundleLoader
+	client  *http.Client
+	// baseURL is the API root a read goes to. It is empty in every deployment
+	// — a root a caller could name would be the App credential's destination
+	// chosen by the caller (githubread.go) — and a test sets it to point the
+	// read at a host of its own.
+	baseURL string
+}
+
+// NewRepoFiles returns the reader the credentials service deploys. A nil
+// client is the routes' own: the provider adapters fall back to a client with
+// a timeout (httpjson).
+func NewRepoFiles(bundles *BundleLoader, client *http.Client) RepoFileReader {
+	return &repoFiles{bundles: bundles, client: client}
+}
+
+// Read reads one file of one repository, and it answers ErrRepoFileUnreachable
+// for the one failure a caller may fall back from and nothing else.
+//
+// The provider is dispatched on the QUERY's kind, which the verified job
+// account named, so a read can never be sent to a host the repository is not
+// held at. Nothing here reads a credential out of the query: the App ID is the
+// caller's own (and is not a secret), and the key and the token are the
+// bundle's.
+func (r *repoFiles) Read(ctx context.Context, q RepoFileQuery) ([]byte, error) {
+	if r.bundles == nil || r.bundles.Source == nil {
+		// A service with no bundle cannot reach any host, and this is a
+		// deployment that is wrong rather than a host that is down: it is
+		// answered as a failure and never as the fallback, which would serve a
+		// value out of a record this release is retiring.
+		return nil, errors.New("credsvc: this service holds no credentials bundle, so it cannot read a repository's own file")
+	}
+	b, err := r.bundles.Load(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("credsvc: the credentials bundle could not be read: %w", err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, repoFileBudget)
+	defer cancel()
+	var contents gitprov.ContentsReader
+	switch q.Provider {
+	case gitprov.KindGitHub:
+		owner, name, err := mintRepository(q.Repo)
+		if err != nil {
+			return nil, err
+		}
+		if !appIDRE.MatchString(q.AppID) {
+			return nil, errRepoFileAppID
+		}
+		key, err := appKey(b)
+		if err != nil {
+			return nil, err
+		}
+		token, _, err := github.MintInstallationToken(cctx, github.Options{
+			Owner: owner, Repo: name, AppID: q.AppID, PrivateKey: key,
+			BaseURL: r.baseURL, HTTP: r.client, Now: time.Now,
+		}, github.BuildTokenPermissions())
+		if err != nil {
+			return nil, hostAnswer(err)
+		}
+		p, err := github.New(github.Options{
+			Owner: owner, Repo: name, AppID: q.AppID, ServiceHeldKey: true,
+			BaseURL: r.baseURL, HTTP: r.client,
+		})
+		if err != nil {
+			return nil, err
+		}
+		p.UseServiceTokens(staticToken(token))
+		contents = p
+	case gitprov.KindBitbucket:
+		workspace, name, err := splitCanonicalRepo(q.Repo)
+		if err != nil {
+			return nil, err
+		}
+		entry, ok := b.BitbucketToken()
+		if !ok || entry.Value() == "" {
+			return nil, errors.New("credsvc: the credentials bundle holds no Bitbucket credential, so a Bitbucket repository's own file cannot be read")
+		}
+		p, err := bitbucket.New(bitbucket.Options{
+			Workspace: workspace, Slug: name, Token: entry.Value(),
+			BaseURL: r.baseURL, HTTP: r.client,
+		})
+		if err != nil {
+			return nil, err
+		}
+		contents = p
+	default:
+		return nil, fmt.Errorf("credsvc: a repository on the host %q has no file this service can read", q.Provider)
+	}
+	data, err := contents.Contents(cctx, q.Path, q.Ref)
+	if err != nil {
+		return nil, hostAnswer(err)
+	}
+	return data, nil
+}
+
+// staticToken is a gitprov.TokenSource over one already-minted token: the read
+// is one call, so the token it was minted for is the token it uses.
+type staticToken string
+
+func (t staticToken) Token(context.Context, time.Duration) (string, time.Time, error) {
+	return string(t), time.Time{}, nil
+}
+
+// hostAnswer classifies a failed read by whether the host ANSWERED.
+//
+// An answer — any status below 500, a 404 included — is a refusal the caller
+// reads as this route's own, and never the fallback: the repository's file is
+// there or it is not, and a record consulted beside it would be a second
+// authority for a fact the first one settled (D3459). A host that could not be
+// reached at all, or one that answered 5xx, is the one state the record is the
+// fallback for.
+func hostAnswer(err error) error {
+	var se *httpjson.StatusError
+	if errors.As(err, &se) && se.Status < http.StatusInternalServerError {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrRepoFileUnreachable, err)
+}
 
 // The refusals of this route, as sentences written here. Each one names the
 // field that was wrong and never what the call sent, what the record holds or
@@ -254,6 +473,19 @@ const (
 	// project copy would shadow them. Nothing a caller can do; the sentence
 	// says so rather than sending a run looking for a secret.
 	workflowSecretFlipPending = "this installation still serves repository-level workflow secrets, so the service does not serve one by name yet"
+	// workflowSecretFileUnreadable answers a repository's own fugaro.yaml that
+	// the host answered with and this release could not read (D3459). It is a
+	// refusal and NOT the record fallback: the file is there and it is the
+	// authority, so a record read beside it would serve a name the repository's
+	// own file no longer writes.
+	workflowSecretFileUnreadable = "the repository's own fugaro.yaml could not be read, so this service serves no workflow secret for it"
+	// workflowSecretNoAppID answers a GitHub repository's call that carries no
+	// App ID (UO7, D3459): the read of the repository's own file is signed as
+	// the App, and the App ID is the one thing a caller supplies to that mint
+	// (githubread.go). It is a refused REQUEST — the caller can fix it — and
+	// never the record fallback, which would answer a call this route could not
+	// perform out of a record this release is retiring.
+	workflowSecretNoAppID = "the call carries no GitHub App ID, which is what the repository's own fugaro.yaml is read as"
 )
 
 // WorkflowSecretRecords reads the record `fugaro update` writes at
@@ -447,9 +679,67 @@ func (s *Server) workflowSecrets(ctx context.Context, w http.ResponseWriter, r *
 	s.workflowSecretByEnv(ctx, w, id, ja, req)
 }
 
-// workflowSecretByEnv is version 1: the variable the call names, read out of the
-// container the repository's own record puts it in.
+// workflowSecretByEnv is version 1: the variable the call names, resolved to the
+// logical secret the repository's own fugaro.yaml declares it under (D3459) and
+// served out of the project container that name builds, fenced exactly as
+// version 2's is.
+//
+// The record is the fallback, and for two states only: while the door D2313
+// keeps is open (G9, F24), when a repository's own copies are what is in force;
+// and when the code host could not be reached. Both fall back to the record's
+// own container for the variable, unchanged, because that is what the job's
+// mount would have carried.
 func (s *Server) workflowSecretByEnv(ctx context.Context, w http.ResponseWriter, id Identity, ja JobAccount, req WorkflowSecretsRequest) {
+	if !s.workflowSecretsFromFile() {
+		s.workflowSecretFromRecord(ctx, w, id, ja, req)
+		return
+	}
+	secrets, declared, err := s.repoWorkflowSecrets(ctx, ja.Repo, ja.Workflow, req.AppID)
+	switch {
+	case errors.Is(err, ErrRepoFileUnreachable):
+		s.logRepoFileFallback(ja.Slug, err)
+		s.workflowSecretFromRecord(ctx, w, id, ja, req)
+		return
+	case errors.Is(err, errRepoFileAppID):
+		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+workflowSecretNoAppID)
+		return
+	case err != nil:
+		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnavailable, ErrorStateUnavailable, workflowSecretFileUnreadable)
+		return
+	case !declared:
+		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnavailable, ErrorStateUnavailable, workflowSecretOtherWorkflow)
+		return
+	}
+	name := ""
+	for _, sec := range secrets {
+		if sec.Env == req.Env {
+			name = sec.Name
+			break
+		}
+	}
+	if name == "" {
+		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+workflowSecretNoSuchEnv)
+		return
+	}
+	container, err := secretname.Project(name)
+	if err != nil {
+		// The file declared a name the grammar does not build a container for,
+		// so the file is what this refusal is about: it is a document this
+		// release cannot serve and not a call the caller can fix.
+		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnavailable, ErrorStateUnavailable, workflowSecretFileUnreadable)
+		return
+	}
+	s.serveProjectSecret(ctx, w, id, ja, name, container, WorkflowSecretsResponse{Env: req.Env})
+}
+
+// workflowSecretFromRecord is version 1's record path: the variable the call
+// names, read out of the container the repository's own record puts it in.
+//
+// It is what this route did before a repository's file was read (UO7), kept
+// whole for the two states that still reach it — the door D2313 keeps being
+// open, and a code host that could not be reached — and it goes when the record
+// does (UO7b).
+func (s *Server) workflowSecretFromRecord(ctx context.Context, w http.ResponseWriter, id Identity, ja JobAccount, req WorkflowSecretsRequest) {
 	if s.cfg.WorkflowSecrets == nil {
 		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnavailable, ErrorStateUnavailable, workflowSecretNoReader)
 		return
@@ -530,6 +820,12 @@ func (s *Server) workflowSecretByEnv(ctx context.Context, w http.ResponseWriter,
 // Nothing about the workflow enters: D3333 makes the REPOSITORY the unit, so
 // every workflow of an admitted repository may fetch the name, and the job
 // account still decides which repository that is.
+//
+// A name must also be one the repository's OWN fugaro.yaml declares (D3459), and
+// that is the one answer the runner falls back to version 1 on
+// (credsvc.ErrorWorkflowSecretNotAllowed): a record that does not hold the name
+// yet and a file that does not declare it are the same answer, which is what
+// keeps a repository already served by S3 working until its file is updated.
 func (s *Server) workflowSecretByName(ctx context.Context, w http.ResponseWriter, id Identity, ja JobAccount, req WorkflowSecretsRequest) {
 	if !config.RepoSecretsOff {
 		// G9, F24: the door is open, so a repository's own copies are in force
@@ -540,12 +836,47 @@ func (s *Server) workflowSecretByName(ctx context.Context, w http.ResponseWriter
 		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnavailable, ErrorWorkflowSecretsOff, workflowSecretFlipPending)
 		return
 	}
+	// The container is built here and not inside serveProjectSecret because
+	// this is the ORDER this version has always had: a name the grammar refuses
+	// is a refused request before the repository's own file is read at all.
 	container, err := secretname.Project(req.Name)
 	if err != nil {
 		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
 		return
 	}
-	src, ref := s.projectSecretReadable(ctx, req.Name, container, ja.Repo)
+	if s.workflowSecretsFromFile() {
+		secrets, declared, err := s.repoWorkflowSecrets(ctx, ja.Repo, ja.Workflow, req.AppID)
+		switch {
+		case errors.Is(err, ErrRepoFileUnreachable):
+			// The one fallback: the host could not be reached, and this version's
+			// own admission — the project record and the marker — is then the
+			// whole answer, exactly as it was before the file was read.
+			s.logRepoFileFallback(ja.Slug, err)
+		case errors.Is(err, errRepoFileAppID):
+			s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+workflowSecretNoAppID)
+			return
+		case err != nil:
+			s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnavailable, ErrorStateUnavailable, workflowSecretFileUnreadable)
+			return
+		case !declaresName(secrets, declared, req.Name):
+			s.refuseCall(ctx, w, id, PurposeWorkflowSecret, "", "", StatusUnverified, ErrorWorkflowSecretNotAllowed, workflowSecretNotAllowed)
+			return
+		}
+	}
+	s.serveProjectSecret(ctx, w, id, ja, req.Name, container, WorkflowSecretsResponse{Name: req.Name})
+}
+
+// serveProjectSecret reads the project container one logical secret's name
+// builds and answers its value: the fence version 2 has always served a name
+// through (F13, D3328, D3333, G2) — the owner's record must admit this
+// repository to the name and the container must carry the marker — and the same
+// fence a name the repository's own file declares is served through, because a
+// file is not a grant either.
+//
+// name and container are the caller's: each version derives them where its own
+// refusal belongs, and ans is the answer without its value, which is added here.
+func (s *Server) serveProjectSecret(ctx context.Context, w http.ResponseWriter, id Identity, ja JobAccount, name, container string, ans WorkflowSecretsResponse) {
+	src, ref := s.projectSecretReadable(ctx, name, container, ja.Repo)
 	if ref != nil {
 		s.refuseProjectSecret(ctx, w, id, container, ref)
 		return
@@ -566,7 +897,89 @@ func (s *Server) workflowSecretByName(ctx context.Context, w http.ResponseWriter
 		s.refuseCall(ctx, w, id, PurposeWorkflowSecret, container, "", StatusUnavailable, ErrorStateUnavailable, workflowSecretUnreadableValue)
 		return
 	}
-	s.answerWorkflowSecret(ctx, w, id, container, WorkflowSecretsResponse{Name: req.Name, Value: value})
+	ans.Value = value
+	s.answerWorkflowSecret(ctx, w, id, container, ans)
+}
+
+// workflowSecretsFromFile says whether this route reads the repository's own
+// fugaro.yaml at all: the flip must have taken the mount away
+// (config.RepoSecretsOff, G9) and the deployment must hold a reader for the
+// code host. Either one absent is the record path, unchanged — a repository
+// whose own root was never re-applied with the switch on keeps every mount, and
+// a service whose reader is not wired refuses nothing it did not refuse before.
+func (s *Server) workflowSecretsFromFile() bool {
+	return config.RepoSecretsOff && s.cfg.RepoFiles != nil
+}
+
+// repoWorkflowSecrets reads the calling job account's own repository's
+// fugaro.yaml at its DEFAULT branch and answers the secrets its workflow
+// declares there (D3459).
+//
+// The repository is the account's canonical name and the workflow is the
+// account's (JobAccount, which is the launcher-written task's), so nothing a
+// call carries decides either; the ref is the empty string, which is the
+// default branch and never the branch the run itself pushes.
+//
+// declared=false is a file that holds no such workflow, which the caller
+// answers the way the record path answers it. The two errors are the reader's:
+// ErrRepoFileUnreachable (the fallback) and errRepoFileAppID (a refused
+// request), both wrapped and read with errors.Is; everything else is a file
+// this release cannot read and is a refusal.
+func (s *Server) repoWorkflowSecrets(ctx context.Context, repo, workflow, appID string) ([]config.Secret, bool, error) {
+	data, err := s.cfg.RepoFiles.Read(ctx, RepoFileQuery{
+		Provider: providerOf(repo), Repo: repo, AppID: appID, Path: fugaroYAMLPath, Ref: "",
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	cfg, ok := config.RepoOf(data)
+	if !ok {
+		return nil, false, errors.New("credsvc: the repository's own fugaro.yaml is not a document this release can read")
+	}
+	wf, ok := cfg.Workflows[workflow]
+	if !ok {
+		return nil, false, nil
+	}
+	return wf.Secrets, true, nil
+}
+
+// declaresName reports whether the repository's own file declares a logical
+// secret, which is what bounds a version-2 call to the names the file writes
+// (D3459, D3333).
+func declaresName(secrets []config.Secret, declared bool, name string) bool {
+	if !declared {
+		return false
+	}
+	for _, sec := range secrets {
+		if sec.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// providerOf reads the provider kind out of a canonical repository name
+// (projectpolicy.Canonical), which is the first of its three segments. A name
+// with no separator answers "", which no read can dispatch on and which is the
+// fail-closed answer: a repository this service cannot place is one it cannot
+// read a file for.
+func providerOf(canonical string) string {
+	provider, _, _ := strings.Cut(canonical, "/")
+	return provider
+}
+
+// logRepoFileFallback records why the record path was taken after the
+// repository's file was asked for: the operator's line, carrying the class of
+// the failure and, when the host answered, its status — and never the failure's
+// own text, because the request that failed carried the App's JWT or the
+// repository's token (githubread.go's rule).
+func (s *Server) logRepoFileFallback(slug string, err error) {
+	attrs := []any{"purpose", PurposeWorkflowSecret, "repository", slug}
+	var se *httpjson.StatusError
+	if errors.As(err, &se) {
+		attrs = append(attrs, "status", se.Status)
+	}
+	s.log.Warn("credsvc: the repository's own fugaro.yaml could not be read, so the workflow secrets record is the fallback", attrs...)
 }
 
 // refuseProjectSecret answers one refusal of the project fence, with the cause
