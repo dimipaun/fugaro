@@ -296,6 +296,23 @@ func (r *stateReads) UpdateObservation(ctx context.Context, name string, f func(
 	return o, labelRead(stateWrite, err)
 }
 
+// UpdateUsage passes a member's figures through to the store this reader wraps,
+// when that store counts them (creds.UsageCounter, PL10). It is here for the
+// reason UpdateObservation is: this wrapper is what a scope answers and
+// therefore what every selector is built over, so without the pass-through no
+// store this service holds would satisfy the capability and no call would be
+// counted. A store that does not count is not an error and not a refusal — the
+// figures are display data, and a member with none shows none — so an
+// unsupported inner store writes nothing.
+func (r *stateReads) UpdateUsage(ctx context.Context, name string, f func(creds.Usage, bool) (creds.Usage, error)) (creds.Usage, error) {
+	store, ok := r.Store.(creds.UsageCounter)
+	if !ok {
+		return creds.Usage{}, nil
+	}
+	u, err := store.UpdateUsage(ctx, name, f)
+	return u, labelRead(stateWrite, err)
+}
+
 // logRefusal writes the one server-side line a refusal leaves.
 //
 // cause is the error the refusal was taken on, or nil for a refusal that is not

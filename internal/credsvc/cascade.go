@@ -1173,6 +1173,13 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 	// (WS8). It is nil for a call the meter does not bracket — an
 	// installation's scope, a token count — and nothing below then differs.
 	s.withMeter(ctx, cl, id)
+	// The figures of the served call (PL10) are counted in the scope's own
+	// store, which is where the selection's state is read from: a store that
+	// can count says so by satisfying creds.UsageCounter, and one that cannot
+	// leaves the figures absent rather than counting them somewhere else.
+	if store, ok := sel.Store.(creds.UsageCounter); ok {
+		cl.usage = store
+	}
 
 	pool := cands
 	// next is the ORDERING this call goes out on, and it is the only thing a
@@ -1573,6 +1580,20 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 			}
 		}
 	}
+	// The figures the pool keeps (PL10) are read by a reader of their own,
+	// beside the meter's and not the same one: the meter brackets the
+	// WORKSPACE's cap and is there only for a call a workspace pays for, while
+	// what is counted here is what the member has spent, and every call this
+	// service serves has that. They are fed differently for a reason that
+	// matters: the meter's whole body is held before the answer is written,
+	// because the settle it feeds is a write the call can be refused on, and
+	// this reader is fed from the bytes on their way to the client — so a
+	// figure is never a delay the run waits on, and an answer is never held
+	// back to count it.
+	var counting *callUsage
+	if cl.usage != nil {
+		counting = newCallUsage(stream)
+	}
 	hdr := http.Header{}
 	copyAnswerHeaders(hdr, ans.resp.Header, ans.credential)
 	// The workspace's advisory headroom, on the answer to every call of a
@@ -1673,6 +1694,13 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 			use.feed(b)
 		}
 	}
+	if counting != nil {
+		inner := tee
+		tee = func(b []byte) {
+			inner(b)
+			counting.feed(b)
+		}
+	}
 	// The credential is scrubbed out of the body on its way to the client, and
 	// so is every token the caller presented: the run identity this service
 	// verified and the job's ID token. An upstream that echoed one of them —
@@ -1710,6 +1738,16 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 	// then has the same chance to find a value in what it is handed.
 	for i := len(rw) - 1; i >= 0; i-- {
 		_ = rw[i].Close()
+	}
+	if counting != nil {
+		// Counted here, where the answer has left and its whole body has been
+		// read: a stream's figures arrived with its events, and a whole body's
+		// are in the copy this reader kept. A call whose answer never reached
+		// this point — a refusal between the settle and the pump — counted
+		// nothing, which is right: the member's answer was not given, and the
+		// figures say what the member served.
+		counting.finish()
+		s.recordUsage(ctx, cl, c.Name, counting)
 	}
 	if cm != nil {
 		// The streamed call settles here, on whatever its events reported: a

@@ -226,10 +226,12 @@ resource "google_secret_manager_secret_iam_member" "credentials_bundle" {
 # (config/policy/shared, config/policy/repos/$slug), a run's outcome node
 # (outcomes/$day/$slug/$run — how it decides a caller is a real run) and the
 # credential state it did not write itself (creds/, whose marks, current nodes,
-# run leases and probe leases every other revision of the service also reads).
+# run leases, probe leases and per-member usage every other revision of the
+# service also reads).
 # It WRITES the credential state it owns — creds/marks/$name,
-# creds/current/$slug/$run, creds/leases/... and creds/probes/$name — by
-# compare-and-set, and deletes the leases it finds lapsed. Nothing else in the
+# creds/current/$slug/$run, creds/leases/..., creds/probes/$name and
+# creds/usage/$name — by compare-and-set, and deletes the leases it finds
+# lapsed. Nothing else in the
 # installation writes any of those nodes (the repository jobs read their own
 # node through the service, never directly).
 #

@@ -330,16 +330,21 @@ type fakeStore struct {
 	// (creds.Observation, Check 880): a node of its own beside the marks, which
 	// is where the fake keeps it too, because the two must be read apart.
 	observations map[string]creds.Observation
-	marks        map[string]creds.Mark
-	current      map[string]string
-	leases       map[string]creds.Lease
-	rr           int64
-	repoAuth     map[string]creds.RepoAuth
-	err          error
-	updateErr    error
-	marksErr     error
-	leasesErr    error
-	currentErr   error
+	// usages is what each member has spent (creds.Usage, PL10): the figures a
+	// served call counts, kept beside the observations for the same reason —
+	// they are a node of their own, and the fake keeps them where the service
+	// does.
+	usages     map[string]creds.Usage
+	marks      map[string]creds.Mark
+	current    map[string]string
+	leases     map[string]creds.Lease
+	rr         int64
+	repoAuth   map[string]creds.RepoAuth
+	err        error
+	updateErr  error
+	marksErr   error
+	leasesErr  error
+	currentErr error
 	// repoAuthErr fails the repository auth record's read alone. It is its own
 	// error for the reason the three per-read ones are: a refusal taken on a
 	// record that could not be read is a different incident from one taken on
@@ -350,6 +355,7 @@ type fakeStore struct {
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		observations: map[string]creds.Observation{},
+		usages:       map[string]creds.Usage{},
 		marks:        map[string]creds.Mark{}, current: map[string]string{}, leases: map[string]creds.Lease{}, repoAuth: map[string]creds.RepoAuth{},
 	}
 }
@@ -380,6 +386,48 @@ func (s *fakeStore) observation(name string) (creds.Observation, bool) {
 	defer s.mu.Unlock()
 	o, ok := s.observations[name]
 	return o, ok
+}
+
+// UpdateUsage counts what one member has spent, as the store the service holds
+// does (creds.UsageCounter, PL10). It fails on the same err the other writes fail
+// on, so a test can drive the write that could not be made.
+func (s *fakeStore) UpdateUsage(_ context.Context, name string, f func(creds.Usage, bool) (creds.Usage, error)) (creds.Usage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return creds.Usage{}, s.err
+	}
+	prev, found := s.usages[name]
+	next, err := f(prev, found)
+	if err != nil {
+		return creds.Usage{}, err
+	}
+	s.usages[name] = next
+	return next, nil
+}
+
+// Usages reads every member's figures, as the store the service holds does.
+func (s *fakeStore) Usages(_ context.Context) (map[string]creds.Usage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make(map[string]creds.Usage, len(s.usages))
+	for k, v := range s.usages {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// usage is what one member has been counted for, and whether anything was
+// counted for it at all: an absent node and a node holding zero are different
+// answers (creds.Usage).
+func (s *fakeStore) usage(name string) (creds.Usage, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.usages[name]
+	return u, ok
 }
 
 // setRepoAuth records what `fugaro update` would have written for a repository,

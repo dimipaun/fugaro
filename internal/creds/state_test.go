@@ -929,6 +929,35 @@ func TestTheLeaseReadSweepsTheDeadNodesItFinds(t *testing.T) {
 	}
 }
 
+// TestTheUnprunedLeaseReadDeletesNothing is the other half of the read above,
+// and it is the half `fugaro accounts pool ls --json` depends on: that command
+// prints the pools as the person running it and reads the leases for the reset
+// the contract promises, so it must not be the read that prunes — the service
+// is this database's only writer (C2). The same subtree, the same answer, and
+// no delete; Leases over the same fixture still sweeps, so the two are one read
+// and only the sweep is missing here.
+func TestTheUnprunedLeaseReadDeletesNothing(t *testing.T) {
+	const gone = DefaultLeaseResidue + 6
+	db, _ := leaseDB(gone)
+	st := &RTDBStore{DB: db}
+	leases, err := st.LeasesUnpruned(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := gone + 1; len(leases) != want {
+		t.Fatalf("the unpruned read answered %d leases; want the %d Leases answers", len(leases), want)
+	}
+	if db.deletes != 0 {
+		t.Fatalf("the unpruned read deleted %d nodes; want none — a read that prunes is a write, and this one is the listing's", db.deletes)
+	}
+	if _, err := st.Leases(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if want := gone - DefaultLeaseResidue; db.deletes != want {
+		t.Fatalf("Leases over the same subtree deleted %d nodes after the unpruned read; want %d — the read itself must be unchanged", db.deletes, want)
+	}
+}
+
 // The sweep's prune is BOUNDED, and the bound is what keeps the read path from
 // turning into a delete of the whole subtree the first time a project comes back
 // from a long quiet spell: a read deletes the oldest DefaultLeasePrune lapsed
