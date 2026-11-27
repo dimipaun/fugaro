@@ -1447,7 +1447,6 @@ flag	setup	bool		--create-project
 flag	setup	bool		--events
 flag	setup	bool		--forget
 flag	setup	bool		--json
-flag	setup	bool		--managed
 flag	setup	bool		--no-build
 flag	setup	bool		--no-log-isolation
 flag	setup	bool		--plan-only
@@ -1522,7 +1521,6 @@ flag	update	bool		--create-project
 flag	update	bool		--events
 flag	update	bool		--forget
 flag	update	bool		--json
-flag	update	bool		--managed
 flag	update	bool		--no-build
 flag	update	bool		--no-log-isolation
 flag	update	bool		--plan-only

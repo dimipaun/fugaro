@@ -699,7 +699,7 @@ func TestRestoreStatesWhatItMakesPermanent(t *testing.T) {
 
 // TestRestoreCreatingPathRemarksTheProjectAndRebuildsTheDeployer is the
 // guard test for the step the restore delegates: fugaro restore creates the
-// project through the same path `fugaro setup --create-project --managed`
+// project through the same path `fugaro setup --create-project`
 // uses, and that path is also what (a) writes the creation fact with the
 // amount Task 4.2 requires and (b) sets up D77's state bucket and binds the
 // deployer to it (Task 1.5). A restore needs no step of its own for either —
@@ -1009,7 +1009,7 @@ func TestRestoreGCPProjectLine(t *testing.T) {
 // confirmations are gone (the policy removed them), so what it still needs a
 // terminal for is the creating path it delegates to: the typed project ID,
 // the billing account and the installation review `fugaro setup
-// --create-project --managed` asks for, none of which a flag covers. A pipe is
+// --create-project` asks for, none of which a flag covers. A pipe is
 // not a terminal, the refusal says which steps those are, and it comes before
 // anything is read.
 func TestRestoreNeedsATerminalForTheCreatingPathsOwnSteps(t *testing.T) {
@@ -1027,7 +1027,7 @@ func TestRestoreNeedsATerminalForTheCreatingPathsOwnSteps(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
 	}
-	for _, want := range []string{"terminal", "fugaro setup --create-project --managed"} {
+	for _, want := range []string{"terminal", "fugaro setup --create-project"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -1432,8 +1432,8 @@ func TestRestoreEndsInTheSharedManagedApply(t *testing.T) {
 // Both halves are held, because both are the operator's: the sentence names
 // the door that carries the creating flags, and the argv printed after it is
 // the argv the child is handed — the config this run just wrote, the new
-// project, the billing account, and the managed and budget flags the child's
-// own confirmations hang off. The line alone is read, not the run's whole
+// project, the billing account, and the budget figures the child records. The
+// line alone is read, not the run's whole
 // transcript: D66's list quotes the retired word elsewhere in it, and that
 // string is W2.1's.
 //
@@ -1448,7 +1448,7 @@ func TestRestorePrintsTheChildCommandLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the restore: %v\n%s", err, out)
 	}
-	const sentence = "fugaro: creating the project through the same path fugaro setup --create-project --managed uses: fugaro setup --create-project"
+	const sentence = "fugaro: creating the project through the same path fugaro setup --create-project uses: fugaro setup --create-project"
 	i := strings.Index(out, sentence)
 	if i < 0 {
 		t.Fatalf("the creating path does not print the child command line:\nwant %q in:\n%s", sentence, out)
@@ -1459,7 +1459,7 @@ func TestRestorePrintsTheChildCommandLine(t *testing.T) {
 	}
 	for _, want := range []string{
 		"--config ", "--gcp-project " + newProj, "--link-billing " + billingAcc,
-		"--managed", "--budget ", "--budget-currency", "--billing-account " + billingAcc,
+		"--budget ", "--budget-currency", "--billing-account " + billingAcc,
 	} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the printed child command line does not carry %q:\n%s", want, line)
@@ -1467,6 +1467,43 @@ func TestRestorePrintsTheChildCommandLine(t *testing.T) {
 	}
 	if strings.Contains(line, "fugaro init") {
 		t.Errorf("the printed child command line names the retired command:\n%s", line)
+	}
+}
+
+// TestRestoreCreateArgs: what the restore hands the creating run is the
+// creating run's own inputs and nothing else — the project ID the operator
+// chose, the config this run just wrote, the billing account, the budget the
+// old project's fact carried, and the two placement flags where they were
+// given. --managed is not among them (R1, D2214): the flag is gone, and a
+// restore that still passed it would have its child refused before it read
+// anything, which is a restore that can never create a project.
+func TestRestoreCreateArgs(t *testing.T) {
+	rr := &restoreRun{
+		o:      restoreOptions{billingAccount: billingAcc, displayName: "Fugaro New"},
+		path:   "/checkout/fugaro.yaml",
+		newID:  newProj,
+		budget: &managed.Budget{Amount: 7, Currency: "USD"},
+	}
+	const want = "--create-project --config /checkout/fugaro.yaml --gcp-project " + newProj +
+		" --link-billing " + billingAcc + " --budget 7 --budget-currency USD" +
+		" --billing-account " + billingAcc + " --display-name Fugaro New"
+	got := rr.createArgs()
+	if joined := strings.Join(got, " "); joined != want {
+		t.Errorf("createArgs() = %q, want %q", joined, want)
+	}
+	for _, arg := range got {
+		if arg == "--managed" {
+			t.Errorf("the creating path still passes --managed, which this build refuses: %q", got)
+		}
+	}
+	// And nothing is passed that the operator did not name: a run with no
+	// display name and no parent hands the child neither flag.
+	bare := &restoreRun{o: restoreOptions{billingAccount: billingAcc}, path: "/c.yaml",
+		newID: newProj, budget: &managed.Budget{Amount: 100, Currency: "USD"}}
+	for _, arg := range bare.createArgs() {
+		if arg == "--display-name" || arg == "--parent" {
+			t.Errorf("an unnamed placement is passed to the child: %q", bare.createArgs())
+		}
 	}
 }
 
@@ -1846,7 +1883,10 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			// managed flag, and the refusal must say so. Telling the owner it
 			// cannot, and to delete the project, is false and destructive (the
 			// ID stays reserved ~30 days); docs/managed-projects/spec.md says the same.
-			if want := "fugaro managed flag " + newProj + " --budget N --budget-currency CCC"; !strings.Contains(err.Error(), want) {
+			// It is named in its plain form: the command takes the selected
+			// installation's own project and defaults the amount, so a reader
+			// needs no ID and no figures to run it (D2213, D2212).
+			if want := "`fugaro managed flag`"; !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not give the way to add a budget %q:\n%v", want, err)
 			}
 			if strings.Contains(err.Error(), "cannot add one") {
@@ -1855,11 +1895,11 @@ func TestRestoreStopsWhenTheNewProjectsMarkerHasNoValidBudget(t *testing.T) {
 			// And it is scoped to the state it applies to (round-2 review, nit
 			// 3): the flag replaces a creation fact that records no amount, so
 			// the sentence offering it has to be about that fact, and the state
-			// this command's own --managed creation leaves — a version-2 fact
-			// that records an amount — has to be given the way out it has,
-			// which is not the flag. A message that offered the flag for both
-			// (the inherited one) would hand the owner a command that refuses.
-			if !regexp.MustCompile(`records none[^.]*fugaro managed flag ` + regexp.QuoteMeta(newProj) + ` --budget N`).MatchString(err.Error()) {
+			// this command's own creation leaves — a fact that records an
+			// amount — has to be given the way out it has, which is not the
+			// flag. A message that offered the flag for both (the inherited
+			// one) would hand the owner a command that refuses.
+			if !regexp.MustCompile(`records none[^.]*fugaro managed flag`).MatchString(err.Error()) {
 				t.Errorf("the refusal does not scope the flag to a creation fact that records no amount:\n%v", err)
 			}
 			if want := "no command of ours rewrites one that does"; !strings.Contains(err.Error(), want) {

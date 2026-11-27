@@ -95,7 +95,7 @@ type InstallOptions struct {
 	// deployer's seven per-service roles and their seven conditioned
 	// bindings (the module's managed_deployer_scoped). init sets it for an
 	// installation that uses managed projects — the run that creates one
-	// with --create-project --managed, and every later run against one,
+	// with --create-project, and every later run against one,
 	// read from the project's creation fact (init's installRoot) — so the
 	// key follows the installation and not the run. What it does not settle
 	// is whether the fence works: Check 68 has not been run

@@ -10,7 +10,7 @@ import (
 // must live in the bucket the managed apply reads it from, and the read takes
 // the name from the GCP project and from nowhere else.
 //
-// Why this is a refusal at creation and not a read that follows the flag: the
+// Why this is a refusal at creation rather than a read of the bucket later: the
 // managed apply's accounted side lists gs://fugaro-tfstate-<gcp_project> and
 // gs://fugaro-managed-tfstate-<gcp_project> by those derived names
 // (managedAccounted, and Inventory.installationCreated on the other half of
@@ -53,7 +53,7 @@ func TestManagedCreationRefusesAForeignStateBucket(t *testing.T) {
 				r.appendConfig(t, tc.config)
 			}
 			args := append([]string{"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-				"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc}, tc.flags...)
+				"--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc}, tc.flags...)
 			out, errOut, err := r.run(t, true, createStdin, args...)
 			if err == nil {
 				t.Fatalf("a managed creation put its installation state outside gs://%s and was accepted:\n%s",
@@ -106,7 +106,7 @@ func TestManagedCreationAcceptsTheDerivedStateBucket(t *testing.T) {
 	r, bucket := newManagedCreateRig(t)
 	out, errOut, err := r.run(t, true, createStdin,
 		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-		"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc,
+		"--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc,
 		"--state-bucket", managedStateBucket())
 	if err != nil {
 		t.Fatalf("%v\n%s", err, refusalText(out, errOut, nil))
@@ -116,22 +116,5 @@ func TestManagedCreationAcceptsTheDerivedStateBucket(t *testing.T) {
 	}
 	if _, ok := markerAt(t, r.gcs, bucket); !ok {
 		t.Errorf("the creation wrote no %s in gs://%s:\n%s", "fugaro/managed.json", bucket, refusalText(out, errOut, nil))
-	}
-}
-
-// And the other control: a creation that is NOT managed keeps --state-bucket
-// exactly as it was. The rule is about the managed read's derived names, and
-// an ordinary installation reads its state from whatever bucket it was given,
-// so nothing here may reach it.
-func TestOrdinaryCreationKeepsItsStateBucket(t *testing.T) {
-	r, _ := newManagedCreateRig(t)
-	out, errOut, err := r.run(t, true, createStdin,
-		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-		"--state-bucket", "aurora-state")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, refusalText(out, errOut, nil))
-	}
-	if n := len(r.crm.Creates()); n != 1 {
-		t.Fatalf("%d project(s) created:\n%s", n, refusalText(out, errOut, nil))
 	}
 }

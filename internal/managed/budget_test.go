@@ -224,17 +224,17 @@ func TestApplyGateOpensWithAWarningOnAVersionOneMarker(t *testing.T) {
 	}
 	for _, want := range []string{project, "has no budget recorded", reason,
 		"`fugaro managed flag`",
-		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID"} {
+		"fugaro setup --create-project --budget N --budget-currency CCC --billing-account ID"} {
 		if !strings.Contains(w, want) {
 			t.Errorf("the warning %q does not carry %q", w, want)
 		}
 	}
 	// And the shapes the commands no longer have are not offered instead: an
 	// owner sent to `fugaro managed flag <gcp-project-id> --budget N ...` would
-	// be reading a syntax this build replaced (D2213, D2212). The creation half
-	// keeps --managed, which is not a shape this build dropped: it is what makes
-	// the creation record a budget at all, so a warning without it would send
-	// its reader to the creation fact it is warning about.
+	// be reading a syntax this build replaced (D2213, D2212), and the creation
+	// half's `--managed` is gone with the flag (D2214) — the amount and the
+	// currency are what a creating run records, on every run, so the command
+	// the warning offers is the one this build answers to.
 	for _, unwanted := range []string{"<gcp-project-id>"} {
 		if strings.Contains(w, unwanted) {
 			t.Errorf("the warning %q still carries %q", w, unwanted)

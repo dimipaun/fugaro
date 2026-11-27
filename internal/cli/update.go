@@ -56,7 +56,7 @@ lack and the one command an owner runs to grant them. The next fugaro update
 is the ordinary re-converge.
 
 It creates nothing. The flags that do — --create-project, --display-name,
---parent, --managed, --link-billing and --provision-batch — are fugaro setup's,
+--parent, --link-billing and --provision-batch — are fugaro setup's,
 and update refuses each by name rather than ignoring it, so a re-converge
 cannot create a GCP project, link a billing account or provision the Batch
 backend by accident. A first installation is fugaro setup.
@@ -116,7 +116,6 @@ var updateDoor = convergeDoor{
 		{name: "create-project", owner: "fugaro setup", hint: "creating a GCP project is a first run's"},
 		{name: "display-name", owner: "fugaro setup", hint: "it names a project --create-project makes"},
 		{name: "parent", owner: "fugaro setup", hint: "it places a project --create-project makes"},
-		{name: "managed", owner: "fugaro setup", hint: "it marks the project --create-project makes as managed"},
 		{name: "link-billing", owner: "fugaro setup", hint: "linking a billing account is a first run's, and it may incur charges"},
 		{name: "provision-batch", owner: "fugaro setup", hint: "provisioning the Batch backend's root is a first run's"},
 	},

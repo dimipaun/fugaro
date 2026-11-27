@@ -360,15 +360,13 @@ func TestTheCreationIsHeldToTheFlagsChecks(t *testing.T) {
 
 // TestCreationFlagsNeedACreation: a run that creates no project (one with a
 // project config) refuses the flags only a creation takes, by name, rather
-// than ignoring them: --link-billing would otherwise link nothing, and
-// --managed would mark nothing.
+// than ignoring them: --link-billing would otherwise link nothing.
 func TestCreationFlagsNeedACreation(t *testing.T) {
 	for _, tc := range []struct {
 		flag string
 		o    *initOptions
 	}{
 		{"--link-billing", &initOptions{door: setupDoor.name, linkBilling: "0123AB-4567CD-89EF01"}},
-		{"--managed", &initOptions{door: setupDoor.name, managed: true}},
 		{"--parent", &initOptions{door: setupDoor.name, parent: "organizations/123"}},
 		{"--display-name", &initOptions{door: setupDoor.name, displayName: "Mine"}},
 	} {

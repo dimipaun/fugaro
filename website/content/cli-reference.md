@@ -5800,7 +5800,7 @@ Remove both marks that make a GCP project managed (the project's owner)
 Remove the marks that make GCP project PROJECT_ID a managed project.
 
 A managed project carries two marks, written together by the run that created
-it (fugaro setup --create-project --managed) or by fugaro managed flag: the
+it (fugaro setup --create-project) or by fugaro managed flag: the
 creation fact gs://<runs bucket>/fugaro/managed.json in that project's own runs
 bucket, and the label fugaro_managed=true on the GCP project itself. The read
 requires both, so the project is managed only while the two are there — and
@@ -8299,7 +8299,7 @@ delete list. When it is lost — deleted, or closed — its ID stays reserved fo
 about thirty days, so this is a restore into a new project:
 
   - NEW_PROJECT_ID is the GCP project the installation is rebuilt in. It is
-    created through the same path fugaro setup --create-project --managed uses,
+    created through the same path fugaro setup --create-project uses,
     which is also what re-marks the project as managed and re-creates the
     deployer account with the rest of the installation, so neither is a
     separate step here. The repository's gcp_project: line is moved to it, so
@@ -11021,8 +11021,10 @@ is never the gcloud default project. Without a billing link, setup pauses at
 billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
 run that created it marks it Fugaro-managed (its runs bucket's
 fugaro/managed.json and the label fugaro_managed=true) once it has applied the
-installation; --managed with --budget, --budget-currency and --billing-account
-also records the monthly budget the managed apply needs. A creation that a
+installation, and the same run records the monthly budget the managed apply
+needs: --budget and --budget-currency where they were given, and 100 USD
+where nobody chose (they are the alert's threshold, not a cap, and the
+alerts fire at 50%, 90% and 100% of it). A creation that a
 later run finished is marked by that run only where the person at your own
 terminal confirms it: the fugaro_created=true label anyone may set says which
 project to ask about, and never marks one by itself (--json
@@ -11098,7 +11100,6 @@ Flags:
 | `--json` | bool | `false` | no | print the result as JSON on stdout (progress goes to stderr) |
 | `--link-billing` | string | "" | no | on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account, and no flag confirms it. It never changes a project's existing billing link |
 | `--location` | string | "" | no | answer the wizard's place question without a terminal: where the installation lives, us or eu. US is the suggestion and its region is us-east5; EU's is europe-west1. The region is what the installation stores and the place is read back from it (D3080), so --region answers this same question precisely — a region typed in full, such as europe-west4 — and the two given together must agree: a run whose --location and --region name different places is refused at once, naming both. Like every question of the first run, a run that cannot ask and was given neither is refused with both flags. It is a first run's flag: a run that creates no installation — an update, a forget, a run that selects a project config, --config-only, --print-vars and --publish-config — refuses it by name, and the region itself (--region <region>) is what such a run names |
-| `--managed` | bool | `false` | no | on a first run, which creates the project: record its monthly budget in the creation fact. Every project setup creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, and --managed never flags one: it records the budget of a project the run creates |
 | `--name` | string | "" | no | the project's name: for a project config setup creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's) |
 | `--no-build` | bool | `false` | no | with --repo: don't offer the first image builds |
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
@@ -11321,7 +11322,7 @@ lack and the one command an owner runs to grant them. The next fugaro update
 is the ordinary re-converge.
 
 It creates nothing. The flags that do — --create-project, --display-name,
---parent, --managed, --link-billing and --provision-batch — are fugaro setup's,
+--parent, --link-billing and --provision-batch — are fugaro setup's,
 and update refuses each by name rather than ignoring it, so a re-converge
 cannot create a GCP project, link a billing account or provision the Batch
 backend by accident. A first installation is fugaro setup.

@@ -41,7 +41,7 @@ import (
 // managed apply (Task 3.1, D76):
 //
 //   - It creates the project through the SAME path `fugaro setup
-//     --create-project --managed` uses. That is not a convenience: the
+//     --create-project` uses. That is not a convenience: the
 //     creating run is also what writes the project's creation fact for the
 //     project it created (Task 0.1, and Task 4.2's amount) and what sets up
 //     D77's dedicated state bucket and binds the deployer to it (Task 1.5).
@@ -95,7 +95,7 @@ type restoreOptions struct {
 }
 
 // newRestoreCmd is `fugaro restore NEW_PROJECT_ID ROOT` (D68: a top-level
-// verb of its own, beside fugaro setup --create-project --managed).
+// verb of its own, beside fugaro setup --create-project).
 func newRestoreCmd() *cobra.Command {
 	var o restoreOptions
 	cmd := &cobra.Command{
@@ -108,7 +108,7 @@ delete list. When it is lost — deleted, or closed — its ID stays reserved fo
 about thirty days, so this is a restore into a new project:
 
   - NEW_PROJECT_ID is the GCP project the installation is rebuilt in. It is
-    created through the same path fugaro setup --create-project --managed uses,
+    created through the same path fugaro setup --create-project uses,
     which is also what re-marks the project as managed and re-creates the
     deployer account with the rest of the installation, so neither is a
     separate step here. The repository's gcp_project: line is moved to it, so
@@ -260,7 +260,7 @@ func restorePreflight(cmd *cobra.Command, o restoreOptions, newID, rootArg strin
 		return nil, nil, userErr("nothing was restored: %s", initflow.AgentRefusal(m))
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return nil, nil, userErr("nothing was restored: %s", initflow.NeedsTerminal("the typed steps of the creating path a restore delegates to (fugaro setup --create-project --managed)"))
+		return nil, nil, userErr("nothing was restored: %s", initflow.NeedsTerminal("the typed steps of the creating path a restore delegates to (fugaro setup --create-project)"))
 	}
 	sel, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
@@ -408,7 +408,7 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			//
 			// Both ways out are offered and each is scoped to the state it
 			// applies to, because the states are not one: what this command's
-			// own --managed creation writes is a version-2 fact that records
+			// own creation writes is a version-2 fact that records
 			// the amount the restore was given, and the one object the owner's
 			// flag replaces is a version-1 creation fact, which records none
 			// (internal/infra/managed, WriteFlag's own rule). The inherited
@@ -416,8 +416,8 @@ func restoreSteps(cmd *cobra.Command, o restoreOptions, newID, rootArg string) (
 			// offers a command that would refuse for the state this command
 			// actually leaves.
 			moved = false
-			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag %s --budget N --budget-currency CCC`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's --managed creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
-				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID, rr.newID))
+			return fail(restoreWrap(err, "%s exists: this run created it and wrote its creation fact, so it is a complete managed project except for the apply, and the project config now names it (its previous content is in the backup %s); the checkout's gcp_project: line did not move. If the marker read failed for a passing reason, change that line to gcp_project: %s and run fugaro managed apply %s to finish. Otherwise the fact in the runs bucket is what refuses the apply, and what can replace it depends on what it records: a creation fact that records none is what `fugaro managed flag`, run at the owner's own terminal, replaces with the version that records the amount (Task 6.1), while the fact this run's creation writes already records one, and no command of ours rewrites one that does — so for it, shut %s down (gcloud projects delete %s), put the backup back over the project config, and run fugaro restore again with another NEW_PROJECT_ID",
+				rr.newID, rr.backup, rr.newID, rr.rootArg, rr.newID, rr.newID))
 		case errors.As(err, &unmarked):
 			// The creation is this run's and half marked: the fact is in the
 			// runs bucket and the project has no label, so nothing reads it
@@ -1090,7 +1090,7 @@ func (t *throughWriter) Write(p []byte) (int, error) {
 }
 
 // createArgs is the creating path's flags, and nothing else: `fugaro setup
-// --create-project --managed` with this run's inputs. It is a function of its
+// --create-project` with this run's inputs. It is a function of its
 // own so that what the restore delegates to is one thing a reader (and a
 // test) can see whole.
 //
@@ -1106,7 +1106,6 @@ func (rr *restoreRun) createArgs() []string {
 		"--config", rr.path,
 		"--gcp-project", rr.newID,
 		"--link-billing", rr.o.billingAccount,
-		"--managed",
 		"--budget", strconv.FormatInt(rr.budget.Amount, 10),
 		"--budget-currency", rr.budget.Currency,
 		"--billing-account", rr.o.billingAccount,
@@ -1120,8 +1119,8 @@ func (rr *restoreRun) createArgs() []string {
 	return args
 }
 
-// create is the creating path: literally `fugaro setup --create-project
-// --managed`, built by the same constructor the command tree uses and run
+// create is the creating path: literally `fugaro setup --create-project`,
+// built by the same constructor the command tree uses and run
 // with this run's stdin, stdout and stderr.
 //
 // Delegating is the point and not a shortcut. The creating run is what writes
@@ -1140,7 +1139,7 @@ func (rr *restoreRun) createArgs() []string {
 func (rr *restoreRun) create(ctx context.Context, made *initCreation) error {
 	cmd := rr.cmd
 	args := rr.createArgs()
-	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro setup --create-project --managed uses: fugaro setup %s\n", strings.Join(args, " "))
+	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: creating the project through the same path fugaro setup --create-project uses: fugaro setup %s\n", strings.Join(args, " "))
 	// strictCreate: the child refuses a project that is already there, even
 	// one an earlier run of fugaro setup created; made: the child's own account of what it did, which
 	// verifyCreated checks.
