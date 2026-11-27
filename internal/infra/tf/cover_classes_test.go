@@ -12,7 +12,8 @@ import "testing"
 // TestRemovalClassFollowsD3430 holds the class table against D3430's two lists:
 // what Fugaro made and can make again is ClassRecreatable and what it cannot put
 // back is ClassIrreplaceable, an unclassified type is irreplaceable, and
-// RefusesRemovalType is the same table read by a caller with a type alone.
+// RefusesRemovalType is the same table's bearing column read by a caller with
+// a type alone — D1551's question, which DG0 leaves answering as it did.
 func TestRemovalClassFollowsD3430(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -61,21 +62,24 @@ func TestRemovalClassFollowsD3430(t *testing.T) {
 		}
 	}
 
-	// RefusesRemovalType is the class column read by a caller holding a type
-	// alone, and it is what changed for the two types D3430 moves: a registry
-	// repository and a service account no longer refuse.
+	// RefusesRemovalType is D1551's column read by a caller holding a type
+	// alone, and DG0 moves none of it: the two types D3430 makes recreatable —
+	// a registry repository and a service account — keep refusing here until
+	// DG1a takes the gate that asks this onto RemovalClass, which is what makes
+	// DG0 inert.
 	for _, tc := range []struct {
 		typ  string
 		want bool
 	}{
-		{"google_artifact_registry_repository", false},
-		{"google_service_account", false},
+		{"google_artifact_registry_repository", true},
+		{"google_service_account", true},
 		{"google_secret_manager_secret", true},
 		{"google_storage_bucket", true},
+		{"google_cloud_run_v2_job", false},
 		{"google_firestore_database", true}, // unclassified: nobody decided it
 	} {
 		if got := RefusesRemovalType(tc.typ); got != tc.want {
-			t.Errorf("RefusesRemovalType(%s) = %v, want %v: the rule is the class table, and an unclassified type is irreplaceable", tc.typ, got, tc.want)
+			t.Errorf("RefusesRemovalType(%s) = %v, want %v: it is D1551's column, and an unclassified type is irreplaceable", tc.typ, got, tc.want)
 		}
 	}
 }

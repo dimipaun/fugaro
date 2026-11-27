@@ -3645,10 +3645,10 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// not a value this run's config holds. Without the carry the next `fugaro update` of an
 	// installation that opted in hands
 	// Terraform a document with no orchestrator block: the plan is the account's
-	// and its bindings' removal, and a google_service_account is recreatable under
-	// D3430, so the rule applies it rather than refusing — the account, its five
-	// bindings and the grants the block renders are destroyed, the same shape as
-	// the four above and the same one missed update.
+	// and its bindings' removal, and the removal of a google_service_account is
+	// data-bearing under D1551, so the run is refused and the installation stops
+	// converging — the same shape as the four above, and the same one missed
+	// update.
 	for _, prev := range documents {
 		if vars, err = infra.CarriedOrchestrator(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)

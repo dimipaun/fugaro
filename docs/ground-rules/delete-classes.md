@@ -13,6 +13,10 @@ resource type of `allowedTypes`. Each row carries both answers, because `Refuses
 type question) and `RemovalClass` (D3430's per-change question) ask the same thing and may not be
 told different classifications.
 
+The class column is D3430's; the gate still reads D1551's column. A removal of a
+`google_artifact_registry_repository` or a `google_service_account` therefore refuses today exactly
+as it did before DG0, and `RemovalClass` is the answer DG1a moves that gate onto.
+
 ## Per change, not only per type
 
 `tf.RemovalClass(rc ResourceChange, people []string) Class` reads two things besides the type.

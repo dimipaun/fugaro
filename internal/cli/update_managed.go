@@ -1366,15 +1366,15 @@ func admittedRules(upgrade, identity, retired []string, warned bool) []string {
 		cover = "the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)"
 	}
 	if warned {
-		// The same two facts with the half D3430 and D1545 took out of them:
-		// what the guard did not refuse is what the removal rule's class does
-		// not call irreplaceable, and the cover's integrity rules are the ones
-		// that still refuse.
-		guard = "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own that the removal rule protects (an irreplaceable or unclassified type; the owner's delete list admits no removal in the embedded roots)"
+		// The same two facts with the half D1551 and D1545 took out of them:
+		// what the guard did not refuse is what the classification does not
+		// protect, and the cover's integrity rules are the ones that still
+		// refuse.
+		guard = "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
 		cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
 		costs = "the cost list refused no attribute of the plan — a blocked attribute did not refuse it, and it is one of this record's warnings (D1545)"
 		if own {
-			guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own that the removal rule protects (an irreplaceable or unclassified type; the owner's delete list admits no removal in the embedded roots)"
+			guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
 		}
 		if len(upgrade) > 0 {
 			cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it) — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"

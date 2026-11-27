@@ -2490,10 +2490,9 @@ func (c Cover) notCoveredIntegrity(rc ResourceChange, imports []ImportKey, creat
 
 // removalContent is whether the arm this cover refuses a removal with — the one
 // it has instead of a delete list — is a CONTENT refusal D1545 records and
-// warns rather than an integrity one D1549 keeps. D1551's table, read by the
-// class D3430 rules it with, alone decides it: a delete, or a replace in either
-// of terraform's two orders, of an irreplaceable or unclassified type refuses
-// for good (RefusesRemovalType), and
+// warns rather than an integrity one D1549 keeps. D1551's rule alone decides
+// it: a delete, or a replace in either of terraform's two orders, of a
+// data-bearing or unclassified type refuses for good (RefusesRemovalType), and
 // one of any other classified type is a removal the managed gate now takes with
 // a warning.
 //
@@ -5910,10 +5909,12 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 
 // Class is what one planned removal deletes, decided per change (D3430,
 // docs/ground-rules/delete-classes.md): a thing Fugaro made and can make again
-// from the same plan, or a thing it did not make and cannot put back. It is the
-// input every delete rule now reads (DG1a, DG2), and it replaces D1551's
+// from the same plan, or a thing it did not make and cannot put back. It is what
+// the delete rules read once DG1a moves them onto it, and it replaces D1551's
 // data-bearing question as what a removal is judged by — the two are one table
-// below, because they ask the same question of the same types.
+// below, because they ask the same question of the same types. Until that move
+// the gate's own readers hold a type alone and RefusesRemovalType answers for
+// them.
 type Class int
 
 const (
@@ -5947,8 +5948,10 @@ func (c Class) String() string {
 // always agree, and D3430 is why: an artifact registry repository and a service
 // account are data-bearing under D1551 (the images in it, the identity's keys
 // and grants) and recreatable under D3430 (Fugaro made them and the same apply
-// makes them again), and D3430 supersedes D1551 for those two types. So
-// DataBearingType reads bearing and RemovalClass/RefusesRemovalType read class.
+// makes them again), and D3430 supersedes D1551 for those two types. The
+// supersession lives in the class column, and the gate keeps reading the
+// bearing one until DG1a moves it: DataBearingType and RefusesRemovalType read
+// bearing, and RemovalClass — the per-change rule — reads class.
 type removalClassRow struct {
 	// bearing is D1551's answer: see DataBearingType.
 	bearing bool
@@ -5966,8 +5969,9 @@ type removalClassRow struct {
 //
 // D1545 is what makes the bearing column matter beyond the refusal: the managed
 // gate records and warns about what a plan CONTAINS, and D1551's exception —
-// the types whose objects hold data — is what still refuses. The class column
-// is D3430's, and it is what the delete rules read now.
+// the types whose objects hold data — is what still refuses, which is the
+// column the gate reads today. The class column is D3430's, and it is what the
+// delete rules read once DG1a moves them onto RemovalClass.
 //
 // TestRemovalClassFollowsD3430 holds the class column against D3430's two
 // lists, and TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds the bearing
@@ -6086,14 +6090,20 @@ func DataBearingType(t string) (dataBearing, classified bool) {
 	return row.bearing, ok
 }
 
-// RefusesRemovalType is D3430's rule for a reader that holds a TYPE alone: a
-// removal of an irreplaceable type refuses, and so does one of an unclassified
+// RefusesRemovalType is D1551's rule for a reader that holds a TYPE alone: a
+// removal of a data-bearing type refuses, and so does one of an unclassified
 // type — a type added to allowedTypes later refuses until somebody decides it
-// on purpose. Every recreatable type is one the gate admits (DG1a, DG2), and
-// the per-change half of the rule — a person's grant, the workspace account —
-// is RemovalClass, which a caller with a plan asks.
+// on purpose.
+//
+// It reads the BEARING column and not the class column, because DG0 is inert:
+// the readers that hold a type alone are the gate's own — GuardManaged, the
+// managed cover, removalContent — and DG1a moves them onto RemovalClass and the
+// per-change exceptions (D3454's person, D3456's workspace account) in one
+// step. Until then a google_artifact_registry_repository and a
+// google_service_account keep refusing exactly as they did before.
 func RefusesRemovalType(t string) bool {
-	return removalClass(t) == ClassIrreplaceable
+	row, ok := removalClasses[t]
+	return !ok || row.bearing
 }
 
 // removalClass is the class the table gives a type, with an unclassified type

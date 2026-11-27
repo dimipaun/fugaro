@@ -24,11 +24,10 @@ import (
 // Without the carry in prepare, that installation's next `fugaro update` hands
 // Terraform a document with no orchestrator block at all, and the plan is the
 // account's and its bindings' removal. The account is a google_service_account,
-// which D3430 classes recreatable, so the removal rule does NOT refuse that plan
-// (internal/infra/tf's RemovalClass) and the apply takes the account, its five
-// bindings and the caller class and invoker grant the block renders: the
-// installation loses its daemon's identity, which is the HARD RULE's failure
-// mode — nothing but a hand-written block puts it back.
+// which D1551 classifies as data-bearing — "an identity whose keys and grants
+// are lost with it" — and the removal rule refuses the plan (internal/infra/tf's
+// RefusesRemovalType), so the run stops and every later run stops the same way:
+// the HARD RULE's failure mode, an installation that cannot be updated.
 //
 // Mutation (run, restore): drop the infra.CarriedOrchestrator loop from prepare
 // and this test reports a document with no orchestrator in it.
@@ -76,7 +75,7 @@ func TestPrepareCarriesTheOrchestratorBlockAHandOptedInstallationHolds(t *testin
 	}
 	block, _ := doc[infra.OrchestratorKey].(map[string]any)
 	if block == nil {
-		t.Fatalf("the installation opted into a resident orchestrator and the document this run hands Terraform has no orchestrator block in it:\n%s\nThe account and its five bindings are state, and this document is the plan of their removal — applied, not refused, because a google_service_account is recreatable under D3430 — so the apply destroys the account and the grants the block renders", now)
+		t.Fatalf("the installation opted into a resident orchestrator and the document this run hands Terraform has no orchestrator block in it:\n%s\nThe account and its five bindings are state, and this document is the plan of their removal — which the D1551 removal rule refuses for a google_service_account, so this update and every update after it stops", now)
 	}
 	for key, want := range map[string]string{
 		"account_id":        infra.OrchestratorAccountID,
@@ -141,10 +140,9 @@ func TestPrepareCarriesTheOrchestratorBlockAHandOptedInstallationHolds(t *testin
 // and the assertion below fires — the document this run hands Terraform has no
 // orchestrator block, which is the plan of the account's and its bindings'
 // removal. The fixture's terraform is a fake and applies that document anyway;
-// a real installation really does destroy the account: a google_service_account
-// is recreatable under D3430, so the removal rule applies that document, which
-// is the HARD RULE's failure mode — an installation whose daemon has no identity
-// left and no command that puts it back.
+// a real installation is refused there by the D1551 removal rule for a
+// google_service_account, which is the HARD RULE's failure mode — an
+// installation that cannot be updated at all.
 func TestUpdateConvergesADaemonInstallationInOneCommand(t *testing.T) {
 	r := newConvergeRig(t, v7Node())
 	// The service a previous release deployed — a revision whose environment
