@@ -63,6 +63,7 @@
    "footprint": {
     "prediction": true,
     "paths": [
+     "internal/projectpolicy/profiles.go",
      "internal/infra/spec.go",
      "internal/cli/init.go",
      "internal/cli/init_retire.go",
@@ -82,7 +83,9 @@
     "prediction": true,
     "paths": [
      "internal/config/retired.go",
-     "internal/config/retired_test.go"
+     "internal/config/retired_test.go",
+     "internal/cli/compute.go",
+     "internal/cli/budget_preview.go"
     ]
    }
   },
@@ -118,12 +121,27 @@
    "footprint": {
     "prediction": true,
     "paths": [
+     "docs/*.md",
      "docs/how-to/*.md",
      "README.md",
      "SECURITY.md",
      "website/content/security.md",
      "docs/managed-agent-converge/handoffs.md",
      "internal/cli/docs_*_test.go"
+    ]
+   }
+  },
+  {
+   "id": "DOC3",
+   "title": "the live-check scripts",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "scripts/live-checks/**"
     ]
    }
   },
@@ -156,7 +174,9 @@
     "prediction": true,
     "paths": [
      "internal/**/*.go",
-     "website/content/cli-reference.md"
+     "website/content/cli-reference.md",
+     "console/docs/json-contract.md",
+     "console/test/unit/manage-code.test.ts"
     ]
    }
   },
@@ -172,8 +192,11 @@
     "paths": [
      "deploy/terraform/gcp/roots/repo/**",
      "deploy/terraform/gcp/modules/repo/**",
-     "internal/infra/roots.go",
-     "deploy/terraform/terraform_test.go"
+     "internal/infra/workdir.go",
+     "internal/infra/retire.go",
+     "internal/infra/*_test.go",
+     "deploy/terraform/terraform_test.go",
+     "deploy/terraform/secret_readers_test.go"
     ]
    }
   },
@@ -226,6 +249,13 @@
      "internal/cli/recipes_skew_test.go",
      "internal/cli/run.go",
      "internal/cli/init.go",
+     "internal/cli/launch_budget.go",
+     "internal/cli/config_publish.go",
+     "internal/cli/image_layer.go",
+     "internal/cli/imagecheck.go",
+     "internal/cli/validate.go",
+     "internal/cli/validate_recipes.go",
+     "internal/cli/doctor_layer.go",
      "website/content/cli-reference.md"
     ]
    }
@@ -261,6 +291,7 @@
      "internal/cli/managed_apply.go",
      "internal/cli/restore.go",
      "internal/cli/root.go",
+     "internal/cli/report_exempt.go",
      "website/content/cli-reference.md"
     ]
    }
@@ -300,6 +331,11 @@
      "internal/infra/tf/guard_test.go",
      "internal/cli/init.go",
      "internal/cli/init_refusal.go",
+     "internal/cli/init_compute.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/init_firebase.go",
+     "internal/cli/init_retire.go",
+     "internal/cli/update_managed.go",
      "website/content/cli-reference.md"
     ]
    }
@@ -759,6 +795,7 @@
     "paths": [
      "internal/cli/exec.go",
      "internal/selfupgrade/selfupgrade.go",
+     "internal/runner/runner.go",
      "internal/cli/exec_selfupgrade_test.go"
     ]
    }
@@ -823,6 +860,16 @@
    "task": "UO4a",
    "needs": "DOC2",
    "reason": "kept: the Docs tests"
+  },
+  {
+   "task": "UO4a",
+   "needs": "DOC3",
+   "reason": "kept: the live-check scripts must not run a removed flag"
+  },
+  {
+   "task": "DOC3",
+   "needs": "UO2",
+   "reason": "kept: behaviour: plain update covers every repository"
   },
   {
    "task": "UO4b",
@@ -1050,24 +1097,24 @@
    "reason": "kept: one file: internal/task/task.go"
   },
   {
-   "task": "CF2b",
-   "needs": "UO3",
-   "reason": "kept: one file: internal/config/retired.go"
-  },
-  {
    "task": "UO4b",
    "needs": "UO3",
    "reason": "kept: one file: internal/config/retired.go"
   },
   {
    "task": "CF2b",
-   "needs": "CV1",
-   "reason": "kept: one file: internal/config/config.go"
+   "needs": "UO3",
+   "reason": "kept: one file: internal/config/retired.go"
   },
   {
    "task": "UO4b",
    "needs": "CV1",
    "reason": "kept: one file: internal/config/versions.go"
+  },
+  {
+   "task": "CF2b",
+   "needs": "CV1",
+   "reason": "kept: one file: internal/config/config.go"
   },
   {
    "task": "AG2a",
@@ -1110,9 +1157,14 @@
    "reason": "kept: one file: laconic_census_test.go"
   },
   {
-   "task": "UO4b",
+   "task": "VS5",
    "needs": "CF1",
    "reason": "kept: one file: internal/runner/runner.go"
+  },
+  {
+   "task": "DOC2",
+   "needs": "CF1",
+   "reason": "kept: one file: docs/checkout.md"
   },
   {
    "task": "UO4b",
@@ -1150,12 +1202,12 @@
    "reason": "kept: one file: deploy/terraform/terraform_test.go"
   },
   {
-   "task": "CF2c",
+   "task": "UO4b",
    "needs": "VS2",
    "reason": "kept: one file: run.go"
   },
   {
-   "task": "UO4b",
+   "task": "CF2c",
    "needs": "VS2",
    "reason": "kept: one file: run.go"
   },
@@ -1165,17 +1217,17 @@
    "reason": "kept: one file: exec.go"
   },
   {
-   "task": "AG2a",
+   "task": "DG2",
    "needs": "VS3b",
    "reason": "kept: one file: init_stages.go"
   },
   {
-   "task": "CF2b",
+   "task": "UO4b",
    "needs": "VS4",
    "reason": "kept: one file: internal/config/layer.go"
   },
   {
-   "task": "UO4b",
+   "task": "CF2b",
    "needs": "VS4",
    "reason": "kept: one file: internal/config/layer.go"
   },
@@ -1188,6 +1240,11 @@
    "task": "DG1b",
    "needs": "DG2",
    "reason": "kept: one file: website/content/cli-reference.md"
+  },
+  {
+   "task": "AG2b",
+   "needs": "DG2",
+   "reason": "kept: one file: init_compute.go"
   },
   {
    "task": "AG3",
@@ -1260,24 +1317,14 @@
    "reason": "kept: one file: update_ground_rules_test.go"
   },
   {
-   "task": "UO4b",
-   "needs": "CF2a",
-   "reason": "kept: one file: internal/infra/spec.go"
-  },
-  {
-   "task": "UO4a",
-   "needs": "CF2c",
-   "reason": "kept: one file: init.go"
-  },
-  {
-   "task": "UO4b",
-   "needs": "CF2b",
-   "reason": "kept: one file: internal/config/config.go"
-  },
-  {
-   "task": "CV3",
+   "task": "CF2c",
    "needs": "UO4a",
    "reason": "kept: one file: init.go"
+  },
+  {
+   "task": "CF2a",
+   "needs": "UO4b",
+   "reason": "kept: one file: internal/**/*.go"
   },
   {
    "task": "UO6",
@@ -1285,9 +1332,9 @@
    "reason": "kept: one file: internal/**/*.go"
   },
   {
-   "task": "CV3",
-   "needs": "UO4b",
-   "reason": "kept: one file: internal/**/*.go"
+   "task": "UO6",
+   "needs": "CF2a",
+   "reason": "kept: one file: internal/infra/spec_test.go"
   }
  ],
  "decoupling": [],

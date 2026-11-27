@@ -1,6 +1,8 @@
 # Ground rules
 
-**Status: plan only; nothing is implemented; no task approved.** Every decision is answered.
+**Status: plan only; nothing is implemented; no task approved.** Every decision is answered. Three
+amendments await the owner's confirmation (O1–O3), and the last review round left seven open items
+(O4–O10).
 
 **Spec owner:** Dimi Paun. Received, reconciled and planned on 2026-11-26, against `origin/main` at
 `a067bd0fa`.
@@ -16,9 +18,10 @@ Six rules that win over any design choice they conflict with:
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received |
-| [reconciliation.md](reconciliation.md) | The module map, findings F1–F43, decisions D3420–D3452 with the owner's answers, tension T1, UNVERIFIED U1–U3 (U2 settled), and §A, the audit of agent refusals. **It wins over the spec** |
-| [implementation-plan.md](implementation-plan.md) | 44 tasks in seven slices and eight levels, with the critical path, the shared files and Checks 950–953. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | The module map, findings F1–F43, decisions D3420–D3452 with the owner's answers, tension T1, open items O1–O10, UNVERIFIED U1–U3 (U2 settled), and §A, the audit of agent refusals. **It wins over the spec** |
+| [implementation-plan.md](implementation-plan.md) | 45 tasks in seven slices and ten levels, with the critical path, the shared files and Checks 950–953. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan as `fugaro plan graph` reads it |
+| `delete-classes.md`, `agent-flags.md` | Written by tasks DG0 and AG2a; not in this pull request |
 
 **Numbers taken:**
 - decisions D3420–D3459: D3420–D3452 used, D3453–D3459 reserved and unused;

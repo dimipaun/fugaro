@@ -4,11 +4,12 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 
 **Status: nothing is implemented, and no task is approved.** Each task needs the owner's explicit go.
 
-The answers that shaped the plan are D3420–D3449, all given on 2026-11-26.
+The answers that shaped the plan are D3420–D3452, all given or stated on 2026-11-26.
 - **Not the recommendation:** D3441 (the stamp lives in `task.json`), D3445 (one eager rebuild) and
   D3448 (accept the launch window).
 - **Amended after review:** D3425 and D3430, both confirmed by the owner the same day; D3424 and D3448,
-  and D3425's second amendment, which wait on the owner's confirmation (open items O1–O3).
+  and D3425's second amendment, which wait on the owner's confirmation (open items O1–O3). The third
+  review round left open items O4–O10 in the reconciliation; each names the tasks it would change.
 - **Resolutions**, stated without a question: D3424, D3426, D3428, D3429, D3434, D3435, D3439, D3446,
   D3449, D3450, D3451 and D3452.
 
@@ -75,12 +76,14 @@ The answers that shaped the plan are D3420–D3449, all given on 2026-11-26.
    accepts, the earlier documents brought in line, and the versioned loader.
 2. **Output** (CO1–CO5): useful alone.
 3. **Deletes by class** (DG1a, DG1b, DG1c, DG2, DG3, DG4).
-4. **One update for the project** (UO2, then DOC1, DOC2, UO4a, UO4b, and UO6 a release later).
+4. **One update for the project** (UO2, then DOC1, DOC2, DOC3, UO4a, UO4b, and UO6 a release later).
 5. **Agents run update** (AG2a–AG5d).
 6. **Checkout** (CF1, CF2a, CF2c, CF2b).
 7. **Versions** (CV2, VS1–VS5, REL1, then CV3 after release A).
 
-AG1 is the audit itself, §A of the reconciliation; the agent tasks start at AG2a. UO5 of the first draft
+AG1 is the audit itself, §A of the reconciliation; the agent tasks start at AG2a. Each task's **Depends on**
+line names the edges that carry behaviour, a build or an interface; the edges that only order two writers
+of one file are in the Edges table and the graph, which are complete. UO5 of the first draft
 was dropped with D3424's amendment.
 
 ## Tasks
@@ -100,7 +103,7 @@ was dropped with D3424's amendment.
   Fugaro makes missing from the table adds it in its own change.
 - Tests: `TestRemovalClassFollowsD3430`, `TestPersonGrantIsIrreplaceable`, `TestServiceAccountGrantIsRecreatable`,
   `TestUnknownTypeRefused`.
-- Command: `go test ./internal/infra/tf/ -run 'TestRemovalClassFollowsD3430|TestPersonGrantIsIrreplaceable|TestServiceAccountGrantIsRecreatable|TestUnknownTypeRefused' -count=1`
+- Command: `go test ./internal/infra/tf/ -run 'TestRemovalClassFollowsD3430|TestPersonGrantIsIrreplaceable|TestServiceAccountGrantIsRecreatable|TestUnknownTypeRefused' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestPersonGrantIsIrreplaceable` fails while `google_project_iam_member` is classed by type alone.
 - Depends on: none.
 - Commit: `ground-rules DG0: the delete classes, per change (D3430)`
@@ -141,9 +144,11 @@ was dropped with D3424's amendment.
     deleted, and secret containers leave state and are not destroyed;
   - retirement still waits on `infra.InFlightJobs` (F38);
   - an installation that last ran `update` on the release before converges.
-- Files: `internal/infra/spec.go`, `internal/cli/init.go` (`repoEngine`, `enrolSharedRepo`,
+- Files: `internal/projectpolicy/profiles.go` (admission: the project's default profile admits every
+  enrolled repository), `internal/infra/spec.go`, `internal/cli/init.go` (`repoEngine`, `enrolSharedRepo`,
   `retireSharedRoot`), `internal/cli/init_retire.go`, `internal/cli/init_repo_stage.go`,
-  `internal/cli/update_retire_root_test.go` (new).
+  `internal/cli/update_retire_root_test.go` (new). The file count is six. A repository whose workflows
+  no profile can serve is open item O9.
 - Interfaces: consumes DG0. Produces a repository stage that covers every enrolled repository with no
   checkout.
 - Tests: `TestUpdateRetiresEveryRepoRoot`, `TestRetiredRootKeepsSecretContainers`,
@@ -157,7 +162,8 @@ was dropped with D3424's amendment.
 ### UO3: `workflows.*.resources` read and ignored
 - Acceptance: a `fugaro.yaml` with `workflows.*.resources` loads, the key is dropped in memory, and one
   note names the profile that decides the sizing (D3421).
-- Files: `internal/config/retired.go`, `internal/config/retired_test.go`.
+- Files: `internal/config/retired.go`, `internal/config/retired_test.go`, and the two other readers of
+  `Workflow.Resources`: `internal/cli/compute.go` (the Batch checks) and `internal/cli/budget_preview.go`.
 - Tests: `TestRetiredWorkflowResources`.
 - Command: `go test ./internal/config/ -run TestRetiredWorkflowResources -count=1`
 - Red step: the test fails while the key still feeds the job.
@@ -191,7 +197,8 @@ was dropped with D3424's amendment.
     and `website/content/security.md`;
   - `docs/managed-agent-converge/handoffs.md` records D3425 (F13);
   - the Docs tests that pin the old sentences change with them.
-- Files: `docs/how-to/*.md`, `README.md`, `SECURITY.md`, `website/content/security.md`,
+- Files: `docs/*.md` (the nine top-level documents that name it), `docs/how-to/*.md`, `README.md`,
+  `SECURITY.md`, `website/content/security.md`,
   `docs/managed-agent-converge/handoffs.md`, `internal/cli/docs_*_test.go`.
 - Tests: the Docs tests and the website check.
 - Command: `go test ./internal/cli/ -run Docs -count=1 && (cd website && npm run check)`
@@ -201,6 +208,17 @@ was dropped with D3424's amendment.
 - Commit: `ground-rules DOC2: how-tos and security pages for a project-wide update`
 - Reviewer tier: opus (`SECURITY.md` falls under the credentials-service rule).
 
+
+### DOC3: the live-check scripts
+- Acceptance: no script under `scripts/live-checks/` runs `fugaro update --repo` (34 today); each runs plain
+  `fugaro update`.
+- Files: `scripts/live-checks/**`.
+- Tests: `bash -n` over every changed script, and `git grep -n 'update --repo' scripts` printing nothing.
+- Command: `for f in $(git grep -l 'fugaro update' scripts/live-checks); do bash -n "$f" || exit 1; done && ! git grep -n 'update --repo' scripts`
+- Red step: the `git grep` lists today's 34 files.
+- Depends on: UO2 (behaviour: plain `update` covers every repository).
+- Commit: `ground-rules DOC3: the live-check scripts run plain update`
+- Reviewer tier: standard. The owner runs these scripts; none is run by an agent.
 ### UO4a: `update --repo` and its flags go
 - Acceptance: `--repo`, `--no-build`, `--retire` and `--allow-job-delete` are gone from `setup` and
   `update`. `retireNextCommand` is deleted, and the CLI reference is regenerated.
@@ -209,8 +227,7 @@ was dropped with D3424's amendment.
 - Tests: `TestUpdateHasNoRepoFlag`, the plugin tests, `go test ./ee/clidoc/`.
 - Command: `go test ./internal/cli/ -run 'TestUpdateHasNoRepoFlag|Docs' -count=1 && go test ./ee/clidoc/ ./plugin/... -count=1`
 - Red step: `TestUpdateHasNoRepoFlag` fails while the flag is registered.
-- Depends on: UO2 (behaviour), DOC1 and DOC2 (nothing may name the flag when it goes), CF2c (one file:
-  `init.go`), AG3 and DG1b (one file: the CLI reference).
+- Depends on: UO2 (behaviour), DOC1, DOC2 and DOC3 (nothing may name or run the flag when it goes).
 - Commit: `ground-rules UO4a: update --repo and its flags go (D3420, D3431)`
 - Reviewer tier: standard.
 
@@ -223,9 +240,10 @@ was dropped with D3424's amendment.
   - the CLI reference is regenerated.
 
   The lift tasks (AG2b–AG5d) change no help text, so that this one sweep owns it.
-- Files: `internal/**/*.go` (a sweep), `website/content/cli-reference.md`.
+- Files: `internal/**/*.go` (a sweep), `website/content/cli-reference.md`, and the console's pins of
+  doctor's `fix` value: `console/docs/json-contract.md`, `console/test/unit/manage-code.test.ts`.
 - Tests: `TestNoMessageNamesRepoFlag`, `TestHelpMatchesAgentKeepList`, CO5's census, `go test ./ee/clidoc/`.
-- Command: `go test ./internal/cli/ -run 'TestNoMessageNamesRepoFlag|TestHelpMatchesAgentKeepList|TestMessagesAreLaconic' -count=1 && go test ./ee/clidoc/ -count=1`
+- Command: `go test ./internal/cli/ -run 'TestNoMessageNamesRepoFlag|TestHelpMatchesAgentKeepList|TestMessagesAreLaconic' -count=1 && go test ./ee/clidoc/ -count=1 && (cd console && npm run test:unit -- --maxWorkers=2 manage-code)`
 - Red step: `TestNoMessageNamesRepoFlag` lists today's 64 files.
 - Depends on: UO4a, and every earlier writer under `internal/` (the sweep runs alone).
 - Commit: `ground-rules UO4b: no message names update --repo; help follows the keep list`
@@ -235,12 +253,15 @@ was dropped with D3424's amendment.
 - Acceptance: `deploy/terraform/gcp/roots/repo` and `modules/repo` are deleted, with every Go reference to
   them, once no installation can still hold a per-repository root (D3451).
 - Files: `deploy/terraform/gcp/roots/repo/**`, `deploy/terraform/gcp/modules/repo/**`,
-  `internal/infra/roots.go`, `deploy/terraform/terraform_test.go`.
+  `internal/infra/workdir.go` (the `roots` map), `internal/infra/retire.go` (it reads
+  `modules/repo/registry.tf`), `internal/infra/*_test.go`, `deploy/terraform/terraform_test.go`,
+  `deploy/terraform/secret_readers_test.go`.
 - Tests: `go build ./...`, `TestNoRepoRoot`, `terraform fmt -check -recursive deploy/terraform`.
 - Command: `go build ./... && go test ./deploy/terraform/ ./internal/infra/ -run 'TestNoRepoRoot|TestPreventDestroy' -count=1`
 - Red step: `TestNoRepoRoot` finds the root.
 - Depends on: UO2 (behaviour). **External:** one release after the release carrying UO2, so an
-  installation one release behind still retires its roots.
+  installation one release behind still retires its roots. An installation that skips that release
+  is open item O8.
 - Commit: `ground-rules UO6: the per-repository Terraform goes (D3451)`
 - Reviewer tier: opus (Terraform).
 ### CV1: the versioned loader
@@ -272,11 +293,13 @@ was dropped with D3424's amendment.
 
 ### CV3: the image-age gates retire
 - Acceptance: the per-key `*Since` gates in `recipes_skew.go` and `gcpProjectFieldSince` are gone, with
-  their call sites in `run.go` and the `--anchor` help in `init.go` (D3446). A launch no longer reads a
+  every call site and the `--anchor` help in `init.go` (D3446). A launch no longer reads a
   build record's release to admit a key.
 - Files: `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`,
-  `internal/cli/init_fugaroyaml.go`, `internal/cli/run.go`, `internal/cli/init.go`,
-  `website/content/cli-reference.md` (the `--anchor` help).
+  `internal/cli/init_fugaroyaml.go`, `internal/cli/init.go`, and the callers: `run.go`,
+  `launch_budget.go`, `config_publish.go`, `image_layer.go`, `imagecheck.go`, `validate.go`,
+  `validate_recipes.go`, `doctor_layer.go`; `website/content/cli-reference.md` (the `--anchor` help). The
+  file count is fourteen; outside `recipes_skew.go` each change deletes a call.
 - Tests: `TestLaunchNeedsNoImageAgeGate`.
 - Command: `go test ./internal/cli/ -run 'TestLaunchNeedsNoImageAgeGate|Skew' -count=1`
 - Red step: the test fails while `rigorSince` and the others still refuse.
@@ -307,7 +330,8 @@ was dropped with D3424's amendment.
 - Acceptance: `fugaro allow-delete` is gone, `managed apply` and `restore` read no delete list, and the CLI
   reference is regenerated (D3427).
 - Files: `internal/cli/allow_delete.go` (deleted), `internal/cli/managed_apply.go`,
-  `internal/cli/restore.go`, `internal/cli/root.go`, `website/content/cli-reference.md`.
+  `internal/cli/restore.go`, `internal/cli/root.go`, `internal/cli/report_exempt.go`,
+  `website/content/cli-reference.md`.
 - Tests: `TestNoAllowDeleteCommand`, and `managed apply`'s and `restore`'s existing tests.
 - Command: `go build ./... && go test ./internal/cli/ -run 'TestNoAllowDeleteCommand|ManagedApply|Restore' -count=1 && go test ./ee/clidoc/ -count=1`
 - Red step: `TestNoAllowDeleteCommand` finds `allow-delete` registered.
@@ -332,12 +356,21 @@ was dropped with D3424's amendment.
 - Commit: `ground-rules DG1c: the delete list leaves the libraries (D3427)`
 - Reviewer tier: opus (the write guard). The file count is eight; each change deletes a read.
 ### DG2: the guard judges what is deleted; `--allow-delete` goes
-- Acceptance: `tf.Guard` refuses only irreplaceable deletes or replaces, and `--allow-delete` is gone.
-  The refusal says in at most two sentences which resource and that `update` never deletes it (D3431).
+- Acceptance:
+  - `tf.Guard` refuses only irreplaceable deletes or replaces, and `--allow-delete` is gone, with every
+    use of `o.allowDelete` (`gateDeleteLeft` no longer offers the flag);
+  - the refusal says in at most two sentences which resource and that `update` never deletes it (D3431);
+  - on every path, the owner's included, a plan that deletes a job, or a service account a job runs as,
+    while that job has an execution in flight, is not applied: that root's apply is skipped with one line
+    and left for a later update, and the other roots apply (D3450).
 - Files: `internal/infra/tf/guard.go`, `internal/infra/tf/guard_test.go`, `internal/cli/init.go`,
-  `internal/cli/init_refusal.go`, `website/content/cli-reference.md`.
-- Tests: `TestGuardPassesRecreatable`, `TestGuardRefusesIrreplaceable`, `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/infra/tf/ -run TestGuard -count=1 && go test ./internal/cli/ -run TestUpdateLeavesARunInFlightRunning -count=1 && go test ./ee/clidoc/ -count=1`
+  `internal/cli/init_refusal.go`, `internal/cli/init_compute.go`, `internal/cli/init_stages.go`,
+  `internal/cli/init_firebase.go`, `internal/cli/init_retire.go`, `internal/cli/update_managed.go`,
+  `website/content/cli-reference.md`. The file count is ten; outside `guard.go` each change drops one
+  field read.
+- Tests: `TestGuardPassesRecreatable`, `TestGuardRefusesIrreplaceable`, `TestGuardSkipsRootWithJobInFlight`,
+  `TestUpdateLeavesARunInFlightRunning`.
+- Command: `go test ./internal/infra/tf/ -run TestGuard -count=1 && go test ./internal/cli/ -run 'TestGuardSkipsRootWithJobInFlight|TestUpdateLeavesARunInFlightRunning' -count=1 && go test ./ee/clidoc/ -count=1`
 - Red step: `TestGuardPassesRecreatable` fails on today's refusal.
 - Depends on: DG0 (the class table); UO2 and CO3 (one file: `init.go`); DG1a (one file: `guard.go`).
 - Commit: `ground-rules DG2: the guard judges what is deleted; --allow-delete goes (D3431)`
@@ -390,7 +423,8 @@ was dropped with D3424's amendment.
 - Acceptance:
   - the TTY spinner shows the elapsed time;
   - without a TTY, a step still running after a minute prints one "still …" line a minute;
-  - `--events` carries a `heartbeat` event (D3436).
+  - `--events` carries a `heartbeat` event (D3436), **not before open item O4 settles how shipped consoles,
+    which refuse an unknown event type, take it**; until then the task ships the human lines only.
 - Files: `internal/report/spinner.go`, `internal/report/report.go`, `internal/cli/setup_events.go`,
   `schemas/setup-events.schema.json`, `internal/cli/testdata/setup_events.golden.ndjson`.
 - Tests: `TestSpinnerShowsElapsed`, `TestHeartbeatWithoutTTY`, `TestEventsHeartbeat`.
@@ -455,7 +489,7 @@ was dropped with D3424's amendment.
   `internal/cli/init.go`, `internal/cli/init_stages.go`, `docs/ground-rules/agent-flags.md` (new).
 - Interfaces: consumes DG0 through the gate's unchanged `admit`.
 - Tests: `TestAgentUpdateReachesEveryStage`, `TestAgentRefusedKeepListFlags`, `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/initflow/ ./internal/cli/ -run 'TestAgentUpdateReachesEveryStage|TestAgentRefusedKeepListFlags|TestUpdateLeavesARunInFlightRunning' -count=1`
+- Command: `go test ./internal/initflow/ ./internal/cli/ -run 'TestAgentUpdateReachesEveryStage|TestAgentRefusedKeepListFlags|TestUpdateLeavesARunInFlightRunning|Docs' -count=1`
 - Red step: `TestAgentUpdateReachesEveryStage` fails on the loop's `AgentRefusal` for Compute.
 - Depends on: DG0 (the class table); DG1a (behaviour: the gate admits recreatable deletes first); DG2
   (behaviour: `--allow-delete` is gone before agents run every stage).
@@ -470,7 +504,7 @@ was dropped with D3424's amendment.
   `internal/cli/init_orchestrator_stage.go`, `internal/cli/init_checkout_upgrade.go`.
 - Tests: `TestAgentSecretsStageSkipsWithLine`, `TestAgentStagesHaveNoOwnRefusal`.
 - Command: `go test ./internal/cli/ -run 'TestAgentSecretsStageSkipsWithLine|TestAgentStagesHaveNoOwnRefusal' -count=1`
-- Red step: `TestAgentStagesHaveNoOwnRefusal` fails on Compute's `noYes`.
+- Red step: `TestAgentStagesHaveNoOwnRefusal` fails on the Compute stage's own agent refusal (`init_compute.go`).
 - Depends on: none.
 - Commit: `ground-rules AG2b: update's stages run in an agent's session (D3425)`
 - Reviewer tier: opus (agent reach).
@@ -578,7 +612,7 @@ was dropped with D3424's amendment.
   `internal/runner/checkout_fallback_test.go` (new), `docs/checkout.md`.
 - Tests: `TestForeignBakeRemovedAndCloned`, `TestBrokenBakeClonesFresh`, `TestUsableBakeFetches`,
   `TestNoBakeClones`, `TestPushBindingOnFreshClone`.
-- Command: `go test ./internal/runner/ -run 'TestForeignBakeRemovedAndCloned|TestBrokenBakeClonesFresh|TestUsableBakeFetches|TestNoBakeClones|TestPushBindingOnFreshClone' -count=1`
+- Command: `go test ./internal/runner/ -run 'TestForeignBakeRemovedAndCloned|TestBrokenBakeClonesFresh|TestUsableBakeFetches|TestNoBakeClones|TestPushBindingOnFreshClone' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestForeignBakeRemovedAndCloned` fails on today's origin refusal.
 - Depends on: none. It must ship no later than release A, because CF2a relies on every image carrying it
   after A's eager rebuild.
@@ -609,9 +643,7 @@ was dropped with D3424's amendment.
 - Tests: `TestNothingReadsCheckout`, and each reader's existing tests.
 - Command: `go build ./... && go test ./internal/catalog/ ./internal/infra/ ./internal/localcfg/ -count=1 && go test ./internal/cli/ -run 'TestNothingReadsCheckout|Image|Readiness' -count=1`
 - Red step: `TestNothingReadsCheckout` lists today's readers.
-- Depends on: CF2a (behaviour: deploy no longer marks the mode); and, for one file each, AG2a and DG2
-  (`init.go`), AG2b (`init_checkout_upgrade.go`), AG4b (`image_refresh.go`), AG5d (`imagecheck.go`) and VS2
-  (`run.go`).
+- Depends on: CF2a (behaviour: deploy no longer marks the mode).
 - Commit: `ground-rules CF2c: nothing reads the checkout mode (D3440)`
 - Reviewer tier: standard. The file count is about twenty; each change removes a branch.
 
@@ -731,7 +763,8 @@ was dropped with D3424's amendment.
   - an end-to-end test with a fake release server shows a stamped task re-executing the fetched binary,
     and an unfetchable stamp ending the run in one line.
 - Files: `internal/cli/exec.go`, `internal/selfupgrade/selfupgrade.go` (new: the exported `Ensure` over
-  VS1's `upgrade`, and the install-directory check), `internal/cli/exec_selfupgrade_test.go` (new).
+  VS1's `upgrade`, and the install-directory check), `internal/runner/runner.go` (the per-stage hook
+  for the check), `internal/cli/exec_selfupgrade_test.go` (new).
 - Tests: `TestExecUpgradesToStamp`, `TestExecUpgradesDespiteUnknownField`, `TestExecUpgradesOnce`,
   `TestExecFailsOnUnfetchableStamp`, `TestInstallDirTampered`, `TestLocalExecNeverUpgrades`.
 - Command: `go test ./internal/cli/ ./internal/selfupgrade/ -run 'TestExec|TestInstallDirTampered|TestLocalExecNeverUpgrades' -count=1`
@@ -766,7 +799,8 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 
 | Task | Needs | Reason |
 | --- | --- | --- |
-| UO2 | CO3 | one file: `init.go` |
+| VS5 | CF1 | one file: internal/runner/runner.go |
+| UO2 | CO3 | one file: init.go |
 | CV2 | CV1 | SupportedVersions; a contract would be the table itself |
 | UO2, DG1a, DG2, DG3, AG2a | DG0 | the class table |
 | VS2 | VS0 | the field |
@@ -775,25 +809,19 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | VS3b | VS3a | the recorded epoch; a contract would be the constant itself |
 | VS4 | VS3a | staleness by epoch |
 | AG5d | VS3a | one file: image_build_catalog.go |
-| CF2a | CF1 | behaviour: the runner decides without the mark |
-| DG2 | CO3, UO2 | one file: `init.go` |
+| DG2 | CO3, UO2 | one file: init.go |
 | DG2 | DG1a | one file: internal/infra/tf/guard.go |
-| CF2a | UO2 | one file: internal/infra/spec.go |
-| CF2a | VS3b | behaviour: release A's eager rebuild puts CF1's runner in every image; external: release A shipped |
-| CF2a | VS5 | behaviour: as above |
+| DOC3 | UO2 | behaviour: plain update covers every repository |
+| DG2 | VS3b | one file: init_stages.go |
 | AG2a | CO1 | one file: internal/initflow/loop.go |
 | DG1b | CO4 | one file: root.go |
 | DG1b | DG1a | behaviour: nothing needs the list once the rule changed |
 | AG2a | DG1a | behaviour: the gate admits recreatable deletes first |
 | AG2a | DG2 | behaviour: --allow-delete is gone before agents run every stage |
 | DG1b | DG2 | one file: website/content/cli-reference.md |
-| AG2a | VS3b | one file: init_stages.go |
+| AG2b | DG2 | one file: init_compute.go |
 | DOC1 | AG2b | behaviour |
-| CF2c | AG2b | one file: init_checkout_upgrade.go |
-| CF2c | AG4b | one file: image_refresh.go |
-| CF2c | AG5d | one file: imagecheck.go |
-| CF2c | CF2a | behaviour: deploy no longer marks the mode |
-| CF2c | CO3, DG2, AG2a | one file: `init.go` |
+| DOC2 | CF1 | one file: docs/checkout.md |
 | AG5c | DG1a | behaviour: managed apply goes through the reclassified gate |
 | DG1c | DG1b | build: the library leaves once no command reads it |
 | AG5c | DG1b | one file: managed_apply.go |
@@ -801,25 +829,34 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | DOC1 | UO2, AG2a | behaviour: the text describes shipped behaviour |
 | DOC2 | UO2, AG2a | behaviour |
 | REL1 | UO2, VS3b, VS4, VS5, DG1b | the operator line describes it |
-| CF2c, UO4b | VS2 | one file: run.go |
-| CF2b | CF2c | build: the field leaves once nothing reads it |
-| UO4a | CF2c | one file: `init.go` |
-| CF2b | CV1 | one file: internal/config/config.go |
 | UO4a, CV3 | DG1b, AG3 | one file: website/content/cli-reference.md |
 | DG4 | DG1c, DG2, UO2, AG2a, AG2b | behaviour: the end-to-end test |
 | DG4 | DG3 | behaviour: the registry can be destroyed |
 | UO4a | DOC1 | the plugin tests: no skill may name the flag when it goes |
 | UO4a | DOC2 | the Docs tests |
+| UO4a | DOC3 | the live-check scripts must not run a removed flag |
 | UO4a | UO2 | behaviour: plain update covers every repository first |
-| CF2b, UO4b | UO3 | one file: internal/config/retired.go |
-| CF2b, UO4b | VS4 | one file: internal/config/layer.go |
 | UO4b | AG3, AG4a, AG4b, AG5a, AG5b, AG5c, AG5d, AG2b | the help sweep follows every lift |
+| UO4b, CF2b | UO3 | one file: internal/config/retired.go |
 | UO4b | UO4a | the sweep follows the flag's removal |
-| CV3 | CF2c | behaviour: the clone value is gone |
+| UO4b, CF2c | VS2 | one file: run.go |
+| UO4b, CF2b | VS4 | one file: internal/config/layer.go |
+| CF2a | CF1 | behaviour: the runner decides without the mark |
+| CF2a | UO2 | one file: internal/infra/spec.go |
+| CF2a, UO6 | UO4b | one file: internal/**/*.go |
+| CF2a | VS3b | behaviour: release A's eager rebuild puts CF1's runner in every image; external: release A shipped |
+| CF2a | VS5 | behaviour: as above |
+| CF2c | AG2b | one file: init_checkout_upgrade.go |
+| CF2c | AG4b | one file: image_refresh.go |
+| CF2c | AG5d | one file: imagecheck.go |
+| CF2c | CF2a | behaviour: deploy no longer marks the mode |
+| UO6 | CF2a | one file: internal/infra/spec_test.go |
+| CF2c | CO3, DG2, AG2a, UO4a | one file: init.go |
 | UO6 | DG3 | one file: deploy/terraform/terraform_test.go |
 | UO6 | UO2 | behaviour: no installation applies a per-repository root after UO2; external: one release later |
-| CV3 | UO4a | one file: `init.go` |
-| UO6, CV3 | UO4b | one file: internal/**/*.go |
+| CV3 | CF2c | behaviour: the clone value is gone |
+| CF2b | CF2c | build: the field leaves once nothing reads it |
+| CF2b | CV1 | one file: internal/config/config.go |
 | CV3 | VS2 | behaviour: every launch is stamped |
 | CV3 | VS5 | behaviour: runners upgrade themselves |
 | UO4b | every earlier writer under `internal/` | one file each: the sweep runs alone |
@@ -840,23 +877,26 @@ The contract-first pass ran and broke no edge.
     nearly the whole of the first task.
   - CF1→CF2a→CF2c→CF2b: behaviour and the build.
   - Every "one file" edge orders two writers of one file, so that launching by edges never runs them at
-    once. `init.go` has seven writers: CO3, UO2, DG2, AG2a, CF2c, UO4a and CV3, in that order.
+    once. `init.go` has seven writers: CO3, UO2, DG2, AG2a, UO4a, CF2c and CV3, in that order. UO4a comes
+    before CF2c so that removing `--repo` does not wait on release A.
 
 ### Levels
 
 | Level | Tasks |
 | --- | --- |
-| 0 | DG0, VS0, UO1, CO3, UO3, CO1, VS3a, AG2b, CO4, CF1, VS1, AG4b, AG4a, AG5a, AG5b, CV1, CO2, CO5 |
-| 1 | UO2, DG1a, VS3b, VS5, VS2, AG5d, DG3, VS4, CV2 |
-| 2 | DG2, CF2a |
-| 3 | AG2a, DG1b |
-| 4 | DOC1, DOC2, AG3, CF2c, AG5c, DG1c, REL1 |
-| 5 | UO4a, DG4, CF2b |
+| 0 | DG0, VS0, UO1, CO3, UO3, VS3a, CO1, CF1, CO4, AG4a, AG4b, AG5a, AG5b, CV1, CO2, CO5, VS1 |
+| 1 | UO2, DG1a, VS3b, AG5d, DG3, VS2, VS5, VS4, CV2 |
+| 2 | DG2, DOC3 |
+| 3 | AG2a, AG2b, DG1b |
+| 4 | DOC1, DOC2, AG3, AG5c, DG1c, REL1 |
+| 5 | UO4a, DG4 |
 | 6 | UO4b |
-| 7 | UO6, CV3 |
+| 7 | CF2a |
+| 8 | UO6, CF2c |
+| 9 | CV3, CF2b |
 
-The critical path is CO3 → UO2 → DG2 → AG2a → CF2c → CF2b → UO4b → CV3, eight tasks with CO3 the
-bottleneck, as the graph read reports. **Release A** is the first release that carries VS0–VS5, VS3b and
+The critical path is CO3 → UO2 → DG2 → AG2a → DOC1 → UO4a → UO4b → CF2a → CF2c → CF2b, ten tasks with
+CO3 the bottleneck, as the graph read reports. **Release A** is the first release that carries VS0–VS5, VS3b and
 CF1; its `update` runs the eager rebuild. CF2a and CV3 launch only after release A ships, and UO6 only a
 release after UO2's. The graph cannot hold an external wait, so each task and this paragraph state it.
 
@@ -866,28 +906,33 @@ Every pair of writers of one file is ordered by an edge, not only placed in diff
 
 | File | Writers, in order |
 | --- | --- |
-| `deploy/terraform/terraform_test.go` | DG3 (1), UO6 (7) |
-| `internal/cli/image.go` | CO3 (0), CF2c (4) |
+| `deploy/terraform/terraform_test.go` | DG3 (1), UO6 (8) |
+| `internal/cli/config_publish.go` | AG4b (0), CV3 (9) |
+| `internal/cli/image.go` | CO3 (0), CF2c (8) |
 | `internal/cli/image_build_catalog.go` | VS3a (0), AG5d (1) |
-| `internal/cli/image_refresh.go` | AG4b (0), CF2c (4) |
-| `internal/cli/imagecheck.go` | AG5d (1), CF2c (4) |
-| `internal/cli/init.go` | CO3 (0), UO2 (1), DG2 (2), AG2a (3), CF2c (4), UO4a (5), CV3 (7) |
-| `internal/cli/init_checkout_upgrade.go` | AG2b (0), CF2c (4) |
+| `internal/cli/image_refresh.go` | AG4b (0), CF2c (8) |
+| `internal/cli/imagecheck.go` | AG5d (1), CF2c (8), CV3 (9) |
+| `internal/cli/init.go` | CO3 (0), UO2 (1), DG2 (2), AG2a (3), UO4a (5), CF2c (8), CV3 (9) |
+| `internal/cli/init_checkout_upgrade.go` | AG2b (3), CF2c (8) |
+| `internal/cli/init_compute.go` | DG2 (2), AG2b (3) |
 | `internal/cli/init_refusal.go` | DG2 (2), UO4a (5) |
-| `internal/cli/init_retire.go` | UO2 (1), UO4a (5) |
-| `internal/cli/init_stages.go` | VS3b (1), AG2a (3) |
+| `internal/cli/init_retire.go` | UO2 (1), DG2 (2), UO4a (5) |
+| `internal/cli/init_stages.go` | VS3b (1), DG2 (2), AG2a (3) |
 | `internal/cli/managed_apply.go` | DG1b (3), AG5c (4) |
 | `internal/cli/root.go` | CO4 (0), DG1b (3) |
-| `internal/cli/run.go` | VS2 (1), CF2c (4), CV3 (7) |
-| `internal/config/config.go` | CV1 (0), CF2b (5) |
-| `internal/config/layer.go` | VS4 (1), CF2b (5) |
-| `internal/config/retired.go` | UO3 (0), CF2b (5) |
-| `internal/config/validate.go` | CV1 (0), CF2b (5) |
-| `internal/infra/spec.go` | UO2 (1), CF2a (2) |
+| `internal/cli/run.go` | VS2 (1), CF2c (8), CV3 (9) |
+| `internal/cli/update_managed.go` | DG2 (2), AG2a (3) |
+| `internal/cli/validate.go` | CF2c (8), CV3 (9) |
+| `internal/config/config.go` | CV1 (0), CF2b (9) |
+| `internal/config/layer.go` | VS4 (1), CF2b (9) |
+| `internal/config/retired.go` | UO3 (0), CF2b (9) |
+| `internal/config/validate.go` | CV1 (0), CF2b (9) |
+| `internal/infra/spec.go` | UO2 (1), CF2a (7) |
 | `internal/infra/tf/guard.go` | DG1a (1), DG2 (2) |
 | `internal/initflow/loop.go` | CO1 (0), AG2a (3) |
-| `website/content/cli-reference.md` | DG2 (2), DG1b (3), AG3 (4), UO4a (5), UO4b (6), CV3 (7) |
-| `internal/**/*.go` | UO4b (6): the sweep waits on every earlier writer of `internal/` it touches |
+| `internal/runner/runner.go` | CF1 (0), VS5 (1) |
+| `website/content/cli-reference.md` | DG2 (2), DG1b (3), AG3 (4), UO4a (5), UO4b (6), CV3 (9) |
+| `internal/**/*.go` | UO4b (6), ordered after every earlier writer under `internal/` and before CF2a, CF2c, CF2b and CV3 |
 
 ### Contract changes anticipated
 
@@ -897,7 +942,7 @@ None: the plan has no contract.
 
 The graph read prints one line for the plan:
 
-> ready in 660–2659 min, no history yet for 35 tasks (44 tasks; tiers for 9, seeds for 35; from the cached history of 2026-11-22 07:25 UTC)
+> ready in 746–3038 min, no history yet for 35 tasks (45 tasks; tiers for 10, seeds for 35; from the cached history of 2026-11-22 07:25 UTC)
 
 It is informational: it reserves no budget, and it moves as runs finish and as the graph changes.
 

@@ -60,7 +60,7 @@ What the repository already has, against the spec's concepts:
   same engine as stage 9, but only over the working directory's checkout (`init_repo_stage.go`
   `repositoryStage`, `init_repo_target.go` `resolveRepoTarget`). Its removal is U12 of
   `docs/update-from-anywhere/`, the owner's D3353 of 2026-11-26, and U12 waits on U11.
-- **F2. Exists.** Other commands change the cloud. Each is classified in D3424:
+- **F2. Exists.** Other commands change the cloud. Each is classified in D3424 or in §A:
   - `setup --provision-batch` provisions the compute root the first time; `update` already converges an
     existing one by the installation's own opt-in (`init_compute.go`, R2/D3110);
   - `project repos add`, `sync` and `rm` (`project_enroll*.go`, `project_repos_rm.go`);
@@ -72,7 +72,7 @@ What the repository already has, against the spec's concepts:
 - **F3. Open.** The approach the spec drops is lift L5 (`docs/update-from-anywhere/`). L5 reads repositories
   through the forge, not a checkout (`internal/repofiles` `Read`). These parts are merged: C1, U1, U2, U3a,
   U3b, U4, U5, U6a, U6b, U7b, U8, U9a, U10 and U13. U11, the step that would apply every repository's
-  root, is not merged, and neither are U7a, U9b–U9d, U12, I1 or K1. D3420 settles which parts stay.
+  root, is not merged; U7a merged after the base (#4179); and neither are U9b–U9d, U12, I1 or K1. D3420 settles which parts stay.
 - **F4. Exists.** The repo-coupling audit (`docs/repo-coupling-audit/report.md`) already lists every
   coupling, B1–B19 and RC1–RC107, with the owner's rulings D3235–D3239. The audit this spec asks for is
   that report, plus F5 and F6.
@@ -357,6 +357,45 @@ D3453–D3459 are reserved and unused.
 - **O3.** Confirm D3425's second amendment: every `shapesTheInstallation` flag except `--registry-cleanup`
   and `--scheduler-region` stays refused to agents, `--base` and `--github-app-id` included, and
   `config publish --executable-changes` stays a person's.
+
+Left by the third and last review round (2026-11-26). Each needs the owner, and none is fixed in the plan:
+
+- **O4. CO2's heartbeat event.** The console's feed reader (`console/src/shared/new-ops.ts`) refuses any
+  event type it does not know, so a CLI that emits `heartbeat` breaks every shipped console. D3436 asked for
+  the event. Choose: a console task that accepts it first, released before the CLI emits it; or a
+  heartbeat carried as an existing `notice`; or the human lines only. CO2 ships the human lines until this
+  is answered.
+- **O5. Removing a person's grant.** `fugaro user rm` only edits the operator and admin lists, and the next
+  `update` applies the revocation (`user.go`). With a person's grant irreplaceable (D3430 as amended),
+  every `update` would refuse that revocation, and a role change that replaces the grant too. Person grants
+  also come from the launcher and budget-admin lists (`modules/firebase/iam.tf`). Choose: the membership
+  commands apply their own revocation (D3431's "their own commands"), or a revocation the lists already
+  record counts as the owner's approval inside `update`.
+- **O6. Other doors to the code every job runs.** D3425's second amendment keeps
+  `config publish --executable-changes` and the image-source flags of `update` from agents. These are open
+  on the same reasoning:
+  - `settings set`/`unset --executable-changes` and `workflow --executable-changes`;
+  - `image refresh --image-source`/`--expect-digest`;
+  - `image add`'s `--image`, `--dockerfile`, `--inline` and `--default`.
+
+  AG3 and AG4b lift them as written.
+- **O7. D3430's premise has two more gaps.** A recreated registry is empty, so launches fail until the
+  background or nightly builds finish; VS3b waits only on an epoch change. And the workspace service
+  account carries people's grants made outside Terraform (`internal/workspace/authority_sa.go`), which a
+  recreation loses; `update` recreates only Terraform's bindings. Choose whether the workspace account and
+  registries in use stay irreplaceable, or whether a recreation triggers an eager rebuild and a re-grant.
+- **O8. An installation that skips a release.** UO6 deletes `modules/repo` one release after UO2 (D3451).
+  An installation that upgrades past UO2's release keeps its per-repository roots, and nothing can retire
+  them. Choose: keep the module until `doctor` sees no root anywhere, or refuse such an update with one
+  line naming the release to pass through.
+- **O9. A repository no profile can serve.** UO2 makes the project's default profile admit every enrolled
+  repository. A repository whose workflows need resources or an image no profile offers has no stated
+  outcome.
+- **O10. Workflow secrets still need an update.** `creds/workflowsecrets/<slug>` is written only by
+  `update`'s repository engine, from `fugaro.yaml` workflows (`update_workflowsecrets.go`). A secret added
+  in `fugaro.yaml` therefore needs an `update` before it takes effect, against spec §1. No task removes
+  that dependency.
+
 
 ## UNVERIFIED
 
