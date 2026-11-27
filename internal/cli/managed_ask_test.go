@@ -623,6 +623,42 @@ func TestUpdateAskOnAFailedReadKeepsTheValuesLine(t *testing.T) {
 	}
 }
 
+// The same read in a session that cannot answer a prompt: there is no terminal
+// to ask a value at, so the update door's value entry answers NOTHING — no
+// values line, and no refusal either. The empty answer is AskDecision's own row
+// (D3347/R18; the stage leaves its `fugaro secrets set` lines, D1540) and not a
+// gap: the flag refuses where a confirmation it restored cannot be answered, and
+// here it restored none. A refusal would be the claim the rule does not make —
+// that asking for a value nobody can type fails the run — and the run meets the
+// read outage instead, in the stage's own words.
+func TestUpdateAskOnAFailedReadAsksForNoValueInAnAgentSession(t *testing.T) {
+	r := updateManagedRig(t)
+	noAgentSession(t)
+	noRunSession(t)
+	unreadableRead(r)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, errOut, err := executeStdin(t, "", "update", "--ask")
+	said := out + errOut + ErrorText(err)
+	if !strings.Contains(said, "could not read whether "+initProject+" is managed") {
+		t.Fatalf("the run does not warn about the read that failed:\n%s", said)
+	}
+	for _, line := range []string{
+		initflow.AskValues(), initflow.AskUnmanaged(), initflow.AskRestored(),
+		initflow.AskRefusal(initflow.Conditions{Agent: "CLAUDECODE"}),
+	} {
+		if strings.Contains(said, line) {
+			t.Errorf("--ask answered a session that cannot ask a value (%q):\n%s", line, said)
+		}
+	}
+	if err != nil && ExitCode(err) == ExitUserError {
+		t.Errorf("the flag refused where the rule answers nothing:\n%s", said)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) ran on a read that did not answer", n)
+	}
+}
+
 // A run the gate never covers: --plan-only applies nothing by its own
 // definition, so there is no step whose confirmation the gate stands in for.
 // The flag says that, and the run is otherwise the run it always was.
