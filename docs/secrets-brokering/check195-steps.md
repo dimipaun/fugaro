@@ -20,10 +20,10 @@ Restore deletes. Read those before you start. This file is the two commands.
   the file.
 - `bash`, `mktemp`, `gcloud`, `curl` and `fugaro` on PATH, `gcloud` authenticated as you. Nothing is
   installed and nothing is fetched.
-- An account that can **create a Cloud Run service, create a service account, set IAM on the service,
-  add one project-level binding, create a GCS bucket, set IAM on it, read the object in it and delete
-  it**, submit a build, and read the build's own record and its lines out of Cloud Logging: a project
-  Owner can.
+- An account that can **create a Cloud Run service, create a service account, set IAM on the service
+  and on that account's own policy, add one project-level binding, create a GCS bucket, set IAM on it,
+  read the object in it and delete it**, submit a build, and read the build's own record and its lines
+  out of Cloud Logging: a project Owner can.
 - **Nothing else. No token, no secret, no repository, no file to prepare.** The only credential in the
   whole path is the ID token the build's own step mints for itself, out of the build's own metadata
   server, and uses where it mints it. This check mints no credential of its own and asks you for
@@ -92,12 +92,12 @@ worth knowing by name:
   reads the policy back to prove it removed it again, and once its account is deleted that leftover can
   never be removed — and the stop prints the exact `remove-iam-policy-binding` to run by hand. A policy
   read that **failed** stops the run too, for the same reason a failed list does.
-- **A grant this check makes is refused** (`invoker-grant`) — the row covers all three: the service's
-  own policy is read back after the invoker binding and must name the throwaway account and nobody
+- **A grant this check makes is refused** — `invoker-grant` for the service's own policy, which is read
+  back after the invoker binding and must name the throwaway account and nobody
   else (a binding that did not land is a stop rather than a 403 the block would report as the account
-  having been refused, which is a different fact), and the project-level `roles/logging.logWriter` and
-  the bucket-level `roles/storage.objectCreator` writes are refused here too, the row naming which of
-  the three and what gcloud said.
+  having been refused, which is a different fact); the project-level `roles/logging.logWriter` and
+  the bucket-level `roles/storage.objectCreator` writes, refused here too, the row naming which of
+  the three and what gcloud said; and `openid-grant` for the account's own policy, below.
 - **The build fails** (`build`) — the row carries Cloud Build's own failure detail, the step's own
   exit code out of the build's record, and the build's own last lines, redacted. The likeliest causes,
   in order: your account lacks `iam.serviceAccounts.actAs` on the throwaway account (so `gcloud builds
@@ -108,6 +108,15 @@ worth knowing by name:
   service: the grant does not admit a build account's own token, which is the answer S4 rests on, so
   report it rather than working around it. A **401** is the front end refusing the token itself.
   Read the step's own lines with `gcloud builds log <build id> --project=fugaro-dev`.
+- **The grant the metadata server reads does not land** (`openid-grant`) — the throwaway account's
+  **own** policy is re-read until it names `roles/iam.serviceAccountOpenIdTokenCreator`, the role the
+  installation's own catalog build identity holds on itself
+  (`deploy/terraform/gcp/modules/installation/build_identity.tf`). Without it the build's step can only
+  end **14** (`notoken`): that is the owner's run of 2026-11-27, whose call at the metadata server
+  answered 404. The build still runs — the row says the mint was unmeasured — and the row names the
+  command to read the account's own policy by hand. A **refused** grant call (this needs
+  `iam.serviceAccounts.setIamPolicy` on that account, which an Owner has) stops the run before the
+  build instead.
 - **A grant the build's own writes need does not land** (`write-grants`) — both policies are re-read
   until they name the throwaway account: the project's own for `roles/logging.logWriter` (what buys
   the build's own log) and the bucket's own for `roles/storage.objectCreator` (what buys the object
@@ -145,7 +154,7 @@ worth knowing by name:
   `gcloud builds describe <build id> --project=fugaro-dev` and its lines with
   `gcloud builds log <build id> --project=fugaro-dev`.
 - **A delete that failed** (`service-deleted`, `bucket-deleted`, `account-deleted`, `binding-removed`,
-  `restore`) — every one of the four is **read back**, and a FAILed row names what is left, what the last refusal
+  `openid-grant-removed`, `restore`) — every one of the five is **read back**, and a FAILed row names what is left, what the last refusal
   said and the exact command to remove it. The bucket is deleted **before** the account, and the
   project-level binding **before** it too, on purpose: a binding that outlives its member reads back
   as `deleted:serviceAccount:…` and can never be removed again. The bucket is deleted only when its
@@ -168,8 +177,15 @@ list --project=fugaro-dev` shows it. Everything the check makes is deleted by it
 from the exit trap too, so a Ctrl-C in the middle still deletes the service (and the invoker binding
 with it), the bucket (with the object the step wrote into it, and the bucket-level
 `roles/storage.objectCreator` binding beside it), the project-level `roles/logging.logWriter` binding
-and the throwaway account — and each of the four is read back. The scratch directory goes at the end,
-and its row says whether it did.
+and the throwaway account — which takes the `roles/iam.serviceAccountOpenIdTokenCreator` binding it
+holds on its **own** account with it, read back too — and each of the five is read back. The scratch
+directory goes at the end, and its row says whether it did.
+
+The third grant is what the **mint** needs: the metadata server serves a build its ID token only when
+the account the build runs as holds `roles/iam.serviceAccountOpenIdTokenCreator` on its own account,
+the role the installation's catalog build identity holds on itself
+(`deploy/terraform/gcp/modules/installation/build_identity.tf`). Without it the step ends 14 and the
+build's log carries the 404 the endpoint answered — the owner's run of 2026-11-27.
 
 The two grants are what the build's own **writes** need, beyond the reading itself: a build that names
 its own service account must say where its logs go (`options.logging: CLOUD_LOGGING_ONLY`, as Fugaro's
