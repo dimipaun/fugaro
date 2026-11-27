@@ -631,6 +631,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
     CHECK631_POLL_SECONDS=1 CHECK631_RUN_TIMEOUT_SECONDS="${CHECK631_TEST_RUN_TIMEOUT:-20}" \
     CHECK631_CLI_TIMEOUT_SECONDS=20 CHECK631_DOCTOR_TIMEOUT_SECONDS=20 \
     CHECK631_LAUNCH_TIMEOUT_SECONDS=20 CHECK631_PUBLISH_TIMEOUT_SECONDS=20 \
+    CHECK631_DECLARE_TIMEOUT_SECONDS=120 \
     ${args[@]+"${args[@]}"} \
     bash ${bashargs[@]+"${bashargs[@]}"} "$script" ${cli[@]+"${cli[@]}"} \
     </dev/null >"$dir/out" 2>"$dir/err" || status=$?
@@ -813,6 +814,25 @@ test_with_no_terminal_the_check_stops() {
   expect_contains "$out" "FACT aborted: FAIL" "no terminal: the run is aborted"
   expect_contains "$out" "this check needs your own terminal" "no terminal: the message"
   expect_absent "$fugaro_calls" "accounts add" "no terminal: nothing is declared"
+}
+
+# The two declarations are measured against their OWN bound, and this case is
+# what says so: a terminal is held open with nothing written into it, so the
+# first declaration has no value to read and its row can only end on a bound.
+# The bound it ends on is the declaration's, injected at a second here — which
+# is the whole point of the knob beside the pacing one, since a tight bound on a
+# command that reads at a terminal is a verdict about the machine rather than
+# about the command. A number nothing reads would put that verdict back.
+test_a_declaration_is_measured_against_its_own_bound() {
+  local dir=$work/declare-bound
+  prepare "$dir"
+  need_pty || return 0
+  start_feeder "$dir"
+  run_check "$dir" CHECK631_DECLARE_TIMEOUT_SECONDS=1
+  stop_feeder
+  expect_status "$status" 2 "a declaration nothing answers"
+  expect_contains "$out" "FACT add-anthropic: FAIL — fugaro accounts add $anthropic --type anthropic did not finish inside 1s" "a declaration nothing answers: the row ends on the declaration's own bound"
+  expect_absent "$out" "FACT add-anthropic: PASS" "a declaration nothing answers: no value was read"
 }
 
 test_a_session_that_is_refused() {
@@ -1214,6 +1234,7 @@ t test_the_second_command_echoing_a_key_shape_is_a_finding
 t test_a_command_that_prints_no_prompt_is_a_finding
 t test_both_commands_read_at_their_own_prompts
 t test_with_no_terminal_the_check_stops
+t test_a_declaration_is_measured_against_its_own_bound
 t test_a_session_that_is_refused
 t test_a_session_that_is_not_refused_is_a_finding
 t test_a_session_refusal_that_names_nothing_is_a_finding

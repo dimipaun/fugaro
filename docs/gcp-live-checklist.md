@@ -23890,7 +23890,9 @@ check declares, so the credentials you already have are never touched), `CHECK63
 `CHECK631_OWNER` (the address the pool is served to; the default is the account `gcloud` is authenticated
 as), `CHECK631_TASK` and `CHECK631_RECIPE` (what the run is launched with), `CHECK631_REGION` (us-east5),
 `CHECK631_LOG_VIEW`, `CHECK631_RUN_TIMEOUT_SECONDS` (3600), `CHECK631_POLL_SECONDS` (15),
-`CHECK631_CLI_TIMEOUT_SECONDS` (180), `CHECK631_DOCTOR_TIMEOUT_SECONDS` (300),
+`CHECK631_CLI_TIMEOUT_SECONDS` (180), `CHECK631_DECLARE_TIMEOUT_SECONDS` (the
+`CHECK631_CLI_TIMEOUT_SECONDS` value: the bound the two declarations are measured against, so how fast the
+machine reading at the terminal is is never what calls one hung), `CHECK631_DOCTOR_TIMEOUT_SECONDS` (300),
 `CHECK631_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK631_PUBLISH_TIMEOUT_SECONDS` (600), `CHECK631_TTY` (the
 terminal both declarations run at and read their value from; only the check's own test points it elsewhere),
 `CHECK631_DRY_RUN`, `CHECK631_PREFLIGHT` and `CHECK631_KEEP_SCRATCH`.

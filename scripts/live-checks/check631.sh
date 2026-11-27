@@ -111,7 +111,10 @@
 # address gcloud is authenticated as, and a pool published to the node needs
 # one), TASK and RECIPE (what the run is launched with), REGION (us-east5),
 # LOG_VIEW, RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS
-# (180), DOCTOR_TIMEOUT_SECONDS (300), LAUNCH_TIMEOUT_SECONDS (600),
+# (180), DECLARE_TIMEOUT_SECONDS (CLI_TIMEOUT_SECONDS: the bound the two
+# declarations are measured against, so how fast the machine that reads at the
+# terminal is is never what calls one hung), DOCTOR_TIMEOUT_SECONDS (300),
+# LAUNCH_TIMEOUT_SECONDS (600),
 # PUBLISH_TIMEOUT_SECONDS (600) and TTY (/dev/tty: the terminal both commands
 # run at and read their value from, which only the check's own test points
 # elsewhere).
@@ -932,9 +935,9 @@ step_add_anthropic() {
   owner "That prompt is the one the acceptance names: it is hidden by the command itself, what you type is read by the command and by nothing else here, and this check never holds it."
   owner ""
   say "declaring the Anthropic-key credential: fugaro accounts add ${ANTHROPIC} --type anthropic (at your terminal: its own hidden prompt, and what it prints comes back here)"
-  run_at_terminal "$CLI_TIMEOUT" add-anthropic "$SANDBOX" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
+  run_at_terminal "$DECLARE_TIMEOUT" add-anthropic "$SANDBOX" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-    unmeasured add-anthropic "fugaro accounts add ${ANTHROPIC} --type anthropic did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-anthropic.out and $SCRATCH/add-anthropic.err"
+    unmeasured add-anthropic "fugaro accounts add ${ANTHROPIC} --type anthropic did not finish inside ${DECLARE_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-anthropic.out and $SCRATCH/add-anthropic.err"
     return 0
   fi
   if [ "$BOUNDED_STATUS" != 0 ]; then
@@ -989,9 +992,9 @@ step_add_openrouter() {
   owner "That prompt is the one the acceptance names: it is hidden by the command itself, and what you type is read by the command and by nothing else here."
   owner ""
   say "declaring the OpenRouter credential: fugaro accounts add ${OPENROUTER} --type openrouter (at your terminal: its own hidden prompt, and what it prints comes back here)"
-  run_at_terminal "$CLI_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter
+  run_at_terminal "$DECLARE_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-    unmeasured add-openrouter "fugaro accounts add ${OPENROUTER} --type openrouter did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-openrouter.out and $SCRATCH/add-openrouter.err"
+    unmeasured add-openrouter "fugaro accounts add ${OPENROUTER} --type openrouter did not finish inside ${DECLARE_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-openrouter.out and $SCRATCH/add-openrouter.err"
     return 0
   fi
   if [ "$BOUNDED_STATUS" != 0 ]; then
@@ -1693,6 +1696,7 @@ REGION=${CHECK631_REGION:-us-east5}
 RUN_TIMEOUT=${CHECK631_RUN_TIMEOUT_SECONDS:-3600}
 POLL_SECONDS=${CHECK631_POLL_SECONDS:-15}
 CLI_TIMEOUT=${CHECK631_CLI_TIMEOUT_SECONDS:-180}
+DECLARE_TIMEOUT=${CHECK631_DECLARE_TIMEOUT_SECONDS:-$CLI_TIMEOUT}
 DOCTOR_TIMEOUT=${CHECK631_DOCTOR_TIMEOUT_SECONDS:-300}
 LAUNCH_TIMEOUT=${CHECK631_LAUNCH_TIMEOUT_SECONDS:-600}
 PUBLISH_TIMEOUT=${CHECK631_PUBLISH_TIMEOUT_SECONDS:-600}
