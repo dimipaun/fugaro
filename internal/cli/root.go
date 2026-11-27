@@ -509,6 +509,11 @@ func newCoreRoot() *cobra.Command {
 		// the command's own project from are parsed.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
+			// A coding agent's session gets the document (D3437): the flag is
+			// set here, before any command reads its own flags or builds a
+			// reporter, so a command that has --json behaves as if it had been
+			// passed and the agent reads a result rather than a screen.
+			agentJSON(cmd)
 			// A command the desktop console spawns as a read changes nothing
 			// on this machine, so it does not write the remembered checkouts
 			// either (see consoleReadPaths in project.go). Marked here, once

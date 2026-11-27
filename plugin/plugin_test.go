@@ -13,7 +13,22 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/agentenv"
 )
+
+// TestMain takes the coding-agent markers out of the environment: the suite is
+// often run from a coding agent's session, where a command that has --json
+// answers with its document instead of its human view (CO4, D3437), and these
+// tests read the skills' own commands as a person does — the same reason
+// internal/cli's TestMain clears them. A test that means to be in an agent's
+// session sets a marker itself.
+func TestMain(m *testing.M) {
+	for _, k := range agentenv.Markers {
+		os.Unsetenv(k)
+	}
+	os.Exit(m.Run())
+}
 
 func decodeJSON(t *testing.T, path string, v any) {
 	t.Helper()

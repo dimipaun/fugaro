@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/agentenv"
 )
 
 // TestMain closes the ways a test could reach the developer's own machine or
@@ -39,6 +41,12 @@ func TestMain(m *testing.M) {
 	// own directory and below the root that holds .git.
 	if wd, err := os.Getwd(); err == nil {
 		os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(filepath.Dir(wd)))
+	}
+	// A coding agent's session now gets the --json document from every command
+	// that has the flag (CO4, D3437), and these tests read the tree as a person
+	// does; internal/cli's TestMain clears the same markers, for the same reason.
+	for _, k := range agentenv.Markers {
+		os.Unsetenv(k)
 	}
 	os.Exit(m.Run())
 }
