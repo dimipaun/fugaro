@@ -10,7 +10,7 @@ paths:
 - Run `npm test` in `mobile/` and in `shared/` (`node --test`). CI runs neither until `docs/pending-workflows/shared-tests.yml` is copied in, so your local run is the only check.
 - Each module's `index.js` is its only entry point; import from it, never around it. Where an `index.test.js` asserts the exported surface as an exact set, a new export is a decision and goes into that test.
 - The scan tests fence these rules; extend a scan's list on purpose and never weaken its pattern:
-  - `src/boundary.test.js`: the Keychain SDK only in `expo-secure-store.js`, `reveal(` only in `secret.js` and `secure-store.js`, no `console.` anywhere in the app,
+  - `src/boundary.test.js`: the Keychain SDK only in `expo-secure-store.js`, `reveal(` only in `secret.js`, `secure-store.js` and `session/devicekey.js`, no `console.` anywhere in the app,
   - `src/mailbox/write-path.test.js`: the mailbox client is the app's only write path (D113).
 - When you change a guard, run the module's `mutation-proof.sh` too. It needs a Node, and the base carries none (`docs/base-image.md`): in a run, `mise use -g node@22` first, or the script refuses rather than report a verdict it could not have run.
 - JS and Go share wire formats. `internal/mailbox` tests read `shared/mailbox-schema/vectors.json` and `shared/mailbox/index.js` directly, and `shared/lease/parity.test.js` generates `internal/mailbox/testdata/lease-parity.json`. When one side changes, update both sides and run `npm test` and `go test ./internal/mailbox/`.
