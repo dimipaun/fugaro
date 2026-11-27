@@ -285,10 +285,10 @@ run "kind: the defaults are the table's, not a fallthrough" \
   "  message: Object.freeze([]),
   prompt: Object.freeze(['options']),
   answer: Object.freeze(['reply_to']),
-  action: Object.freeze(['action', 'reply_to'])," "  message: Object.freeze(['options']),
+  action: Object.freeze(['action', 'reply_to', 'brief'])," "  message: Object.freeze(['options']),
   prompt: Object.freeze(['options']),
   answer: Object.freeze(['reply_to']),
-  action: Object.freeze(['action', 'reply_to']),"
+  action: Object.freeze(['action', 'reply_to', 'brief']),"
 
 # P5.1g's kind, and the one guard of it that is not P6.3's generic one: the
 # (kind, field) table has to NAME the stop request, or a message of that kind
@@ -324,8 +324,12 @@ run "agents: two agents under one id are refused" \
 run "agents: only id and name, nothing else" \
   "      if (!AGENT_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD, \`agents[\${i}].\${key}\`) };" "      if (false) {"
 run "heartbeat: the tag is required (O7)" \
-  "const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot', 'mac']);" \
-  "const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot']);"
+  "  const tags = tagFields(value, 'mac');
+  if (tags.bad) return tags.bad;
+
+  const heartbeat = {" "  const tags = tagFields(value, 'mac');
+
+  const heartbeat = {"
 
 # An action record: complete, or refused.
 run "action: the unknown-field guard" \
@@ -399,8 +403,12 @@ run "action: the launch target does not grow a brief" \
 
 # The tag itself: required, and 32 bytes of lowercase hex.
 run "mac: required on every message" \
-  "export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at', 'mac']);" \
-  "export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at']);"
+  "  const tags = tagFields(value, 'mac');
+  if (tags.bad) return tags.bad;
+
+  const message = {" "  const tags = tagFields(value, 'mac');
+
+  const message = {"
 run "mac: 64 hex characters, or it is not a tag" \
   "  if (value.length !== MAC_MAX || !HEX_PATTERN.test(value)) {" "  if (false) {"
 run "mac: lowercase only (one tag, one spelling)" \
@@ -418,7 +426,7 @@ run "registration: the platform is required" \
   "  registration: Object.freeze(['token', 'platform'])," \
   "  registration: Object.freeze(['token']),"
 run "registration: the (kind, field) table is two-sided for its own three fields" \
-  "  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {" \
+  "  for (const field of ['options', 'reply_to', 'action', 'brief', 'token', 'platform', 'prefs']) {" \
   "  for (const field of ['options', 'reply_to', 'action']) {"
 run "registration: the platform is one of the two" \
   "  if (!PLATFORMS.includes(value)) return { bad: refuse(REFUSALS.UNKNOWN_PLATFORM, 'platform') };" \
@@ -471,11 +479,11 @@ run "the two encoders' separators are refused (Go escapes them, JavaScript does 
   "  const code = s.charCodeAt(i);
   return code === 0x2028 || code === 0x2029;" "  return false;"
 run "canonicalBytes: the tag itself is not covered" \
-  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'acked') covered[key] = record[key];"
+  "    if (key !== 'mac' && key !== 'sig' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'sig' && key !== 'acked') covered[key] = record[key];"
 run "canonicalBytes: the ack is outside the bytes" \
-  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac') covered[key] = record[key];"
+  "    if (key !== 'mac' && key !== 'sig' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac' && key !== 'sig') covered[key] = record[key];"
 run "canonicalBytes: a covered field is never dropped (reply_to)" \
-  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac' && key !== 'acked' && key !== 'reply_to') covered[key] = record[key];"
+  "    if (key !== 'mac' && key !== 'sig' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac' && key !== 'sig' && key !== 'acked' && key !== 'reply_to') covered[key] = record[key];"
 run "canonicalBytes: the direction is inside the covered bytes" \
   "  covered[DIRECTION_FIELD] = direction;" ""
 run "canonicalBytes: the direction is one of the three" \
