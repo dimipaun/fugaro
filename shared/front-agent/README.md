@@ -163,7 +163,7 @@ glob exits 0, see [the package README](../README.md)), or if a control mutation 
 **first two guards are the task's own red step** — the phase rule that refuses a second go, and the
 deadline — so the red step stays re-runnable rather than living only in a pull-request transcript.
 
-`vectors.json` carries 34 accept-and-refuse cases as **data** (the conversation, the clock it is
+`vectors.json` carries 35 accept-and-refuse cases as **data** (the conversation, the clock it is
 judged at, and the exact answer) for P5.4.5's Go parity test; the constants travel with them so the
 Go side reads no second set. `vectors.generate.mjs` asserts every case against the live module
 before it writes, so the file cannot be minted from a module that disagrees with a case, and
