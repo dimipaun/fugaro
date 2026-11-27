@@ -123,38 +123,63 @@ func (c *Cloud) Put(ctx context.Context, deviceUID string, key Key) error {
 // report a pairing revoked with its key still in the container: the failure the
 // note in SECURITY.md says is refused and reported rather than passed over.
 func (c *Cloud) Delete(ctx context.Context, deviceUID string) (int, error) {
-	versions, err := c.versions(ctx)
-	if errors.Is(err, ErrNoCloud) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	destroyed := 0
-	for _, v := range versions {
-		gone, err := c.revokeVersion(ctx, v, deviceUID)
-		if err != nil {
-			return destroyed, err
-		}
-		if gone {
-			destroyed++
-		}
-	}
-	return destroyed, nil
+	gone, err := c.sweep(ctx, func(uid string) bool { return uid == deviceUID })
+	return len(gone), err
 }
 
-// revokeVersion destroys the version at v if it carries deviceUID, and answers
-// whether it did.
+// Sweep destroys every version whose device uid live refuses — the retirement
+// J5c's sweep runs — and answers the uids it destroyed, oldest version first.
+//
+// **This is the half of the sweep that no laptop's own state can name.** The
+// config's mailbox block lists the items one machine recorded, and a version can
+// outlive every record of it: a pairing from another laptop, an item the
+// operator never wrote down, a pairing whose delivery failed after the copy
+// landed. The container is the one place the whole set is written down, so it is
+// read here and every version is held against the live device set the caller
+// passes. A version whose uid no device node names is key material no phone is
+// admitted by (D166), and it is exactly what the cloud consumer would go on
+// verifying a message with.
+func (c *Cloud) Sweep(ctx context.Context, live func(uid string) bool) ([]string, error) {
+	return c.sweep(ctx, func(uid string) bool { return !live(uid) })
+}
+
+// sweep destroys every version whose uid doomed admits, and answers those uids.
+// One loop, so `Delete` and `Sweep` are one reading of the container and one
+// enable/read/destroy dance: a second copy of it would be a second place a
+// version could be passed over.
+func (c *Cloud) sweep(ctx context.Context, doomed func(uid string) bool) ([]string, error) {
+	versions, err := c.versions(ctx)
+	if errors.Is(err, ErrNoCloud) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var gone []string
+	for _, v := range versions {
+		uid, destroyed, err := c.revokeVersion(ctx, v, doomed)
+		if err != nil {
+			return gone, err
+		}
+		if destroyed {
+			gone = append(gone, uid)
+		}
+	}
+	return gone, nil
+}
+
+// revokeVersion destroys the version at v if doomed admits the uid it carries,
+// and answers that uid and whether it destroyed it.
 //
 // A version whose state serves no read is ENABLED so that it can be attributed
 // at all — the design's step 2b sentence is about this very state, and a
 // version a revoke cannot read is one it cannot destroy — and put back DISABLED
 // unless the destroy took it: an enable left behind would hand another pairing's
 // key back to the consumer, which is the opposite of what this file is for.
-func (c *Cloud) revokeVersion(ctx context.Context, v cloudVersion, deviceUID string) (destroyed bool, err error) {
+func (c *Cloud) revokeVersion(ctx context.Context, v cloudVersion, doomed func(uid string) bool) (uid string, destroyed bool, err error) {
 	if v.state != "ENABLED" {
 		if err := c.enableVersion(ctx, v.name); err != nil {
-			return false, err
+			return "", false, err
 		}
 		defer func() {
 			if destroyed {
@@ -165,18 +190,17 @@ func (c *Cloud) revokeVersion(ctx context.Context, v cloudVersion, deviceUID str
 			}
 		}()
 	}
-	var uid string
 	uid, _, err = c.record(ctx, v.name)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
-	if uid != deviceUID {
-		return false, nil
+	if !doomed(uid) {
+		return uid, false, nil
 	}
 	if _, err := c.svc.Projects.Secrets.Versions.Destroy(v.name, &secretmanager.DestroySecretVersionRequest{}).Context(ctx).Do(); err != nil {
-		return false, cloudErr(err, nil)
+		return uid, false, cloudErr(err, nil)
 	}
-	return true, nil
+	return uid, true, nil
 }
 
 // enableVersion and disableVersion are one version's two state calls, and the

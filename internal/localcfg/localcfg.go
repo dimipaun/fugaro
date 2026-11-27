@@ -39,6 +39,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // ConfigVersion is the version of the local config this release writes, and
@@ -1384,6 +1385,39 @@ type Mailbox struct {
 // two from drifting. A key that is neither shape is refused, which is the only
 // way an operator learns of a typo.
 var pairUIDRE = regexp.MustCompile(`^(?:p~[A-Za-z0-9_-]{43}|m~[A-Za-z0-9_-]{22})$`)
+
+// MailboxKeychainItemPath is the document path of one pairing's entry in the
+// mailbox block, which is the path an edit of that block has to name.
+func MailboxKeychainItemPath(uid string) []string {
+	return []string{"mailbox", "keychain_item", uid}
+}
+
+// RemoveMailboxKeychainItems removes the named pairings' entries from a local
+// config document, and answers the document with them gone.
+//
+// **It splices bytes rather than rewriting the file** (yamledit): the local
+// config is a document a person also edits by hand, and a retirement that
+// marshalled the loaded value back would take the comments, the key order and
+// every other block with it. The block itself goes when its last entry does —
+// DropEmptyParents — because a `mailbox:` key holding an empty mapping is a
+// block a reader has to tell apart from an absent one for no reason.
+//
+// A uid the document does not carry is not an error and not an edit: the same
+// absence the caller asked for, exactly as the keychain Store's Delete reads
+// one. The returned document is the input unchanged when nothing was removed,
+// so a caller can write only what changed (yamledit.Changed).
+func RemoveMailboxKeychainItems(doc []byte, uids []string) ([]byte, error) {
+	out := doc
+	for _, uid := range uids {
+		next, err := yamledit.RemoveKeyWithOptions(out, MailboxKeychainItemPath(uid),
+			yamledit.RemoveOptions{DropEmptyParents: true})
+		if err != nil {
+			return doc, fmt.Errorf("mailbox.keychain_item.%s: %w", uid, err)
+		}
+		out = next
+	}
+	return out, nil
+}
 
 // CredentialsService is the credentials service block: the installation's own
 // Cloud Run service, as the launcher needs it (docs/credentials-service,

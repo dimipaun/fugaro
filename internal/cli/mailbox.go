@@ -668,9 +668,10 @@ type mailboxPairing struct {
 // O6 retires — and a pairing with no signer takes no lease, which is M4b's row.
 //
 // A pairing whose item holds no key and whose node holds no public key is **not
-// served and is reported**: a config entry survives the `pair revoke` that
-// deletes the item — revoke edits no config — so refusing to start over one
-// would leave the consumer unable to serve any other phone on the machine. It
+// served and is reported**: an entry can outlive its item — a revoke that
+// predates J5c's retirement sweep, a config this machine may not write — so
+// refusing to start over one would leave the consumer unable to serve any other
+// phone on the machine. It
 // comes back from here as a pairing of its own with `revoked` set, so that the
 // pass it is given is the one that drops the prompts nobody can answer any more,
 // and it is a pass **in its sorted place** beside the served ones rather than a

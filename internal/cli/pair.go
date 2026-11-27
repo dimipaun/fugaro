@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -29,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // fugaro pair (plan §4.1, §7.1): pair a phone with this installation. This is
@@ -754,6 +756,164 @@ func pairUndoItemAndNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Conf
 	return pairRemoveDeviceNode(ctx, db, lc, deviceUID, pairRemoveItem(ctx, pairKeychain(), item, cause))
 }
 
+// pairMACRetirement is what the retirement sweep took away: the pairings whose
+// MAC key no device node names any more, the homes each one was removed from,
+// and what did not land.
+type pairMACRetirement struct {
+	// UIDs are the pairings that were retired, sorted: the uids this machine's
+	// config named and no device node does, plus the uids the installation's
+	// container held a version for and no device node does.
+	UIDs []string
+	// Items are this laptop's keychain items the sweep deleted; Cloud is how
+	// many versions of the installation's own container it destroyed; Config is
+	// the file whose mailbox block it edited, empty when there was nothing to
+	// edit.
+	Items  []string
+	Cloud  int
+	Config string
+	// Wrote is every path deleted, in the order it was deleted, for the
+	// document.
+	Wrote []string
+	// Warnings are leftovers the operator has to act on and that are not a
+	// failure of the sweep: the shared config's entries, which this machine may
+	// not write.
+	Warnings []string
+	// Failed is one line per step that did not land. A caller refuses on it: a
+	// key the operator believes is gone and is not is the one outcome here that
+	// looks like success.
+	Failed []string
+}
+
+// pairRetireOrphanedMACKeys deletes the MAC key of every pairing this
+// installation no longer holds, from all three homes the key was ever written
+// to (J5c): this laptop's OS keychain, the installation's own container in
+// Secret Manager, and the project config's mailbox block.
+//
+// **A uid with no device node is the whole test.** The node's existence is what
+// admits a phone (D166, rules.PathDevices), so a uid the node tree does not
+// carry is one no phone is admitted by: its MAC key is key material nothing
+// verifies with, and the consumer would go on signing and verifying with it for
+// ever. A uid the nodes DO carry is left alone, whichever home holds a copy.
+//
+// It is what retires the keys of the pairings that were revoked before this
+// release, and it runs from two places: `fugaro pair revoke`, whose own uid is
+// orphaned by the act — so a revoke is also what takes away a config entry and
+// a container version an earlier revoke left — and `fugaro update`, which is
+// the pass that retires what no command named.
+//
+// **The device set is read first, and a read that fails refuses the sweep.** An
+// empty device tree is a real answer — an installation with no phone is one
+// whose every key is an orphan — but a read that did not happen is not, and
+// sweeping against a set that is empty because the database refused would
+// destroy the keys of every live pairing at once.
+func pairRetireOrphanedMACKeys(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, configPath string) (pairMACRetirement, error) {
+	ret := pairMACRetirement{}
+	rows, err := pairListDevices(ctx, lc, db)
+	if err != nil {
+		return ret, err
+	}
+	live := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		live[r.UID] = true
+	}
+
+	// This laptop's home: the config's own keys are the only index of the items
+	// this machine holds, since an item's name is derived from a uid and the
+	// keychain cannot be listed by it. The name deleted is the one the config
+	// records and not the one this build derives — the recorded name is what the
+	// consumer reads the key from (mailboxKeyring), so a config that names
+	// another item is a config whose item is the one to delete.
+	var configured map[string]string
+	if lc.Mailbox != nil {
+		configured = lc.Mailbox.KeychainItem
+	}
+	orphans := make([]string, 0, len(configured))
+	for uid := range configured {
+		if !live[uid] {
+			orphans = append(orphans, uid)
+		}
+	}
+	sort.Strings(orphans)
+
+	var removed []string
+	for _, uid := range orphans {
+		item, err := keychain.ParseItem(configured[uid], lc.Name)
+		if err != nil {
+			ret.Failed = append(ret.Failed, fmt.Sprintf("mailbox.keychain_item.%s names %s, which is not a name a key is stored under: %v", uid, configured[uid], oneLine(err.Error())))
+			continue
+		}
+		if err := pairKeychain().Delete(ctx, item); err != nil {
+			ret.Failed = append(ret.Failed, fmt.Sprintf("this laptop's MAC key at %s could not be deleted: %s", item.Name(), oneLine(err.Error())))
+			continue
+		}
+		ret.UIDs = append(ret.UIDs, uid)
+		ret.Items = append(ret.Items, item.Name())
+		ret.Wrote = append(ret.Wrote, item.Name())
+		removed = append(removed, uid)
+	}
+	if len(removed) > 0 {
+		// The entry goes with the item it names, and only when the file may be
+		// written: the shared config is published to the runs bucket and no
+		// command writes it, so its entries are left where they are and reported.
+		// An entry that outlives its item is not a failure — the consumer reads
+		// it as a pairing with no key and serves the others — but it is a line an
+		// operator asked for the sweep is owed.
+		if configPath == "" {
+			ret.Warnings = append(ret.Warnings, fmt.Sprintf("the mailbox.keychain_item entr(y|ies) %s are in the shared config, which this machine does not write: delete them where it is published", strings.Join(removed, ", ")))
+		} else if err := pairRemoveConfigItems(configPath, removed); err != nil {
+			ret.Failed = append(ret.Failed, err.Error())
+		} else {
+			ret.Config = configPath
+			ret.Wrote = append(ret.Wrote, configPath)
+		}
+	}
+
+	// The installation's home: the container is the one place the whole set of
+	// copies is written down, so it is read and every version held against the
+	// live set. A version for a uid the config never named — another laptop's
+	// pairing, an item nobody recorded — is destroyed here or nowhere.
+	cloud, err := pairCloud(ctx, lc)
+	if err != nil {
+		return ret, err
+	}
+	destroyed, err := cloud.Sweep(ctx, func(uid string) bool { return live[uid] })
+	if err != nil {
+		ret.Failed = append(ret.Failed, fmt.Sprintf("the installation's own cloud copy of a retired pairing's key could not be destroyed: %s", oneLine(err.Error())))
+	} else if len(destroyed) > 0 {
+		ret.UIDs = append(ret.UIDs, destroyed...)
+		ret.Cloud = len(destroyed)
+		ret.Wrote = append(ret.Wrote, pairCloudCopyName(lc))
+	}
+	sort.Strings(ret.UIDs)
+	ret.UIDs = slices.Compact(ret.UIDs)
+	return ret, nil
+}
+
+// pairRemoveConfigItems takes the retired pairings' entries out of the config
+// document at path, leaving every other byte of it as it was.
+//
+// It writes only when the edit changed the document, and it writes atomically
+// (writeFileAtomic): the file is the owner's own, read and edited by hand
+// between commands, and a half-written config is one every later command
+// refuses.
+func pairRemoveConfigItems(path string, uids []string) error {
+	doc, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("the mailbox.keychain_item entries for %s are in %s, which could not be read (%v): delete them by hand", strings.Join(uids, ", "), path, oneLine(err.Error()))
+	}
+	next, err := localcfg.RemoveMailboxKeychainItems(doc, uids)
+	if err != nil {
+		return fmt.Errorf("%s could not be edited (%v): delete the mailbox.keychain_item entries for %s by hand", path, oneLine(err.Error()), strings.Join(uids, ", "))
+	}
+	if !yamledit.Changed(doc, next) {
+		return nil
+	}
+	if err := writeFileAtomic(path, next); err != nil {
+		return fmt.Errorf("%s could not be written (%v): delete the mailbox.keychain_item entries for %s by hand", path, oneLine(err.Error()), strings.Join(uids, ", "))
+	}
+	return nil
+}
+
 // pairWrote is the completed pairing's `wrote` list (§4.5's document): the two
 // nodes the pairing holds, and the installation's cloud copy of the key where
 // there is one. It is built from what the pairing actually wrote rather than
@@ -1462,35 +1622,38 @@ func pairRefuseIn(ev *pairEventWriter, asJSON bool, code string, err error) erro
 // minter's. The device node is the whole of what the rules admit a device by
 // (D166), so a command that could not read it must say so rather than report
 // that no device is paired.
-func pairOpen(cmd *cobra.Command, o cloudOptions, ev *pairEventWriter, asJSON bool, local string) (*localcfg.Config, *rtdb.Client, error) {
+func pairOpen(cmd *cobra.Command, o cloudOptions, ev *pairEventWriter, asJSON bool, local string) (localcfg.Selection, *localcfg.Config, *rtdb.Client, error) {
 	ctx := cmd.Context()
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
-		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusedEnv, err)
+		return localcfg.Selection{}, nil, nil, pairRefuseIn(ev, asJSON, pairRefusedEnv, err)
 	}
-	_, lc, err := selectProject(ctx, o)
+	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
-		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedProject), err)
+		return localcfg.Selection{}, nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedProject), err)
 	}
 	ev.project = lc.Name
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
-		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedBudget), err)
+		return sel, nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedBudget), err)
 	}
 	// The probe first, as in the pairing itself: it is the credential's own
 	// refusal and keeps its message and code.
 	if err := pairDatabaseAdminProbe(ctx, db, lc); err != nil {
-		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, local), err)
+		return sel, nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, local), err)
 	}
 	// The same one ownership question the pairing itself asks: `ls` reads the
 	// device nodes and `revoke` deletes one, and neither is this installation's
 	// to do anywhere but in its own database.
 	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was done there"); err != nil {
-		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)
+		return sel, nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)
+		return sel, nil, nil, pairRefuseIn(ev, asJSON, pairRefusalCode(err, pairRefusedMismatch), err)
 	}
-	return lc, db, nil
+	// The selection travels with the config because the retirement sweep
+	// rewrites the config document itself (J5c), and it has to be the file that
+	// was read: `Path` is empty for the shared config, which nothing may write.
+	return sel, lc, db, nil
 }
 
 type pairLsOptions struct {
@@ -1529,7 +1692,7 @@ func newPairLsCmd() *cobra.Command {
 
 func runPairLs(cmd *cobra.Command, o *pairLsOptions) error {
 	ev := &pairEventWriter{w: cmd.OutOrStdout(), now: pairNow}
-	lc, db, err := pairOpen(cmd, o.cloudOptions, ev, o.asJSON, pairRefusedDatabaseAdmin)
+	_, lc, db, err := pairOpen(cmd, o.cloudOptions, ev, o.asJSON, pairRefusedDatabaseAdmin)
 	if err != nil {
 		return err
 	}
@@ -1571,6 +1734,17 @@ func runPairLs(cmd *cobra.Command, o *pairLsOptions) error {
 // and not two.
 func pairCell(s string) string {
 	return strings.ReplaceAll(pluginwire.Printable(strings.TrimSpace(s)), "\t", `\u0009`)
+}
+
+// pairCells is pairCell over a list, for a sentence that names several of one
+// kind: every name sanitised the same way, since a keychain item's name is a
+// config value and a config value is a person's own text.
+func pairCells(names []string) string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, pairCell(n))
+	}
+	return strings.Join(out, ", ")
 }
 
 // pairListDevices reads the device allowlist: one row per child, sorted by uid
