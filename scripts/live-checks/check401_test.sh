@@ -341,7 +341,7 @@ expect_scratch_gone() { # dir what
 }
 
 converged() { # what — the converge ran
-  grep -q '^fugaro update --yes --config ' "$dir/state/calls" ||
+  grep -q '^fugaro update --config ' "$dir/state/calls" ||
     fail "$1: the converge never ran (calls: $(tr '\n' ';' <"$dir/state/calls"))"
 }
 
@@ -635,7 +635,7 @@ test_dry_run_runs_nothing() {
   run401 --installation "$PROJECT" --config "$dir/config.yaml"
   expect_status "$status" 0 "dry run"
   expect_contains "$out" "CHECK 401 DRY RUN" "dry run: the plan"
-  expect_contains "$out" "fugaro update --yes --config $dir/config.yaml" "dry run: the converge it would run"
+  expect_contains "$out" "fugaro update --config $dir/config.yaml" "dry run: the converge it would run"
   expect_contains "$out" "fugaro update --plan-only --config $dir/config.yaml" "dry run: the plan-only line"
   expect_contains "$out" "what it leaves behind" "dry run: the note about the migration staying"
   expect_contains "$out" "FACT dry-run: PASS — " "dry run: recorded as its own row"

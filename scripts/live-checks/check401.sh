@@ -46,7 +46,8 @@
 # Costs:      one converge and one plan of a sandbox installation. Nothing here
 #             is billable on its own; an image rebuild or a deploy that an
 #             unrelated stage decides it wants is the converge's own asking, and
-#             `--yes` covers it — run the check where that is acceptable.
+#             it asks YOU at your own terminal — run the check where that is
+#             acceptable.
 # Runs:       by YOU. No agent runs any step of it.
 # Cleanup:    always, including on a Ctrl-C: the scratch directory is removed.
 #             Nothing else was created, so the `restore` row says that and
@@ -669,7 +670,7 @@ step_node_before() {
 # node to it, which is the whole method here.
 step_update() {
   local status=0
-  fugaro update --yes --config "$CONFIG" >"$SCRATCH/update.log" 2>&1 || status=$?
+  fugaro update --config "$CONFIG" >"$SCRATCH/update.log" 2>&1 || status=$?
   if [ "$status" -ne 0 ]; then
     owner "the converge's own output, last lines (this is NOT in the block):"
     tail -n 12 "$SCRATCH/update.log" >&4 || true
@@ -832,7 +833,7 @@ plan_of_the_run() {
   printf 'the installation named:        %s\n' "$INSTALLATION" >&3
   printf 'the config named:              %s\n' "$CONFIG" >&3
   printf 'the node it reads:             %s/%s.json\n' "${RTDB%/}" "$NODE_PATH" >&3
-  printf 'the converge it would run:     fugaro update --yes --config %s\n' "$CONFIG" >&3
+  printf 'the converge it would run:     fugaro update --config %s\n' "$CONFIG" >&3
   printf 'the plan it would then read:   fugaro update --plan-only --config %s\n' "$CONFIG" >&3
   printf 'the reads it makes first:      fugaro doctor --json, gcloud auth print-access-token, curl the node\n' >&3
   printf 'what it does not do:           launch a run, create a resource, write the node by itself, publish anything\n' >&3
