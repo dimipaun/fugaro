@@ -368,7 +368,7 @@ func TestImagesSkillRerunProposesDiffOnly(t *testing.T) {
 	if err != nil || cmd == nil {
 		t.Fatalf("the tree has no `fugaro image survey`: %v", err)
 	}
-	if long := strings.Join(strings.Fields(cmd.Long), " "); !strings.Contains(long, "catalog, repository-to-image map and bake setting") {
+	if long := strings.Join(strings.Fields(cmd.Long), " "); !strings.Contains(long, "the repository-to-image map (`repo_images`) and the bake setting") {
 		t.Errorf("`fugaro image survey`'s long help no longer names the three a rerun compares against: %q", long)
 	}
 	// Nothing is proposed again either: a rerun that re-proposed an image the

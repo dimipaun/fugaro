@@ -158,6 +158,17 @@ type initGate struct {
 	// change within a run's own read of it, and a re-read before a write is the
 	// helper's, not this struct's.
 	managed bool
+	// readErr is why the read did not answer at all, and it is kept apart from
+	// managed on purpose (D2218, amended): "the read failed" and "the project
+	// is not managed" are two different facts, and a caller that conflated them
+	// would either stop a run over an outage or admit the gate on a project
+	// nobody proved is managed. The gate itself reads managed alone — false
+	// either way, so no stage of a run whose read failed is admitted — and the
+	// one caller that reads this is the head of the engine
+	// (requireManagedInstallation, update_selfflag.go), which takes the path a
+	// project that is not managed took before this plan: a warning, and the run
+	// goes on.
+	readErr error
 }
 
 // underway is whether this run's gate is open now: the marks were read, they
@@ -174,11 +185,13 @@ type initGate struct {
 // for a project the last read said is not managed.
 func (g *initGate) underway() bool { return g != nil && g.managed && !g.g.revoked }
 
-// factVersion is the version of the creation fact this run's own gate read
-// answered with, and 0 where it answered none (no object there, an object that
-// is not this project's marker, or a read that did not answer at all — the
-// helper keeps whatever it read even when it returns an error, and the caller
-// here drops it only on the paths where gateRun gave the run no gate).
+// factVersion is the version of the creation fact this run's own read of the
+// marks answered with, and 0 where it answered none (no object there, an object
+// that is not this project's marker, or a read that did not answer at all). Its
+// caller asks it of the read itself (initRun.gateRead) and not of the gate: the
+// head of every run that converges an installation reads the marks for its own
+// stop, and that read answers the same version a run whose door has a gate
+// reads (D1015).
 //
 // It is exported to the converge's steps and not to the plan: what it is for is
 // a step that reads the object ITSELF deciding, before its own read, whether
@@ -327,13 +340,34 @@ func (r *initRun) shapesTheInstallation() bool {
 // the question themselves, where the database is in hand, exactly as they do
 // today. Every failure here is the zero gate: the marks could not be read, so
 // this program cannot prove the project is managed, and an unproven project
-// keeps every confirmation it has.
+// keeps every confirmation it has. The failure itself is kept (initGate.readErr)
+// rather than swallowed, so the one caller that has to tell "not managed" from
+// "could not read" can (D2218, amended).
+//
+// The read is memoized on the run (initRun.gateRead): the head of every run
+// that converges an installation reads the marks for its own stop
+// (requireManagedInstallation), and this gate is that same read rather than a
+// second one (D1015 — one read per command).
 func readUpdateGate(e *initEngine, r *initRun) *initGate {
 	// A gate that was returned at all is a gate that was read: the callers ask
 	// r.gate == nil for "this run never read", so every path out of here hands
 	// back the struct, with managed left false where the marks said nothing.
+	if r.gateRead != nil {
+		return r.gateRead
+	}
 	g := &initGate{}
+	r.gateRead = g
 	ctx := r.ctx()
+	// The environment check first, and for the reason preflightStage is the
+	// first stage of every converge: a run whose environment is not this
+	// project's is refused by the check, and the marks are not read with a
+	// credential that check refuses. The failure is kept as the read's
+	// (initGate.readErr): the callers that warn and go on see the outage, and
+	// the run's own first stage reports the environment's problem.
+	if err := e.environment(); err != nil {
+		g.readErr = err
+		return g
+	}
 	// The clients alone, and not setup's whole readiness: this read is made
 	// BEFORE the run has decided to do anything, and a run whose project turns
 	// out not to be managed must not have paid for the gate in any way a
@@ -345,6 +379,7 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 	if c == nil {
 		var err error
 		if c, err = newInitClients(ctx, e.lc); err != nil {
+			g.readErr = err
 			return g
 		}
 		e.c = c
@@ -364,6 +399,7 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 	}
 	gate, err := readManagedGate(ctx, env, facts)
 	if err != nil {
+		g.readErr = err
 		return g
 	}
 	g.g, g.managed = gate, gate.managed

@@ -54,6 +54,11 @@ func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	// is what the refusals' own tests are for.
 	fakeTerminal(t)
 	r := newImagesRig(t, version)
+	// The installation is a managed one (newInitRig's marks), so the steps
+	// these runs apply are the gate's and every one of them leaves a record
+	// naming who ran it (D1014) — a hermetic world has no credentials to answer
+	// with.
+	isolateGateCredentials(t)
 	publishCredentialsImage(t, r, version)
 	// The database the marker is read from: a project config with a budget
 	// backend is what `fugaro update --firebase-project` writes. Its
@@ -61,6 +66,13 @@ func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	// carries (FUGARO_FIREBASE_PROJECT) and its rtdb_url the one FUGARO_RTDB_URL
 	// carries: infra.Credentials takes both from here, because the service reads
 	// the installation's own database and has no default.
+	// The source every installation records: the credentials service's image
+	// reference is this installation's released pin read back through the
+	// pull-through repository, and the cover that judges that plan reads the
+	// pin's owner out of image_source (baseOwner). Without it the owner is ""
+	// and every plan carrying the service is refused — which an unmanaged rig
+	// never noticed, because nothing judged its plan.
+	r.appendConfig(t, "image_source: ghcr.io/dimipaun\n")
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+r.db.URL+" }\n")
 	r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 	// The Cloud Run SERVICE reads of a run: this fake's Cloud Run speaks jobs
@@ -91,7 +103,7 @@ func publishCredentialsImage(t *testing.T, r *imagesRig, version string) {
 
 // credentialsDigest is the digest the fake source published the credentials
 // image under: what the resolve-and-verify step returns.
-func (r *imagesRig) credentialsDigest() string { return r.credentialsDigestAt("1.2.3") }
+func (r *imagesRig) credentialsDigest() string { return r.credentialsDigestAt(r.version) }
 
 // credentialsDigestAt is credentialsDigest for another release.
 func (r *imagesRig) credentialsDigestAt(version string) string {
@@ -100,8 +112,12 @@ func (r *imagesRig) credentialsDigestAt(version string) string {
 
 // credentialsRef is the reference the deploy must write for
 // credentials_service.image: the remote repository's path, the version as a
-// tag, and the verified digest.
-func (r *imagesRig) credentialsRef() string { return r.credentialsRefAt("1.2.3") }
+// tag, and the verified digest. It is the rig's OWN release, which is what the
+// run under test resolves and the cover reads a plan's image against: a rig
+// built at another version publishes the credentials image under that one, so a
+// ref taken at 1.2.3 there names a digest the source never served (and the
+// cover refuses the plan an installation that moves its service is judged on).
+func (r *imagesRig) credentialsRef() string { return r.credentialsRefAt(r.version) }
 
 // credentialsRefAt is credentialsRef for another release of the same source.
 func (r *imagesRig) credentialsRefAt(version string) string {
@@ -276,7 +292,7 @@ func intakeServiceOutput() map[string]any {
 // deploys with it, on every installation, and no second command names it.
 func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
@@ -384,7 +400,7 @@ func credentialsGitHubRepo(t *testing.T, r *imagesRig) {
 func TestTheDeployRunDeploysTheImplicitReviewJob(t *testing.T) {
 	r := credentialsRig(t)
 	credentialsGitHubRepo(t, r)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
@@ -492,7 +508,7 @@ func dropCredentialsServiceFromConfig(t *testing.T, r *imagesRig) {
 func TestACarriedRunStillDeploysTheImplicitReviewJob(t *testing.T) {
 	r := credentialsRig(t)
 	credentialsGitHubRepo(t, r)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the run that deploys the credentials service failed: %v\n%s", err, errOut)
@@ -537,7 +553,7 @@ func TestACarriedRunStillDeploysTheImplicitReviewJob(t *testing.T) {
 func TestAnInstallationHoldingTheImplicitReviewJobConvergesThroughBothTransitions(t *testing.T) {
 	r := credentialsRig(t)
 	credentialsGitHubRepo(t, r)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the run that deploys the credentials service failed: %v\n%s", err, errOut)
@@ -677,7 +693,7 @@ func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
 		t.Skipf("this host makes no symlink: %v", err)
 	}
 	t.Setenv("XDG_STATE_HOME", link)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
@@ -771,7 +787,7 @@ func planDirs(t *testing.T, log string) []string {
 // and the service admits nobody.
 func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	out, errOut, err := executeStdin(t, "", "update")
@@ -876,7 +892,7 @@ func seedCheckoutGitSecret(t *testing.T, r *imagesRig, repo string) {
 // exactly the members the earlier release wrote.
 func TestUpdateNamesTheServicesIdentity(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	r.appendConfig(t, "terraform:\n  operators: ['serviceAccount:"+rosterSAJob+"']\n  budget_admins: ['user:boss@example.com']\n")
@@ -900,7 +916,7 @@ func TestUpdateNamesTheServicesIdentity(t *testing.T) {
 	// class: a run that leaves an empty array behind would carry a member no
 	// later run can tell from a class the config cleared.
 	bare := credentialsRig(t)
-	bare.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	bare.setPlanAt(t, "installation", installationCredentialsPlan("update", bare.credentialsRef())...)
 	credentialsOutputs(t, bare)
 	seedCredentialsService(t, bare, oldCredentialsRef("1.2.2"))
 	out, errOut, err = executeStdin(t, "", "update")
@@ -941,7 +957,7 @@ func TestUpdateNamesTheServicesIdentity(t *testing.T) {
 // table then does not hold.
 func TestUpdateRefreshesTheServicesJobTable(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	// The table the deploy left: a repository this machine's config no longer
@@ -1013,7 +1029,7 @@ func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
 	// decodes it as an installation that manages nothing.
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
+	r.setPlanAt(t, "installation", installationServicePlan(intakeServiceShape(), "create", r.credentialsRef())...)
 	// The table the deploy left: a repository this machine's config no longer
 	// describes, which is what stands in for "the config has moved on since".
 	setCredentialsJobTable(t, r, []any{map[string]any{
@@ -1085,7 +1101,7 @@ func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
 // verifier (internal/credsvc/auth.go:574).
 func TestUpdateCarriesTheVerifierAccount(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	// The node a previous `fugaro update` published, naming the installation's
 	// verifier account: this machine's config is silent about the key, so the
@@ -1118,7 +1134,7 @@ func TestUpdateCarriesTheVerifierAccount(t *testing.T) {
 	// the variable is that same address (verifier.tf), so which of the two
 	// spellings the apply carries changes nothing in the plan.
 	plain := credentialsRig(t)
-	plain.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	plain.setPlanAt(t, "installation", installationCredentialsPlan("create", plain.credentialsRef())...)
 	credentialsOutputs(t, plain)
 	out, errOut, err = executeStdin(t, "", "update")
 	s = out + errOut
@@ -1188,7 +1204,7 @@ func TestProvisionCredentialsFlagIsGone(t *testing.T) {
 // there is no reference to write at all.
 func TestUpdatePinsTheServiceImageByDigest(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
@@ -1326,7 +1342,7 @@ func publishedVerifiersForTest(t *testing.T, r *imagesRig) {
 // never let prepare write the member, and this test fails on the block's list.
 func TestCredentialsServiceKeepsThePublishedVerifierList(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	publishedVerifiersForTest(t, r)
 	out, errOut, err := executeStdin(t, "", "update")
@@ -1358,7 +1374,7 @@ func TestCredentialsServiceKeepsThePublishedVerifierList(t *testing.T) {
 // (CSR14).
 func TestCredentialsServiceClearsTheListOnAnExplicitEmptyOne(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	publishedVerifiersForTest(t, r)
 	r.appendConfig(t, "verifier_accounts: []\n")
@@ -1475,7 +1491,7 @@ func TestUpgradeNoteCredentialsClauseIsSilentWithoutCascade(t *testing.T) {
 // would disagree with the installation it stands for.
 func TestPrintVarsCarriesTheCredentialsService(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsServiceWithVerifiers(t, r, oldCredentialsRef("1.2.2"), verifierAccountsEnv)
 	out, errOut, err := executeStdin(t, "", "update", "--print-vars")
@@ -1523,7 +1539,7 @@ func TestPrintVarsCarriesTheCredentialsService(t *testing.T) {
 // 1.2.2's image and this test fails.
 func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	out, errOut, err := executeStdin(t, "", "update")
@@ -1708,7 +1724,7 @@ func TestTheFirebaseProjectDoorBackfillsTheRecordToo(t *testing.T) {
 // admits nobody.
 func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *testing.T) {
 	r := credentialsRigAt(t, "0.15.0")
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("0.14.2"))
 	out, errOut, err := executeStdin(t, "", "update")
@@ -1754,7 +1770,7 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 // assertion is the intake's image and not the service's.
 func TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
+	r.setPlanAt(t, "installation", installationServicePlan(intakeServiceShape(), "create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	// The installation's record: the service, on a release that predates the
 	// intake, and no intake block at all.
@@ -1849,7 +1865,10 @@ func TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun(t *testing.T)
 // evidence about the judge rather than about the rig.
 func TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate(t *testing.T) {
 	r := credentialsRigAt(t, reviewAdmissionSince)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	// The ref this release serves: the rig published the credentials image
+	// under its own version, so the plan carries the pin the resolve answers
+	// with, which is what the cover reads it against (credentialsImageOK).
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRefAt(reviewAdmissionSince))...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("0.20.3"))
 	// The base pin the last in-checkout update left, at a release this one
@@ -1905,7 +1924,7 @@ func TestUpdateOutsideACheckoutConvergesTheReviewAdmissionGate(t *testing.T) {
 // the service as moved), and never a digest nothing verified.
 func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	r.resolveErr = errors.New("the signature of dimipaun/fugaro-credentials:1.2.3-pinned did not verify")
@@ -1975,7 +1994,7 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 // with newer and never moves a pin back).
 func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	ahead := oldCredentialsRef("1.2.4")
 	seedCredentialsService(t, r, ahead)
@@ -2009,7 +2028,7 @@ func TestUpdateKeepsANewerRecordedCredentialsImage(t *testing.T) {
 // rig at what will be the current release is the one that pins this.
 func TestUpdateReplacesACredentialsImageThatNamesNoRelease(t *testing.T) {
 	r := credentialsRigAt(t, "0.15.0")
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seeded := "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry +
 		"/dimipaun/fugaro-credentials@sha256:" + strings.Repeat("ab", 32)
@@ -2043,7 +2062,7 @@ func TestUpdateReplacesACredentialsImageThatNamesNoRelease(t *testing.T) {
 // prepare wrote, which no earlier stage of an agent's run reaches.
 func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
 	t.Setenv("CLAUDECODE", "1")
@@ -2129,7 +2148,7 @@ func credentialsVarsOnDisk(t *testing.T, r *imagesRig) map[string]any {
 // makes (init.go's writeConfig) and this test fails with that sentence.
 func TestOrdinaryUpdateAdmitsTheVerifierAccountInOneRun(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	// The database is this installation's, marked (the ownership check every
 	// policy write is behind), and it holds the node the PREVIOUS release
@@ -2547,7 +2566,7 @@ func TestUpdateRendersNoPeoplesListOnAnInstallationOfNoWorkspace(t *testing.T) {
 	}
 
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	r.db.Set(path, json.RawMessage(roster))
 	registerInstallation(t, r.initRig)

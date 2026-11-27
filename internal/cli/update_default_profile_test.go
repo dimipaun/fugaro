@@ -248,7 +248,7 @@ func TestUpdatePreviousVersionConverges(t *testing.T) {
 func TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannotComposeIt(t *testing.T) {
 	r := credentialsRig(t)
 	credentialsGitHubRepo(t, r)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the run that wrote the default profile and deployed its job failed: %v\n%s", err, errOut)

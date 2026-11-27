@@ -579,6 +579,12 @@ func TestUpdateLiftsEveryKey(t *testing.T) {
 // TestUpdateAskChoosesAuthWhereReposDisagree: update --ask puts one question
 // when the repositories write different agent.auth values, and only then; with
 // nobody to answer it is refused at once.
+//
+// The rig is a managed installation, and --ask there is U3b's line: the
+// confirmations the gate would have stood in for are asked at this terminal
+// instead — the two agent.auth values, the runs bucket's IAM removals, the
+// local config's own write and the layer publish's — and the flag restores
+// those prompts without ever widening what the run may do.
 func TestUpdateAskChoosesAuthWhereReposDisagree(t *testing.T) {
 	setup := func(t *testing.T) {
 		newLayerRig(t, strings.Replace(testProjectLayer, layerAgentLine, "", 1))
@@ -596,7 +602,11 @@ func TestUpdateAskChoosesAuthWhereReposDisagree(t *testing.T) {
 	t.Run("the first no moves to the next value", func(t *testing.T) {
 		setup(t)
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, "n\ny\n", "update", "--ask")
+		// The two agent.auth values are the run's first questions, most common
+		// first: the first is declined and the second is the answer. Everything
+		// the run asks after them is answered yes, so it reaches the write this
+		// test asserts and the value it chose is what lands in the layer file.
+		out, errOut, err := executeStdin(t, "n\ny\n"+strings.Repeat("y\n", 6), "update", "--ask")
 		if err != nil {
 			t.Fatalf("update --ask failed: %v\n%s%s", err, out, errOut)
 		}
@@ -610,8 +620,12 @@ func TestUpdateAskChoosesAuthWhereReposDisagree(t *testing.T) {
 		noAgentSession(t)
 		noTerminalHere(t)
 		_, errOut, err := executeStdin(t, "", "update", "--ask")
-		if err == nil || !strings.Contains(err.Error()+errOut, "needs a real terminal") {
-			t.Fatalf("want a refusal naming the terminal, got %v\n%s", err, errOut)
+		// The flag's own sentence and not the terminal's: what refused the run
+		// is that this project's confirmations were asked for where nobody can
+		// answer, which is --ask's refusal and not a step's (U3b,
+		// initflow.AskRefusal).
+		if err == nil || !strings.Contains(err.Error()+errOut, "the confirmations of this managed project were asked for") {
+			t.Fatalf("want the flag's own refusal, got %v\n%s", err, errOut)
 		}
 		if _, ok := localLayerText(t); ok {
 			t.Error("the layer file was written")

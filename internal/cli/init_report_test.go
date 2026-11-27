@@ -1015,9 +1015,12 @@ func planRowOf(out, stage string) string {
 
 // TestUpdateUnderAgentMarkerPrintsTheSameSteps: a coding agent's session sees
 // the same account a person's does — the same stages, as the reporter's steps
-// — and the marker changes no cloud write (G11). What the marker still changes
-// is what the run may do: the installation is left for the user, as it was
-// before CL5b, and nothing is applied.
+// — and the marker changes no cloud write (G11). Nor does it change what the
+// run may do on a managed installation, which is what these rigs are: the gate
+// admits the plan in either session (D55), so the installation step runs in
+// both and what the marker changes is the sentence the step prints. (The step
+// the marker does keep out of a session is the one no gate judges and a person
+// answers for: the project layer's own write, managed_owner_terminal_test.go.)
 func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	clearAgentMarkers(t)
 	person := applyingRig(t)
@@ -1057,9 +1060,8 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 		rest = rest[i+1:]
 	}
 	// And what the marker does change is in the account too: the agent's run
-	// reaches the machine-local plugin stage although it left the installation
-	// for the user — the stage whose own writes are on this machine, which is
-	// what it is named in both runs.
+	// reaches the machine-local plugin stage in both runs — the stage whose own
+	// writes are on this machine, which is what it is named in both.
 	if !slices.Contains(agentStages, initflow.Plugin) || !slices.Contains(personStages, initflow.Plugin) {
 		t.Errorf("an account does not name the machine-local plugin stage:\nperson: %v\nagent: %v", personStages, agentStages)
 	}
@@ -1069,17 +1071,24 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 			t.Errorf("the run does not end in the reporter's closing line: %q", last)
 		}
 	}
-	if got := ExitCode(errAgent); got != ExitUserError {
-		t.Errorf("the agent's run exits %d, want %d for a step it left for the user", got, ExitUserError)
+	// What the marker changes on a managed project is the sentence, and not
+	// what the run may do: the gate admits the plan in an agent's session as it
+	// does at the owner's own terminal (D55, initflow.AgentProceeded), so the
+	// installation step runs in both. The steps the marker does keep out of an
+	// agent's session are the ones the gate has no document to judge and a
+	// person has to answer for (the layer's own write, managed_owner_terminal_
+	// test.go), not these.
+	if got := ExitCode(errAgent); got != 0 {
+		t.Errorf("the agent's run exits %d, want 0: the gate admits the plan in an agent's session as at the owner's own terminal (D55)", got)
 	}
-	if n := len(agent.ran(t, "apply")); n != 0 {
-		t.Errorf("the marker permitted %d applies, want none", n)
+	if n, p := len(agent.ran(t, "apply")), len(person.ran(t, "apply")); n != p || n == 0 {
+		t.Errorf("the agent's run applied %d step(s), the person's %d: the marker does not decide what a managed project's admitted plan does", n, p)
 	}
 	all := outAgent + errAgentOut
-	if !strings.Contains(all, "left for you (installation") || !strings.Contains(all, markLeft+" installation: ") {
-		t.Errorf("the refusal is not the one it was before the account moved:\n%s", all)
+	if !strings.Contains(all, initflow.AgentProceeded("CLAUDECODE")) {
+		t.Errorf("the step the gate admitted in an agent's session did not say so:\n%s", all)
 	}
-	if !strings.Contains(namedLog(t, all), "CLAUDECODE is set") {
-		t.Errorf("the log does not hold the whole of the reason the step's line shortened:\n%s", all)
+	if strings.Contains(all, "left for you (installation") {
+		t.Errorf("a managed project's admitted step was left for the user:\n%s", all)
 	}
 }

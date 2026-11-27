@@ -37,6 +37,11 @@ func newAnchorModeRig(t *testing.T, yaml string, onboarded bool) *anchorModeRig 
 		t.Setenv(k, "") // this session may be a coding agent's
 	}
 	r := &anchorModeRig{initRig: newInitRig(t), yaml: yaml}
+	// These rigs run `fugaro update`'s own stages against a project the fixture
+	// flags managed, and a cloud step the gate admits leaves an audit record
+	// that has to name the account: the read is answered here rather than by
+	// the developer's own credentials (isolateGateCredentials).
+	isolateGateCredentials(t)
 	if onboarded {
 		r.appendConfig(t, "  acme/app: { provider: github, workflows: [app] }\n")
 	}
