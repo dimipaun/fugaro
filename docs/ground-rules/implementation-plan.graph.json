@@ -196,7 +196,8 @@
      "internal/infra/retire.go",
      "internal/infra/*_test.go",
      "deploy/terraform/terraform_test.go",
-     "deploy/terraform/secret_readers_test.go"
+     "deploy/terraform/secret_readers_test.go",
+     "docs/releases/v*.md"
     ]
    }
   },
@@ -358,6 +359,40 @@
    }
   },
   {
+   "id": "DG5",
+   "title": "membership commands revoke their own grants",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/user.go",
+     "internal/cli/offboard.go",
+     "internal/cli/workspace_offboard.go",
+     "internal/cli/user_revoke.go",
+     "internal/cli/user_revoke_test.go"
+    ]
+   }
+  },
+  {
+   "id": "DG6",
+   "title": "a recreation re-grants and rebuilds",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_workspace.go",
+     "internal/cli/init_images_catalog.go",
+     "internal/cli/update_recreate_test.go"
+    ]
+   }
+  },
+  {
    "id": "DG4",
    "title": "deletes by class, end to end",
    "run": null,
@@ -399,6 +434,35 @@
     "paths": [
      "internal/report/spinner.go",
      "internal/report/report.go",
+     "internal/report/spinner_test.go"
+    ]
+   }
+  },
+  {
+   "id": "CO2b",
+   "title": "the console accepts a heartbeat",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "console/src/shared/new-ops.ts",
+     "console/test/unit/new-ops.test.ts"
+    ]
+   }
+  },
+  {
+   "id": "CO2c",
+   "title": "the events feed carries a heartbeat",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
      "internal/cli/setup_events.go",
      "schemas/setup-events.schema.json",
      "internal/cli/testdata/setup_events.golden.ndjson"
@@ -540,7 +604,8 @@
      "internal/cli/image_catalog.go",
      "internal/cli/image_map_managed.go",
      "internal/cli/image_refresh.go",
-     "internal/cli/config_publish.go"
+     "internal/cli/config_publish.go",
+     "internal/cli/workflow.go"
     ]
    }
   },
@@ -813,6 +878,37 @@
      "docs/releases/v*.md"
     ]
    }
+  },
+  {
+   "id": "UO7",
+   "title": "the credentials service reads workflow secrets from fugaro.yaml",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/workflowsecrets.go",
+     "internal/credsvc/workflowsecrets_test.go",
+     "internal/creds/workflowsecrets.go"
+    ]
+   }
+  },
+  {
+   "id": "UO7b",
+   "title": "update stops writing the workflow-secrets record",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_workflowsecrets.go",
+     "internal/cli/update_workflowsecrets_test.go"
+    ]
+   }
   }
  ],
  "edges": [
@@ -1072,6 +1168,41 @@
    "reason": "kept: the operator line describes it"
   },
   {
+   "task": "CO2c",
+   "needs": "CO2b",
+   "reason": "kept: behaviour: consoles accept the event first; external: that console release shipped"
+  },
+  {
+   "task": "CO2c",
+   "needs": "CO2",
+   "reason": "kept: behaviour: the heartbeat ticker"
+  },
+  {
+   "task": "DG2",
+   "needs": "DG5",
+   "reason": "kept: behaviour: membership commands revoke before update refuses a person's grant removal"
+  },
+  {
+   "task": "DG1a",
+   "needs": "DG5",
+   "reason": "kept: behaviour: as above"
+  },
+  {
+   "task": "DG6",
+   "needs": "DG1a",
+   "reason": "kept: behaviour: the gate admits the recreation first"
+  },
+  {
+   "task": "DG6",
+   "needs": "VS3b",
+   "reason": "kept: behaviour: the eager-rebuild path"
+  },
+  {
+   "task": "UO7b",
+   "needs": "UO7",
+   "reason": "kept: behaviour: nothing reads the record; external: one release later"
+  },
+  {
    "task": "REL1",
    "needs": "VS3b",
    "reason": "kept: the operator line describes it"
@@ -1090,6 +1221,11 @@
    "task": "REL1",
    "needs": "DG1b",
    "reason": "kept: the operator line describes it"
+  },
+  {
+   "task": "UO4b",
+   "needs": "UO7",
+   "reason": "kept: one file: internal/credsvc/workflowsecrets.go"
   },
   {
    "task": "UO4b",
@@ -1257,6 +1393,11 @@
    "reason": "kept: one file: init.go"
   },
   {
+   "task": "UO4b",
+   "needs": "DG6",
+   "reason": "kept: one file: update_workspace.go"
+  },
+  {
    "task": "AG3",
    "needs": "DG1b",
    "reason": "kept: one file: website/content/cli-reference.md"
@@ -1315,6 +1456,21 @@
    "task": "UO4b",
    "needs": "DG4",
    "reason": "kept: one file: update_ground_rules_test.go"
+  },
+  {
+   "task": "UO6",
+   "needs": "REL1",
+   "reason": "kept: one file: docs/releases/v*.md"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CO2c",
+   "reason": "kept: one file: setup_events.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "UO7b",
+   "reason": "kept: one file: update_workflowsecrets.go"
   },
   {
    "task": "CF2c",

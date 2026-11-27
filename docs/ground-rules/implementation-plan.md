@@ -4,12 +4,17 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 
 **Status: nothing is implemented, and no task is approved.** Each task needs the owner's explicit go.
 
-The answers that shaped the plan are D3420–D3452, all given or stated on 2026-11-26.
-- **Not the recommendation:** D3441 (the stamp lives in `task.json`), D3445 (one eager rebuild) and
-  D3448 (accept the launch window).
-- **Amended after review:** D3425 and D3430, both confirmed by the owner the same day; D3424 and D3448,
-  and D3425's second amendment, which wait on the owner's confirmation (open items O1–O3). The third
-  review round left open items O4–O10 in the reconciliation; each names the tasks it would change.
+The answers that shaped the plan are D3420–D3459, all given or stated on 2026-11-26.
+- **Not the recommendation:**
+  - D3441 (the stamp lives in `task.json`);
+  - D3445 (one eager rebuild);
+  - D3448 (accept the launch window);
+  - D3454 (the membership commands revoke grants themselves);
+  - D3455 (only `--executable-changes` stays a person's);
+  - D3456 (recreate, then re-grant and rebuild);
+  - D3457 (accept the skipped-release gap).
+- **Amended after review and confirmed by the owner:** D3424, D3425 (twice), D3430 and D3448. The open
+  items O1–O10 are all answered; O4–O10 became D3453–D3459.
 - **Resolutions**, stated without a question: D3424, D3426, D3428, D3429, D3434, D3435, D3439, D3446,
   D3449, D3450, D3451 and D3452.
 
@@ -74,9 +79,10 @@ The answers that shaped the plan are D3420–D3452, all given or stated on 2026-
 
 1. **The first pieces** (DG0, VS0, UO1, UO3, CV1): inert. The class table, the stamp field the runner
    accepts, the earlier documents brought in line, and the versioned loader.
-2. **Output** (CO1–CO5): useful alone.
-3. **Deletes by class** (DG1a, DG1b, DG1c, DG2, DG3, DG4).
-4. **One update for the project** (UO2, then DOC1, DOC2, DOC3, UO4a, UO4b, and UO6 a release later).
+2. **Output** (CO1–CO5, CO2b, then CO2c after the console release).
+3. **Deletes by class** (DG5 first, then DG1a, DG1b, DG1c, DG2, DG3, DG6, DG4).
+4. **One update for the project** (UO2, UO7, then DOC1, DOC2, DOC3, UO4a, UO4b; UO6 and UO7b a release
+   later).
 5. **Agents run update** (AG2a–AG5d).
 6. **Checkout** (CF1, CF2a, CF2c, CF2b).
 7. **Versions** (CV2, VS1–VS5, REL1, then CV3 after release A).
@@ -143,6 +149,8 @@ was dropped with D3424's amendment.
   - plain `update` retires each remaining per-repository root without `--retire`: jobs and schedulers are
     deleted, and secret containers leave state and are not destroyed;
   - retirement still waits on `infra.InFlightJobs` (F38);
+  - a repository whose workflows no profile serves runs on the default profile, and `update` prints one line
+    naming the repository and the profile setting to add (D3458);
   - an installation that last ran `update` on the release before converges.
 - Files: `internal/projectpolicy/profiles.go` (admission: the project's default profile admits every
   enrolled repository), `internal/infra/spec.go`, `internal/cli/init.go` (`repoEngine`, `enrolSharedRepo`,
@@ -261,7 +269,8 @@ was dropped with D3424's amendment.
 - Red step: `TestNoRepoRoot` finds the root.
 - Depends on: UO2 (behaviour). **External:** one release after the release carrying UO2, so an
   installation one release behind still retires its roots. An installation that skips that release
-  is open item O8.
+  removes its leftover roots by hand: UO6's release notes (`docs/releases/vX.Y.Z.md`) name the release
+  to install first (D3457).
 - Commit: `ground-rules UO6: the per-repository Terraform goes (D3451)`
 - Reviewer tier: opus (Terraform).
 ### CV1: the versioned loader
@@ -355,6 +364,37 @@ was dropped with D3424's amendment.
 - Depends on: DG1b (build: the library leaves once no command reads it).
 - Commit: `ground-rules DG1c: the delete list leaves the libraries (D3427)`
 - Reviewer tier: opus (the write guard). The file count is eight; each change deletes a read.
+
+### DG5: membership commands revoke their own grants
+- Acceptance:
+  - `user rm`, `user offboard`, `workspace user rm` and a role change (`user rm` from one list plus
+    `user add` to the other) remove the person's IAM grants themselves, through the IAM API, before they
+    return, and edit the lists as today;
+  - the next `update` plans no change for that grant, because the configuration and the project agree;
+  - these commands stay refused to agents (D3425) (D3454).
+- Files: `internal/cli/user.go`, `internal/cli/offboard.go`, `internal/cli/workspace_offboard.go`,
+  `internal/cli/user_revoke.go` (new), `internal/cli/user_revoke_test.go` (new).
+- Tests: `TestUserRmRevokesAtOnce`, `TestOffboardRevokesAtOnce`, `TestUpdatePlansNoGrantChangeAfterRm`.
+- Command: `go test ./internal/cli/ -run 'TestUserRmRevokesAtOnce|TestOffboardRevokesAtOnce|TestUpdatePlansNoGrantChangeAfterRm' -count=1`
+- Red step: `TestUserRmRevokesAtOnce` finds the grant still bound after `user rm`.
+- Depends on: none. DG1a and DG2 wait on it, so `update` never refuses a revocation nobody else makes.
+- Commit: `ground-rules DG5: membership commands revoke grants themselves (D3454)`
+- Reviewer tier: opus (IAM).
+
+### DG6: a recreation re-grants and rebuilds
+- Acceptance:
+  - when an `update` recreates the workspace service account, it re-runs the converging grants
+    (`SAAuthority.AddAdmin` for each workspace admin, `Link` for each member project);
+  - when it recreates a registry, it rebuilds that registry's catalog entries eagerly, in the same update
+    (D3456).
+- Files: `internal/cli/update_workspace.go`, `internal/cli/init_images_catalog.go`,
+  `internal/cli/update_recreate_test.go` (new).
+- Tests: `TestRecreatedWorkspaceAccountRegranted`, `TestRecreatedRegistryRebuiltEagerly`.
+- Command: `go test ./internal/cli/ -run 'TestRecreatedWorkspaceAccountRegranted|TestRecreatedRegistryRebuiltEagerly' -count=1`
+- Red step: `TestRecreatedWorkspaceAccountRegranted` finds the admin's token-creator grant missing.
+- Depends on: DG1a (behaviour: the gate admits the recreation); VS3b (behaviour: the eager-rebuild path).
+- Commit: `ground-rules DG6: a recreated account is re-granted and a recreated registry rebuilt (D3456)`
+- Reviewer tier: opus (IAM).
 ### DG2: the guard judges what is deleted; `--allow-delete` goes
 - Acceptance:
   - `tf.Guard` refuses only irreplaceable deletes or replaces, and `--allow-delete` is gone, with every
@@ -422,18 +462,40 @@ was dropped with D3424's amendment.
 ### CO2: liveness
 - Acceptance:
   - the TTY spinner shows the elapsed time;
-  - without a TTY, a step still running after a minute prints one "still …" line a minute;
-  - `--events` carries a `heartbeat` event (D3436), **not before open item O4 settles how shipped consoles,
-    which refuse an unknown event type, take it**; until then the task ships the human lines only.
-- Files: `internal/report/spinner.go`, `internal/report/report.go`, `internal/cli/setup_events.go`,
-  `schemas/setup-events.schema.json`, `internal/cli/testdata/setup_events.golden.ndjson`.
-- Tests: `TestSpinnerShowsElapsed`, `TestHeartbeatWithoutTTY`, `TestEventsHeartbeat`.
-- Command: `go test ./internal/report/ ./internal/cli/ -run 'Elapsed|Heartbeat' -count=1`
+  - without a TTY, a step still running after a minute prints one "still …" line a minute (D3436).
+
+  The `--events` heartbeat is CO2c's, after the console accepts it (D3453).
+- Files: `internal/report/spinner.go`, `internal/report/report.go`, `internal/report/spinner_test.go`.
+- Tests: `TestSpinnerShowsElapsed`, `TestHeartbeatWithoutTTY`.
+- Command: `go test ./internal/report/ -run 'Elapsed|Heartbeat' -count=1`
 - Red step: `TestHeartbeatWithoutTTY` fails, because nothing prints for a minute (a fake clock).
 - Depends on: none.
 - Commit: `ground-rules CO2: long steps show they are alive (D3436)`
 - Reviewer tier: standard.
 
+### CO2b: the console accepts a heartbeat
+- Acceptance: the console's setup-feed reader (`setupFeedAt`) accepts an event of type `heartbeat` and
+  ignores it, where today it refuses an unknown type (D3453).
+- Files: `console/src/shared/new-ops.ts`, `console/test/unit/new-ops.test.ts`.
+- Tests: `heartbeat events are accepted and ignored` in `new-ops.test.ts`.
+- Command: `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 new-ops`
+- Red step: the test fails on `refuse('unknown-value', …)`.
+- Depends on: none. It ships in a console release before CO2c's CLI release.
+- Commit: `ground-rules CO2b: the console accepts a heartbeat event (D3453)`
+- Reviewer tier: standard.
+
+### CO2c: the events feed carries a heartbeat
+- Acceptance: under `--json --events`, a step still running after a minute emits one `heartbeat` event a
+  minute, and the schema and golden name it (D3436, D3453).
+- Files: `internal/cli/setup_events.go`, `schemas/setup-events.schema.json`,
+  `internal/cli/testdata/setup_events.golden.ndjson`.
+- Tests: `TestEventsHeartbeat`.
+- Command: `go test ./internal/cli/ -run TestEventsHeartbeat -count=1`
+- Red step: the test finds no `heartbeat` event in a minute (a fake clock).
+- Depends on: CO2 (the ticker), CO2b (behaviour: consoles accept the event first). **External:** the
+  console release that carries CO2b has shipped.
+- Commit: `ground-rules CO2c: the events feed carries a heartbeat (D3453)`
+- Reviewer tier: standard.
 ### CO3: no raw output on screen
 - Acceptance: no path prints the Terraform or docker stream on the terminal (D3438):
   - `--plan-only` prints the plain plan and the log path;
@@ -511,7 +573,7 @@ was dropped with D3424's amendment.
 ### AG3: settings, rigor and accounts picks lift
 - Acceptance:
   - an agent may run `settings set`/`unset` for every key except those that raise a budget or widen
-    `allow_data_to`, which are still refused;
+    `allow_data_to`, and without `--executable-changes` (D3455), which are still refused;
   - an agent may lower rigor (`rigor set`, `rigor floor`, `rigor security rm`) and run
     `accounts switch`, `alias` and `pool`;
   - `--yes` is gone from `accounts alias` and `accounts switch` (D3425 as amended, D3429).
@@ -539,11 +601,11 @@ was dropped with D3424's amendment.
 - Reviewer tier: opus (agent reach).
 
 ### AG4b: image and publish commands lift
-- Acceptance: an agent may run `image add`, `image map`, `image refresh` and `config publish`.
-  `config publish --executable-changes` stays a person's, because it decides what code every repository
-  runs (D3425 as amended; O3).
+- Acceptance: an agent may run `image add`, `image map`, `image refresh` (image-source flags included) and
+  `config publish`. `--executable-changes` stays a person's on `config publish` and `workflow`, because it
+  decides what code every repository runs (D3425 as amended, D3455).
 - Files: `internal/cli/image_catalog.go`, `internal/cli/image_map_managed.go`, `internal/cli/image_refresh.go`,
-  `internal/cli/config_publish.go`.
+  `internal/cli/config_publish.go`, `internal/cli/workflow.go`.
 - Tests: `TestAgentMayEditImages`, `TestAgentExecutableChangesRefused`.
 - Command: `go test ./internal/cli/ -run 'TestAgentMayEditImages|TestAgentExecutableChangesRefused' -count=1`
 - Red step: `TestAgentMayEditImages` fails on `image refresh`.
@@ -793,6 +855,34 @@ The lines sit in one task rather than in each of four PRs because all four tasks
 one file cannot have four writers there. REL1 lands before the release is cut, which is what the
 `For operators` rule needs.
 
+
+### UO7: the credentials service reads workflow secrets from `fugaro.yaml`
+- Acceptance:
+  - when a run fetches its workflow secrets, the credentials service resolves the workflow's secret names
+    from the repository's default-branch `fugaro.yaml`, read with its own read mint (U4), so a secret added
+    there needs no `update` (D3459);
+  - while the per-repository record `creds/workflowsecrets/<slug>` still exists, it is read as a fallback,
+    so a run of the release behind and a repository whose read fails keep working.
+- Files: `internal/credsvc/workflowsecrets.go`, `internal/credsvc/workflowsecrets_test.go`,
+  `internal/creds/workflowsecrets.go`.
+- Tests: `TestWorkflowSecretsFromDefaultBranch`, `TestWorkflowSecretsRecordFallback`,
+  `TestWorkflowSecretsReadMint`.
+- Command: `go test ./internal/credsvc/ ./internal/creds/ -run 'WorkflowSecrets' -count=1`
+- Red step: `TestWorkflowSecretsFromDefaultBranch` fails while only the record is read.
+- Depends on: none.
+- Commit: `ground-rules UO7: workflow secrets come from fugaro.yaml at fetch (D3459)`
+- Reviewer tier: opus (the credentials service; `.claude/rules/credentials-service.md`).
+
+### UO7b: update stops writing the workflow-secrets record
+- Acceptance: `update` no longer writes `creds/workflowsecrets/<slug>`. That lets the next release delete
+  the record and UO7's fallback, which is a follow-up, not in this plan (D3459).
+- Files: `internal/cli/update_workflowsecrets.go`, `internal/cli/update_workflowsecrets_test.go`.
+- Tests: `TestUpdateWritesNoWorkflowSecretsRecord`, `TestUpdateLeavesARunInFlightRunning`.
+- Command: `go test ./internal/cli/ -run 'TestUpdateWritesNoWorkflowSecretsRecord|TestUpdateLeavesARunInFlightRunning' -count=1`
+- Red step: `TestUpdateWritesNoWorkflowSecretsRecord` finds the record written.
+- Depends on: UO7 (behaviour: nothing needs a fresh record). **External:** one release after UO7's.
+- Commit: `ground-rules UO7b: update stops writing the workflow-secrets record (D3459)`
+- Reviewer tier: opus (the credentials service).
 ## Parallel execution
 
 ### Edges
@@ -800,9 +890,13 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | Task | Needs | Reason |
 | --- | --- | --- |
 | VS5 | CF1 | one file: internal/runner/runner.go |
+| CO2c | CO2 | behaviour: the heartbeat ticker |
+| CO2c | CO2b | behaviour: consoles accept the event first; external: that console release shipped |
 | UO2 | CO3 | one file: init.go |
 | CV2 | CV1 | SupportedVersions; a contract would be the table itself |
 | UO2, DG1a, DG2, DG3, AG2a | DG0 | the class table |
+| DG1a | DG5 | behaviour: as above |
+| UO7b | UO7 | behaviour: nothing reads the record; external: one release later |
 | VS2 | VS0 | the field |
 | VS5 | VS0 | it reads the field |
 | VS5 | VS1 | it calls the upgrader |
@@ -810,8 +904,11 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | VS4 | VS3a | staleness by epoch |
 | AG5d | VS3a | one file: image_build_catalog.go |
 | DG2 | CO3, UO2 | one file: init.go |
+| DG6 | DG1a | behaviour: the gate admits the recreation first |
 | DG2 | DG1a | one file: internal/infra/tf/guard.go |
+| DG2 | DG5 | behaviour: membership commands revoke before update refuses a person's grant removal |
 | DOC3 | UO2 | behaviour: plain update covers every repository |
+| DG6 | VS3b | behaviour: the eager-rebuild path |
 | DG2 | VS3b | one file: init_stages.go |
 | AG2a | CO1 | one file: internal/initflow/loop.go |
 | DG1b | CO4 | one file: root.go |
@@ -853,6 +950,7 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | UO6 | CF2a | one file: internal/infra/spec_test.go |
 | CF2c | CO3, DG2, AG2a, UO4a | one file: init.go |
 | UO6 | DG3 | one file: deploy/terraform/terraform_test.go |
+| UO6 | REL1 | one file: docs/releases/v*.md |
 | UO6 | UO2 | behaviour: no installation applies a per-repository root after UO2; external: one release later |
 | CV3 | CF2c | behaviour: the clone value is gone |
 | CF2b | CF2c | build: the field leaves once nothing reads it |
@@ -884,9 +982,9 @@ The contract-first pass ran and broke no edge.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | DG0, VS0, UO1, CO3, UO3, VS3a, CO1, CF1, CO4, AG4a, AG4b, AG5a, AG5b, CV1, CO2, CO5, VS1 |
-| 1 | UO2, DG1a, VS3b, AG5d, DG3, VS2, VS5, VS4, CV2 |
-| 2 | DG2, DOC3 |
+| 0 | DG0, VS0, UO1, CO3, UO3, DG5, VS3a, CO1, CF1, CO4, AG4a, AG4b, AG5a, AG5b, UO7, CV1, CO2, CO5, VS1, CO2b |
+| 1 | UO2, DG1a, VS3b, AG5d, DG3, VS2, VS5, VS4, CV2, CO2c, UO7b |
+| 2 | DG2, DOC3, DG6 |
 | 3 | AG2a, AG2b, DG1b |
 | 4 | DOC1, DOC2, AG3, AG5c, DG1c, REL1 |
 | 5 | UO4a, DG4 |
@@ -897,8 +995,8 @@ The contract-first pass ran and broke no edge.
 
 The critical path is CO3 → UO2 → DG2 → AG2a → DOC1 → UO4a → UO4b → CF2a → CF2c → CF2b, ten tasks with
 CO3 the bottleneck, as the graph read reports. **Release A** is the first release that carries VS0–VS5, VS3b and
-CF1; its `update` runs the eager rebuild. CF2a and CV3 launch only after release A ships, and UO6 only a
-release after UO2's. The graph cannot hold an external wait, so each task and this paragraph state it.
+CF1; its `update` runs the eager rebuild. CF2a and CV3 launch only after release A ships; UO6 waits a
+release after UO2's, UO7b a release after UO7's, and CO2c a console release carrying CO2b. The graph cannot hold an external wait, so each task and this paragraph state it.
 
 ### Shared files
 
@@ -907,6 +1005,7 @@ Every pair of writers of one file is ordered by an edge, not only placed in diff
 | File | Writers, in order |
 | --- | --- |
 | `deploy/terraform/terraform_test.go` | DG3 (1), UO6 (8) |
+| `docs/releases/v*.md` | REL1 (4), UO6 (8) |
 | `internal/cli/config_publish.go` | AG4b (0), CV3 (9) |
 | `internal/cli/image.go` | CO3 (0), CF2c (8) |
 | `internal/cli/image_build_catalog.go` | VS3a (0), AG5d (1) |
@@ -915,6 +1014,7 @@ Every pair of writers of one file is ordered by an edge, not only placed in diff
 | `internal/cli/init.go` | CO3 (0), UO2 (1), DG2 (2), AG2a (3), UO4a (5), CF2c (8), CV3 (9) |
 | `internal/cli/init_checkout_upgrade.go` | AG2b (3), CF2c (8) |
 | `internal/cli/init_compute.go` | DG2 (2), AG2b (3) |
+| `internal/cli/init_images_catalog.go` | VS3b (1), DG6 (2) |
 | `internal/cli/init_refusal.go` | DG2 (2), UO4a (5) |
 | `internal/cli/init_retire.go` | UO2 (1), DG2 (2), UO4a (5) |
 | `internal/cli/init_stages.go` | VS3b (1), DG2 (2), AG2a (3) |
@@ -942,7 +1042,7 @@ None: the plan has no contract.
 
 The graph read prints one line for the plan:
 
-> ready in 746–3038 min, no history yet for 35 tasks (45 tasks; tiers for 10, seeds for 35; from the cached history of 2026-11-22 07:25 UTC)
+> ready in 746–3038 min, no history yet for 38 tasks (51 tasks; tiers for 13, seeds for 38; from the cached history of 2026-11-22 07:25 UTC)
 
 It is informational: it reserves no budget, and it moves as runs finish and as the graph changes.
 

@@ -311,8 +311,8 @@ request.
 | D3421 | update-only | How do the per-repository roots go? | As recommended. Every repository runs on the project's shared jobs. `update` retires each remaining root itself: jobs are deleted, and secret containers are kept (removed from state, not destroyed). Sizing comes from the profile (`Profile.Resources`, which exists), and a repository's `workflows.*.resources` is read and ignored with a note. |
 | D3422 | config-versions | How do `fugaro.yaml` versions load? | As recommended. A registry of in-memory upgraders, v1→v2→…. Unknown keys within a known version stay errors. A file newer than the reader is refused in one line naming `brew upgrade`. The per-key image-age gates retire (D3446). |
 | D3423 | config-versions | How long is the deprecation window? | As recommended: two minor releases. Through those releases `doctor` and `update` name the old version, and a later release may refuse it only by its own ruling. |
-| D3424 | update-only | Which commands count as "update operations"? | **Resolution, amended after review (2026-11-26).** A command that edits project data on purpose (`project repos add/rm/sync`, `project policy publish`, `settings`, the after-write hook) is an edit, not an update. It publishes itself, as the owner ruled on 2026-11-26 ("management commands publish themselves"). It needs no checkout and writes no `fugaro.yaml`. `update` already converges an existing compute root (F2). Provisioning it the first time is a creating act, like setup's project-creating run, so `setup --provision-batch` stays. *First text: the compute root became an `update` stage. It was dropped because it would let an agent turn billable infrastructure on.* |
-| D3425 | agent-access | Which agent refusals stay? | As recommended: the minimal keep list in §A. **Amended after review, confirmed by the owner the same day:** the installation-shaping flags of `update` that are on the keep list stay refused to agents (budget, billing, operator and admin lists, `--managed`, `--create-project`, `--state-bucket`, `--allow-delete`), and so do the image-source flags (`--base-image`, `--replace-image`, `--expect-digest`, `--image-source`), because they decide what code every job runs. The `settings` keys that raise a budget or widen `allow_data_to` stay a person's too. Lowering rigor lifts, as answered (F13). **Amended again after the second review, awaiting confirmation (O3):** on the same reasoning, `shapesTheInstallation` keeps refusing every flag it covers except `--registry-cleanup` and `--scheduler-region`, including `--base` and `--github-app-id`, and `config publish --executable-changes` stays a person's. These stay refused to agents: a budget raise or resume (D1542); entering any secret or token value; irreplaceable deletes (`secrets rm`, `accounts rm`, `user offboard`, teardown); `managed flag`/`unflag`; membership (`user`/`workspace` add, rm, grant); licence; `restore`; and setup's project-creating run. Every other refusal lifts. |
+| D3424 | update-only | Which commands count as "update operations"? | **Resolution, amended after review (2026-11-26).** A command that edits project data on purpose (`project repos add/rm/sync`, `project policy publish`, `settings`, the after-write hook) is an edit, not an update. It publishes itself, as the owner ruled on 2026-11-26 ("management commands publish themselves"). It needs no checkout and writes no `fugaro.yaml`. `update` already converges an existing compute root (F2). Provisioning it the first time is a creating act, like setup's project-creating run, so `setup --provision-batch` stays. *First text: the compute root became an `update` stage. It was dropped because it would let an agent turn billable infrastructure on.* **Confirmed by the owner, 2026-11-26 (O1).** |
+| D3425 | agent-access | Which agent refusals stay? | As recommended: the minimal keep list in §A. **Amended after review, confirmed by the owner the same day:** the installation-shaping flags of `update` that are on the keep list stay refused to agents (budget, billing, operator and admin lists, `--managed`, `--create-project`, `--state-bucket`, `--allow-delete`), and so do the image-source flags (`--base-image`, `--replace-image`, `--expect-digest`, `--image-source`), because they decide what code every job runs. The `settings` keys that raise a budget or widen `allow_data_to` stay a person's too. Lowering rigor lifts, as answered (F13). **Amended again after the second review, awaiting confirmation (O3):** on the same reasoning, `shapesTheInstallation` keeps refusing every flag it covers except `--registry-cleanup` and `--scheduler-region`, including `--base` and `--github-app-id`, and `config publish --executable-changes` stays a person's. **Confirmed by the owner, 2026-11-26 (O3).** These stay refused to agents: a budget raise or resume (D1542); entering any secret or token value; irreplaceable deletes (`secrets rm`, `accounts rm`, `user offboard`, teardown); `managed flag`/`unflag`; membership (`user`/`workspace` add, rm, grant); licence; `restore`; and setup's project-creating run. Every other refusal lifts. |
 | D3426 | agent-access | Unmanaged projects | **Resolution.** This is consistent with D2217, and already done: #4045 (T3) merged after the base (F14). |
 | D3427 | deletion-gating | What becomes of the managed gate? | As recommended. The gate stays as the plan check on agent runs. Rule 1 becomes: a recreatable delete passes and an irreplaceable one is refused (D3430). `fugaro/allow-delete.json` and the `fugaro allow-delete` command retire. |
 | D3428 | deletion-gating | `--ask` | **Resolution.** Unchanged. It is the owner-terminal opt-in of D1028, not a safety flag. |
@@ -335,13 +335,20 @@ request.
 | D3445 | version-stamp | How the stamp rolls out | **Not the recommendation:** one eager rebuild. Release A's runner reads the field, and its `update` rebuilds every image once and waits. From release A on, the launcher always writes the stamp. The recommendation was a write gated on the image's runner. |
 | D3446 | version-stamp | What makes a rebuild eager | **Resolution**, following D3422, D3444 and D3445. A base-image epoch, a constant bumped when `images/base` changes for anything but the Fugaro version, is recorded on each catalog build. An entry is stale when its epoch differs or its age passes `DefaultMaxAge`. `update` waits only on an epoch change (release A bumps it, which is D3445's eager rebuild). Otherwise it submits the stale builds in the background and waits for none. The per-key image-age gates retire one release after A. |
 | D3447 | all | The standing rules | As recommended. CLAUDE.md's HARD RULE, `.claude/rules/credentials-service.md`, the plugin skills and the how-tos are rewritten to these rules, with a short CLAUDE.md pointer to this folder. |
-| D3448 | version-stamp | Tension T1 | **Not the recommendation:** accept the window. A launch from CLI A before the project's update to A finishes meets an old image that refuses the stamped task. Runs already in flight are untouched, because they parsed their task before the stamp. **Amended after review:** the old runner fails with its own parse error, not a line naming `fugaro update`, because old code cannot be taught a new message. Inside the same window, a teammate's CLI older than A also fails to read a stamped task (F34). Once the update finishes, `required_cli` refuses those CLIs before they read. |
+| D3448 | version-stamp | Tension T1 | **Not the recommendation:** accept the window. A launch from CLI A before the project's update to A finishes meets an old image that refuses the stamped task. Runs already in flight are untouched, because they parsed their task before the stamp. **Amended after review:** the old runner fails with its own parse error, not a line naming `fugaro update`, because old code cannot be taught a new message. Inside the same window, a teammate's CLI older than A also fails to read a stamped task (F34). Once the update finishes, `required_cli` refuses those CLIs before they read. **Confirmed by the owner, 2026-11-26 (O2).** |
 | D3449 | version-stamp | Development builds | **Resolution.** A runner or a stamp that is a development build (`dev`, or no release version) never upgrades. A runner newer than the stamp never downgrades. |
 | D3450 | deletion-gating | A recreatable delete with a run in flight | **Resolution (second review).** Under the HARD RULE, the gate and the guard defer the delete of a job, or of a service account a job runs as, while an execution of that job is in flight. They name it in one line and leave it for a later update, as whole-root retirement already does (F42). |
 | D3451 | update-only | The per-repository Terraform | **Resolution (second review).** `roots/repo` and `modules/repo` are deleted one release after the release that carries UO2, so an installation one release behind still retires its roots (UO6). |
 | D3452 | deletion-gating | The audit record's `delete_list_generation` | **Resolution (second review).** The field stays and is written as 0, which already means "no list consulted"; removing it would bump the audit format's version for nothing. |
+| D3453 | command-output | O4: how the `heartbeat` event ships | As recommended: console first. A console task makes the feed reader accept and ignore `heartbeat`; the CLI emits it only in a release after that console has shipped. The human heartbeat lines ship at once. |
+| D3454 | deletion-gating | O5: how a person's grant is removed | **Not the recommendation:** the membership commands apply it. `user rm`, `user offboard`, `workspace user rm` and a role change remove the person's IAM grant themselves, at once; `update` never removes a person's grant. The recommendation was to let `update` remove a grant the lists already record. |
+| D3455 | agent-access | O6: other doors to the code every job runs | **Not the recommendation:** only `--executable-changes` stays a person's, on `settings set`/`unset`, `workflow` and `config publish`. `image refresh` and `image add` are lifted whole, image-source flags included. The recommendation was to keep all of them a person's. |
+| D3456 | deletion-gating | O7: a recreated registry and the workspace account | **Not the recommendation:** both stay recreatable. When `update` recreates the workspace service account, it re-runs the converging grants (`SAAuthority.AddAdmin` for each workspace admin, `Link` for each member project); when it recreates a registry, it rebuilds that registry's catalog entries eagerly in the same update. The recommendation was to keep the workspace account irreplaceable. |
+| D3457 | update-only | O8: an installation that skips UO2's release | **Not the recommendation:** accept the gap. UO6 ships one release after UO2's; an installation that skipped that release removes its leftover per-repository roots by hand, and UO6's release notes say which release to install first to avoid it. |
+| D3458 | update-only | O9: a repository no profile can serve | As recommended. It runs on the default profile, and `update` prints one line naming the repository and the profile setting (resources or image) to add. No per-repository job is made. |
+| D3459 | update-only | O10: workflow secrets without an update | As recommended: read at launch. The credentials service resolves a workflow's secret names from the repository's default-branch `fugaro.yaml` when a run fetches them, and the per-repository record `creds/workflowsecrets/<slug>` goes. |
 
-D3453–D3459 are reserved and unused.
+
 
 ## Open tensions
 
@@ -350,52 +357,8 @@ D3453–D3459 are reserved and unused.
 
 ## Open items
 
-- **O1.** Confirm D3424 as amended after review: `setup --provision-batch` stays the first provisioning
-  of the compute root.
-- **O2.** Confirm D3448 as amended after review: the window's failure is the old runner's own parse
-  error, and older CLIs fail to read stamped tasks inside the same window.
-- **O3.** Confirm D3425's second amendment: every `shapesTheInstallation` flag except `--registry-cleanup`
-  and `--scheduler-region` stays refused to agents, `--base` and `--github-app-id` included, and
-  `config publish --executable-changes` stays a person's.
-
-Left by the third and last review round (2026-11-26). Each needs the owner, and none is fixed in the plan:
-
-- **O4. CO2's heartbeat event.** The console's feed reader (`console/src/shared/new-ops.ts`) refuses any
-  event type it does not know, so a CLI that emits `heartbeat` breaks every shipped console. D3436 asked for
-  the event. Choose: a console task that accepts it first, released before the CLI emits it; or a
-  heartbeat carried as an existing `notice`; or the human lines only. CO2 ships the human lines until this
-  is answered.
-- **O5. Removing a person's grant.** `fugaro user rm` only edits the operator and admin lists, and the next
-  `update` applies the revocation (`user.go`). With a person's grant irreplaceable (D3430 as amended),
-  every `update` would refuse that revocation, and a role change that replaces the grant too. Person grants
-  also come from the launcher and budget-admin lists (`modules/firebase/iam.tf`). Choose: the membership
-  commands apply their own revocation (D3431's "their own commands"), or a revocation the lists already
-  record counts as the owner's approval inside `update`.
-- **O6. Other doors to the code every job runs.** D3425's second amendment keeps
-  `config publish --executable-changes` and the image-source flags of `update` from agents. These are open
-  on the same reasoning:
-  - `settings set`/`unset --executable-changes` and `workflow --executable-changes`;
-  - `image refresh --image-source`/`--expect-digest`;
-  - `image add`'s `--image`, `--dockerfile`, `--inline` and `--default`.
-
-  AG3 and AG4b lift them as written.
-- **O7. D3430's premise has two more gaps.** A recreated registry is empty, so launches fail until the
-  background or nightly builds finish; VS3b waits only on an epoch change. And the workspace service
-  account carries people's grants made outside Terraform (`internal/workspace/authority_sa.go`), which a
-  recreation loses; `update` recreates only Terraform's bindings. Choose whether the workspace account and
-  registries in use stay irreplaceable, or whether a recreation triggers an eager rebuild and a re-grant.
-- **O8. An installation that skips a release.** UO6 deletes `modules/repo` one release after UO2 (D3451).
-  An installation that upgrades past UO2's release keeps its per-repository roots, and nothing can retire
-  them. Choose: keep the module until `doctor` sees no root anywhere, or refuse such an update with one
-  line naming the release to pass through.
-- **O9. A repository no profile can serve.** UO2 makes the project's default profile admit every enrolled
-  repository. A repository whose workflows need resources or an image no profile offers has no stated
-  outcome.
-- **O10. Workflow secrets still need an update.** `creds/workflowsecrets/<slug>` is written only by
-  `update`'s repository engine, from `fugaro.yaml` workflows (`update_workflowsecrets.go`). A secret added
-  in `fugaro.yaml` therefore needs an `update` before it takes effect, against spec §1. No task removes
-  that dependency.
-
+All answered on 2026-11-26. O1–O3 confirmed the amendments to D3424, D3448 and D3425; O4–O10 became
+D3453–D3459.
 
 ## UNVERIFIED
 
@@ -406,6 +369,8 @@ Left by the third and last review round (2026-11-26). Each needs the owner, and 
 - **U3.** Whether a Fugaro binary newer than an image's pinned Claude Code, `gh` and `mise` stays
   compatible with them. The epoch rule (D3446) assumes that any such incompatibility comes with a base
   image change. Check 951 runs one upgrade across releases.
+- **U4.** Whether the credentials service can read a repository's default branch for D3459 with the
+  read mint it already holds (D3343's `serviceReadProvider`). Task UO7's first test settles it.
 
 ## §A: agent refusals today, and D3425's decision on each
 
