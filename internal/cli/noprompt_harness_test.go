@@ -640,6 +640,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image build":       "refuses before the build: the budget database a build's lease is taken from is not in this world",
 	"fugaro image check":       "prints the no-project-config refusal",
 	"fugaro image ls":          "prints the no-project-config refusal",
+	"fugaro image prune":       "prints the no-project-config refusal",
 	"fugaro image refresh":     "refuses before its steps: the two cloud steps that ask need a real terminal",
 	"fugaro image render":      "refuses outside a git checkout, which is what the world is",
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",

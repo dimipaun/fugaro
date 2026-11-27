@@ -187,6 +187,7 @@ var managedFencedCommands = map[string]string{
 	"config publish":              "nothing was published: the project layer lives in the project's runs bucket",
 	"creds set":                   "nothing was stored: the credentials bundle is a Secret Manager secret of the project",
 	"image build":                 "no build was submitted: a build spends the project's Cloud Build quota and writes its record into the project",
+	"image prune":                 "nothing was pruned: a shared image and the lock that names it are the project's own",
 	"image refresh":               "nothing was refreshed: a refresh pins, rebuilds and re-points the project's own images",
 	"issue dismiss":               "nothing was dismissed: an issue the project's store carries is set aside there as well as here, so the row that says so is written into the project",
 	"issue sync":                  "nothing was uploaded: the project's issue store is in the project's runs bucket",

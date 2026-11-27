@@ -167,6 +167,7 @@ var seamFencedCommands = []struct{ path, door string }{
 	{"cancel", "newCancelCmd"},
 	{"config publish", "newConfigPublishCmd"},
 	{"image build", "openBuildCloud"},
+	{"image prune", "runImagePrune"},
 	{"orchestrator run", "runOrchestratorRun"},
 	{"project repos add", "reposEnrolmentStages"},
 	{"recipes publish", "newRecipesPublishCmd"},
