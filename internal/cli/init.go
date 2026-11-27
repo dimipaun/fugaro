@@ -1403,13 +1403,16 @@ func runInit(r *initRun) error {
 	}
 	if o.printVars {
 		// The run's own lines go through the reporter like every other shape's
-		// (D3438), so what it says beside the document is in its log too. The
-		// document itself is the command's answer and stays on stdout alone.
-		rep, sink := convergeReporter(cmd, o.doorName(), nil)
+		// (D3438), so what it says beside the document is in its log too. It is
+		// the log alone that is asked for here and not the reporter's stream: a
+		// warning is a warning whether or not --verbose was passed, and stdout
+		// is the document — loggedOut is the writer these lines went to before
+		// there was a reporter, with the run's log beside it.
+		_, sink := convergeReporter(cmd, o.doorName(), nil)
 		if sink != nil {
 			defer func() { _ = sink.Close() }()
 		}
-		said := streamOut(rep, sink, cmd.ErrOrStderr())
+		said := loggedOut(cmd.ErrOrStderr(), sink)
 		data, err := infra.InstallationVars(spec)
 		if err != nil {
 			return err
