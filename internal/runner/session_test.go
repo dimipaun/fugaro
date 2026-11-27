@@ -26,8 +26,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// realPath is p with symlinks resolved: Claude Code names a session
-// directory after its real working directory.
+// realPath is p with symlinks resolved: the run resolves some of the paths it
+// reports and leaves others as it was handed them, so a test comparing one of
+// its own names with the run's resolves both sides (review L2). On macOS a
+// test's temp dir is under /var/folders, itself a symlink to /private/var/
+// folders, and Claude Code names a session directory after its real path.
 func realPath(t *testing.T, p string) string {
 	t.Helper()
 	real, err := filepath.EvalSymlinks(p)
