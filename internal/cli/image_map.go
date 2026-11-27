@@ -60,8 +60,8 @@ func newImageMapSetCmd() *cobra.Command {
 			"of its own takes the map the project publishes into it first — a name the\n" +
 			"migration cannot place is dropped with its line — so a mapping written\n" +
 			"here adds to the project's map rather than replacing it.\n\n" +
-			"This write is a person's own: fugaro update publishes it, and a coding\n" +
-			"agent's session is refused it, in a managed project by that project's gate.",
+			"This write is fugaro update's to publish: it lands in this machine's project\n" +
+			"config, and a coding agent's session may make it like any other (D3425).",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runImageMapSet(cmd, o, args[0], args[1])
@@ -127,26 +127,6 @@ func runImageMapSet(cmd *cobra.Command, o cloudOptions, repo, entry string) erro
 		}
 	}
 	next, dropped := imageMapWith(ctx, onDisk, node, key, entry)
-	// The document the managed gate judges, if it is asked at all: the bytes
-	// this command is about to write, taken here so the verdict and the write
-	// are the same artifact (managed spec §4.1's hashing rule).
-	doc, err := next.Marshal()
-	if err != nil {
-		return err
-	}
-	// A coding agent's session is refused before anything is printed and before
-	// the file is written: in a managed project by the gate, in the gate's own
-	// words and with the record of the refusal, and everywhere else by this
-	// command's own sentence (image_map_managed.go). The marker is read once
-	// here and passed, so the session the gate records and the session the
-	// refusal is scoped to are one reading of the same facts.
-	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
-	if marker != "" {
-		if err := imageMapGate(ctx, onDisk, doc, marker); err != nil {
-			return err
-		}
-		return imageMapSession(marker, key, entry)
-	}
 	// A file with no map of its own states the project's map from here on: under
 	// the keep rule (D1906) the publisher takes this file's member over the
 	// published one, so a file that stayed silent would take a map the project
@@ -299,11 +279,4 @@ func imageMapWith(ctx context.Context, lc *localcfg.Config, node *projectpolicy.
 	// repository twice to a reader that still holds it (R2).
 	next.ImageMap = nil
 	return &next, dropped
-}
-
-// imageMapCommand is the command as a reader types it, for the sentences that
-// point at it: a refusal names the command a person runs and never a flag, a
-// variable or a mark (D1023).
-func imageMapCommand(repo, entry string) string {
-	return "fugaro image map set " + quoteWord(repo) + " " + quoteWord(entry)
 }

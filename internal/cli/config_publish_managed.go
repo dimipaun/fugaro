@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -64,17 +65,19 @@ import (
 //
 // It answers nil for anything but a project this program can PROVE is managed:
 // a project that is not managed, a client that could not be built, a mark that
-// did not answer. The caller then has no gate to consult and refuses the
-// session in the command's own words — the refusal this command gave it before
-// this row landed — and nothing is recorded.
+// did not answer. A nil gate is not a refusal any more (D3425): a coding agent's
+// session may publish, and where the gate proves nothing there is no plan for it
+// to judge, so the caller goes on exactly as a person's own publish does and
+// nothing is recorded. What stands in a session's way there is the fence (D2217,
+// a project that is not managed is refused at the door) and the flag this
+// command keeps for the owner (configPublishAgentExecutable).
 //
-// A read that failed is a refusal and not a diagnostic, which is the answer the
-// sibling rows give it for the same reason (accounts_managed.go,
+// A read that failed is still not a diagnostic (accounts_managed.go,
 // image_refresh_managed.go): a session that is refused anyway must not learn
 // which read broke, which endpoint carries it or what the Storage or Resource
-// Manager error said. That is the installation's business, and a coding agent's
-// session is not the surface that reads it — the owner's own terminal is, where
-// this command's refusal is not the gate's.
+// Manager error said — the installation's business, and the owner's own terminal
+// is where it is read. A session that is not refused reads no such sentence
+// either: the gate answers nil and says nothing about why.
 //
 // The clients are built from the installation's own endpoints when the
 // installation is a fake (a test's), and from Google's otherwise. A
@@ -104,6 +107,28 @@ func configPublishGate(ctx context.Context, env *cloudEnv, marker string) *manag
 		return nil
 	}
 	return &g
+}
+
+// configPublishAgentExecutable is D3455's refusal: --executable-changes is the
+// owner's word for a change to what runs as shell in every repository of the
+// project, so a coding agent's session is refused it.
+//
+// Why it is a check of the flag and not a rule of configPublishConverge, and why
+// its caller asks it only where the gate proved nothing. The gate judges a
+// DOCUMENT, and the rules over that document refuse every executable change a
+// session makes whatever the flag says (configPublishRules, D1015(e), D1021(b)) —
+// so where a gate judged, the flag decided nothing and the refusal the session
+// reads is the gate's own, which names no flag (D1023). Where no gate proved
+// anything — the marks could not be read and the fence went on with its warning
+// (D2218) — no rule of the gate runs at all, and the flag would be the one thing
+// left that could put an executable change into the layer. That is the hole this
+// closes, and it is why the refusal is about the flag rather than about the
+// bytes: the session that passed it learns nothing about the layer it named.
+func configPublishAgentExecutable(marker string, executable bool) error {
+	if marker == "" || !executable {
+		return nil
+	}
+	return userErr("nothing was published: --executable-changes is the project's owner's word for a change to what runs as shell in every repository, so a coding agent's session does not publish one: %s", initflow.AgentRefusal(marker))
 }
 
 // configPublishConverge judges the layer document an agent's session is about

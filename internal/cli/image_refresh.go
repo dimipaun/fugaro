@@ -522,9 +522,9 @@ func newImageRefreshCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "refresh",
 		Short: "Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale",
-		Long: "Run it in the checkout of an onboarded repository, in your own terminal window:\n" +
-			"every step that asks is confirmed there, and a session with no terminal leaves\n" +
-			"those steps for you.\n\n" +
+		Long: "Run it in the checkout of an onboarded repository: every step that asks is\n" +
+			"confirmed at a real terminal, and a run with no terminal (a coding agent's\n" +
+			"session, a pipe) needs --yes, which answers those steps itself.\n\n" +
 			"It prints the whole plan first, then, each step with its own confirmation:\n" +
 			"(2) resolves this release's base image of each selected workflow's kind at\n" +
 			"its -pinned tag, verifies its cosign signature, reads the digest back\n" +
@@ -544,14 +544,14 @@ func newImageRefreshCmd() *cobra.Command {
 			"an earlier fugaro copied (a development or hand-pushed image) stops it\n" +
 			"before anything changes, whoever is there: remove the entry from the local\n" +
 			"config, then rerun. It never\n" +
-			"writes fugaro.yaml, never onboards a repository and never runs Terraform. A\n" +
-			"coding agent's session is refused (there is still no --json\n" +
-			"or --plan-only to get around that). A run that stops says which steps\n" +
+			"writes fugaro.yaml, never onboards a repository and never runs Terraform. There\n" +
+			"is still no --json or --plan-only. A run that stops says which steps\n" +
 			"finished and what to rerun; a rerun skips\n" +
 			"what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,\n" +
 			"2 a cloud failure.\n\n" +
-			"No flag confirms the steps that ask — the base pin and the check-job\n" +
-			"update — so a run with no terminal leaves them for you and says so;\n" +
+			"Only --yes confirms the steps that ask — the base pin and the check-job\n" +
+			"update — so a run with no terminal and no --yes leaves them for you and says\n" +
+			"so;\n" +
 			"the billable builds ask nothing in any session, and it is the budget lease\n" +
 			"each of them takes that bounds them, where the installation has a budget\n" +
 			"backend at all (with none, no build leases anything and none is counted).\n" +
@@ -571,33 +571,22 @@ func newImageRefreshCmd() *cobra.Command {
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for the converge (repeatable)")
-	f.StringVar(&o.onDivergence, "on-divergence", "", "the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs; refused in a coding agent's session")
+	f.StringVar(&o.onDivergence, "on-divergence", "", "the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmations this run would otherwise skip (the project's name typed at each step that asks) instead of applying on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the questions back. It cannot restore a confirmation the billable builds no longer have: those ask nothing in any session, and each leases its cost from the project's budget where the installation has one. Refused where nobody can answer them (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
-// refuseRefreshHere is decision D2, as reversed in part by the owner's
-// 2026-10-08 decision and in part by the managed gate (M4, D1011): it still
-// runs before anything else (git, the credentials, the network — the gate's
-// own read is the one exception, and where it is made is openRefreshManaged's
-// business). A coding agent's session applies nothing, --yes included, UNLESS the
-// project is managed and the gate admitted every step it reaches: g is that
-// gate, and it is nil for every other session, so the sentence below is
-// exactly the one this command has always printed — a project that is not
-// managed, a mark that could not be read and a session with no installation to
-// read about all arrive here as nil. Without yes, anything but a real terminal
-// still cannot type the confirmations steps 2 and 3 need, exactly as before
-// (the billable builds ask nothing either way, T4); with yes, no terminal is
-// required (it may run from CI or a script). There is still no --json or
-// --plan-only.
-func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		if g != nil {
-			return nil
-		}
-		return userErr("fugaro image refresh applies cloud changes: %s", initflow.AgentRefusal(m))
-	}
+// refreshNeedsATerminal is decision D2 as the no-prompt policy and the
+// ground-rules lift leave it: a refresh asks for the project's name at each
+// step that asks, so anything but a real terminal is refused here, before
+// anything else runs (git, the credentials, the network). --yes answers every
+// step itself and needs no terminal (it may run from CI or a script), and the
+// billable builds ask nothing either way (T4). A coding agent's session is
+// admitted like any other: what stands in for a confirmation there is the
+// managed gate's admission of each build, asked where the build is
+// (announceBuild). There is still no --json or --plan-only.
+func refreshNeedsATerminal(cmd *cobra.Command, yes bool) error {
 	if yes {
 		return nil
 	}
@@ -741,7 +730,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask}, o.managed != nil, askConditions(cmd, false, false)); err != nil {
 		return err
 	}
-	if err := refuseRefreshHere(cmd, o.yes, o.managed); err != nil {
+	if err := refreshNeedsATerminal(cmd, o.yes); err != nil {
 		return err
 	}
 	r := newInitRun(cmd, iopts)
