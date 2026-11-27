@@ -61,7 +61,8 @@ What the repository already has, against the spec's concepts:
   `repositoryStage`, `init_repo_target.go` `resolveRepoTarget`). Its removal is U12 of
   `docs/update-from-anywhere/`, the owner's D3353 of 2026-11-26, and U12 waits on U11.
 - **F2. Exists.** Other commands change the cloud. Each is classified in D3424:
-  - `setup --provision-batch` applies the compute root, and `update` never applies it;
+  - `setup --provision-batch` provisions the compute root the first time; `update` already converges an
+    existing one by the installation's own opt-in (`init_compute.go`, R2/D3110);
   - `project repos add`, `sync` and `rm` (`project_enroll*.go`, `project_repos_rm.go`);
   - `image refresh` and `image build`;
   - `project policy publish`;
@@ -133,18 +134,24 @@ What the repository already has, against the spec's concepts:
 
   §A lists every command an agent is refused, with its reason and the decision on it.
 - **F13. Wrong.** The handoff table of `docs/managed-agent-converge/` says rigor and `accounts rm` are
-  "now" open to agents. They are still refused, and the gate's allowlist never received them.
-- **F14. Wrong.** The `root.go` exemption says `update`'s own engine stops on an unmanaged installation
-  (T3). It does not yet: T3 is draft #4045, and `selfFlagUnmanaged` is still wired in `init_stages.go`.
-  The three `README`s that say "nothing is implemented" are stale as well
-  (`docs/managed-flag-ergonomics/`, `docs/update-from-anywhere/`, `docs/required-version-stamp/`).
+  "now" open to agents. `accounts rm` is still refused. `rigor set` already admits an agent's *raise* and
+  refuses only a lowering, "the sensitive direction" (`rigor.go`); `rigor floor` and `rigor security rm`
+  refuse the same way. (Corrected after review: the first text said rigor was wholly refused.)
+- **F14. Exists, since the base.** T3 of `docs/managed-flag-ergonomics/` (#4045) merged after this
+  document's base (`e1c86a3e4`): `update` now stops on an unmanaged installation, naming
+  `fugaro managed flag`. The "nothing is implemented" status lines of `docs/managed-flag-ergonomics/`,
+  `docs/update-from-anywhere/` and `docs/required-version-stamp/` are stale.
 
 ### deletion-gating
 
-- **F15. Exists, opposite rule.** Gate rule 1 refuses every delete unless the owner's delete list
-  (`internal/infra/managed/deletelist.go`, the `fugaro allow-delete` command) names it. Outside the gate,
-  `tf.Guard` (`internal/infra/tf/guard.go`) refuses every delete or replace unless `--allow-delete ADDR`
-  names it. Both gate on the fact of a delete. The spec asks for a gate on what is deleted.
+- **F15. Exists, partly.** The gate already classifies by type: `tf.DataBearingType` and
+  `RefusesRemovalType` (`internal/infra/tf/cover.go`, D1551/D1545). In the gate (`managed_cover.go`), a
+  removal the owner's delete list (`internal/infra/managed/deletelist.go`, `fugaro allow-delete`) does not
+  name is refused when its type is data-bearing, and passes with a warning otherwise. D1551 classes
+  registries, service accounts, bucket objects and API keys as data-bearing. Outside the gate, `tf.Guard`
+  (`internal/infra/tf/guard.go`) refuses every delete or replace unless `--allow-delete ADDR` names it.
+  The delete list is also read by `managed apply`, `restore` and `internal/managed/inventory.go`.
+  (Corrected after review: the first text missed the existing table.)
 - **F16. Gap.** These copy-paste escape flags are in normal use:
   - `--retire`: the refusal prints `fugaro update --repo . --retire` (`init_refusal.go` `retireNextCommand`);
   - `--allow-delete ADDR`;
@@ -231,6 +238,40 @@ What the repository already has, against the spec's concepts:
   past the installation's own release. That is the same skew that launching from a newer CLI has today;
   `required_cli` remains the floor.
 
+Found by the first review round, 2026-11-26:
+
+- **F32. Exists.** `checksums.txt` is already signed keyless with cosign (`.goreleaser.yaml`,
+  `checksums.txt.sigstore.json`), and `internal/basepin/cosign.go` verifies cosign signatures by running
+  the binary, which the job image does not carry. With D3442's sha256 alone, a compromised release runs in
+  every job; the owner kept sha256 with this in view.
+- **F33. Gap.** `fugaro exec` puts its own binary's directory first on the agent's `PATH` (`exec.go`,
+  `PathPrepend`), and the image runs as one non-root user. An upgraded binary therefore lands in a
+  directory the agent's user could write to. VS1 makes the directory and the file read-only; the same user
+  could undo that, which is the residual risk, no larger than the agent's existing reach over its own
+  user's files.
+- **F34. Gap.** A CLI older than release A reading a stamped `task.json` gets `runstore.ErrCorrupt`:
+  - `runs ls` shows the title as `-`;
+  - `cancel`, `followup` and the chain raise that rewrites `task.json` fail;
+  - the coordinator's readers fail too.
+
+  `update` writes `required_cli` as its own published release (`update_version_stamp.go`), so once the
+  project is updated to A, older CLIs are refused before they read. The exposure is the T1 window only
+  (D3448).
+- **F35. Gap.** `checkout` has a third value, `shared` (`config.CheckoutShared`), which is refused while
+  `sharedCheckoutShipped` is false. The mode is read in about twenty files beyond `internal/config` (the
+  catalog selection, image refresh and promote, `run.go`, `init.go`, `infra/readiness.go`,
+  `infra/repo.go`). Retiring the key is a sweep, not a config change.
+- **F36. Gap.** The catalog check's pause default lives in Go, not in Terraform: `config/layer.go`
+  `jobPaused` (shared with the reports job) and `infra/tfvars.go` `jobPaused`. `init.go` always writes
+  the value it computes.
+- **F37. Gap.** `update --repo` is named in 64 non-test Go files, and in these other places:
+  - the setup skill's own test (`plugin/setup_skill_test.go`), the Docs-test pins and `README.md`;
+  - `SECURITY.md` and `website/content/security.md`;
+  - `docs/how-to/retiring-a-workflow.md` and `teammates.md`;
+  - `plugin/skills/setup/reference/`.
+- **F38. Exists.** Whole-root retirement already waits on `infra.InFlightJobs`
+  (`docs/design/update-in-flight.md`). UO2 keeps it when retirement becomes automatic.
+
 ## Decisions
 
 Answered by the owner on 2026-11-26 through `AskUserQuestion`, unless marked **resolution**. A resolution
@@ -243,13 +284,13 @@ request.
 | D3421 | update-only | How do the per-repository roots go? | As recommended. Every repository runs on the project's shared jobs. `update` retires each remaining root itself: jobs are deleted, and secret containers are kept (removed from state, not destroyed). Sizing comes from the profile (`Profile.Resources`, which exists), and a repository's `workflows.*.resources` is read and ignored with a note. |
 | D3422 | config-versions | How do `fugaro.yaml` versions load? | As recommended. A registry of in-memory upgraders, v1→v2→…. Unknown keys within a known version stay errors. A file newer than the reader is refused in one line naming `brew upgrade`. The per-key image-age gates retire (D3446). |
 | D3423 | config-versions | How long is the deprecation window? | As recommended: two minor releases. Through those releases `doctor` and `update` name the old version, and a later release may refuse it only by its own ruling. |
-| D3424 | update-only | Which commands count as "update operations"? | **Resolution.** A command that edits project data on purpose (`project repos add/rm/sync`, `project policy publish`, `settings`, the after-write hook) is an edit, not an update. It publishes itself, as the owner ruled on 2026-11-26 ("management commands publish themselves"). It needs no checkout and writes no `fugaro.yaml`. `setup --provision-batch`'s compute root becomes an `update` stage that runs when the layer enables batch. |
-| D3425 | agent-access | Which agent refusals stay? | As recommended: the minimal keep list in §A. These stay refused to agents: a budget raise or resume (D1542); entering any secret or token value; irreplaceable deletes (`secrets rm`, `accounts rm`, `user offboard`, teardown); `managed flag`/`unflag`; membership (`user`/`workspace` add, rm, grant); licence; `restore`; and setup's project-creating run. Every other refusal lifts. |
-| D3426 | agent-access | Unmanaged projects | **Resolution.** This is consistent with D2217. #4045 (T3) lands, and `update` stops on an unmanaged installation, naming `fugaro managed flag`. |
+| D3424 | update-only | Which commands count as "update operations"? | **Resolution, amended after review (2026-11-26).** A command that edits project data on purpose (`project repos add/rm/sync`, `project policy publish`, `settings`, the after-write hook) is an edit, not an update. It publishes itself, as the owner ruled on 2026-11-26 ("management commands publish themselves"). It needs no checkout and writes no `fugaro.yaml`. `update` already converges an existing compute root (F2). Provisioning it the first time is a creating act, like setup's project-creating run, so `setup --provision-batch` stays. *First text: the compute root became an `update` stage. It was dropped because it would let an agent turn billable infrastructure on.* |
+| D3425 | agent-access | Which agent refusals stay? | As recommended: the minimal keep list in §A. **Amended after review, confirmed by the owner the same day:** the installation-shaping flags of `update` that are on the keep list stay refused to agents (budget, billing, operator and admin lists, `--managed`, `--create-project`, `--state-bucket`, `--allow-delete`), and so do the image-source flags (`--base-image`, `--replace-image`, `--expect-digest`, `--image-source`), because they decide what code every job runs. The `settings` keys that raise a budget or widen `allow_data_to` stay a person's too. Lowering rigor lifts, as answered (F13). These stay refused to agents: a budget raise or resume (D1542); entering any secret or token value; irreplaceable deletes (`secrets rm`, `accounts rm`, `user offboard`, teardown); `managed flag`/`unflag`; membership (`user`/`workspace` add, rm, grant); licence; `restore`; and setup's project-creating run. Every other refusal lifts. |
+| D3426 | agent-access | Unmanaged projects | **Resolution.** This is consistent with D2217, and already done: #4045 (T3) merged after the base (F14). |
 | D3427 | deletion-gating | What becomes of the managed gate? | As recommended. The gate stays as the plan check on agent runs. Rule 1 becomes: a recreatable delete passes and an irreplaceable one is refused (D3430). `fugaro/allow-delete.json` and the `fugaro allow-delete` command retire. |
 | D3428 | deletion-gating | `--ask` | **Resolution.** Unchanged. It is the owner-terminal opt-in of D1028, not a safety flag. |
 | D3429 | deletion-gating | `--yes` on `accounts alias` and `accounts switch` | **Resolution.** It goes, finishing the no-prompt policy's T11. |
-| D3430 | deletion-gating | What is recreatable and what is irreplaceable? | As recommended. **Recreatable:** Cloud Run jobs and services, Scheduler jobs, images and registry repositories, build artifacts, and the service accounts and IAM bindings Fugaro made. **Irreplaceable:** Secret Manager secrets, buckets, the RTDB, Firestore, KMS keys, Terraform state, the policy and settings, the spend ledger and run history. |
+| D3430 | deletion-gating | What is recreatable and what is irreplaceable? | As recommended. **Amended after review, confirmed by the owner the same day:** IAM grants to people (the operator and admin lists) are membership and irreplaceable. Registries and Fugaro-made service accounts stay recreatable, confirmed knowing that D1551 classes them data-bearing and that a recreated service account gets a new ID; `update` recreates the bindings in the same apply. DG0 extends the existing table (`tf.DataBearingType`), and this answer supersedes D1551 for those types. **Recreatable:** Cloud Run jobs and services, Scheduler jobs, images and registry repositories, build artifacts, and the service accounts and IAM bindings Fugaro made. **Irreplaceable:** Secret Manager secrets, buckets, the RTDB, Firestore, KMS keys, Terraform state, the policy and settings, the spend ledger and run history. |
 | D3431 | deletion-gating | How is an irreplaceable delete approved? | As recommended: never in `update`. Its plan refuses one in one or two sentences. `--retire`, `--allow-delete`, `--allow-job-delete` and the delete list go. Such deletes exist only in their own commands, and those are refused to agents. |
 | D3432 | deletion-gating | Teardown | As recommended: it gets its own spec later. This plan pins only that no normal command destroys the project, its buckets or the RTDB. |
 | D3433 | deletion-gating | Grace period after offboarding | As recommended: none. Deletion stays immediate. |
@@ -267,7 +308,7 @@ request.
 | D3445 | version-stamp | How the stamp rolls out | **Not the recommendation:** one eager rebuild. Release A's runner reads the field, and its `update` rebuilds every image once and waits. From release A on, the launcher always writes the stamp. The recommendation was a write gated on the image's runner. |
 | D3446 | version-stamp | What makes a rebuild eager | **Resolution**, following D3422, D3444 and D3445. A base-image epoch, a constant bumped when `images/base` changes for anything but the Fugaro version, is recorded on each catalog build. An entry is stale when its epoch differs or its age passes `DefaultMaxAge`. `update` waits only on an epoch change (release A bumps it, which is D3445's eager rebuild). Otherwise it submits the stale builds in the background and waits for none. The per-key image-age gates retire one release after A. |
 | D3447 | all | The standing rules | As recommended. CLAUDE.md's HARD RULE, `.claude/rules/credentials-service.md`, the plugin skills and the how-tos are rewritten to these rules, with a short CLAUDE.md pointer to this folder. |
-| D3448 | version-stamp | Tension T1 | **Not the recommendation:** accept the window. A launch from CLI A before the project's update to A finishes meets an old image that refuses the stamped task, and fails in one line naming `fugaro update`. Runs already in flight are untouched, because they parsed their task before the stamp. |
+| D3448 | version-stamp | Tension T1 | **Not the recommendation:** accept the window. A launch from CLI A before the project's update to A finishes meets an old image that refuses the stamped task. Runs already in flight are untouched, because they parsed their task before the stamp. **Amended after review:** the old runner fails with its own parse error, not a line naming `fugaro update`, because old code cannot be taught a new message. Inside the same window, a teammate's CLI older than A also fails to read a stamped task (F34). Once the update finishes, `required_cli` refuses those CLIs before they read. |
 | D3449 | version-stamp | Development builds | **Resolution.** A runner or a stamp that is a development build (`dev`, or no release version) never upgrades. A runner newer than the stamp never downgrades. |
 
 D3450–D3459 are reserved and unused.
@@ -279,7 +320,10 @@ D3450–D3459 are reserved and unused.
 
 ## Open items
 
-None. Every decision is answered.
+- **O1.** Confirm D3424 as amended after review: `setup --provision-batch` stays the first provisioning
+  of the compute root.
+- **O2.** Confirm D3448 as amended after review: the window's failure is the old runner's own parse
+  error, and older CLIs fail to read stamped tasks inside the same window.
 
 ## UNVERIFIED
 
@@ -298,12 +342,13 @@ None. Every decision is answered.
 | --- | --- | --- |
 | `update` stages outside the gate (`initflow/loop.go` `agentStage`) | `AgentRefusal` | **Lift.** Every stage runs through the reclassified gate (D3427); the secrets stage skips with a named line |
 | `update --onboard-repo`, `--publish-config`, `--coordinator` | "writes to the cloud" | **Lift** |
+| `update` with an installation-shaping flag (`shapesTheInstallation`) | the flags change what the installation is | **Keep** for budget, billing, operator and admin lists, `--managed`, `--create-project`, `--state-bucket`, `--allow-delete` and the image-source flags (D3425 as amended); **lift** for the rest |
 | `--retire`, automatic retirement (`init_retire.go`) | needs a person's terminal | **Goes** (D3421, D3431): retirement is automatic for everyone |
 | Budget self-flag (`update_selfflag.go`) | the marks are the owner's | **Goes** with #4045 (D3426) |
 | `config publish`, `project policy publish` | "changes what every repository runs" | **Lift**; `--delete` stays a person's (it is irreplaceable) |
 | `image refresh`, `image add`, `image map` | cloud changes | **Lift** |
-| `settings set`/`unset` beyond `settingsManagedKeys` | the registry | **Lift** |
-| `rigor set`, `rigor floor` | not on the allowlist (D1027) | **Lift** |
+| `settings set`/`unset` beyond `settingsManagedKeys` | the registry | **Lift**, except keys that raise a budget or widen `allow_data_to` (D3425 as amended) |
+| `rigor set` lowering, `rigor floor`, `rigor security rm` | the sensitive direction (a raise is already admitted) | **Lift** |
 | `accounts add` (token) | a token is a person's | **Keep** (secret value) |
 | `accounts rm` | deletes a credential | **Keep** (irreplaceable) |
 | `accounts switch`, `alias`, `pool` | "which credential spends" | **Lift** |
@@ -316,7 +361,10 @@ None. Every decision is answered.
 | `budget set` raise, `budget resume` | D1542 | **Keep** |
 | `recipes publish/rm`, `runs reindex`, `issue sync/dismiss`, `orchestrator patch/install`, `stats runs` | "a person's" | **Lift** |
 | `issue submit --ask` | `--ask` | **Keep** (`--ask` is never an agent's, D3428) |
-| `apply` | `AgentRefusal` | **Lift** |
+| `apply`, `managed apply` | `AgentRefusal` | **Lift**, through the reclassified gate |
+| `image build`, the cloud half of `upgrade` | cloud changes | **Lift** |
+| `issue list/show/mine`, `runs digest`, `followups` | a person's reads | **Lift** |
+| `budget kill --workspace` | a workspace act | **Lift** (a stop); `budget resume` stays kept |
 | `--check-github-app` | reads the App key | **Keep** (secret value) |
 | `licence set/login/refresh/renew` | a key is a person's | **Keep** |
 | `setup` creating a project | billing | **Keep** |

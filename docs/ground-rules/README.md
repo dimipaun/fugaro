@@ -16,8 +16,8 @@ Six rules that win over any design choice they conflict with:
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received |
-| [reconciliation.md](reconciliation.md) | The module map, findings F1–F31, decisions D3420–D3449 with the owner's answers, tension T1, UNVERIFIED U1–U3, and §A, the audit of agent refusals. **It wins over the spec** |
-| [implementation-plan.md](implementation-plan.md) | 34 tasks in seven slices and six levels, with the critical path, the shared files and Checks 950–953. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | The module map, findings F1–F38, decisions D3420–D3449 with the owner's answers, tension T1, UNVERIFIED U1–U3, and §A, the audit of agent refusals. **It wins over the spec** |
+| [implementation-plan.md](implementation-plan.md) | 39 tasks in seven slices and eight levels, with the critical path, the shared files and Checks 950–953. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan as `fugaro plan graph` reads it |
 
 **Numbers taken:**
