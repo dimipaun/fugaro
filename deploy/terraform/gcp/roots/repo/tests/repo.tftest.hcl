@@ -319,7 +319,7 @@ run "max_retries_zero_job" {
     error_message = "the job's image must be the input"
   }
   assert {
-    condition     = google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].resources[0].limits == tomap({ cpu = "1", memory = "2Gi" })
+    condition     = google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].resources[0].limits == tomap({ cpu = "4", memory = "8Gi" })
     error_message = "the job's limits must be the input's cpu and memory"
   }
   assert {
