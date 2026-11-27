@@ -25131,9 +25131,12 @@ made to commit:
   **refuse**, and each refusal must name `model_prices` and the model. The **exit status** is what says the
   validation refused: a message that names the fix and exits **0** is a warning, and the row reads **FAIL** —
   a run that goes on to spend a model nobody priced. One mode's refusal is a refusal about a mode, which is
-  why both are read. The price table is read first (`fugaro budget prices --json`, offline): a table that
-  **carries** the subject ID leaves the row UNVERIFIED — the name is taken, not the reading, and the entry to
-  change is `SUBJECT_MODEL` in the script.
+  why both are read, and each leg's own exit status is read on its own — a status carried from one leg to the
+  next would read the second leg's exit 0 as the first leg's refusal. The price table is read first
+  (`fugaro budget prices --json`, offline): a table that **carries** the subject ID leaves the row UNVERIFIED
+  — the name is taken, not the reading, and the entry to change is `SUBJECT_MODEL` in the script — and so
+  does a read that **failed** or answered with no models at all, because whether the subject is priced is the
+  premise the row reads the table for.
 - **`mode-off` — D3022.** The sandbox's **COMMITTED** `fugaro.yaml` is read with `git show HEAD:fugaro.yaml`
   — never the working tree, because the file a **run** reads is the one on the branch, and the two differ
   exactly when a task is half-written. The check copies it into a **scratch checkout of its own** (its
@@ -25154,9 +25157,11 @@ read: a policy that still says **`off`** (every run is refused for the policy's 
 refused below would not be the repository file's refusal — republish with `fugaro update` and run it again),
 a policy read that answered with no mode, or a mode this release does not have.
 
-**Prerequisites.** `--sandbox` is a **git checkout** of a sandbox repository with an `origin` remote and a
-**committed** `fugaro.yaml` on its HEAD — nothing else about it matters: the check builds both subjects
-itself. `fugaro`, `git`, `python3` and `mktemp` on PATH. The check reads that checkout and the published
+**Prerequisites.** `--sandbox` is a **git checkout** of a sandbox repository whose HEAD carries a
+**committed** `fugaro.yaml`, with an `origin` remote, naming **`main`** as its `git.base_branch` — nothing
+else about it matters: the check builds both subjects itself. The origin and the branch are the two premises
+of the second subject (a scratch checkout cannot be placed without a remote, and the check's own checkout is
+built on `main`), and each reads UNVERIFIED rather than a pass where it does not hold. `fugaro`, `git`, `python3` and `mktemp` on PATH. The check reads that checkout and the published
 policy and touches nothing else; run it on a sandbox you are happy to see named.
 
 **What a failure means, row by row.**
@@ -25166,7 +25171,9 @@ policy and touches nothing else; run it on a sandbox you are happy to see named.
 - `unpriced` — the validation named `model_prices` **and exited 0** under either mode (a warning is not the
   refusal **D3020** writes), it refused **without naming** `model_prices` (the person meeting it is told
   which entry clears it, and a refusal that does not name it leaves them with nothing to do), or it refused
-  about **another** pin without naming the model. A price table that carries the subject ID is UNVERIFIED.
+  about **another** pin without naming the model. A price table that carries the subject ID, a table read that
+  failed and a table with no models at all are UNVERIFIED: none of the three says whether the model the row
+  wrote is unpriced.
 - `mode-off` — a launch from a scratch checkout whose committed file says off was **not** refused (a real run
   the release should never have started: the row names it and the `fugaro cancel --now <run id>` that stops
   it), or it was refused **without the refusal naming `off`**. A committed file that could not be read, or a

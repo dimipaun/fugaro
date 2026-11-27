@@ -281,8 +281,12 @@ What it would do, in order:
 Premises this dry run does NOT settle (nothing is read: no git, no fugaro, no policy):
 
   NOT settled  the installation's published budget mode is not 'off'   (read at run time)
-  NOT settled  the price table does not carry @MODEL@                  (read at run time)
+  NOT settled  the price table can be read, and does not carry @MODEL@  (read at run time)
   NOT settled  the sandbox's committed fugaro.yaml can be read         (read at run time)
+  NOT settled  the sandbox has an 'origin' remote                      (read at run time;
+               a scratch checkout of it cannot be placed without one, and the row reads UNVERIFIED)
+  NOT settled  its committed file names 'main' as its git.base_branch  (read at run time;
+               the scratch checkout is built on 'main', so another branch is a repository this row does not cover)
   NOT settled  the launch is refused at once, naming 'off'             (read at run time; only a real run settles it)
 
   The two subjects themselves are settled by construction: the check writes them,
@@ -451,7 +455,7 @@ step_premise() {
 # longer name one (D3237): the project does, and a project layer file is the
 # document this check can write without publishing anything.
 step_unpriced() {
-  local dir="$SCRATCH/unpriced" cfg="$SCRATCH/config" priced id
+  local dir="$SCRATCH/unpriced" cfg="$SCRATCH/config" priced prices_status=0
   mkdir -p "$dir" "$cfg/fugaro/projects" "$SCRATCH/cache" "$SCRATCH/home"
   say "reading the price table, then validating the check's own subject under both modes"
 
@@ -461,18 +465,30 @@ step_unpriced() {
     cd "$dir"
     env XDG_CONFIG_HOME="$cfg" XDG_CACHE_HOME="$SCRATCH/cache" HOME="$SCRATCH/home" \
       fugaro budget prices --json
-  ) >"$dir/prices.json" 2>"$dir/prices.json.err" || true
+  ) >"$dir/prices.json" 2>"$dir/prices.json.err" || prices_status=$?
+  if [ "$prices_status" -ne 0 ]; then
+    fact unpriced UNVERIFIED "the price table could not be read: 'fugaro budget prices --json' exited ${prices_status} with $(head -c 300 "$dir/prices.json.err" 2>/dev/null). Whether the subject is priced is the premise this row reads it for, and a table read that failed says nothing about it — a validation refused below could be refusing anything"
+    return 0
+  fi
   if grep -q "$SUBJECT_MODEL" "$dir/prices.json" 2>/dev/null; then
     fact unpriced UNVERIFIED "the price table this installation reads CARRIES '${SUBJECT_MODEL}', so this row's model IS priced here and there is nothing for D3020 to refuse. That is the subject's name being taken, not a reading: change SUBJECT_MODEL in this script to a model the price table does not carry"
     return 0
   fi
   priced=$(jget "$dir/prices.json" models.0.id)
+  if [ -z "$priced" ]; then
+    fact unpriced UNVERIFIED "the price table read answered with no models at all: $(head -c 300 "$dir/prices.json" 2>/dev/null). A table with no entry in it is not a table that does not carry the subject, so this row cannot say the model it wrote is unpriced — and a refusal read under it measures nothing. Check the read with 'fugaro budget prices --json'"
+    return 0
+  fi
   local pins="    models: { coder: ${SUBJECT_MODEL}${priced:+, reviewer: $priced, background: $priced} }"
   {
     printf 'version: 1\nproject: %s\ngcp_project: %s\ndefaults:\n  agent:\n%s\n' "$SUBJECT_PROJECT" "$SUBJECT_PROJECT" "$pins"
   } >"$dir/layer.yaml"
-  local mode file status=0
+  local mode file observe_status="" enforce_status=""
   for mode in observe enforce; do
+    # Per leg: a status left over from the leg before would read the second
+    # leg's exit 0 as the first leg's refusal, and a validation that passes
+    # under one mode would be reported as the refusal of every mode.
+    local status=0
     file="$dir/fugaro-${mode}.yaml"
     {
       printf 'version: 1\nproject: %s\ngcp_project: %s\ngit: { provider: github, base_branch: main }\nagent: { auth: api-key }\n' "$SUBJECT_PROJECT" "$SUBJECT_PROJECT"
@@ -496,8 +512,9 @@ step_unpriced() {
       fact unpriced FAIL "the validation under '${mode}' refused naming 'model_prices' but never naming '${SUBJECT_MODEL}': $(head -c 400 "$dir/validate.$mode.out" 2>/dev/null). The refusal is about another pin, so it says nothing about the model this row wrote"
       return 0
     fi
+    if [ "$mode" = observe ]; then observe_status=$status; else enforce_status=$status; fi
   done
-  fact unpriced PASS "a model with no price ('${SUBJECT_MODEL}') is refused under observe AND under enforce (exit ${status}), each refusal naming the 'model_prices' entry that clears it: D3020 holds in every mode, on a subject this check wrote"
+  fact unpriced PASS "a model with no price ('${SUBJECT_MODEL}') is refused under observe AND under enforce (exit ${observe_status} and exit ${enforce_status}), each refusal naming the 'model_prices' entry that clears it: D3020 holds in every mode, on a subject this check wrote"
 }
 
 step_mode_off() {

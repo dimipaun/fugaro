@@ -77,6 +77,14 @@ budget)
   exit "${FAKE791_PRICES_STATUS:-0}"
   ;;
 validate)
+  # The row validates the same subject twice, once per mode, so a case can say
+  # that the two legs answered differently.
+  nth=$(( $(cat "${FAKE791_DIR:?}/validate.n" 2>/dev/null || echo 0) + 1 ))
+  printf '%s' "$nth" >"${FAKE791_DIR}/validate.n"
+  if [ "$nth" -ge 2 ] && [ -n "${FAKE791_VALIDATE2_STATUS:-}" ]; then
+    if [ -f "${FAKE791_DIR}/validate2.txt" ]; then cat "${FAKE791_DIR}/validate2.txt"; fi
+    exit "$FAKE791_VALIDATE2_STATUS"
+  fi
   if [ -f "${FAKE791_DIR:?}/validate.txt" ]; then cat "$FAKE791_DIR/validate.txt"; fi
   exit "${FAKE791_VALIDATE_STATUS:-0}"
   ;;
@@ -143,7 +151,10 @@ case_dir() { # case_dir <name>
   printf '%s' "$PRICES" >"$answers/prices.json"
   printf 'agent.models.coder: %s has no price: add it under model_prices in the project config\n' "$UNPRICED_ID" >"$answers/validate.txt"
   printf "fugaro.yaml says budget.mode: off, which is not a mode any more: remove the key ('off' is accepted nowhere; the modes are observe and enforce)\n" >"$answers/run.txt"
+  FAKE791_POLICY_STATUS=0
+  FAKE791_PRICES_STATUS=0
   FAKE791_VALIDATE_STATUS=1
+  FAKE791_VALIDATE2_STATUS=
   FAKE791_RUN_STATUS=1
 }
 
@@ -159,6 +170,7 @@ run791() {
     FAKE791_POLICY_STATUS="${FAKE791_POLICY_STATUS:-0}" \
     FAKE791_PRICES_STATUS="${FAKE791_PRICES_STATUS:-0}" \
     FAKE791_VALIDATE_STATUS="${FAKE791_VALIDATE_STATUS:-1}" \
+    FAKE791_VALIDATE2_STATUS="${FAKE791_VALIDATE2_STATUS:-}" \
     FAKE791_RUN_STATUS="${FAKE791_RUN_STATUS:-1}" \
     ${RUN791_ENV[@]+"${RUN791_ENV[@]}"} \
     bash "$script" --sandbox "$sandbox" --installation test "$@" 2>"$work/err") || status=$?
@@ -199,6 +211,11 @@ test_a_dry_run_does_not_claim_a_run_pass() {
   expect_status "$status" 0 "the plan is not a run"
   expect_contains "$out" "NOT settled" "the plan says what this dry run cannot settle"
   expect_contains "$out" "only a real run" "and that a real run is what settles them"
+  # Everything the mode-off subject depends on is on the list: the file it is
+  # built from, the remote it is placed by, and the branch the scratch checkout
+  # holds it on.
+  expect_contains "$out" "'origin' remote" "the plan says the sandbox needs an origin"
+  expect_contains "$out" "git.base_branch" "the plan says which branch the subject is built on"
   [ ! -s "$CALLS" ] || fail "a dry run made a call: $(cat "$CALLS")"
 }
 
@@ -259,6 +276,39 @@ test_a_validation_that_does_not_refuse_is_a_finding() {
   run791
   expect_status "$status" 1 "a warning that names the fix is not the refusal D3020 writes"
   expect_contains "$out" "exits 0" "the finding says what is wrong"
+}
+
+test_a_validation_that_passes_under_enforce_is_a_finding() {
+  case_dir enforce-passes
+  make_sandbox "$sandbox" "$(repo_yaml)"
+  # The observe leg refuses (the case's default) and the enforce leg exits 0: a
+  # status carried over from the leg before would read that exit 0 as the first
+  # leg's refusal, and the row would pass a validation D3020 does not write.
+  printf 'note: add a model_prices entry for %s\n' "$UNPRICED_ID" >"$answers/validate2.txt"
+  FAKE791_VALIDATE2_STATUS=0
+  run791
+  expect_status "$status" 1 "one mode's refusal is not the refusal of every mode"
+  expect_contains "$out" "under 'enforce' exits 0" "the finding names the mode that passed"
+}
+
+test_a_price_table_that_cannot_be_read_is_not_a_pass() {
+  case_dir prices-unreadable
+  make_sandbox "$sandbox" "$(repo_yaml)"
+  rm -f "$answers/prices.json"
+  FAKE791_PRICES_STATUS=1
+  run791
+  expect_status "$status" 3 "a table read that failed says nothing about whether the subject is priced"
+  expect_contains "$out" "price table could not be read" "the row names the read that failed"
+  expect_contains "$out" "UNVERIFIED" "the row says it was not measured"
+}
+
+test_a_price_table_with_no_models_is_not_a_pass() {
+  case_dir prices-empty
+  make_sandbox "$sandbox" "$(repo_yaml)"
+  printf '{}' >"$answers/prices.json"
+  run791
+  expect_status "$status" 3 "an empty table is not a table that does not carry the subject"
+  expect_contains "$out" "no models at all" "the row says what it read"
 }
 
 test_a_refusal_without_the_fix_is_a_finding() {
@@ -382,6 +432,9 @@ t test_an_enforcing_installation_is_not_a_finding
 t test_a_policy_that_says_off_is_not_read_as_the_subject
 t test_an_unreadable_mode_is_not_a_pass
 t test_a_validation_that_does_not_refuse_is_a_finding
+t test_a_validation_that_passes_under_enforce_is_a_finding
+t test_a_price_table_that_cannot_be_read_is_not_a_pass
+t test_a_price_table_with_no_models_is_not_a_pass
 t test_a_refusal_without_the_fix_is_a_finding
 t test_a_table_that_carries_the_subject_is_not_a_pass
 t test_a_launch_that_is_not_refused_is_a_finding
