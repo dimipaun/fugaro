@@ -1251,7 +1251,7 @@ wait_for_grants() {
   # `call: FAIL status=notoken` below are the same fact read twice.
   case "$opol" in
   named)
-    fact openid-grant PASS "${OPENID_ROLE} is on ${CALLER_EMAIL}'s OWN account: its own IAM policy named it ${opol_at} s after the binding was added (read back from that policy, not assumed), with the same fixed ${settle} given to it. It is the grant the installation's own catalog build identity holds on itself (deploy/terraform/gcp/modules/installation/build_identity.tf), and nothing else is added to that account's policy: the throwaway account may mint an identity token as itself and as no other account. It goes with the account, which the Restore reads back"
+    fact openid-grant PASS "${OPENID_ROLE} is on ${CALLER_EMAIL}'s OWN account: its own IAM policy named it ${opol_at} s after the binding was added (read back from that policy, not assumed). It is the grant the installation's own catalog build identity holds on itself (deploy/terraform/gcp/modules/installation/build_identity.tf), and nothing else is added to that account's policy: the throwaway account may mint an identity token as itself and as no other account. It goes with the account, which the Restore reads back"
     ;;
   clean)
     fact openid-grant FAIL "${CALLER_EMAIL}'s own IAM policy names ${OPENID_ROLE} in no binding ${opol_at} s after it was reported added: Cloud Build serves a build its ID token only when the account it runs as holds that role on itself, so the step below would end 14 (notoken) with the mint unmeasured"
