@@ -56,12 +56,12 @@
 #             standard library is used.
 # Where:      SANDBOX installations only, and never `belong`: the name is
 #             refused, whether you typed it or doctor answers it. The check runs
-#             `fugaro update --yes` TWICE on the installation you name — the
-#             converge itself, with the Terraform plan and apply, the rules
-#             deploy, the policy publish and the local config write that command
-#             already does. It launches no run and makes no model call. The
-#             second converge is the idempotence reading and is the same command
-#             again; on a converged installation it plans no change.
+#             `fugaro update` TWICE on the installation you name — the converge
+#             itself, as a person runs it, with the Terraform plan and apply, the
+#             rules deploy, the policy publish and the local config write that
+#             command already does. It launches no run and makes no model call.
+#             The second converge is the idempotence reading and is the same
+#             command again; on a converged installation it plans no change.
 # When:       Run it on an installation you have NOT yet converged with this
 #             CLI: the migration is the first half of what is measured, and it
 #             happens in the local config's first write. On an installation
@@ -71,10 +71,12 @@
 # Costs:      two converges of a sandbox installation. Nothing here is billable
 #             on its own; an image rebuild, a deploy or a first policy publish
 #             that an unrelated stage decides it wants is the converge's own
-#             asking and `fugaro update --yes` covers it, so run the check where
-#             that is acceptable. The plugin stage writes your own Claude Code
-#             plugin at user scope, outside every checkout. The check itself
-#             makes two reads of the published policy node and no other call.
+#             step, taken at the terminal this check is run from — the
+#             no-prompt policy leaves no flag that answers for you — so run the
+#             check where that is acceptable. The plugin stage writes your own
+#             Claude Code plugin at user scope, outside every checkout. The
+#             check itself makes two reads of the published policy node and no
+#             other call.
 # Runs:       by YOU. No agent runs any step of it.
 # Cleanup:    always, including on a Ctrl-C: the scratch directory is removed.
 #             Nothing else was created — the converge is the installation's own
@@ -274,10 +276,13 @@ remove_scratch() {
   if [ ! -e "$SCRATCH" ]; then SCRATCH_REMOVED=yes; fi
 }
 
-# The `--json` documents and the local config, in one program: a live check on
-# the owner's machine has python3 and no jq, and a row that read a document with
-# grep would report a key the release did not write the day the document is
-# re-wrapped. The config is read by a scanner rather than a YAML implementation:
+# The documents, the converge's own account and the local config, in one
+# program: a live check on the owner's machine has python3 and no jq, and a row
+# that read a document with grep would report a key the release did not write
+# the day the document is re-wrapped. The two converges are read as the account
+# a person reads, because a converge is a person's run (T11: --json confirms no
+# step of one, so a converge under it applies nothing). The config is read by a
+# scanner rather than a YAML implementation:
 # it is a flat document the CLI itself writes, and this reads the blocks this
 # check is about — presence, counts, the names inside them and a digest of each
 # block's own text.
@@ -461,35 +466,80 @@ def config(path=""):
     ])
 
 
+# The account a converge prints, which is the only account of one there is: a
+# converge takes its steps on a person being at the terminal, and --json turns
+# every one of them down (T11 of docs/no-prompt-policy: `--json` confirms
+# nothing), so the document a converge under --json prints describes a run that
+# applied nothing. What a converge run by a person prints is the CLI's own
+# words, and these are the shapes it writes them in: one line per stage, marked
+# in the reporter's alphabet (internal/report: done, will-do, skipped, waiting,
+# failed — a refusal carries that mark too — and left for you), the block per
+# step it leaves (internal/initflow/loop.go's finish), and what the local
+# config's own write says (internal/cli/init.go's writeLocalConfig: the file it
+# wrote, the backup it took, and the `note:` lines it prints beside them).
+# The line's own name is what says it is a step and not the waiting line the
+# reporter draws in the same alphabet ("3 steps not run (they need …)"): a stage
+# is named and never counted.
+STEP = re.compile("^([" + "✔○–↳✖!" + "]) ([A-Za-z][A-Za-z0-9_-]*)(?:: | )?(.*)$")
+LEFT_BLOCK = re.compile(r"^left for you \((\S+), (\S+)\): (.*)$")
+CONFIG_LINE = re.compile(r"^The local config (\S+) (?:is up to date\.|changes:)$")
+BACKUP_LINE = re.compile(r"^backed up the old local config to (\S+)$")
+APPLIED_LINE = re.compile(
+    r"^applied: (\d+) imports, (\d+) creates, (\d+) updates(?:, (\d+) deletes, (\d+) replaces)?")
+
+
 def update(path=""):
-    """What a converge said about itself, out of its --json document."""
-    try:
-        doc = json.loads(text(path))
-    except ValueError:
-        out([("ran", "no")])
-        return
-    failed = doc.get("failed") or {}
-    left = doc.get("left_for_you") or []
-    stages = doc.get("stages") or []
-    counts = doc.get("changes") or {}
-    needs = [s for s in stages if (s.get("state") or "") in ("needs-you", "blocked", "failed")]
+    """What a converge printed about itself, as a person at its terminal read it."""
+    stages = 0
+    needs = 0
+    failed = ""
+    left = []
+    applied = "no"
+    counts = (0, 0, 0, 0, 0)
+    config = ""
+    backup = ""
+    for line in text(path).splitlines():
+        step = STEP.match(line)
+        if step:
+            mark, name, detail = step.group(1), step.group(2), step.group(3)
+            stages += 1
+            # The stages the run's own account counts as needing somebody: the
+            # one it left for the person, and the one that failed (a refusal
+            # is left for the person too, and carries the failed mark).
+            if mark in ("!", "✖"):
+                needs += 1
+            if mark == "✖" and not failed:
+                failed = name
+            if detail.startswith("applied"):
+                applied = "yes"
+                counts_match = APPLIED_LINE.match(detail)
+                if counts_match:
+                    # The counts of a plan that deleted and replaced nothing are
+                    # written without those two (infra.PlanCounts.String).
+                    counts = tuple(int(n or 0) for n in counts_match.groups())
+            continue
+        block = LEFT_BLOCK.match(line)
+        if block:
+            left.append((block.group(1), block.group(2)))
+            continue
+        write = CONFIG_LINE.match(line)
+        if write:
+            config = write.group(1)
+            continue
+        take = BACKUP_LINE.match(line)
+        if take:
+            backup = take.group(1)
     out([
-        ("ran", "yes"),
-        ("failed", flat(failed.get("stage"))),
+        ("ran", "yes" if (stages or left or config or backup) else "no"),
+        ("failed", flat(failed)),
         ("left", len(left)),
-        ("left_stages", ",".join(sorted(flat(entry.get("stage")) for entry in left))),
-        ("stages", len(stages)),
-        ("needs_you", len(needs)),
-        ("applied", yes(doc.get("applied"))),
-        ("changes", "%d/%d/%d/%d/%d" % (
-            counts.get("imports") or 0, counts.get("creates") or 0, counts.get("updates") or 0,
-            counts.get("deletes") or 0, counts.get("replaces") or 0)),
-        # The run's own `error` field is printed as `refused`: a key literally
-        # named `error` would collide with the marker this reader prints when it
-        # cannot read a document at all, and every caller reads that marker.
-        ("refused", "yes" if doc.get("error") else "no"),
-        ("config", flat(doc.get("config"))),
-        ("backup", flat(doc.get("backup"))),
+        ("left_stages", ",".join(sorted(set(stage for stage, _kind in left)))),
+        ("stages", stages),
+        ("needs_you", needs),
+        ("applied", applied),
+        ("changes", "%d/%d/%d/%d/%d" % counts),
+        ("config", flat(config)),
+        ("backup", flat(backup)),
     ])
 
 
@@ -596,6 +646,34 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   wait "$pid" 2>/dev/null || BOUNDED_STATUS=$?
 }
 
+# run_bounded_here SECONDS KEY DIR CMD...: run_bounded with this shell's own
+# standard input left on the command. A background job in a script has its
+# standard input on /dev/null before any redirection the caller writes, and the
+# converge is a run at the terminal: the person at it IS what confirms its steps
+# (T11 — the flag that used to answer for them is gone), so a converge started
+# with no input of its own stops at the first step that needs somebody and
+# leaves it for you. An explicit redirection wins over the /dev/null default.
+run_bounded_here() { # run_bounded_here SECONDS KEY DIR CMD...
+  local secs=$1 key=$2 dir=$3
+  shift 3
+  BOUNDED_TIMED_OUT=no
+  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" <&0 &
+  local pid=$! ticks=0 max=$((secs * 10))
+  while kill -0 "$pid" 2>/dev/null; do
+    [ "$ticks" -lt "$max" ] || break
+    sleep 0.1
+    ticks=$((ticks + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    BOUNDED_TIMED_OUT=yes
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 2
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  BOUNDED_STATUS=0
+  wait "$pid" 2>/dev/null || BOUNDED_STATUS=$?
+}
+
 # node_read OUTFILE: the published policy node, straight from the Realtime
 # Database's REST API with an access token of your own. It is the one read here
 # that is NOT the CLI's, which is why the check can say what the converge did to
@@ -674,14 +752,14 @@ step_features() {
     missing="fugaro craft ls"
   elif ! help=$("$FUGARO_BIN" update --help 2>&1); then
     missing="fugaro update --help"
-  elif [[ "$help" != *--json* ]]; then
-    missing="fugaro update --json"
+  elif [[ "$help" != *--verbose* ]]; then
+    missing="fugaro update --verbose"
   fi
   if [ -n "$missing" ]; then
-    fact features FAIL "this build has no '${missing}': the model-crafts vocabulary (credentials, pools and crafts, docs/model-crafts/implementation-plan.md MC1–MC7) and the converge's own result document are what this check reads, so there is no migration here for it to measure. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
-    stop "the installed fugaro has no '${missing}': this check needs the model-crafts vocabulary and 'update --json'"
+    fact features FAIL "this build has no '${missing}': this check reads the model-crafts vocabulary (credentials, pools and crafts, docs/model-crafts/implementation-plan.md MC1–MC7) and the account a converge prints, so there is no migration here for it to measure. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
+    stop "the installed fugaro has no '${missing}': this check needs the model-crafts vocabulary and 'update --verbose'"
   fi
-  fact features PASS "fugaro craft ls is there and fugaro update reads its flags from a document this check can read (--json): the build carries the crafts this check reads back"
+  fact features PASS "fugaro craft ls is there and fugaro update prints the whole of its run (--verbose): the build carries the crafts this check reads back and the account it reads the converges from"
 }
 
 # ------------------------------------------------------------------- reading
@@ -791,33 +869,35 @@ step_config_before() {
 }
 
 # step_bound says the spend this check is about to commit, before it commits it.
-# `--yes` is the owner's answer to it, passed to the converge itself; the check
-# asks for no confirmation of its own, because the owner runs it by hand and its
-# header says what it does.
+# Nothing is passed to either converge and nothing stands in for the person who
+# runs the check: the check asks for no confirmation of its own, because the
+# owner runs it by hand at a terminal — which is exactly what a converge's own
+# steps are confirmed by — and its header says what it does.
 step_bound() {
   local second="a second converge of the same installation, which must plan nothing"
-  fact bound PASS "TWO converges of the $NAME installation ($PROJECT) — the whole of what fugaro update does: the Terraform plan and apply, the rules deploy, the published policy, the job images behind their own confirmation and the local config. Nothing here is billable on its own; an image rebuild or a deploy an unrelated stage decides it wants is the converge's own asking, and the --yes this check passes covers it. Then $second. No run is launched and no model call is made"
+  fact bound PASS "TWO converges of the $NAME installation ($PROJECT) — the whole of what fugaro update does: the Terraform plan and apply, the rules deploy, the published policy, the job images behind their own confirmation and the local config. Nothing here is billable on its own; an image rebuild or a deploy an unrelated stage decides it wants is the converge's own step, taken at the terminal this check is run from, and the no-prompt policy leaves no flag that stands in for the person at it. Then $second. No run is launched and no model call is made"
 }
 
-# step_update is the converge itself, read as data. It is run with --json so the
-# check can read what the run says about itself — what it left for the person,
-# which stage failed, which config file it wrote — and with the config named, so
-# the file the check reads before and after is the file the run wrote.
+# step_update is the converge itself, read out of the account it prints. It is
+# run as a person runs it — at this check's own terminal, with no --json and no
+# --yes — because that is the only session a converge takes its steps in (T11:
+# --json confirms nothing) — and with the config named, so the file the check
+# reads before and after is the file the run wrote.
 step_update() {
   local secs=$UPDATE_TIMEOUT
-  run_bounded "$secs" update1 "$WORKDIR" "$FUGARO_BIN" update --yes --json --config "$CONFIG"
+  run_bounded_here "$secs" update1 "$WORKDIR" "$FUGARO_BIN" update --verbose --config "$CONFIG"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured update "fugaro update did not finish within ${secs}s and was killed: nothing below is a verdict about the migration. Raise the bound with --timeout <seconds> and run the check again"
     stop "the converge did not finish within ${secs}s (the check killed it). Raise the bound with --timeout and run the check again — nothing was concluded about the migration"
   fi
   U1_STATUS=$BOUNDED_STATUS
   local answer
-  answer=$(reader update "$SCRATCH/update1.out") || stop "the converge's --json document is not one this check can read"
-  case "$answer" in *error=*) stop "the converge's --json document is not the shape this check reads: run 'fugaro update --yes --json' yourself and see" ;; esac
+  answer=$(reader update "$SCRATCH/update1.out") || stop "the converge's own account is not one this check can read"
+  case "$answer" in *error=*) stop "the converge's own account is not the shape this check reads: run 'fugaro update --verbose' yourself and see" ;; esac
   printf '%s\n' "$answer" >"$SCRATCH/update1.txt"
   if [ "$(field "$SCRATCH/update1.txt" ran)" != yes ]; then
-    unmeasured update "the converge printed no --json document this check can read, so what it left for the person is not measured: run 'fugaro update --yes --json' at your terminal and see"
-    stop "the converge printed no --json document: nothing was concluded about the migration"
+    unmeasured update "the converge printed no account this check can read, so what it left for the person is not measured: run 'fugaro update --verbose' at your terminal and see"
+    stop "the converge printed no account of itself: nothing was concluded about the migration"
   fi
   U1_LEFT=$(field "$SCRATCH/update1.txt" left)
   U1_FAILED=$(field "$SCRATCH/update1.txt" failed)
@@ -827,14 +907,14 @@ step_update() {
   U1_CHANGES=$(field "$SCRATCH/update1.txt" changes)
   U1_CONFIG=$(field "$SCRATCH/update1.txt" config)
   U1_BACKUP=$(field "$SCRATCH/update1.txt" backup)
-  # The lines a run prints about the keys it could not convert go to the run's
-  # own stream, which --json sends to stderr: the document carries the stages and
-  # not these notes.
-  U1_NOTES=$(grep -c '^note: ' "$SCRATCH/update1.err" 2>/dev/null || true)
+  # The lines a run prints about the keys it could not convert are the run's own
+  # output, which --verbose puts on the terminal it is read from beside the
+  # log: reading them is reading the converge's stdout.
+  U1_NOTES=$(grep -c '^note: ' "$SCRATCH/update1.out" 2>/dev/null || true)
   U1_NOTES=${U1_NOTES:-0}
   if [ "${U1_STATUS}" -ne 0 ]; then
     owner "the converge's own output, last lines (this is NOT in the block):"
-    tail -n 12 "$SCRATCH/update1.err" >&4 || true
+    tail -n 12 "$SCRATCH/update1.out" >&4 || true
     fact update FAIL "fugaro update exited $U1_STATUS${U1_FAILED:+, at the stage $U1_FAILED}: its output is in the terminal above"
     if [ "$U1_LEFT" = 0 ]; then
       stop "the converge did not finish (exit $U1_STATUS): fix what it reported and run the check again — nothing was concluded about the migration"
@@ -880,7 +960,7 @@ step_no_step_left() {
     fact no-step-left FAIL "the converge left $U1_LEFT step(s) for you${where:+, at the stage(s) $where}: 'fugaro update' is the whole upgrade and must leave nothing for a person (an update that needs another command is the release's own bug). Read the step(s) where the run printed them, finish them, and run the check again"
     return 0
   fi
-  if [ "$(field "$SCRATCH/update1.txt" refused)" = yes ]; then
+  if [ "$U1_STAGES" = 0 ]; then
     fact no-step-left FAIL "the converge refused before any stage ran and printed no stage account: read the refusal where the run printed it"
     return 0
   fi
@@ -1057,7 +1137,7 @@ step_config_after() {
     if in_list "$AFTER_OAUTH_LIST" "$account"; then
       continue
     fi
-    if grep -qF "the account ${account}," "$SCRATCH/update1.err" 2>/dev/null; then
+    if grep -qF "the account ${account}," "$SCRATCH/update1.out" 2>/dev/null; then
       named_by_note="${named_by_note}${named_by_note:+, }${account}"
       continue
     fi
@@ -1084,31 +1164,30 @@ step_config_after() {
 # the second pass would make every later converge a diff.
 step_second_update() {
   local secs=$UPDATE_TIMEOUT
-  run_bounded "$secs" update2 "$WORKDIR" "$FUGARO_BIN" update --yes --json --config "$CONFIG"
+  run_bounded_here "$secs" update2 "$WORKDIR" "$FUGARO_BIN" update --verbose --config "$CONFIG"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured second-update "the second fugaro update did not finish within ${secs}s and was killed: the idempotence of the migration is not measured"
     return 0
   fi
   local status=$BOUNDED_STATUS
+  local answer
   if [ "$status" -ne 0 ]; then
     local at=""
-    local refused
-    refused=$(reader update "$SCRATCH/update2.out") || true
-    printf '%s\n' "$refused" >"$SCRATCH/update2.txt"
+    answer=$(reader update "$SCRATCH/update2.out") || true
+    printf '%s\n' "$answer" >"$SCRATCH/update2.txt"
     at=$(field "$SCRATCH/update2.txt" failed)
     owner "the second converge's own output, last lines (this is NOT in the block):"
-    tail -n 12 "$SCRATCH/update2.err" >&4 || true
+    tail -n 12 "$SCRATCH/update2.out" >&4 || true
     fact second-update FAIL "the second fugaro update exited $status${at:+, at the stage $at}: a converged installation converges again with the same command, so this is either a finding about the second run or an installation that was still moving"
     return 0
   fi
-  local answer
   answer=$(reader update "$SCRATCH/update2.out") || {
-    unmeasured second-update "the second converge's --json document is not one this check can read"
+    unmeasured second-update "the second converge's own account is not one this check can read"
     return 0
   }
   printf '%s\n' "$answer" >"$SCRATCH/update2.txt"
   if [ "$(field "$SCRATCH/update2.txt" ran)" != yes ]; then
-    unmeasured second-update "the second converge printed no --json document this check can read: the idempotence of the migration is not measured"
+    unmeasured second-update "the second converge printed no account of itself this check can read: the idempotence of the migration is not measured"
     return 0
   fi
   local left
@@ -1125,7 +1204,7 @@ step_second_update() {
   SECOND_CRAFT_ACCESSES=$(field "$SCRATCH/config-second.txt" craft_accesses)
   SECOND_CRED_SHA=$(field "$SCRATCH/config-second.txt" credentials_digest)
   SECOND_CRAFT_SHA=$(field "$SCRATCH/config-second.txt" crafts_digest)
-  U2_NOTES=$(grep -c '^note: ' "$SCRATCH/update2.err" 2>/dev/null || true)
+  U2_NOTES=$(grep -c '^note: ' "$SCRATCH/update2.out" 2>/dev/null || true)
   U2_NOTES=${U2_NOTES:-0}
   U2_CHANGES=$(field "$SCRATCH/update2.txt" changes)
   if [ "$SECOND_CRED_SHA" != "$AFTER_CRED_SHA" ]; then
@@ -1157,7 +1236,7 @@ plan() {
   printf 'its shape before a converge: %s\n' "$PRE_SHAPE" >&3
   printf 'the migration it would run:  %s typed credential(s) and %s craft access(es) today, over the accounts design'"'"'s %s account(s) and %s stage key(s)\n' \
     "$PRE_CREDS" "$PRE_CRAFTS" "$PRE_ACCOUNTS" "$PRE_STAGES" >&3
-  printf 'the converges it would run:  fugaro update --yes --json --config %s (twice: the second is the idempotence reading)\n' "$CONFIG" >&3
+  printf 'the converges it would run:  fugaro update --verbose --config %s (twice, at your terminal: the second is the idempotence reading)\n' "$CONFIG" >&3
   printf 'the node it would read:      %s/%s.json, before and after, with your own credentials\n' "${RTDB%/}" "$POLICY_PATH" >&3
   printf 'the reads it makes first:    fugaro doctor --json, fugaro craft ls --json\n' >&3
   printf 'what it does not do:         launch a run, make a model call, write a credential value, publish a policy by itself\n' >&3

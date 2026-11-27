@@ -270,8 +270,8 @@ update)
   case "$*" in
   *--help*)
     case "$mode" in
-    no-json) printf 'Usage:\n  fugaro update [flags]\n' ;;
-    *) printf 'Usage:\n  fugaro update [flags]\n\nFlags:\n      --json   print the result as JSON on stdout\n' ;;
+    no-verbose) printf 'Usage:\n  fugaro update [flags]\n' ;;
+    *) printf 'Usage:\n  fugaro update [flags]\n\nGlobal Flags:\n  -v, --verbose   print the whole run as it goes\n' ;;
     esac
     exit 0
     ;;
@@ -296,12 +296,12 @@ update)
   case "$mode" in
   second-fails)
     if [ "$n" -ge 2 ]; then
-      printf '{"project":"chk422","gcp_project":"fugaro-chk422-test","failed":{"stage":"images","error":"the image could not be built","fix":"run it again"},"left_for_you":[]}\n'
+      printf '✖ images\nError: the image could not be built\n  run it again\n'
       exit 2
     fi
     ;;
   update-fails)
-    printf '{"project":"chk422","gcp_project":"fugaro-chk422-test","failed":{"stage":"installation","error":"the apply failed","fix":"read the plan"},"left_for_you":[]}\n'
+    printf '✖ installation\nError: the apply failed\n  read the plan\n'
     exit 2
     ;;
   update-hangs)
@@ -309,7 +309,7 @@ update)
     ;;
   esac
   if [ "$mode" = update-unreadable ]; then
-    printf 'not json at all\n'
+    printf 'fugaro: this is not the account of a converge\n'
     exit 0
   fi
   wrote=no
@@ -334,7 +334,7 @@ update)
       } >>"$config"
       wrote=yes
     fi
-    printf 'note: the account %s, named by the review crafts, has no craft key: it is not a name a credential may carry\n' "$FAKE_ACCOUNT_TWO" >&2
+    printf 'note: the account %s, named by the review crafts, has no craft key: it is not a name a credential may carry\n' "$FAKE_ACCOUNT_TWO"
     ;;
   update-rewrites)
     if [ "$n" -ge 2 ]; then
@@ -354,30 +354,22 @@ update)
     wrote=yes
     ;;
   esac
-  notes='[]'
   case "$mode" in
   update-second-notes)
     if [ "$n" -ge 2 ]; then
-      printf 'note: the account %s, named by the review crafts, has no craft key: no credential of this release stands for it\n' "$FAKE_ACCOUNT_TWO" >&2
+      printf 'note: the account %s, named by the review crafts, has no craft key: no credential of this release stands for it\n' "$FAKE_ACCOUNT_TWO"
     fi
     ;;
   update-partial-note)
     ;;
   esac
-  left='[]'
   status=0
-  failed=''
   case "$mode" in
   update-left)
-    left='[{"stage":"policy","kind":"command","text":"fugaro project policy publish"}]'
     status=1
     ;;
-  update-needs-you)
-    left='[]'
-    notes='[]'
-    ;;
   update-error)
-    printf '{"project":"chk422","error":"no project config is selected","left_for_you":[]}\n'
+    printf 'Error: no project config is selected\n'
     exit 1
     ;;
   update-other-config)
@@ -394,14 +386,35 @@ update)
     applied=true
     changed=2
   fi
-  backup=""
-  if [ "$wrote" = yes ] && [ "$n" -lt 2 ]; then backup="$config.bak-20261114"; fi
+  # The account the check reads, in the shapes the CLI prints it in: one line per
+  # stage in the reporter's alphabet (internal/report: ✔ done, ! left for you),
+  # the block per step left for you (internal/initflow/loop.go's finish), and
+  # what the local config's own write says (internal/cli/init.go's
+  # writeLocalConfig: the file, the backup it took, the notes beside them). A
+  # converge that applied nothing says "No changes" (internal/cli/init_stages.go),
+  # which is also what a converged installation gives on the second pass.
   if [ "$mode" = update-needs-you ]; then
-    printf '{"project":"chk422","gcp_project":"fugaro-chk422-test","config":"%s","applied":false,"stages":[{"name":"installation","state":"done"},{"name":"images","state":"needs-you"}],"left_for_you":[]}\n' "$config"
+    printf '✔ installation applied: 0 imports, 0 creates, %s updates\n' "$changed"
+    printf '! images\n'
     exit 0
   fi
-  printf '{"project":"chk422","gcp_project":"fugaro-chk422-test","config":"%s","backup":"%s","applied":%s,"changes":{"imports":0,"creates":0,"updates":%s,"deletes":0,"replaces":0},"stages":[{"name":"installation","state":"done"},{"name":"policy","state":"done"}],"left_for_you":%s%s}\n' \
-    "$config" "$backup" "$applied" "$changed" "$left" "$failed"
+  if [ "$applied" = true ]; then
+    printf '✔ installation applied: 0 imports, 0 creates, %s updates\n' "$changed"
+  else
+    printf '✔ installation No changes\n'
+  fi
+  printf '✔ policy\n'
+  if [ "$status" -ne 0 ]; then
+    printf '! policy: fugaro project policy publish\n'
+    printf 'left for you (policy, command): fugaro project policy publish\n'
+  fi
+  if [ "$wrote" = yes ]; then
+    printf 'The local config %s changes:\n' "$config"
+    if [ "$n" -lt 2 ]; then printf 'backed up the old local config to %s.bak-20261114\n' "$config"; fi
+    printf 'wrote %s\n' "$config"
+  else
+    printf 'The local config %s is up to date.\n' "$config"
+  fi
   exit "$status"
   ;;
 doctor)
@@ -637,13 +650,15 @@ assert_scratch_removed() { # dir what
 }
 
 assert_no_update() { # dir what
-  expect_absent "$(cat "$1/logs/fugaro.calls")" "update --yes" "$2: no converge ran"
+  expect_absent "$(cat "$1/logs/fugaro.calls")" "update --verbose" "$2: no converge ran"
+  expect_absent "$(cat "$1/logs/fugaro.calls")" "--yes" "$2: nothing stands in for the person at the terminal"
 }
 
 assert_update_count() { # dir want what
   local got
-  got=$(grep -c "update --yes" "$1/logs/fugaro.calls" || true)
-  [ "$got" = "$2" ] || fail "$3: expected $2 converge(s), got $got"
+  got=$(grep -c "^fugaro update --verbose --config " "$1/logs/fugaro.calls" || true)
+  [ "$got" = "$2" ] || fail "$3: expected $2 converge(s) run as a person runs one, got $got"
+  expect_absent "$(cat "$1/logs/fugaro.calls")" "--yes" "$3: nothing stands in for the person at the terminal"
 }
 
 assert_node_reads() { # dir want what
@@ -859,14 +874,14 @@ test_a_build_without_the_crafts_vocabulary_is_refused() {
   assert_no_update "$dir" "a build without the crafts"
 }
 
-test_a_build_whose_update_prints_no_json_is_refused() {
-  local dir=$work/no-json
+test_a_build_whose_update_cannot_print_its_own_account_is_refused() {
+  local dir=$work/no-verbose
   prepare "$dir"
-  run_check "$dir" FAKE_MODE=no-json
-  expect_status "$status" 2 "a build whose update has no --json"
+  run_check "$dir" FAKE_MODE=no-verbose
+  expect_status "$status" 2 "a build whose update has no --verbose"
   expect_contains "$out" "FACT features: FAIL" "the feature row"
-  expect_contains "$out" "fugaro update --json" "the feature row: the flag it needs"
-  assert_no_update "$dir" "a build whose update has no --json"
+  expect_contains "$out" "fugaro update --verbose" "the feature row: the flag it needs"
+  assert_no_update "$dir" "a build whose update has no --verbose"
 }
 
 test_a_doctor_that_cannot_be_read_is_not_measured() {
@@ -914,15 +929,15 @@ test_a_converge_that_leaves_a_step_is_a_finding() {
   assert_config_has "$config" "claude_accounts:" "a converge that left a step: the file is as the converge left it"
 }
 
-test_a_converge_whose_own_answer_cannot_be_read_is_not_measured() {
+test_a_converge_whose_own_account_cannot_be_read_is_not_measured() {
   local dir=$work/update-unreadable
   prepare "$dir"
   run_check "$dir" FAKE_MODE=update-unreadable
-  expect_status "$status" 2 "a converge whose document cannot be read"
+  expect_status "$status" 2 "a converge whose account cannot be read"
   expect_contains "$out" "FACT update: FAIL" "the update row"
-  expect_contains "$out" "printed no --json document" "the update row: what is missing"
+  expect_contains "$out" "printed no account this check can read" "the update row: what is missing"
   expect_contains "$out" "FACT no-step-left: FAIL — not reached" "nothing below a converge this check cannot read is measured"
-  assert_scratch_removed "$dir" "a converge whose document cannot be read"
+  assert_scratch_removed "$dir" "a converge whose account cannot be read"
 }
 
 test_a_converge_that_writes_another_config_is_a_finding() {
@@ -1231,12 +1246,12 @@ t test_a_project_doctor_answers_as_belong_is_refused
 t test_xtrace_refused
 t test_a_coding_agents_session_is_refused
 t test_a_build_without_the_crafts_vocabulary_is_refused
-t test_a_build_whose_update_prints_no_json_is_refused
+t test_a_build_whose_update_cannot_print_its_own_account_is_refused
 t test_a_doctor_that_cannot_be_read_is_not_measured
 t test_a_doctor_that_is_not_a_document_is_not_measured
 t test_a_converge_that_fails_stops_the_run
 t test_a_converge_that_leaves_a_step_is_a_finding
-t test_a_converge_whose_own_answer_cannot_be_read_is_not_measured
+t test_a_converge_whose_own_account_cannot_be_read_is_not_measured
 t test_a_converge_that_writes_another_config_is_a_finding
 t test_a_converge_that_migrates_nothing_is_a_finding
 t test_an_account_left_unconverted_without_a_note_is_a_finding
