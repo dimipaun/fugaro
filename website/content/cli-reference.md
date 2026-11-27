@@ -475,23 +475,19 @@ Write credential_cascade.<member> in this installation's own config. A member
 left out keeps what the file already holds, so one flag changes one member and
 touches nothing else: every comment and every other byte of the file are kept.
 
---fallback is the paid fallback, and it has two values (D152):
+--fallback and --wait-threshold are retired: which source a run falls over to
+when its credential is exhausted, and whether it waits for a reset first, are
+the own order of the project's routing table's chain now
+(docs/model-credentials-routing/spec.md), so `fugaro routing ls` shows what serves
+each model and `fugaro routing set` writes the chain. Both are kept for one
+release so that a line already written down is answered rather than refused as
+an unknown flag, and neither is read; `fugaro update` carries a written `auto`
+into the chain and leaves it out where the member said oauth-only.
 
-  oauth-only  a run waits for the shared token's reset and never spends the
-              project's money. This is what an absent member means.
-  auto        a run whose credential is exhausted falls over to the project's
-              Anthropic API key and, where the third tier is on, to that one —
-              so this is the value that spends paid tiers, and the published
-              node admits it only where the budget enforces a per-run ceiling
-              above zero. Write the ceiling first, or the publish that carries
-              this value to the node is refused.
-
---wait-threshold is how long a run waits for an exhausted credential's reset
-before failing over (15m by default, and ignored under oauth-only, where there
-is nothing to fail over to). --backoff-initial and --backoff-cap are the wait a
-credential is held for when its exhaustion came with no reset time: the first
-wait and the longest the doubling reaches (15m and 5h by default; a cap below
-the first wait is refused).
+--backoff-initial and --backoff-cap are the wait a credential is held for when
+its exhaustion came with no reset time: the first wait and the longest the
+doubling reaches (15m and 5h by default; a cap below the first wait is
+refused).
 
 --stop-after-exhaustion-per-window=false lets a run go on spending on a
 credential which has exhausted its window, and --concurrency-per-token=0 is no
@@ -499,8 +495,8 @@ cap at all on how many runs may hold one shared credential. Both defaults are
 the protective answers (true and 1), so these two flags are spelled with their
 value in the flag's own word.
 
-The three members whose value moves the cascade the wider way — auto, false and
-0 — are the owner's own step, so a coding agent's session is refused them
+The two members whose value moves the cascade the wider way — false and 0 — are
+the owner's own step, so a coding agent's session is refused them
 whatever the managed gate answers (D2617). Run this at your own terminal.
 
 --layer picks the layer the write lands in. The cascade is this installation's
@@ -508,7 +504,7 @@ own statement of the project's policy, and a launcher who could write it into a
 shared file would be choosing everyone's spending, so the only layer it has is
 local; --layer with any other layer is refused naming the one it does have.
 
-Usage: `fugaro accounts cascade set [--fallback oauth-only|auto] [--wait-threshold DUR] [--backoff-initial DUR] [--backoff-cap DUR] [--stop-after-exhaustion-per-window=BOOL] [--concurrency-per-token N]`
+Usage: `fugaro accounts cascade set [--backoff-initial DUR] [--backoff-cap DUR] [--stop-after-exhaustion-per-window=BOOL] [--concurrency-per-token N]`
 
 Flags:
 
@@ -517,11 +513,11 @@ Flags:
 | `--backoff-cap` | string | "" | no | the longest that wait doubles to (a duration; default 5h, and a cap below the first wait is refused) |
 | `--backoff-initial` | string | "" | no | the first wait for a credential whose exhaustion came with no reset time (a duration; default 15m) |
 | `--concurrency-per-token` | int | `0` | no | how many runs may hold one shared credential at a time (default 1; 0 is no cap at all) |
-| `--fallback` | string | "" | no | the paid fallback: oauth-only (a run waits for the shared token's reset and never spends the project's money) or auto (a run falls over to the paid tiers, which spends it) |
+| `--fallback` | string | "" | no | retired: the project's routing table's chain says which source a run falls over to, and `fugaro routing set` writes it |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--layer` | string | "" | no | the layer to write (local, project, repo); the cascade is this installation's own config, so local is the layer it has |
 | `--stop-after-exhaustion-per-window` | bool | `true` | no | stop the runs that need a credential which has exhausted its window (the default; --stop-after-exhaustion-per-window=false lets them spend past it) |
-| `--wait-threshold` | string | "" | no | how long a run waits for an exhausted credential's reset before failing over (a duration: 30m, 2h; default 15m, and ignored under oauth-only) |
+| `--wait-threshold` | string | "" | no | retired: a run moves to the next source of the chain at once rather than waiting for a reset |
 
 Subcommands:
 
@@ -620,7 +616,7 @@ Flags:
 Subcommands:
 
 - `fugaro accounts craft rm` -- Take a craft out of this project's config
-- `fugaro accounts craft set` -- Point one craft's calls at a credential or a pool
+- `fugaro accounts craft set` -- Retired: the project's routing table says which credential a craft's calls go out on
 
 ## `fugaro accounts craft rm`
 
@@ -662,25 +658,18 @@ This command has no subcommands.
 
 ## `fugaro accounts craft set`
 
-Point one craft's calls at a credential or a pool
+Retired: the project's routing table says which credential a craft's calls go out on
 
-Write crafts.<NAME>.access in this installation's own config: the credential or
-pool every stage of that craft sends its calls out on.
+crafts.<NAME>.access is retired: which credential a craft's calls go out on is
+the project's routing table now (docs/model-credentials-routing/spec.md), so
+this command writes nothing and refuses, naming the command that does.
 
-The name must be a credential this installation defines, a pool it defines, or
-the built-in vertex, which needs no declaration. A name it defines nowhere is
-refused before the file is touched, and the refusal lists what it does define.
-Nothing else in the file changes: the craft's model, every comment and every
-other byte are kept.
+`fugaro routing ls` shows the table and `fugaro routing set` writes the entry a craft's
+model is served by; a subscription account has to sit in a pool first
+(`fugaro accounts pool add`), because a pool is what a run spends a token through.
 
-A craft declared here is not a removed one: a name this command writes is
-cleared from node_removals.crafts on the same bytes, so a craft you took away
-and then declared again is served by the node rather than dropped by the record
-of the removal (F22).
-
-An access is a spending and data-egress grant, so it is a widening write: a
-coding agent's session is refused whatever the managed gate answers (D2617).
-Run it at your own terminal.
+The two flags are kept for one release so that a line already written down
+reaches this sentence rather than "unknown flag", and neither is read.
 
 Usage: `fugaro accounts craft set NAME --access CREDENTIAL|POOL`
 
@@ -688,9 +677,9 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--access` | string | "" | no | the credential or pool this craft's calls go out on (fugaro accounts ls lists the accounts; fugaro accounts pool ls the pools) |
+| `--access` | string | "" | no | retired: the project's routing table says which credential a craft's calls go out on, and `fugaro routing set` writes the entry |
 | `-h`, `--help` | bool | `false` | no | help for set |
-| `--layer` | string | "" | no | the layer to write (local, project, repo); a craft is this installation's own config, so local is the layer it has |
+| `--layer` | string | "" | no | retired with --access: a craft's access has no layer to write any more |
 
 Subcommands:
 
@@ -752,35 +741,26 @@ Flags:
 
 Subcommands:
 
-- `fugaro accounts grade set` -- Point one escalation grade's calls at a credential or a pool
+- `fugaro accounts grade set` -- Retired: the project's routing table says which credential an escalation rung's calls go out on
 
 ## `fugaro accounts grade set`
 
-Point one escalation grade's calls at a credential or a pool
+Retired: the project's routing table says which credential an escalation rung's calls go out on
 
-Write model_grades.<GRADE>.access: the credential or pool the rung's escalated
-calls go out on.
+model_grades.<GRADE>.access is retired: which credential serves a model is the
+project's routing table now (docs/model-credentials-routing/spec.md), and a
+rung's escalated calls are routed by the model they ask for like every other
+call, so this command writes nothing and refuses, naming the command that does.
 
-The name must be a credential this installation defines, a pool it defines, or
-the built-in vertex, which needs no declaration; a name it defines nowhere is
-refused before the file is touched, naming what it does define.
+`fugaro routing ls` shows the table and `fugaro routing set` writes the entry the grade's
+model is served by; a subscription account has to sit in a pool first
+(`fugaro accounts pool add`).
 
---layer repo, the default, writes the repository's own fugaro.yaml in the
-checkout's working tree for you to review and commit — a repository's change
-reaches runs when your own branch is merged to the base branch, which is what
-every run reads. --layer project writes this machine's project layer file
-(layer.defaults.model_grades.<GRADE>.access), where the grade is every repository
-of the project's default.
+A grade's own model (model_grades.<GRADE>.model) is unchanged by this: it says
+which model the rung runs, and the table says which credential reaches it.
 
-A grade states the model its rung runs as well, and a grade written with no model
-is one no reader can resolve: this command writes the access alone, so it refuses
-where the grade's own model is not already stated in the document it is aimed at.
-Write model_grades.<GRADE>.model there first (there is no command for it in this
-release) and set the access on it.
-
-An access is a spending and data-egress grant, so it is a widening write: a
-coding agent's session is refused whatever the managed gate answers (D2617). Run
-it at your own terminal.
+The two flags are kept for one release so that a line already written down
+reaches this sentence rather than "unknown flag", and neither is read.
 
 Usage: `fugaro accounts grade set strong|strongest --access CREDENTIAL|POOL`
 
@@ -788,9 +768,9 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--access` | string | "" | no | the credential or pool this grade's calls go out on (fugaro accounts ls lists the accounts; fugaro accounts pool ls the pools) |
+| `--access` | string | "" | no | retired: the project's routing table says which credential an escalated call goes out on, and `fugaro routing set` writes the entry |
 | `-h`, `--help` | bool | `false` | no | help for set |
-| `--layer` | string | "" | no | where the write lands: local, project, repo (repo is the default) |
+| `--layer` | string | "" | no | retired with --access: a grade's access has no layer to write any more |
 
 Subcommands:
 
@@ -1055,17 +1035,22 @@ selects by tier, so neither can walk an order that spans them, and a pool that
 names both is refused when it is declared. Name two pools, one per half, and let
 each craft's access name the one its stages need.
 
-The read is offline: it reads the selected project's config file and reaches no
+The table is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.
 
 --json prints the document the console's pools screen reads
 (docs/model-credentials-routing/contract-pools.md): the project, its pools and
 each pool's members, with the state, the next reset, the usage and the headroom
-of each member. This command prints the shape with the figures absent — the
-state is what nothing-holding-a-member means, "available", and the reset, the
-usage and the headroom are null — because the usage is a service's to count and
-that half does not ship yet. No token, no key and no secret appears in the
-document, for anyone: it carries names and figures and never a value (F19).
+of each member. The figures are the credentials service's own — the calls and
+tokens each member has served in the window it counts, the instant a mark frees
+a member, or the time its leases lapse, and what is left of its limit — so this
+half reads the project's database as the person running it, and a project with
+no database, or one whose read fails, prints the pools with the figures absent
+and says why. The read writes nothing, the leases included: they are read
+without the prune their own read makes. Headroom is there only where a provider
+reported a utilisation figure: it is never guessed. No token, no key and no
+secret appears in the document, for anyone: it carries names and figures and
+never a value (F19).
 
 Usage: `fugaro accounts pool ls`
 
@@ -1322,9 +1307,13 @@ The keys are the whole of what may name an account as a choice:
 
   default_claude_account
   stages.<stage>.claude_account
-  crafts.<craft>.access
   repos.<repo>.claude_accounts
   profiles.<profile>.claude_accounts
+
+A craft's access is not one of them: which credential a craft's calls go out on
+is the project's routing table now, so a switch leaves that key where it is and
+names the command that moves it — `fugaro routing set`, with a subscription
+account in a pool first (`fugaro accounts pool add`).
 
 Nothing else in the file is touched: the claude_accounts block keeps both names
 and the credentials block keeps both credentials, so both accounts stay declared
@@ -1336,8 +1325,8 @@ repository the keys it takes over serve: each repository whose own
 claude_accounts list names it, and every allow_repos entry of a profile that
 lists it. The refusal names the one command that widens the list.
 
-FROM may be a declared account, the default account (the unsuffixed
-claude-oauth-token secret) or a craft's own credential. It may not be an alias:
+FROM may be a declared account or the default account (the unsuffixed
+claude-oauth-token secret). It may not be an alias:
 the keys naming one are meant to keep naming it, and fugaro accounts alias set
 moves all of them in one edit. It may not be a pool or one of a pool's members:
 a pool is walked inside a run, at the stage boundary, and a switch may not
@@ -2724,7 +2713,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says |
+| `--executable-changes` | bool | `false` | no | allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a coding agent's session is refused it |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for publish |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
@@ -4284,12 +4273,9 @@ so no further command is needed. --no-apply saves the entry and leaves those
 steps to fugaro apply. --default marks the entry a job whose repositories
 name no needs runs; a catalog marks one entry, or none.
 
-In a coding agent's session --inline, --image, --default and --branch are
-refused: the first three define executable content the project's jobs run,
-and --branch reads an entry's Dockerfile from a branch no review here has
-vouched for, which a session may have pushed itself. --dockerfile alone is
-allowed there as it is anywhere else: it reads the project's own repository
-at its base branch, where the file was committed and reviewed.
+An entry's source decides where the project's jobs are built from, and a
+coding agent's session may write one like any other (D3425): --inline,
+--image, --default and --branch are all admitted, as --dockerfile is.
 
 --dry-run prints what the add would do and writes nothing: no catalog entry,
 no build, and no step recorded for fugaro apply. --json prints that document,
@@ -4302,7 +4288,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch; a coding agent's session is refused it) |
+| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
 | `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |
@@ -4512,8 +4498,8 @@ of its own takes the map the project publishes into it first — a name the
 migration cannot place is dropped with its line — so a mapping written
 here adds to the project's map rather than replacing it.
 
-This write is a person's own: fugaro update publishes it, and a coding
-agent's session is refused it, in a managed project by that project's gate.
+This write is fugaro update's to publish: it lands in this machine's project
+config, and a coding agent's session may make it like any other (D3425).
 
 Usage: `fugaro image map set <repo> <entry>`
 
@@ -4606,9 +4592,9 @@ This command has no subcommands.
 
 Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale
 
-Run it in the checkout of an onboarded repository, in your own terminal window:
-every step that asks is confirmed there, and a session with no terminal leaves
-those steps for you.
+Run it in the checkout of an onboarded repository: every step that asks is
+confirmed at a real terminal, and a run with no terminal (a coding agent's
+session, a pipe) needs --yes, which answers those steps itself.
 
 It prints the whole plan first, then, each step with its own confirmation:
 (2) resolves this release's base image of each selected workflow's kind at
@@ -4630,15 +4616,15 @@ A base_images entry that is neither this release's pin nor a release image
 an earlier fugaro copied (a development or hand-pushed image) stops it
 before anything changes, whoever is there: remove the entry from the local
 config, then rerun. It never
-writes fugaro.yaml, never onboards a repository and never runs Terraform. A
-coding agent's session is refused (there is still no --json
-or --plan-only to get around that). A run that stops says which steps
+writes fugaro.yaml, never onboards a repository and never runs Terraform. There
+is still no --json or --plan-only. A run that stops says which steps
 finished and what to rerun; a rerun skips
 what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,
 2 a cloud failure.
 
-No flag confirms the steps that ask — the base pin and the check-job
-update — so a run with no terminal leaves them for you and says so;
+Only --yes confirms the steps that ask — the base pin and the check-job
+update — so a run with no terminal and no --yes leaves them for you and says
+so;
 the billable builds ask nothing in any session, and it is the budget lease
 each of them takes that bounds them, where the installation has a budget
 backend at all (with none, no build leases anything and none is counted).
@@ -4658,7 +4644,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for refresh |
 | `--image-source` | string | "" | no | the registry and owner the release base images come from, as for the converge (default ghcr.io/dimipaun) |
-| `--on-divergence` | string | "" | no | the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs; refused in a coding agent's session |
+| `--on-divergence` | string | "" | no | the choice a shared-image divergence is answered with, where the image this repository's job is on does not hold the set its checkout resolves: fork (build an image for this set), adopt=<owner/name> (move onto the image that repository is on, when it holds this set in full) or pin (keep the image it is on, and warn). With no flag the refresh prints the proposal and stops, and no build runs |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout) |

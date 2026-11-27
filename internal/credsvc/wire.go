@@ -221,6 +221,15 @@ type WorkflowSecretsRequest struct {
 	// Version declares which of the two shapes this call is. It is absent on
 	// every version-1 call, and 2 on every version-2 one.
 	Version int `json:"version,omitempty"`
+	// AppID is the GitHub App ID the read of the repository's own fugaro.yaml
+	// is signed as (UO7, D3459). It is BuildCredentialsRequest.AppID's field for
+	// the same reason: it is the one thing a caller supplies to a GitHub App
+	// mint and it is not a secret (githubread.go), and the service's
+	// environment does not hold it — Global Constraint 12 keeps this service's
+	// Terraform member count where it is. A Bitbucket repository's call carries
+	// none, and the field is absent on a call that reads no file, which is why
+	// it is omitempty: the two bodies above pin bytes.
+	AppID string `json:"app_id,omitempty"`
 }
 
 // VersionOf is the version this call is: what it declares, and

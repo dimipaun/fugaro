@@ -433,20 +433,11 @@ func fakeSteps(t *testing.T, fail string, err error) *[]string {
 	return ran
 }
 
-// D2: a coding agent's session is refused before refreshPreflight runs, and
-// before any credential, network or cloud use; this still holds with --yes
-// (2026-10-08 decision): --yes never reaches a coding agent's session.
-// Mutation (run, restore): move the refuseRefreshHere call after
-// refreshPreflight in runImageRefresh, or drop it, and this test fails (the
-// agent marker is ignored and preflight's own refusal, that this directory
-// is not a checkout, is returned instead).
-//
-// The markers are the five a coding agent's own processes set: the sixth,
-// CLAUDE_CODE_SSE_PORT, is the IDE extension's, and alone, at the real
-// terminal this test runs the command at, it is a person's terminal rather
-// than an agent's session (the ruling of 2026-11-05; TestIDETerminalTyped-
-// Confirmation drives that case end to end).
-func TestRefreshRefusedInAgentSession(t *testing.T) {
+// TestRefreshIsNotRefusedForBeingASession is AG4b's refresh half (D3425): a
+// coding agent's session, any of the markers a coding agent's own processes set,
+// is admitted like any other run, --yes or not, and reaches the command's own
+// preflight; the refusal that named the session is gone.
+func TestRefreshIsNotRefusedForBeingASession(t *testing.T) {
 	for _, yes := range []bool{false, true} {
 		for _, marker := range agentenv.AgentMarkers {
 			t.Run(fmt.Sprintf("yes=%v/%s", yes, marker), func(t *testing.T) {
@@ -454,15 +445,12 @@ func TestRefreshRefusedInAgentSession(t *testing.T) {
 					t.Setenv(k, "")
 				}
 				t.Setenv(marker, "1")
-				t.Chdir(t.TempDir()) // not even a checkout: preflight would refuse differently
+				t.Chdir(t.TempDir())
 				noRecordReads(t)
 				fakeTerminal(t)
-				args := []string{"image", "refresh", "--repo", "acme/app"}
-				if yes {
-				}
-				_, _, err := executeStdin(t, "", args...)
-				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal(marker)) {
-					t.Fatalf("exit %d, err %v", ExitCode(err), err)
+				_, _, err := executeStdin(t, "", "image", "refresh", "--repo", "acme/app")
+				if err != nil && strings.Contains(err.Error(), initflow.AgentRefusal(marker)) {
+					t.Fatalf("a session was refused for being one: %v", err)
 				}
 			})
 		}

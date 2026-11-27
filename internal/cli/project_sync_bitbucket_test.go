@@ -261,11 +261,13 @@ func TestProjectSyncCheckWritesNothing(t *testing.T) {
 }
 
 // The refusal in a coding agent's session comes before the listing and before
-// the token is read: the write is not an agent's to make, and a Bitbucket token
-// is a workspace credential a session must never hold.
+// the token is read: the write is an agent's (D3425 lifted the refusal this
+// command's own door carried), and a Bitbucket token is a workspace credential
+// a session must never hold — so what refuses is the read of the value, which
+// is where it would reach the session's process.
 //
-// Mutation (verified, run and restored): drop the agentEnv refusal — this test
-// fails, the token read inside a session that sets CLAUDECODE.
+// Mutation (verified, run and restored): drop the refusal at the token read —
+// this test fails, the token read inside a session that sets CLAUDECODE.
 func TestProjectSyncBitbucketRefusedInAgentSession(t *testing.T) {
 	const token = "token-not-a-real-credential-abcdef"
 	f := bitbucketPolicyFixture(t, "bitbucket/acme/app")

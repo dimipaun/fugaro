@@ -2,13 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/pluginwire"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -42,9 +42,9 @@ import (
 // write lands through applySettingsEdit, so the diff, the sentence, the backup
 // and the fence are the ones every other settings write has.
 //
-// Three of the members are the owner's own step in one direction — the paid
-// fallback turned on, and D142's two controls written against their defaults —
-// so a write in one of those directions is `Typed` (D2617): refused in a coding
+// Two of the members are the owner's own step in one direction — D142's two
+// controls written against their defaults — so a write in one of those
+// directions is `Typed` (D2617): refused in a coding
 // agent's session whatever the managed gate answers, and read by no gate at the
 // owner's own terminal, where it prints what it widens instead.
 func newAccountsCascadeCmd() *cobra.Command {
@@ -93,29 +93,25 @@ type accountsCascadeOptions struct {
 func newAccountsCascadeSetCmd() *cobra.Command {
 	var o accountsCascadeOptions
 	cmd := &cobra.Command{
-		Use:   "set [--fallback oauth-only|auto] [--wait-threshold DUR] [--backoff-initial DUR] [--backoff-cap DUR] [--stop-after-exhaustion-per-window=BOOL] [--concurrency-per-token N]",
+		Use:   "set [--backoff-initial DUR] [--backoff-cap DUR] [--stop-after-exhaustion-per-window=BOOL] [--concurrency-per-token N]",
 		Short: "Write the cascade's members in this installation's own config",
 		Long: `Write credential_cascade.<member> in this installation's own config. A member
 left out keeps what the file already holds, so one flag changes one member and
 touches nothing else: every comment and every other byte of the file are kept.
 
---fallback is the paid fallback, and it has two values (D152):
+--fallback and --wait-threshold are retired: which source a run falls over to
+when its credential is exhausted, and whether it waits for a reset first, are
+the own order of the project's routing table's chain now
+(docs/model-credentials-routing/spec.md), so ` + "`fugaro routing ls`" + ` shows what serves
+each model and ` + "`fugaro routing set`" + ` writes the chain. Both are kept for one
+release so that a line already written down is answered rather than refused as
+an unknown flag, and neither is read; ` + "`fugaro update`" + ` carries a written ` + "`auto`" + `
+into the chain and leaves it out where the member said oauth-only.
 
-  oauth-only  a run waits for the shared token's reset and never spends the
-              project's money. This is what an absent member means.
-  auto        a run whose credential is exhausted falls over to the project's
-              Anthropic API key and, where the third tier is on, to that one —
-              so this is the value that spends paid tiers, and the published
-              node admits it only where the budget enforces a per-run ceiling
-              above zero. Write the ceiling first, or the publish that carries
-              this value to the node is refused.
-
---wait-threshold is how long a run waits for an exhausted credential's reset
-before failing over (15m by default, and ignored under oauth-only, where there
-is nothing to fail over to). --backoff-initial and --backoff-cap are the wait a
-credential is held for when its exhaustion came with no reset time: the first
-wait and the longest the doubling reaches (15m and 5h by default; a cap below
-the first wait is refused).
+--backoff-initial and --backoff-cap are the wait a credential is held for when
+its exhaustion came with no reset time: the first wait and the longest the
+doubling reaches (15m and 5h by default; a cap below the first wait is
+refused).
 
 --stop-after-exhaustion-per-window=false lets a run go on spending on a
 credential which has exhausted its window, and --concurrency-per-token=0 is no
@@ -123,8 +119,8 @@ cap at all on how many runs may hold one shared credential. Both defaults are
 the protective answers (true and 1), so these two flags are spelled with their
 value in the flag's own word.
 
-The three members whose value moves the cascade the wider way — auto, false and
-0 — are the owner's own step, so a coding agent's session is refused them
+The two members whose value moves the cascade the wider way — false and 0 — are
+the owner's own step, so a coding agent's session is refused them
 whatever the managed gate answers (D2617). Run this at your own terminal.
 
 --layer picks the layer the write lands in. The cascade is this installation's
@@ -137,8 +133,8 @@ local; --layer with any other layer is refused naming the one it does have.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.fallback, "fallback", "", "the paid fallback: oauth-only (a run waits for the shared token's reset and never spends the project's money) or auto (a run falls over to the paid tiers, which spends it)")
-	f.StringVar(&o.waitThreshold, "wait-threshold", "", "how long a run waits for an exhausted credential's reset before failing over (a duration: 30m, 2h; default 15m, and ignored under oauth-only)")
+	f.StringVar(&o.fallback, "fallback", "", "retired: the project's routing table's chain says which source a run falls over to, and `fugaro routing set` writes it")
+	f.StringVar(&o.waitThreshold, "wait-threshold", "", "retired: a run moves to the next source of the chain at once rather than waiting for a reset")
 	f.StringVar(&o.backoffInitial, "backoff-initial", "", "the first wait for a credential whose exhaustion came with no reset time (a duration; default 15m)")
 	f.StringVar(&o.backoffCap, "backoff-cap", "", "the longest that wait doubles to (a duration; default 5h, and a cap below the first wait is refused)")
 	f.BoolVar(&o.stopAfterExhaustion, "stop-after-exhaustion-per-window", true, "stop the runs that need a credential which has exhausted its window (the default; --stop-after-exhaustion-per-window=false lets them spend past it)")
@@ -147,19 +143,47 @@ local; --layer with any other layer is refused naming the one it does have.`,
 	return cmd
 }
 
+// cascadeRetiredMembers are the two leaves `accounts cascade set` wrote until
+// MG4 (R4 of docs/model-credentials-routing/reconciliation.md): a chain's own
+// order replaces the paid fallback and the wait before failing over, so
+// `fugaro update` writes a key into the chain where `fallback: auto` was set and
+// leaves it out where it was oauth-only, and a run moves to the next source at
+// once rather than waiting for a reset. Release 2 rejects both; this release
+// reads them, and the flags below stay for one release so that a line already
+// written down is answered rather than refused as an unknown flag.
+var cascadeRetiredMembers = []cascadeRetiredMember{
+	{flag: "fallback", key: "credential_cascade.fallback", leaf: "fallback"},
+	{flag: "wait-threshold", key: "credential_cascade.wait_threshold", leaf: "wait_threshold"},
+}
+
+// cascadeRetiredMember is one of them: the flag it was written with, the
+// registry key a refusal names it by, and the leaf the file spells.
+type cascadeRetiredMember struct{ flag, key, leaf string }
+
+// accountsCascadeRetiredLeaf reports whether a leaf of the cascade block is one
+// of the two the chain replaced, so that what this command offers a person —
+// the flags a call with none is told to pass — is the members it still writes.
+func accountsCascadeRetiredLeaf(leaf string) bool {
+	return slices.ContainsFunc(cascadeRetiredMembers, func(r cascadeRetiredMember) bool { return r.leaf == leaf })
+}
+
 // runAccountsCascadeSet is the order every settings write in this family takes:
 // everything that can refuse refuses on the values this run was given, and the
 // file is read only once the write is one that can land.
 func runAccountsCascadeSet(cmd *cobra.Command, o accountsCascadeOptions) error {
-	if o.fallback != "" && o.fallback != projectpolicy.FallbackOAuthOnly && o.fallback != projectpolicy.FallbackAuto {
-		// The vocabulary is the node's own (projectpolicy's two constants), and
-		// the sentence is this flag's rather than the loader's: a name outside the
-		// two is refused before the file is read at all, naming both words — one of
-		// which spends the project's money, which is the fact a person guessing at
-		// the spelling needs.
-		return userErr("--fallback %s: the paid fallback is %s (a run waits for the shared token's reset and never spends the project's money) or %s (a run falls over to the paid tiers, which spends it); nothing was written",
-			pluginwire.Printable(o.fallback), projectpolicy.FallbackOAuthOnly, projectpolicy.FallbackAuto)
+	// The two members the chain replaced, refused before the file is read and
+	// before any gate: this release still READS them (the node's own member is
+	// what `fugaro update` carries into the chain), and this command no longer
+	// writes them, so a run's failover is the table's to state.
+	for _, retired := range cascadeRetiredMembers {
+		if cmd.Flags().Changed(retired.flag) {
+			return accountsRetiredAccess(retired.key)
+		}
 	}
+	// The row this run reads the layer off is a member it still writes, never one
+	// of the two above: all six share the one layer, and anchoring on a retired
+	// member would leave this command reading its own layer off a key the release
+	// after this one refuses to know.
 	sel, lc, err := settingsSelection()
 	if err != nil {
 		return err
@@ -167,7 +191,7 @@ func runAccountsCascadeSet(cmd *cobra.Command, o accountsCascadeOptions) error {
 	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "writing the credentials cascade"); err != nil {
 		return err
 	}
-	key := "credential_cascade.fallback"
+	key := "credential_cascade.concurrency_per_token"
 	row, ok := settings.Lookup(key)
 	if !ok {
 		return userErr("%s: this fugaro has no registry row for the credentials cascade, so it cannot say which layer it is written in; upgrade it or file a bug", key)
@@ -245,7 +269,10 @@ func accountsCascadeEdit(cmd *cobra.Command, old []byte, o accountsCascadeOption
 	next := old
 	var wrote []accountsCascadeWritten
 	for _, leaf := range cascadeWriterLeaves {
-		if !cmd.Flags().Changed(leaf.flag) {
+		// A retired member never reaches here — runAccountsCascadeSet refuses its
+		// flag before the file is read — and skipping it here as well is what keeps
+		// the editor from writing one if that refusal ever moves.
+		if !cmd.Flags().Changed(leaf.flag) || accountsCascadeRetiredLeaf(leaf.leaf) {
 			continue
 		}
 		value := accountsCascadeValue(leaf.leaf, o)
@@ -267,14 +294,16 @@ func accountsCascadeEdit(cmd *cobra.Command, old []byte, o accountsCascadeOption
 // accountsCascadeWidens is why writing this member at this value is a widening
 // direction, and "" when it is not (D142, D2617). The rule is per member and per
 // direction rather than per row: a threshold is a figure a person may raise or
-// lower without either way being this command's to grade, while these three
-// spend what the protective value holds back — the paid tiers, the runs a
-// credential which has exhausted its window may still carry, and the number of
-// runs holding one shared credential at a time.
+// lower without either way being this command's to grade, while these two spend
+// what the protective value holds back — the runs a credential which has
+// exhausted its window may still carry, and the number of runs holding one
+// shared credential at a time.
+//
+// D142's third widening, the paid fallback, is not here: it is one of the two
+// members the chain replaced and this command no longer writes it (MG4,
+// cascadeRetiredMembers).
 func accountsCascadeWidens(leaf, value string) string {
 	switch {
-	case leaf == "fallback" && value == projectpolicy.FallbackAuto:
-		return "credential_cascade.fallback auto is the value that spends paid tiers: a run whose credential is exhausted falls over to the project's Anthropic API key and, where the third tier is on, to that one — and the published node admits the value only where the budget enforces a per-run ceiling above zero (D152)"
 	case leaf == "stop_after_exhaustion_per_window" && value == "false":
 		return "credential_cascade.stop_after_exhaustion_per_window false lets a run go on spending on a credential which has exhausted its window (D142)"
 	case leaf == "concurrency_per_token" && value == "0":
@@ -357,6 +386,9 @@ func accountsCascadeValue(leaf string, o accountsCascadeOptions) string {
 func accountsCascadeFlagList() string {
 	flags := make([]string, 0, len(cascadeWriterLeaves))
 	for _, leaf := range cascadeWriterLeaves {
+		if accountsCascadeRetiredLeaf(leaf.leaf) {
+			continue
+		}
 		flags = append(flags, leaf.flagArg())
 	}
 	return strings.Join(flags, ", ")

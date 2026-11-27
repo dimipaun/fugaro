@@ -506,13 +506,13 @@ func credentialsOf(p *projectpolicy.Policy) *projectpolicy.Credentials {
 // marks live in GCS and Resource Manager, so a config with no endpoints for
 // them is a project this program cannot even ask about — and not one it has
 // proved is managed. That is the fail-closed direction twice over: the zero
-// gate admits nothing, so the session keeps today's refusal exactly, which is
-// what an installation that predates the endpoints block (or that never
-// configured the cloud half) read before this design existed. Failing the
-// command instead would replace a refusal an operator can act on with a
-// sentence about endpoints the session has no business reading, and the gate
-// is consulted in a coding agent's session only, so nothing else in this
-// command's behaviour can depend on it.
+// gate admits nothing, so the removal keeps its refusal and the publish goes on
+// as the edit it is (D3425) — which is what an installation that predates the
+// endpoints block (or that never configured the cloud half) read before this
+// design existed. Failing the command instead would replace a refusal an
+// operator can act on with a sentence about endpoints the session has no
+// business reading, and the gate is consulted in a coding agent's session only,
+// so nothing else in this command's behaviour can depend on it.
 func policyPublishGate(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, agent string) (managedGate, error) {
 	if agent == "" {
 		return managedGate{}, nil
@@ -529,15 +529,16 @@ func policyPublishGate(ctx context.Context, lc *localcfg.Config, db *rtdb.Client
 	})
 }
 
-// publishAgentRefusal is today's refusal, byte for byte, for a project this
-// program has not proved is managed. It is written once because two places
-// read it: the command refuses with it before it reads the node, so an
-// unmanaged project's session reads exactly what it read before this design
-// existed and nothing else happens; and the loop refuses with it when the
-// second mark read found the project is not managed any more (D1024). Two
-// copies of one refusal are two chances for them to drift.
+// publishAgentRefusal is the refusal a coding agent's session reads at this
+// command's removal: taking the policy away changes what every run of the
+// project is admitted by, an irreplaceable delete is refused to a session
+// (D3430), and the sentence names what would have gone. It is written once
+// because two places read it: the loop's own refusal for a removal, and the
+// refusal for a managed project whose second mark read found it is not managed
+// any more (D1024). Two copies of one refusal are two chances for them to
+// drift.
 func publishAgentRefusal(agent string) error {
-	return userErr("nothing was written: fugaro project policy publish writes the policy every run of the project is admitted by: %s", initflow.AgentRefusal(agent))
+	return userErr("nothing was removed: fugaro project policy publish --delete removes the policy every run of the project is admitted by, which is a person's: %s", initflow.AgentRefusal(agent))
 }
 
 // policyPublishProceed is whether the session may go on and what it reads
@@ -545,13 +546,22 @@ func publishAgentRefusal(agent string) error {
 // confirmation — asked with the gate's answer, and initflow's own sentence for
 // the one case in which a step in a coding agent's session proceeds. A person's
 // session is touched by neither.
-func policyPublishProceed(agent string, out io.Writer, m initflow.Managed) error {
+//
+// removal is which of the command's two writes this is. A publish is an edit
+// and a session's to make (D3425, D3424), so it proceeds whatever the gate
+// answered — including the zero gate of a project the read did not prove is
+// managed, which is where the gate admits nothing. A removal is never an
+// agent's: it is refused here, and only a gate that admitted it (which no rule
+// of the gate does today) would print the sentence that it proceeded.
+func policyPublishProceed(agent string, out io.Writer, m initflow.Managed, removal bool) error {
 	if agent == "" {
 		return nil
 	}
-	if !m.Removes() {
+	if removal && !m.Removes() {
 		return publishAgentRefusal(agent)
 	}
-	fmt.Fprintln(out, initflow.AgentProceeded(agent))
+	if m.Removes() {
+		fmt.Fprintln(out, initflow.AgentProceeded(agent))
+	}
 	return nil
 }

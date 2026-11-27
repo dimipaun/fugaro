@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -318,6 +320,13 @@ type workflowWrite struct {
 // edited bytes, the executable-key refusal (config.ExecutableKeys), then the
 // managed gate's read, the write path and the record of it.
 func workflowApply(cmd *cobra.Command, w workflowWrite) error {
+	// --executable-changes is the owner's word (D3455) and a coding agent's
+	// session is refused it, exactly as config publish refuses it: the flag is
+	// what lets a write move what runs as shell in every run of the repository,
+	// so it is read and refused before the edit is judged at all.
+	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" && w.o.executable {
+		return userErr("nothing was written: --executable-changes is the owner's word, not a coding agent's: %s", initflow.AgentRefusal(m))
+	}
 	if !yamledit.Changed(w.old, w.next) {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: workflows already reads what was asked for\n", w.target.path)
 		return nil

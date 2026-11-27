@@ -1,18 +1,23 @@
 package plugin_test
 
-// The issue family's three writers are a person's own and only a person's:
-// `fugaro issue sync` uploads to the project's store, `dismiss` sets an issue
-// aside and `submit --ask` uploads and files on GitHub. The CLI refuses all
-// three in a coding agent's session (agentMarker, internal/cli/issue_sync.go,
-// issue_dismiss.go, issue_submit.go), and that refusal is a mitigation rather
-// than a barrier: the guard reads an environment marker a session can clear.
-// A skill sentence that only predicts the refusal leaves an agent free to run
-// the command and be told no, so the rule the paragraph carries has to forbid
-// the run and say whose command it is — which is the wording these tests pin,
-// because nothing else in the plugin does.
+// The issue family's writers, and who may run each: `fugaro issue sync`
+// uploads this machine's pending issues and `dismiss` sets one aside, and both
+// are a coding agent's to run like any other command (D3425); `submit --ask`
+// files the post on GitHub and stays a person's, because `--ask` is never an
+// agent's (D3428, D3425's keep list). The CLI refuses that one in a session
+// (agentMarker, internal/cli/issue_submit.go), and the refusal is a mitigation
+// rather than a barrier: the guard reads an environment marker a session can
+// clear. A skill sentence that only predicts the refusal leaves an agent free
+// to run the command and be told no, so the rule the paragraph carries has to
+// forbid the run and say whose command it is — which is the wording these
+// tests pin, because nothing else in the plugin does.
+//
+// The rule is one writer now, and the other two must not be inside it: a
+// clause that fences `sync` or `dismiss` again tells a session not to run
+// commands it may run.
 //
 // internal/cli pins the other half: the guard itself
-// (TestSyncRefusesInAgentSession, TestIssueSubmitRefusesInAgentSession).
+// (TestIssueSubmitRefusesInAgentSession).
 
 import (
 	"strings"
@@ -24,25 +29,34 @@ import (
 const issueFamilyAnchor = "The rest of the family is that same record from other angles"
 
 // The rule is one sentence of that bullet, and that sentence is the whole
-// subject of the checks below. The bullet names `dismiss` once before it —
+// subject of the checks below. The bullet names `submit` once before it —
 // "`show`, `dismiss` and `submit` take either" — so a check over the whole
 // bullet would find that name whatever the rule went on to cover, and a
-// rewrite that dropped a writer from the rule would pass it.
+// rewrite that dropped the writer from the rule would pass it.
 const (
-	ruleOpensOn  = "writes none of it:"
-	ruleEndsWith = "never run them"
+	ruleOpensOn  = "What it never runs is"
+	ruleEndsWith = "never run it"
 )
 
-// issueWriterRules is what the rule clause must say about the three commands a
-// session writes nothing with.
+// issueWriterRules is what the rule clause must say about the one command a
+// session must not run.
 var issueWriterRules = []struct{ what, text string }{
-	{"that the session never runs them", "never run them"},
-	{"whose commands they are", "the user's own command at their own terminal"},
+	{"that the session never runs it", "never run it"},
+	{"whose command it is", "the user's own command at their own terminal"},
 }
 
-// issueWriters is the class the rule is about: the family's writers, by the
-// names the clause has to carry.
-var issueWriters = []string{"`sync`", "`dismiss`", "`submit --ask`"}
+// issueFencedWriter is the class the rule is about: the family's writer a
+// session must not run, by the name the clause has to carry.
+var issueFencedWriter = "`submit --ask`"
+
+// issueLiftedWriters are the family's writers a session may run since D3425.
+// They must not be inside the rule clause: one that fences them again tells a
+// session not to run commands it may run.
+var issueLiftedWriters = []string{"`sync`", "`dismiss`"}
+
+// issueLiftedRule is the other half the bullet has to carry: what a session
+// may run, in the words that say so.
+const issueLiftedRule = "It may also run `sync` and `dismiss`"
 
 // issueFamilyParagraph is the bullet, whole.
 func issueFamilyParagraph(t *testing.T) string {
@@ -74,7 +88,7 @@ func issueWriterClause(page string) (string, bool) {
 	return rest, true
 }
 
-// issueWriterViolations is every part of the rule a clause is missing, as
+// issueWriterViolations is every part of the rule a clause gets wrong, as
 // phrases that read out of the error message.
 func issueWriterViolations(clause string) []string {
 	var out []string
@@ -83,35 +97,44 @@ func issueWriterViolations(clause string) []string {
 			out = append(out, rule.what)
 		}
 	}
-	for _, writer := range issueWriters {
-		if !strings.Contains(clause, writer) {
-			out = append(out, writer+" among the writers it covers")
+	if !strings.Contains(clause, issueFencedWriter) {
+		out = append(out, issueFencedWriter+" among the writers it covers")
+	}
+	for _, writer := range issueLiftedWriters {
+		if strings.Contains(clause, writer) {
+			out = append(out, writer+" fenced by the rule, though a session may run it")
 		}
 	}
 	return out
 }
 
-// TestWorkingSkillIssueWritersAreTheUsers: the clause names all three of the
-// family's writers and sends them to the user, in the same words the skill
-// uses for every other command of that class (a coding agent's session is
-// refused, so never run it — tell the user and let them run it). The writer
-// that reaches no clause is the one an agent is left free to run: the CLI's
-// guard reads a marker its session can clear.
-func TestWorkingSkillIssueWritersAreTheUsers(t *testing.T) {
+// TestWorkingSkillIssueSubmitIsTheUsers: the clause names the one writer a
+// session must not run — `submit --ask`, whose post goes on GitHub — and sends
+// it to the user, in the same words the skill uses for every other command of
+// that class (a coding agent's session is refused, so never run it — tell the
+// user and let them run it). A writer that reaches no clause is one an agent
+// is left free to run: the CLI's guard reads a marker its session can clear.
+// And `sync` and `dismiss` must reach no clause, because D3425 lifted them:
+// the bullet carries what a session may run instead.
+func TestWorkingSkillIssueSubmitIsTheUsers(t *testing.T) {
 	page := issueFamilyParagraph(t)
 	clause, ok := issueWriterClause(page)
 	if !ok {
-		t.Fatalf("the issue-family paragraph carries no rule clause (%q … %q): what a session may not run, and whose those commands are, is what it is read for:\n%s", ruleOpensOn, ruleEndsWith, page)
+		t.Fatalf("the issue-family paragraph carries no rule clause (%q … %q): what a session may not run, and whose that command is, is what it is read for:\n%s", ruleOpensOn, ruleEndsWith, page)
 	}
-	for _, missing := range issueWriterViolations(clause) {
-		t.Errorf("the rule clause never says %s:\n%s", missing, clause)
+	for _, violation := range issueWriterViolations(clause) {
+		t.Errorf("the rule clause is wrong about %s:\n%s", violation, clause)
+	}
+	if !strings.Contains(page, issueLiftedRule) {
+		t.Errorf("the paragraph never says what a session may run (%q): the rule that fenced `sync` and `dismiss` is gone, and a reader has to be told they are an agent's now:\n%s", issueLiftedRule, page)
 	}
 	// A clause-wide check a rewrite could satisfy by saying nothing: the
-	// wording this rule replaced, and a rule that stopped covering one of its
-	// three writers, must both fail it.
+	// wording this rule replaced, a rule that stopped naming `submit --ask`,
+	// and a rule that fenced the two lifted writers again must all fail it.
 	for _, hostile := range []struct{ what, page string }{
-		{"the clause it replaced", "writes none of it: nothing is uploaded, `sync` and `dismiss` refuse, and `submit --ask` refuses. So what a `list` or a `show` prints for you is this machine's view alone."},
-		{"a rule that leaves `dismiss` out", "writes none of it: nothing is uploaded, and `sync` and `submit --ask` are refused in a session, so never run them — each is the user's own command at their own terminal."},
+		{"the rule that fenced all three writers", "What it never runs is the family that writes the project's store: `sync`, `dismiss` and `submit --ask` are refused in a session, so never run them — each is the user's own command at their own terminal, so never run it."},
+		{"a rule that leaves `submit --ask` out", "What it never runs is the command that files the post on GitHub: it is the user's own command at their own terminal, so never run it."},
+		{"a rule that fences the lifted writers again", "What it never runs is `sync`, `dismiss` and `submit --ask`: each is the user's own command at their own terminal, so never run it."},
 	} {
 		hostileClause, ok := issueWriterClause(hostile.page)
 		if ok && len(issueWriterViolations(hostileClause)) == 0 {

@@ -19,12 +19,11 @@ import (
 // error text nowhere, and the person would be left with a command and no way to
 // unblock it.
 //
-// The failure is a refusal of the same kind, and that is what a pipe gets now
-// (T11, docs/no-prompt-policy): a step's confirmation needs a real terminal, so
-// the step that would have applied — and could have failed the way the apply of
-// a plan with a change fails — comes back unconfirmed first. A terminal that is
-// there takes the confirmation and the apply's own failure is the run's
-// (report_failure_line_test.go).
+// The failure is the apply of a plan with a change, which a managed project's gate
+// covers for a session nobody is at (#4170); a project whose steps need a
+// confirmation gets the refusal first instead (T11, docs/no-prompt-policy), and a
+// terminal that is there takes the confirmation and the apply's own failure is
+// the run's (report_failure_line_test.go).
 func TestARefusalAfterAFailureStillSaysHowToUnblockIt(t *testing.T) {
 	// The refusal this test is about is the plugin stage's own typed
 	// confirmation, so the machine's installed plugin has to be this test's and
@@ -35,6 +34,8 @@ func TestARefusalAfterAFailureStillSaysHowToUnblockIt(t *testing.T) {
 	r := updateRig(t)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	r.script["plan"] = map[string]any{"exit": 2, "stdout": convergeNoise + "\n"}
+	// A managed project's gate covers the apply for a session nobody is at (#4170), so the failure this test puts first is the apply's own.
+	r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: the apply did not land\n"}
 	r.save(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
@@ -51,12 +52,12 @@ func TestARefusalAfterAFailureStillSaysHowToUnblockIt(t *testing.T) {
 		t.Errorf("the top-level line does not carry the refusal's advice on how to unblock the run: %q", line)
 	}
 	// What the log holds — it is what `fugaro troubleshoot` opens — is the
-	// account's own row for the stage that failed, "the confirmation of this step
-	// needs a real terminal", while the refusal the run returns names the stage
-	// the loop reached after it ("typing the confirmation for plugin"): the
-	// failure is in the log and the refusal is not, which is why main's own line
-	// is the only place the refusal is said.
-	if !strings.Contains(newestLog(t, "update"), "needs a real terminal") {
+	// account's own row for the stage that failed, the apply's "the apply did not land",
+	// while the refusal the run returns names the stage the loop reached after it
+	// ("typing the confirmation for plugin"): the failure is in the log and the
+	// refusal is not, which is why main's own line is the only place the refusal
+	// is said.
+	if !strings.Contains(newestLog(t, "update"), "the apply did not land") {
 		t.Errorf("the run's log lost the failure it printed:\n%s", newestLog(t, "update"))
 	}
 }

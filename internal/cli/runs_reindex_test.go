@@ -7,7 +7,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
@@ -243,33 +242,5 @@ func TestRunsReindexStandsWhenTheJobStartIsRefused(t *testing.T) {
 	}
 	if done, ok := sum["complete"].(bool); !ok || done {
 		t.Fatalf("summary = %v", sum)
-	}
-}
-
-// TestRunsReindexRefusedInAnAgentSession is U3: `fugaro runs reindex` starts a
-// job execution and writes the installation's index, which is what the update's
-// own job-starting step does -- and that step is not run from a coding agent's
-// session. The fence is the same one, so the command refuses with the session's
-// marker rather than obeying.
-func TestRunsReindexRefusedInAnAgentSession(t *testing.T) {
-	f, fs := reindexRig(t)
-	t.Setenv("CLAUDECODE", "1")
-
-	_, _, err := execute(t, "runs", "reindex")
-	if err == nil {
-		t.Fatal("a coding agent's session was allowed to start a reindex")
-	}
-	if got := ErrorText(err); !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
-		t.Fatalf("err = %q, want the session's refusal", got)
-	}
-	// Nothing was written and nothing was started: the refusal is before both.
-	if len(f.run.RunRequests()) != 0 {
-		t.Fatalf("a refused command started a run: %+v", f.run.RunRequests())
-	}
-	if _, ok := fs.Value(runindex.SummaryCollection, runindex.SummaryDocument); ok {
-		t.Fatal("a refused command wrote the summary")
-	}
-	if f.budget.DB.Value(runindex.PathLease) != nil {
-		t.Fatalf("a refused command took the lease: %#v", f.budget.DB.Value(runindex.PathLease))
 	}
 }

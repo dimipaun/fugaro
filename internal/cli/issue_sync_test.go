@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -151,40 +152,6 @@ func TestSyncOfflineKeepsLocal(t *testing.T) {
 				t.Errorf("the issue lost its local name: %v", err)
 			}
 		})
-	}
-}
-
-// TestSyncRefusesInAgentSession: uploading is a write to the project's store,
-// and a coding agent's session makes none (F10, D1734). The refusal names the
-// command a person runs, and it comes before anything is read: no credential
-// is asked and no bucket is opened.
-func TestSyncRefusesInAgentSession(t *testing.T) {
-	rig := newMineRig(t)
-	rec := rig.save(mineRec("1", "sig-a"))
-	t.Setenv("CLAUDECODE", "1")
-
-	out, errOut, err := rig.sync()
-	if err == nil {
-		t.Fatalf("a coding agent's session uploaded:\n%s%s", out, errOut)
-	}
-	if !strings.Contains(err.Error(), "coding agent's session") || !strings.Contains(err.Error(), "fugaro issue sync") {
-		t.Errorf("sync = %q, want a refusal naming the session and the command a person runs", err)
-	}
-	if rig.lookups != 0 {
-		t.Errorf("a coding agent's session asked the credential %d time(s)", rig.lookups)
-	}
-	if rig.opens != 0 {
-		t.Errorf("a coding agent's session opened the shared store %d time(s)", rig.opens)
-	}
-	if rows, err := issues.ListShared(context.Background(), rig.bucket); err != nil {
-		t.Fatalf("reading the shared store: %v", err)
-	} else if len(rows) != 0 {
-		t.Errorf("a coding agent's session left %d issue(s) in the shared store", len(rows))
-	}
-	if got, err := rig.store.Get(rec.LocalID); err != nil {
-		t.Fatalf("the issue is not where it was: %v", err)
-	} else if got.Uploaded {
-		t.Error("a coding agent's session marked the issue uploaded")
 	}
 }
 
@@ -469,11 +436,11 @@ func TestSyncRunsOnlyInIssueCommands(t *testing.T) {
 	}
 }
 
-// TestListShowUseLocalInAgentSession: a coding agent's session uploads
-// nothing, so it reads nothing from the project either (F10, D1734). `list`
-// and `show` answer from the files here and say why, and neither the
-// credential nor the store is touched.
-func TestListShowUseLocalInAgentSession(t *testing.T) {
+// TestListShowReadTheProjectInAgentSession: a coding agent's session reads the
+// project's store like a person's (D3425 lifts the read) and uploads nothing:
+// `list` and `show` answer with the project's rows and this machine's own, the
+// session says what it read, and no record is filed (AG5a's write).
+func TestListShowReadTheProjectInAgentSession(t *testing.T) {
 	rig := newMineRig(t)
 	mate := mineRec("1", "sig-mate")
 	mateUp := rig.upload(mate, "user:bo@example.test")
@@ -484,11 +451,22 @@ func TestListShowUseLocalInAgentSession(t *testing.T) {
 	if !strings.Contains(errOut, "coding agent's session") {
 		t.Errorf("a session's listing does not say what it read:\n%s", errOut)
 	}
-	if row := syncRow(out, rec.LocalID); row == nil {
+	// A session is one `issue list` has --json in (D3437): stdout is the
+	// listing's document and the rows are read as fields.
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("a session's listing is not the listing's document: %v\n%s", err, out)
+	}
+	own, stored := false, false
+	for _, row := range rows {
+		own = own || row["local_id"] == rec.LocalID
+		stored = stored || row["number"] == float64(mateUp.Number)
+	}
+	if !own {
 		t.Errorf("a session's listing drops this machine's own issue:\n%s", out)
 	}
-	if strings.Contains(out, mineRefOf(mateUp.Number)) {
-		t.Errorf("a session's listing shows an issue only the project's store has:\n%s", out)
+	if !stored {
+		t.Errorf("a session's listing does not read the project's store:\n%s", out)
 	}
 
 	shown, errOut, err := rig.run("issue", "show", rec.LocalID)
@@ -498,14 +476,15 @@ func TestListShowUseLocalInAgentSession(t *testing.T) {
 	if !strings.Contains(shown, rec.LocalID) || !strings.Contains(errOut, "coding agent's session") {
 		t.Errorf("a session's show printed %q and said %q", shown, errOut)
 	}
-	if _, _, err := rig.run("issue", "show", mineRefOf(mateUp.Number)); err == nil {
-		t.Error("a session's show read the project's store")
+	if _, _, err := rig.run("issue", "show", mineRefOf(mateUp.Number)); err != nil {
+		t.Errorf("a session's show does not read the project's store: %v", err)
 	}
-	if rig.lookups != 0 {
-		t.Errorf("a coding agent's session asked the credential %d time(s)", rig.lookups)
-	}
-	if rig.opens != 0 {
-		t.Errorf("a coding agent's session opened the shared store %d time(s)", rig.opens)
+	// The read lifts and the upload does not: this is `issue sync`'s write, and
+	// a listing that made it on the way would be that write by the back door.
+	if rows, err := issues.ListShared(context.Background(), rig.bucket); err != nil {
+		t.Fatalf("reading the shared store: %v", err)
+	} else if len(rows) != 1 {
+		t.Errorf("a coding agent's session uploaded: the store holds %d issue(s), want 1", len(rows))
 	}
 	if got, err := rig.store.Get(rec.LocalID); err != nil {
 		t.Fatalf("the issue is not where it was: %v", err)

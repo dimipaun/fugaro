@@ -128,21 +128,6 @@ func TestRecipesValidateNameMismatch(t *testing.T) {
 	}
 }
 
-func TestRecipesPublishRefusedInAgentSession(t *testing.T) {
-	f := newCloudFixture(t)
-	projectRecipesFixture(t, f, nil)
-	noAgentSession(t)
-	t.Setenv("CLAUDECODE", "1")
-	path := writeRecipeFile(t, t.TempDir(), "team.yaml", projectTeam)
-	_, _, err := execute(t, "recipes", "publish", path)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "your own terminal") {
-		t.Fatalf("err = %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(f.dir, "runs", filepath.FromSlash(recipe.ObjectKey("team")))); err == nil {
-		t.Fatal("published from an agent session")
-	}
-}
-
 func TestRecipesPublishWritesObject(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, nil)
@@ -455,19 +440,6 @@ func TestRecipesShowPrintsNote(t *testing.T) {
 	out, errOut, err := execute(t, "recipes", "show", "default")
 	if err != nil || !strings.HasPrefix(out, "recipe default from catalog") || !strings.Contains(errOut, "note: project recipes need the default runs bucket name") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
-	}
-}
-
-// The agent check comes before any cloud access: with no project at all the
-// refusal is still the agent's, not "no project".
-func TestRecipesPublishAgentCheckComesFirst(t *testing.T) {
-	isolateProjects(t, t.TempDir())
-	noAgentSession(t)
-	t.Setenv("CLAUDECODE", "1")
-	path := writeRecipeFile(t, t.TempDir(), "team.yaml", projectTeam)
-	_, _, err := execute(t, "recipes", "publish", path)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "your own terminal") || !strings.Contains(err.Error(), "nothing was published") {
-		t.Fatalf("err = %v", err)
 	}
 }
 

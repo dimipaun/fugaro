@@ -351,6 +351,13 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// itself — the default token would say `settings set` writes a key it
 		// will not write (D1178, F13).
 		"settings block",
+		// The keys the routing table replaced (MG4 of
+		// docs/model-credentials-routing/): a craft's access, a grade's access
+		// and the cascade's two retired members. The accounts family wrote them
+		// until the table did, so the token names the command that writes what
+		// replaced them — the read prints that command and the write's refusal
+		// is built from the same token.
+		routingOwnerToken,
 	}
 	for _, r := range Rows() {
 		ok := false

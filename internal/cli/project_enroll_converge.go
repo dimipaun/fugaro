@@ -143,21 +143,16 @@ type reposEnrolment struct {
 // runProjectReposEnroll is the convergent path: read, show, ask once, write.
 //
 // The order is D2414's and every refusal precedes the confirmation, so a yes
-// is never followed by a failure that should have come first: the coding
-// agent's refusal, the wildcard's, the budget and the project's admin gate,
-// the deployed-rules read, then the reads the plan is made of, then the one
-// question.
+// is never followed by a failure that should have come first: the wildcard's,
+// the budget and the project's admin gate, the deployed-rules read, then the
+// reads the plan is made of, then the one question. A coding agent's session
+// carries no refusal of its own here — D3425 lifted it, the write being an edit
+// (D3424) — and the confirmation is what it meets. The one exception is the
+// starter: it opens a pull request in the operator's own repository, and this
+// confirmation is never reached on that path, so it keeps a refusal of its own
+// (enrolOpenStarter).
 func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg string) error {
 	ctx := cmd.Context()
-	// The refusal of a coding agent's session is first of all (SD8, D2401):
-	// this writes the published node, the machine's config, the job set and an
-	// IAM grant, so it is a person's step and never an agent's — an agent that
-	// enrolled a repository would have widened what every run of the project
-	// is admitted by, on its own. Before the gates and before every read, so
-	// nothing is written and no cloud write is even reached.
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written: fugaro project repos add writes the published allow-list, this machine's config, the job set and the repository's run.invoker grant, which are what admit a repository to the project: %s", initflow.AgentRefusal(m))
-	}
 	// `*` is the allow-list's own entry for every repository and not a
 	// repository: it has no provider, no checkout, no workflow list and no
 	// image, so there is nothing here to converge (D2404). Refused rather than

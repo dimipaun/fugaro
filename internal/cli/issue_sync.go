@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/issues"
 )
 
@@ -19,10 +18,10 @@ import (
 // uploads this machine's pending issues, and the one resolution of the
 // project's store that `sync`, `list`, `show` and `dismiss` all read through.
 //
-// Uploading is a cloud write, so every one of them goes through the guard
-// `recipes publish` uses (F10): in a coding agent's session nothing is
-// uploaded, `sync` refuses and names the command a person runs, and the
-// listing commands read this machine's own files only (D1734).
+// Uploading is a cloud write, and `sync` and `dismiss` are an agent's to make
+// (D3425): a session reaches the project's store with them like anyone else.
+// The listing commands read the project's store too (D3425 lifts the read) and
+// upload nothing on the way, and `submit --ask` is a person's.
 
 // issueShared is the project's shared store as one `issue` command reaches it:
 // the bucket, the name of the project it belongs to, and the lines the run has
@@ -37,9 +36,12 @@ type issueShared struct {
 	// installation is the digest of the runs bucket URL: the name this
 	// machine's own records and snapshots are filed under (F8b).
 	installation string
-	// deps is what the identity lookup runs against. A coding agent's session
-	// sets NoLookup, so the credential is never asked (F10).
-	deps  issues.Deps
+	// deps is what the identity lookup runs against.
+	deps issues.Deps
+	// agent marks a coding agent's session. The session reads the project's
+	// store like any other (D3425 lifts the read) and uploads nothing: the
+	// upload is `issue sync`'s write, and a listing must not make it on the way.
+	agent bool
 	notes []string
 }
 
@@ -56,30 +58,31 @@ func (s *issueShared) Close() {
 // notes and a nil bucket, never an error, because the commands that call it
 // have this machine's own records to answer with either way.
 //
-// It reads the checkout and the local config and nothing else — no credential,
-// no network — which is why a coding agent's session may call it and still
-// reach no shared store (F10): what a session must not do is upload, and the
-// project's own name is a local file.
+// A caller that passes its session's marker, a listing, reads the store exactly
+// as a person's session does: it resolves the project, opens the bucket and
+// asks the credential, and uploadPending skips it on the way. `sync` and
+// `dismiss` pass none, since a session may write the project's issues (D3425).
 //
 // The second return is D1541's fence and never a store problem: the store's
 // own failures stay the notes they always were. The project's issues are the
-// project's own state, so `issue sync` and `issue dismiss` — the two commands
-// that write them — are fenced, and the read is made here, where the project's
-// name becomes known and before mineOpen could build a client. An exempt
-// command — every reader of this store — is answered without a read
+// project's own state, so the fence is asked by the two commands that write
+// them — `issue sync` and `issue dismiss` — and the read is made here, where
+// the project's name becomes known and before mineOpen could build a client.
+// An exempt command — every reader of this store — is answered without a read
 // (requireManaged), so a listing never pays for the fence and never fails on
 // it; a caller that ignores the error would be writing the store of a project
 // the fence refused, which is why every caller returns it.
 func openIssueShared(ctx context.Context, agent string) (*issueShared, error) {
-	sh := &issueShared{deps: issues.Deps{
-		Lookup:   mineCaller,
-		NoLookup: agent != "",
-		Getenv:   os.Getenv,
-		GOOS:     runtime.GOOS,
-	}}
-	if agent != "" {
-		sh.notes = append(sh.notes, "note: this is a coding agent's session: nothing is uploaded, and the project's issues are not read")
-		return sh, nil
+	sh := &issueShared{
+		agent: agent != "",
+		deps: issues.Deps{
+			Lookup: mineCaller,
+			Getenv: os.Getenv,
+			GOOS:   runtime.GOOS,
+		},
+	}
+	if sh.agent {
+		sh.notes = append(sh.notes, "note: this is a coding agent's session: the project's issues are read, and nothing is uploaded")
 	}
 	lc, err := mineProject(ctx)
 	if err != nil {
@@ -183,7 +186,7 @@ func sharedIssueRef(ctx context.Context, sh *issueShared, ref string) (issues.Is
 // line here too: an upload that did not happen leaves the issue where it is and
 // the next run retries it, which is no reason to take a listing down.
 func (s *issueShared) uploadPending(ctx context.Context, store *issues.Store) {
-	if s.bucket == nil {
+	if s.bucket == nil || s.agent {
 		return
 	}
 	res, err := issues.SyncPending(ctx, store, s.bucket, s.installation, s.deps)
@@ -221,12 +224,6 @@ func newIssueSyncCmd() *cobra.Command {
 }
 
 func runIssueSync(cmd *cobra.Command) error {
-	// The guard `recipes publish` uses: an agent-set marker refuses whatever the
-	// terminal, and the IDE extension's marker alone refuses only without one,
-	// so a person in their own IDE terminal may sync (F10).
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was uploaded: fugaro issue sync writes to the project's store, so a person runs it at their own terminal: %s", initflow.AgentRefusal(m))
-	}
 	ctx := cmd.Context()
 	store, err := openIssueStore()
 	if err != nil {

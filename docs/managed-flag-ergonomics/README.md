@@ -1,6 +1,6 @@
 # Managed flag ergonomics
 
-**Status: plan only; nothing is implemented; no task approved.** The spec's open decisions were answered on 2026-11-21. The current state is in [docs/status.md](../status.md).
+**Status as of 2026-11-27: in progress, 9/12 merged — T2c is live (#4196), T5 waits on T2c and T6 on the CLI release tag; see [docs/status.md](../status.md) for the current table.** The spec's open decisions were answered on 2026-11-21.
 
 **Spec owner:** Dimi Paun, 2026-11-13. **Reconciled and planned:** 2026-11-21, against `origin/main` at d49063235.
 **Numbers:**

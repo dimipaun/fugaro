@@ -220,11 +220,13 @@ var baseCells = []baseCell{
 				// The base branch moves on while the run works — a person's
 				// commit brings a workflow file, which only the base's own
 				// commits may carry — and the run merges it, as one told to
-				// keep up with its base does.
+				// keep up with its base does. The fetch names the tracking ref
+				// because the run's clone is single-branch (g), whose plain fetch
+				// writes FETCH_HEAD alone.
 				advanceBranch(t, h.remote, integrationBranch, map[string]string{
 					".github/workflows/integration.yml": "on: push\n",
 				})
-				shell(t, req, "git fetch -q origin "+integrationBranch+" && git merge -q --no-edit origin/"+integrationBranch)
+				shell(t, req, "git fetch -q origin "+integrationBranch+":refs/remotes/origin/"+integrationBranch+" && git merge -q --no-edit origin/"+integrationBranch)
 				return implement("feature")(t, ctx, req)
 			}
 			rec, err := h.run(t, mergeTheMovedBase, review("ship", 0))

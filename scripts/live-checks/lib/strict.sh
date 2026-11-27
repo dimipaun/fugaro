@@ -28,10 +28,16 @@ LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
 # 0 when ARGV is a command and flags the real CLI takes, else 1 with the CLI's
 # own wording on stderr ("fugaro: unknown flag: --x").
 # strict_flag_arity TABLE KEY: the arity recorded for KEY (path|flag) in the
-# newline-delimited table the verifier builds.
+# newline-delimited table the verifier builds, or nothing when KEY is not in it.
+# A `case` over the whole table, not a parameter expansion: `${1#*$'\n'"$2"=}`
+# on a table this size is quadratic and cost a stubbed `fugaro` seconds per flag
+# (the entry's own position in the table, so a late command's flag was slowest),
+# which is what made the live checks' tests time out rather than fail.
 strict_flag_arity() {
-  local rest=${1#*$'\n'"$2"=}
-  printf '%s' "${rest%%$'\n'*}"
+  case "$1" in
+  *$'\n'"$2"=value$'\n'*) printf 'value' ;;
+  *$'\n'"$2"=bool$'\n'*) printf 'bool' ;;
+  esac
 }
 
 strict_fugaro_verify() {

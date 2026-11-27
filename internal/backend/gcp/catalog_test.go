@@ -75,8 +75,11 @@ func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 		Selftest:       []byte(`{"skip_verify":true,"tools":"critical"}`),
 		// What a submitter states about the build itself: the digest of the
 		// template it would build with, which the record carries so the check
-		// sees an engine-side change (F33, D1402).
+		// sees an engine-side change (F33, D1402), and the base-image epoch it
+		// builds under, which the record carries so update sees a change to the
+		// base image's own files (D3446).
 		TemplateSalt: strings.Repeat("c", 64),
+		Epoch:        3,
 	}
 }
 
@@ -395,6 +398,7 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
 		"CONTEXT_COMMIT=", "CONTEXT_SHA256=",
 		"TEMPLATE_SALT=" + s.TemplateSalt,
+		"EPOCH=" + strconv.Itoa(s.Epoch),
 		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 	}
 	if env := rec.Env; !slices.Equal(env, want) {
@@ -405,14 +409,14 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 	// human wants: the image, its content tag and the build that wrote it.
 	for _, field := range []string{
 		`"version":`, `"entry":"`, `"source_commit":"`, `"context_commit":"`, `"context_sha256":"`, `"definition_generation":`,
-		`"definition_sha256":"`, `"template_salt":"`, `"base_ref":"`, `"base_digest":"`, `"image":"`,
+		`"definition_sha256":"`, `"template_salt":"`, `"epoch":`, `"base_ref":"`, `"base_digest":"`, `"image":"`,
 		`"content_tag":"`, `"image_digest":"`, `"build_id":"`, `"built_at":"`,
 	} {
 		if !strings.Contains(script, field) {
 			t.Fatalf("the record does not carry %s: %q", field, script)
 		}
 	}
-	for _, value := range []string{"$$SHA256", "$$GENERATION", "$$COMMIT", "$$TEMPLATE_SALT", "/workspace/out/image-digest", "/workspace/base-digest"} {
+	for _, value := range []string{"$$SHA256", "$$GENERATION", "$$COMMIT", "$$TEMPLATE_SALT", "$$EPOCH", "/workspace/out/image-digest", "/workspace/base-digest"} {
 		if !strings.Contains(script, value) {
 			t.Fatalf("the record does not read %s: %q", value, script)
 		}

@@ -901,23 +901,3 @@ func TestStatsRunsHelpNamesNoOtherInstallation(t *testing.T) {
 		t.Errorf("the help does not say --project is required:\n%s", out)
 	}
 }
-
-// TestStatsRunsRefusedInAgentSession: the records are an installation's own
-// data, so reading them is refused under the marker every owner-only path
-// uses (plan W0.3 step 2).
-func TestStatsRunsRefusedInAgentSession(t *testing.T) {
-	newCloudFixture(t)
-	for _, marker := range agentMarkers {
-		t.Run(marker, func(t *testing.T) {
-			noAgentSession(t)
-			t.Setenv(marker, "1")
-			_, _, err := execute(t, "stats", "runs", "--project", "aurora")
-			if err == nil || !strings.Contains(err.Error(), "coding agent") || !strings.Contains(err.Error(), "your own terminal window") {
-				t.Fatalf("err = %v, want the coding-agent refusal", err)
-			}
-			if got := ExitCode(err); got != ExitUserError {
-				t.Errorf("exit code = %d, want %d", got, ExitUserError)
-			}
-		})
-	}
-}

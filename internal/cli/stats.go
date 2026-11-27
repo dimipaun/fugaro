@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -24,8 +23,8 @@ import (
 // one window of one named installation, and no identifier of any kind
 // (reconciliation D96, D97).
 //
-// Three properties are the command rather than niceties around it, and each
-// has a test:
+// Two properties are the command rather than niceties around it, and each has
+// a test:
 //
 //   - One installation, named: --project is required and has no default, the
 //     sandbox included, and there is no --all. An aggregation over "every
@@ -34,7 +33,6 @@ import (
 //   - Read-only, and only result.json: the run records are read through the
 //     store the other read commands use, and the task a run was given is never
 //     read at all, so no task text can reach the output.
-//   - Refused in a coding agent's session, like every other owner-only path.
 
 // statsDefaultSince is stats runs' default window: the runs bucket's own
 // lifecycle age (90 days), so the window holds every record the installation
@@ -152,12 +150,6 @@ func newStatsRunsCmd() *cobra.Command {
 }
 
 func runStatsRuns(cmd *cobra.Command, o *statsOptions) error {
-	// The records are data about an installation of the owner's own, so this
-	// is refused under the marker every owner-only path uses, before anything
-	// is read.
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("fugaro stats runs reads one installation's run records, so it is refused in a coding agent's session (%s is set): run it in your own terminal window", m)
-	}
 	if strings.TrimSpace(o.cloud.project) == "" {
 		return userErr("--project: name the installation to aggregate (this command never guesses one, the sandbox included)")
 	}

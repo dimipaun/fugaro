@@ -21,7 +21,7 @@
     }
   ],
   "properties": {
-    "version": { "const": 1 },
+    "version": { "enum": [1], "description": "The fugaro.yaml version. The CLI reads it before every other key and lifts a file an older release wrote to the version this release reads, in memory (D3422); the enum is the list of versions this release supports. A file above it needs a newer fugaro (`brew upgrade`), and one below it is a file no release supports any more." },
     "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The Fugaro project this repository belongs to." },
     "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "description": "The GCP project ID of the installation. Optional; the trust anchor that lets a teammate use the installation without running fugaro update (written by fugaro update). Never guessed from the project name." },
     "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile of the implicit workflow \"default\", for a file with no workflows: (docs/project-layer.md). Absent: the project's default_profile. Needs fugaro 0.6.0." },

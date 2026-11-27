@@ -538,14 +538,15 @@ import (
 // order it listed its members and moving the node's version, so a case bends a
 // refusal that names one member, a validate that is not the second door and a
 // config the update finds already split. 631 is the one whose fake has to hold
-// the value: the fake `fugaro` declares, lists and removes the credentials, its
-// fake `gcloud` serves the record and the service's own audit line, and a pty
-// the case starts (python3's pty.openpty, handed to the check through
-// CHECK631_TTY) is the terminal the two pastes are made at -- with values
-// written into the terminal's own input queue, so the check's hidden prompt
-// reads the first and the command's own hidden prompt the second, and a case
-// says what was echoed, what was written into the config directory and into a
-// shell history, and what a session was refused. 632 holds the run and the
+// the owner-terminal door: the fake `fugaro` declares, lists and removes the
+// credentials and refuses `accounts add --type` anything but a real terminal on
+// both of its streams, its fake `gcloud` serves the record and the service's own
+// audit line, and a pty the case starts (python3's pty.openpty, handed to the
+// check through CHECK631_TTY) is the terminal each declaration runs at -- with
+// the two values written into the terminal's own input queue, so each command's
+// own hidden prompt reads its own, and a case says what was echoed as a key
+// shape, what was written into the config directory and into a shell history,
+// and what a session was refused. 632 holds the run and the
 // update at once: its fake `fugaro` launches a run and answers the runs list,
 // its fake `update` prints the one in-flight line and writes the converged
 // reads, and its fake `gcloud` serves the record and the run's own ledger, so a

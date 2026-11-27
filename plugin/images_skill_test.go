@@ -423,8 +423,17 @@ func TestImagesSkillNamesTheMapByItsProviderKey(t *testing.T) {
 			t.Errorf("the %s skill still calls the map `image_map`, the member no release writes: it is `repo_images`, and the bare-name one is the survey's `legacy_image_map` (D3371, R4)", name)
 		}
 	}
-	if setup := readRepoFile(t, "plugin/skills/setup/SKILL.md"); !strings.Contains(setup, "repo_images") {
-		t.Error("skills/setup/SKILL.md never names `repo_images`, so the step that checks the image a workflow runs names the map a job's entry is chosen from by a member no release writes (D3371)")
+	// The setup skill introduces the map too: it names the member, the key form
+	// and the command's argument (the owner's ruling of 2026-11-27 made room by
+	// trimming it), so its reader is not sent to `image_map` or to a bare name.
+	setup := readRepoFile(t, "plugin/skills/setup/SKILL.md")
+	for _, want := range []string{"repo_images", "provider/owner/name"} {
+		if !strings.Contains(setup, want) {
+			t.Errorf("skills/setup/SKILL.md never names %q, so the step that checks the image a workflow runs names the map a job's entry is chosen from by a member no release writes (D3371)", want)
+		}
+	}
+	if !regexp.MustCompile(`fugaro image map set \w+/\w+/\w+ \S+`).MatchString(setup) {
+		t.Error("skills/setup/SKILL.md never shows `fugaro image map set <provider>/<owner>/<name> <entry>`, so the skill that introduces the map does not name the argument the command takes (R6)")
 	}
 }
 

@@ -2270,7 +2270,7 @@ var chk49Citations = []chkCitation{
 	{"internal/cli/run.go", "func buildAttemptSpec"},
 	{"internal/cli/basebranch.go", "func launchBaseBranch"},
 	{"internal/gitops/gitops.go", "\"fetch\", \"--quiet\", \"origin\", ref"},
-	{"internal/runner/runner.go", "CheckoutNewBranch(ctx, spec.Ref, branch)"},
+	{"internal/runner/runner.go", "CheckoutNewBranch(ctx, ref, \"fugaro/\"+r.spec.RunID)"},
 	{"internal/cli/cloud.go", "\"project\", \"\", \"the Fugaro project"},
 	{"internal/cli/doctor.go", "\"project: %s (GCP %s, %s)\\n\""},
 	{"internal/localcfg/select.go", "this checkout belongs to project"},

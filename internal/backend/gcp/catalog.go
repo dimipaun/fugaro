@@ -295,6 +295,12 @@ type CatalogBuildSpec struct {
 	// D1402). "" is a submitter that states none, and the record writes it as
 	// it was given it.
 	TemplateSalt string
+	// Epoch is the base-image epoch the submitting binary builds under
+	// (imagecheck.BaseEpoch), which the record carries: an entry whose record
+	// states another epoch was built from base image files that have since
+	// changed, and update rebuilds it eagerly (D3446). A submitter that knows
+	// no epoch states 0, which is stale too.
+	Epoch int
 	// ServiceAccount is the email of the project's build identity
 	// (BuildIdentityEmail), which the build runs as: one account for the
 	// installation, never a repository's (B6).
@@ -1023,6 +1029,7 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
 		"CONTEXT_COMMIT=" + s.ContextCommit, "CONTEXT_SHA256=" + s.ContextSHA256,
 		"TEMPLATE_SALT=" + s.TemplateSalt,
+		"EPOCH=" + strconv.Itoa(s.Epoch),
 		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 	}
 	// A build's own record step has exactly the variables it had before a
@@ -1040,7 +1047,7 @@ func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 image_digest=$$(cat /workspace/out/image-digest)
 case "$$image_digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
 built_at=$$(cat /workspace/out/built-at)
-# A smoke-only run has no base to read: its record carries the same fourteen
+# A smoke-only run has no base to read: its record carries the same fifteen
 # keys, and the fields only a build has are the empty ones its own env states.
 base_digest=
 if [ -z "$${PREBUILT:-}" ]; then
@@ -1049,8 +1056,8 @@ if [ -z "$${PREBUILT:-}" ]; then
   case "$$base_digest" in sha256:*) ;; *) echo "no base digest" >&2; exit 1 ;; esac
 fi
 record=$$(mktemp)
-printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","template_salt":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
-  "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$TEMPLATE_SALT" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
+printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","template_salt":"%s","epoch":%s,"base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
+  "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$TEMPLATE_SALT" "$$EPOCH" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
 case "$$BUCKET" in gs://*) ;; *) echo "the runs bucket must be a gs:// URL" >&2; exit 1 ;; esac
 export LC_ALL=C
 name=

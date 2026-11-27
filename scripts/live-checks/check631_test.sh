@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Tests for scripts/live-checks/check631.sh, with a fake `fugaro`, a fake
-# `gcloud` and (for the cases about the terminal) a real pty on PATH:
-# NOTHING here reaches a cloud, an installation, a secret or a run, no credential
-# is declared anywhere, nothing is published, and the fakes record every call
-# they are given — in which directory it was made — so a case can assert what the
-# check did and did not do.
+# `gcloud` and (for the cases that get past the check's terminal gate) a real pty
+# on PATH: NOTHING here reaches a cloud, an installation, a secret or a run, no
+# credential is declared anywhere, nothing is published, and the fakes record
+# every call they are given — in which directory it was made — so a case can
+# assert what the check did and did not do.
 #
 # The model the fakes carry is one installation at the current release: its
 # config declares a craft whose access names a pool, its credentials listing
@@ -19,13 +19,20 @@
 # removal that is accepted while a pool lists the credential, and a craft with no
 # access to take over.
 #
-# The two pastes are real pastes: the terminal cases start a pty (python3's
-# pty.openpty) and hand the check its slave device through CHECK631_TTY, with the
-# two values written into it — the check's own hidden prompt reads the first and
-# the command's own hidden prompt reads the second, in the order the check makes
-# them. A value never becomes an argument of any process here either. A machine
-# that can make no pty (a sandbox or a coding agent's session) runs every case
-# but the three terminal ones, which skip themselves with one line.
+# The fake's `accounts add --type` carries the managed gate's own door: the
+# declaration runs only where the run's input AND its output are a real terminal
+# and no coding agent's marker is set (accountsAddOwnTerminal,
+# internal/cli/accounts_managed.go) — a pipe, a redirect or a session is refused
+# before a byte is written — and it then reads its value at its OWN hidden prompt,
+# the sentence the acceptance names.
+#
+# The two values are typed for real: the cases that get past the check's terminal gate
+# start a pty (python3's pty.openpty) and hand the check its slave device
+# through CHECK631_TTY, with the two values written into it — each command's own
+# hidden prompt reads its own, in the order the check runs them. The check never
+# holds either value: not an argument, not a variable, not a file. A machine that
+# can make no pty (a sandbox or a coding agent's session) runs every case that
+# needs no terminal and skips the rest with one line each.
 #
 # Usage: bash scripts/live-checks/check631_test.sh
 set -euo pipefail
@@ -209,6 +216,11 @@ crafts_listing() {
     "$installation" "$craft" "$craft" "$access" "$craft"
 }
 
+# accounts_add is the managed gate's own door, in the words the release prints:
+# a session is refused the credential entry and told the narrower step it can
+# take (accountsAddRefusal), a caller with anything but a real terminal on both
+# streams is refused before a byte is written, and the owner's own run reads the
+# value at the command's own hidden prompt on stderr.
 accounts_add() { # accounts_add NAME TYPE
   local name=$1 type=$2 value=""
   if [ -n "${CLAUDECODE:-}" ] && [ "$mode" != session-accepts ]; then
@@ -220,28 +232,90 @@ accounts_add() { # accounts_add NAME TYPE
       printf 'fugaro: a key is written for the person it belongs to and for nobody else: %s was declared, and its value was not read\n' "$name" >&2
       exit 1
     fi
-    printf 'fugaro: No key was stored for credential %s: a session may write the declaration, and never the key.\nRun this in your own terminal, not in an agent session.\n' "$name" >&2
+    printf 'fugaro: This creates the credential credentials.%s, and a managed project'\''s owner is the one who creates credentials.\nDeclare the account without --type, or run this in your own terminal.\n' "$name" >&2
+    exit 1
+  fi
+  if [ "$mode" != session-accepts ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+    printf 'fugaro: This creates the credential credentials.%s, and a managed project'\''s owner is the one who creates credentials.\nRun this in your own terminal.\n' "$name" >&2
     exit 1
   fi
   if [ "$mode" = add-fails ]; then
-    printf 'fugaro: the value is too short to be a key\n' >&2
+    printf 'fugaro: the value is shorter than 16 bytes, too short to redact from logs\n' >&2
     exit 1
   fi
-  if [ "$type" = openrouter ] && [ "$mode" != add-openrouter-no-prompt ]; then
+  if [ "$mode" = add-outlives ]; then
+    # The command outstays its bound on purpose, by seconds, and writes a marker
+    # when it does: the bound a case gives it is one second, so a marker says the
+    # ending that row reports did not reach this command.
+    printf 'Paste the value for credential-%s-key (input hidden), then press Enter: ' "$name" >&2
+    sleep 5
+    printf '%s\n' "$name" >>"$FAKE_LOG_DIR/outlived"
+    printf 'fugaro: declared %s\n' "$name"
+    return 0
+  fi
+  if [ "$mode" = add-interrupts ]; then
+    # The command's own hidden prompt, and the owner's own interrupt. The echo
+    # goes off the way the release takes it off the terminal it reads, and the pid
+    # is written before the prompt so the case can say afterwards whether this
+    # command is gone.
+    printf '%s\n' "$$" >"$FAKE_LOG_DIR/prompt.pid"
+    stty -echo
+  fi
+  if [ "$mode" != add-no-prompt ]; then
     printf 'Paste the value for credential-%s-key (input hidden), then press Enter: ' "$name" >&2
   fi
-  IFS= read -r value || true
-  if [ "$mode" = add-echoes-value ]; then
-    printf 'fugaro: storing the value %s now\n' "$value"
+  if [ "$mode" = add-interrupts ]; then
+    # The signal a person pressing Ctrl-C at this prompt sends the check. This
+    # command is a grandchild of the check (its parent is the runner), so the pid
+    # is walked up rather than searched for: the case signals the check that is
+    # reading this prompt and not another shard's.
+    local check_pid
+    check_pid=$(ps -o ppid= -p "$(ps -o ppid= -p "$$" 2>/dev/null | tr -d ' ')" 2>/dev/null | tr -d ' ')
+    [ -n "$check_pid" ] || printf 'fugaro: no check process was found to interrupt\n' >&2
+    kill -INT "$check_pid" 2>/dev/null || true
   fi
-  if [ "$mode" = add-openrouter-echoes-shape ]; then
+  # The value this read answers is typed at this declaration's own announcement.
+  # At a terminal, end-of-file reads nothing at all — the terminal's other end is
+  # gone — and the declaration it would otherwise report is one about a value
+  # nothing read: that is a failure, not an empty declaration. A run with no
+  # terminal on its input (the refusal act's) has nothing to read by design and
+  # is measured by the gate above instead.
+  if [ -t 0 ]; then
+    if ! IFS= read -r value; then
+      printf 'fugaro: nothing was read at the prompt for credential-%s-key: the terminal gave end-of-file\n' "$name" >&2
+      exit 1
+    fi
+  else
+    IFS= read -r value || true
+  fi
+  if [ "$mode" = add-interrupts ]; then
+    # The read returned, so the ending that ends a declaration is not what ended
+    # this one: the echo goes back, the way the release puts it back itself.
+    stty echo
+  fi
+  if [ "$mode" = add-reads-ahead ]; then
+    # The read this case is about: the command takes its own line and then reads
+    # again, for whatever else the terminal holds. A value written into the
+    # terminal ahead of the declaration it belongs to is what that second read
+    # takes, and the declaration it belongs to is then left with nothing.
+    IFS= read -r -t 1 _ahead || true
+  fi
+  if [ "$mode" = add-echoes-shape ]; then
     # The key-shaped string this case is about is built here, from parts: no
     # literal in this repository is shaped like a credential.
+    printf 'fugaro: storing the value sk-ant-%s now\n' "not-a-real-key" >&2
+  fi
+  if [ "$mode" = add-writes-history ]; then
+    printf 'fugaro accounts add x sk-ant-%s\n' "not-a-real-key" >>"$HOME/.bash_history"
+  fi
+  if [ "$mode" = add-writes-config ]; then
+    printf '{"note":"sk-ant-%s"}\n' "not-a-real-key" >>"$HOME/.config/fugaro/cache.json"
+  fi
+  if [ "$mode" = add-openrouter-echoes-shape ]; then
     printf 'fugaro: the value sk-or-v1-%s was accepted\n' "not-a-real-key" >&2
   fi
   if [ "$name" = "$anthropic" ]; then
     printf "fugaro: no job is deployed for %s: a key credential is not a run's Claude account token\n" "$name" >&2
-    [ -t 0 ] || printf "note: dropped the value's trailing newline\n" >&2
   fi
   printf '%s\t%s\t%s\n' "$name" "$type" "$(serving_path "$type")" >>"$state/creds.tsv"
   printf 'fugaro: declared %s\n' "$name"
@@ -423,26 +497,74 @@ GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
 }
 
-write_feeder() { # dir — the pty the two pastes are made at
+write_feeder() { # dir — the pty the two declarations run at
   cat >"$1/feeder.py" <<'PY'
+import fcntl
 import os
 import pty
+import select
 import sys
+import termios
 import time
 
-# A terminal for the check's two pastes, for its test only. The slave's path is
-# printed first (the check is handed it through CHECK631_TTY), and the values are
-# written into it at once: a terminal holds them in its input queue, so the
-# check's own hidden prompt reads the first and the command's own hidden prompt
-# reads the second, in the order the check makes them. The master is held open
-# until the test kills this process, because a terminal whose master is gone
-# gives its reader end-of-file.
+# A terminal for the two declarations, for this test only. The slave's path is
+# printed first (the check is handed it through CHECK631_TTY), and each value is
+# written into it only once the declaration it answers has announced itself on
+# the check's stderr. A value is therefore typed at its own declaration's
+# announcement and never earlier: a command that reads past its own line finds
+# nothing else to take, and the declaration that follows still finds its value.
+# The master is held open until the test kills this process, because a terminal
+# whose master is gone gives its reader end-of-file.
+err_path = sys.argv[1]
+answers = list(zip(sys.argv[2::2], sys.argv[3::2]))
+
 master, slave = pty.openpty()
+# The slave is made this process's own controlling terminal. A terminal with no
+# session is taken as the controlling terminal of the first session leader that
+# holds it, which is what each declaration's runner is, and the terminal is then
+# hung up for everyone when that command exits: the second declaration would find
+# its terminal gone. A person's terminal already belongs to their shell's session,
+# which is why only this test needs it.
+try:
+    os.setsid()
+except OSError:
+    pass
+try:
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+except OSError:
+    pass
 sys.stdout.write(os.ttyname(slave) + "\n")
 sys.stdout.flush()
-for value in sys.argv[1:]:
+
+# What the terminal echoes comes back through the master, and a person's terminal
+# reads it: a master nobody reads keeps the echo queued, and the command that
+# closes its end of the slave waits, past the check's bound, for it to drain. The
+# feeder reads and drops it, the whole time it holds the terminal.
+deadline = time.time() + float(os.environ.get("PTY_HOLD", "120"))
+
+
+def drain(seconds):
+    ready, _, _ = select.select([master], [], [], seconds)
+    if ready:
+        try:
+            os.read(master, 65536)
+        except OSError:
+            time.sleep(seconds)
+
+
+for needle, value in answers:
+    while time.time() < deadline:
+        try:
+            with open(err_path, errors="replace") as handle:
+                seen = handle.read()
+        except OSError:
+            seen = ""
+        if needle in seen:
+            break
+        drain(0.02)
     os.write(master, (value + "\n").encode())
-time.sleep(float(os.environ.get("PTY_HOLD", "120")))
+while time.time() < deadline:
+    drain(0.2)
 PY
 }
 
@@ -516,9 +638,10 @@ prepare() { # dir
 }
 
 # ------------------------------------------------------------------- the pty
-# Whether this machine can make a pty at all: only the three terminal cases
-# below need one, and a sandbox or a coding agent's session cannot make one —
-# python3's pty.openpty raises "out of pty devices". Probed once.
+# Whether this machine can make a pty at all: every case that gets past the
+# check's terminal gate needs one, and a sandbox or a coding agent's session
+# cannot make one — python3's pty.openpty raises "out of pty devices". Probed
+# once.
 PTY_AVAILABLE=""
 pty_available() {
   if [ -z "$PTY_AVAILABLE" ]; then
@@ -534,23 +657,38 @@ os.close(s)' >/dev/null 2>&1; then
   [ "$PTY_AVAILABLE" = yes ]
 }
 
-# need_pty: a case that needs a terminal for the two pastes skips itself, with
-# one line, where this machine has no pty, and runs where it has one.
+# need_pty: a case that needs a terminal for the two declarations skips itself,
+# with one line, where this machine has no pty, and runs where it has one.
 need_pty() {
   pty_available && return 0
-  echo "skip: ${case_name:-this case}: no pty on this machine (a sandbox or an agent session has none), so the two pastes are not made"
+  echo "skip: ${case_name:-this case}: no pty on this machine (a sandbox or an agent session has none), so the two credentials are not declared"
   return 1
+}
+
+# pty_echo DEV — what the terminal at DEV says about its echo, yes or no. The
+# terminal the declarations run at is this test's own pty, so what a command did
+# to it is still readable here after the check has gone: that is how a case says
+# the terminal was given back.
+pty_echo() {
+  python3 - "$1" <<'PY'
+import sys
+import termios
+
+with open(sys.argv[1], "rb") as handle:
+    attrs = termios.tcgetattr(handle)
+print("yes" if attrs[3] & termios.ECHO else "no")
+PY
 }
 
 FEEDER_PID=""
 FEEDER_TTY=""
-start_feeder() { # start_feeder DIR VALUE...
+start_feeder() { # start_feeder DIR [NEEDLE VALUE]... — each value is typed once its NEEDLE is on the check's stderr
   local dir=$1
   shift
   FEEDER_PID=""
   FEEDER_TTY=""
   : >"$dir/feeder.tty"
-  PTY_HOLD=120 python3 "$dir/feeder.py" "$@" >"$dir/feeder.tty" 2>"$dir/feeder.err" &
+  PTY_HOLD=120 python3 "$dir/feeder.py" "$dir/err" "$@" >"$dir/feeder.tty" 2>"$dir/feeder.err" &
   FEEDER_PID=$!
   local i=0
   while [ "$i" -lt 100 ]; do
@@ -615,6 +753,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
     CHECK631_POLL_SECONDS=1 CHECK631_RUN_TIMEOUT_SECONDS="${CHECK631_TEST_RUN_TIMEOUT:-20}" \
     CHECK631_CLI_TIMEOUT_SECONDS=20 CHECK631_DOCTOR_TIMEOUT_SECONDS=20 \
     CHECK631_LAUNCH_TIMEOUT_SECONDS=20 CHECK631_PUBLISH_TIMEOUT_SECONDS=20 \
+    CHECK631_DECLARE_TIMEOUT_SECONDS=20 \
     ${args[@]+"${args[@]}"} \
     bash ${bashargs[@]+"${bashargs[@]}"} "$script" ${cli[@]+"${cli[@]}"} \
     </dev/null >"$dir/out" 2>"$dir/err" || status=$?
@@ -625,23 +764,18 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
 }
 
-# A run in CHECK631_VALUE_FILE mode: no terminal is needed, the value is read
-# from a file the test wrote, and the command's own hidden prompt is not made.
-# CHECK631_TEST_VALUE names the value when a case needs one of its own.
-run_check_with_value_file() { # run_check_with_value_file DIR ENV... [-- ARGS...]
-  local dir=$1
-  shift
-  printf '%s\n' "${CHECK631_TEST_VALUE:-$value_one}" >"$dir/value.txt"
-  run_check "$dir" CHECK631_VALUE_FILE="$dir/value.txt" "$@"
-}
-
-# A run with a terminal: the check reads its own value at its hidden prompt and
-# the command reads the second at its own. CHECK631_TEST_VALUE_ONE and
+# A run at a terminal: each declaration reads its own value at its own hidden
+# prompt, so every case that gets past the check's terminal gate makes the pty
+# below and types each value at the announcement of the declaration it answers —
+# at no other time, so a command that reads past its own line cannot take the
+# value the other declaration reads. CHECK631_TEST_VALUE_ONE and
 # CHECK631_TEST_VALUE_TWO name the two, where a case needs its own.
 run_check_with_terminal() { # run_check_with_terminal DIR ENV... [-- ARGS...]
   local dir=$1
   shift
-  start_feeder "$dir" "${CHECK631_TEST_VALUE_ONE:-$value_one}" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
+  start_feeder "$dir" \
+    "declaring the Anthropic-key credential" "${CHECK631_TEST_VALUE_ONE:-$value_one}" \
+    "declaring the OpenRouter credential" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
   run_check "$dir" "$@"
   stop_feeder
 }
@@ -674,9 +808,9 @@ test_dry_run_needs_no_terminal() {
   run_check "$dir" CHECK631_DRY_RUN=1
   expect_status "$status" 0 "a dry run"
   expect_contains "$out" "FACT dry-run: PASS" "a dry run: the row"
-  expect_contains "$out" "FACT value-read: INFO" "a dry run: the planned rows are not measured"
-  expect_contains "$err" "[write] fugaro accounts add $anthropic --type anthropic" "a dry run: the plan names the declaration it would make"
-  expect_contains "$err" "[YOU] paste the value for $openrouter" "a dry run: the plan names the second paste"
+  expect_contains "$out" "FACT add-anthropic: INFO" "a dry run: the planned rows are not measured"
+  expect_contains "$err" "[YOU, write] fugaro accounts add $anthropic --type anthropic at your own terminal" "a dry run: the plan names the declaration it would make"
+  expect_contains "$err" "$openrouter --type openrouter at your own terminal" "a dry run: the plan names the second declaration"
   expect_absent "$fugaro_calls" "accounts add" "a dry run: nothing is declared"
   expect_absent "$fugaro_calls" "fugaro run" "a dry run: no run is launched"
   assert_scratch_removed "a dry run"
@@ -689,12 +823,12 @@ test_the_happy_path_at_a_terminal() {
   run_check_with_terminal "$dir"
   expect_status "$status" 0 "the happy path"
   local key
-  for key in fugaro-version xtrace agent-session belong installation declaration agent-refusal value-read add-anthropic nothing-echoed add-openrouter prompt-hidden no-file no-history serving-path wiring publish run-launched terminal record served-by unwiring rm-refusal rm-clears restore scratch-removed; do
+  for key in fugaro-version xtrace agent-session belong installation declaration agent-refusal add-anthropic add-openrouter prompt-hidden nothing-echoed no-file no-history serving-path wiring publish run-launched terminal record served-by unwiring rm-refusal rm-clears restore scratch-removed; do
     expect_contains "$out" "FACT $key: PASS" "the happy path: the $key row"
   done
   expect_absent "$out" ": FAIL" "the happy path: no row failed"
   expect_contains "$out" "CHECK 631 RESULT END (exit 0)" "the happy path: the block ends"
-  expect_contains "$out" "the command's own hidden prompt line ('Paste the value for credential-$openrouter-key (input hidden), then press Enter:')" "the happy path: the prompt row names the command's own prompt"
+  expect_contains "$out" "credential-$anthropic-key, credential-$openrouter-key" "the happy path: the prompt row names both commands' own prompts"
   expect_contains "$fugaro_calls" "fugaro accounts add $anthropic --type anthropic (in $dir/sandbox)" "the happy path: the Anthropic change is declared from the checkout"
   expect_contains "$fugaro_calls" "fugaro accounts pool add $pool $anthropic --owner $owner (in $dir/sandbox)" "the happy path: the check's own pool names the credential and the owner"
   expect_contains "$fugaro_calls" "fugaro accounts craft set $craft --access $pool (in $dir/sandbox)" "the happy path: the craft is pointed at the check's pool"
@@ -709,93 +843,213 @@ test_the_happy_path_at_a_terminal() {
   fi
 }
 
-test_the_value_never_reaches_a_file_or_a_history() {
+test_no_key_shape_reaches_a_file_or_a_history() {
   local dir=$work/sweeps
   prepare "$dir"
-  run_check_with_value_file "$dir"
+  need_pty || return 0
+  run_check_with_terminal "$dir"
   expect_status "$status" 0 "the sweeps"
-  expect_contains "$out" "FACT no-file: PASS" "the sweeps: the config directory holds no value"
-  expect_contains "$out" "is in none of the" "the sweeps: the config sweep says what it read"
-  expect_contains "$out" "FACT no-history: PASS" "the sweeps: the history holds no value"
+  expect_contains "$out" "FACT no-file: PASS" "the sweeps: the config directory holds no key shape"
+  expect_contains "$out" "no line of the" "the sweeps: the config sweep says what it read"
+  expect_contains "$out" "FACT no-history: PASS" "the sweeps: the history holds no key shape"
   expect_contains "$out" "$dir/home/.bash_history" "the sweeps: the history file it read is named"
-  # The block names the files it looked at and never the value itself.
-  expect_absent "$out" "$value_one" "the sweeps: the value is in no line of the block"
-  expect_absent "$err" "$value_one" "the sweeps: the value is in no line of the progress output"
+  # The block names the files it looked at and never a value: this check holds
+  # none, and the two the commands read at their own prompts are printed nowhere.
+  expect_absent "$out" "$value_one" "the sweeps: the first value is in no line of the block"
+  expect_absent "$err" "$value_one" "the sweeps: the first value is in no line of the progress output"
+  expect_absent "$out" "$value_two" "the sweeps: the second value is in no line of the block"
+  expect_absent "$err" "$value_two" "the sweeps: the second value is in no line of the progress output"
 }
 
-test_a_value_in_the_config_directory_is_a_finding() {
+test_a_key_shape_the_check_adds_to_the_config_directory_is_a_finding() {
   local dir=$work/config-holds
   prepare "$dir"
-  printf '{"note":"%s"}\n' "$value_one" >"$dir/home/.config/fugaro/cache.json"
-  run_check_with_value_file "$dir"
-  expect_status "$status" 1 "a value in the config directory"
-  expect_contains "$out" "FACT no-file: FAIL" "a value in the config directory: the row"
-  expect_contains "$out" "is in 1 file(s) under" "a value in the config directory: the row says how many"
-  expect_contains "$out" "cache.json" "a value in the config directory: the file is named"
-  expect_absent "$out" "$value_one" "a value in the config directory: the value itself is never printed"
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=add-writes-config
+  expect_status "$status" 1 "a key shape added to the config directory"
+  expect_contains "$out" "FACT no-file: FAIL" "a key shape added to the config directory: the row"
+  expect_contains "$out" "appeared in 1 file(s) under" "a key shape added to the config directory: the row says how many"
+  expect_contains "$out" "cache.json" "a key shape added to the config directory: the file is named"
+  expect_absent "$out" "sk-ant-not-a-real-key" "a key shape added to the config directory: the line itself is never printed"
 }
 
-test_a_value_in_a_shell_history_is_a_finding() {
+test_a_key_shape_the_check_adds_to_a_shell_history_is_a_finding() {
   local dir=$work/history-holds
   prepare "$dir"
-  printf 'fugaro accounts add %s --type anthropic %s\n' "$anthropic" "$value_one" >>"$dir/home/.bash_history"
-  run_check_with_value_file "$dir"
-  expect_status "$status" 1 "a value in a shell history"
-  expect_contains "$out" "FACT no-history: FAIL" "a value in a shell history: the row"
-  expect_contains "$out" ".bash_history" "a value in a shell history: the file is named"
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=add-writes-history
+  expect_status "$status" 1 "a key shape added to a shell history"
+  expect_contains "$out" "FACT no-history: FAIL" "a key shape added to a shell history: the row"
+  expect_contains "$out" ".bash_history" "a key shape added to a shell history: the file is named"
 }
 
-test_a_command_that_echoes_the_value_is_a_finding() {
+# A key shape that was there before this check ran is an old export or a backup,
+# not what a hidden prompt wrote: the rows pass and say what they found.
+test_a_key_shape_there_before_the_check_is_not_a_finding() {
+  local dir=$work/shape-before
+  prepare "$dir"
+  printf '{"note":"sk-ant-%s"}\n' "not-a-real-key" >"$dir/home/.config/fugaro/cache.json"
+  printf 'export ANTHROPIC_API_KEY=sk-ant-%s\n' "not-a-real-key" >>"$dir/home/.bash_history"
+  need_pty || return 0
+  run_check_with_terminal "$dir"
+  expect_status "$status" 0 "a key shape there before the check"
+  expect_contains "$out" "FACT no-file: PASS" "a key shape there before the check: the config row passes"
+  expect_contains "$out" "FACT no-history: PASS" "a key shape there before the check: the history row passes"
+  expect_contains "$out" "already held such a line before this check ran" "a key shape there before the check: the rows say so"
+  expect_absent "$out" "sk-ant-not-a-real-key" "a key shape there before the check: the line itself is never printed"
+}
+
+test_a_command_that_echoes_a_key_shape_is_a_finding() {
   local dir=$work/echoes
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=add-echoes-value
-  expect_status "$status" 1 "a command that echoes the value"
-  expect_contains "$out" "FACT nothing-echoed: FAIL" "a command that echoes the value: the row"
-  expect_contains "$out" "holds the value this check handed it" "a command that echoes the value: the row says so"
-  expect_absent "$out" "$value_one" "a command that echoes the value: the value is not reprinted by the check"
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=add-echoes-shape
+  expect_status "$status" 1 "a command that echoes a key shape"
+  expect_contains "$out" "FACT nothing-echoed: FAIL" "a command that echoes a key shape: the row"
+  expect_contains "$out" "carries a line shaped like a provider key" "a command that echoes a key shape: the row says so"
+  # The check names the stream and never the line.
+  expect_absent "$out" "sk-ant-not-a-real-key" "a command that echoes a key shape: the check does not reprint the string"
+  # The check relays each declaration's output to its own stderr, which is the
+  # screen the person at the terminal is reading: a key shape it relayed there
+  # would be in that screen and in the transcript of the run that printed it.
+  expect_absent "$err" "sk-ant-not-a-real-key" "a command that echoes a key shape: the check does not reprint the string on the screen it relays the command's output to"
 }
 
-test_a_prompt_that_echoes_a_key_shape_is_a_finding() {
+test_the_second_command_echoing_a_key_shape_is_a_finding() {
   local dir=$work/shape
   prepare "$dir"
   need_pty || return 0
   run_check_with_terminal "$dir" FAKE_MODE=add-openrouter-echoes-shape
-  expect_status "$status" 1 "a prompt that echoes a key shape"
-  expect_contains "$out" "FACT prompt-hidden: FAIL" "a prompt that echoes a key shape: the row"
-  expect_contains "$out" "carries a line shaped like a provider key" "a prompt that echoes a key shape: the row says so"
-  # The check names the stream and never the line: the shape it reports is the
-  # file it found it in, not the string.
-  expect_absent "$out" "sk-or-v1-not-a-real-key" "a prompt that echoes a key shape: the check does not reprint the string"
+  expect_status "$status" 1 "the second command echoing a key shape"
+  expect_contains "$out" "FACT nothing-echoed: FAIL" "the second command echoing a key shape: the row"
+  expect_contains "$out" "credential-$openrouter-key" "the second command echoing a key shape: the row names which command"
+  expect_absent "$out" "sk-or-v1-not-a-real-key" "the second command echoing a key shape: the check does not reprint the string"
+  expect_absent "$err" "sk-or-v1-not-a-real-key" "the second command echoing a key shape: the check does not reprint the string on the screen it relays the command's output to"
 }
 
-test_the_two_pastes_are_read_at_two_different_prompts() {
+test_a_command_that_prints_no_prompt_is_a_finding() {
+  local dir=$work/no-prompt
+  prepare "$dir"
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=add-no-prompt
+  expect_status "$status" 1 "a command that prints no prompt"
+  expect_contains "$out" "FACT prompt-hidden: FAIL" "a command that prints no prompt: the row"
+  expect_contains "$out" "does not carry the command's own hidden prompt" "a command that prints no prompt: the row says so"
+  expect_contains "$out" "FACT add-anthropic: PASS" "a command that prints no prompt: the declaration itself still worked"
+}
+
+test_both_commands_read_at_their_own_prompts() {
   local dir=$work/prompts
   prepare "$dir"
   need_pty || return 0
   run_check_with_terminal "$dir"
   expect_status "$status" 0 "the two prompts"
-  expect_contains "$out" "the value was read at this check's own hidden prompt on your terminal" "the two prompts: the check's own prompt is the one its value came from"
-  expect_contains "$out" "carries the command's own hidden prompt line" "the two prompts: the command's own prompt is the one its value came from"
+  expect_contains "$out" "each declaration carries the command's own hidden prompt" "the two prompts: each command's own prompt is the one its value came from"
+  expect_contains "$out" "credential-$anthropic-key, credential-$openrouter-key" "the two prompts: both prompts are named"
   expect_contains "$out" "FACT add-openrouter: PASS" "the two prompts: the second type was declared"
 }
 
-test_with_no_terminal_and_no_value_file_the_check_stops() {
+test_with_no_terminal_the_check_stops() {
   local dir=$work/no-terminal
   prepare "$dir"
   run_check "$dir"
-  expect_status "$status" 1 "no terminal and no value file"
-  expect_contains "$out" "FACT aborted: FAIL" "no terminal and no value file: the run is aborted"
-  expect_contains "$out" "this check needs your own terminal" "no terminal and no value file: the message"
-  expect_absent "$fugaro_calls" "accounts add" "no terminal and no value file: nothing is declared"
+  expect_status "$status" 1 "no terminal"
+  expect_contains "$out" "FACT aborted: FAIL" "no terminal: the run is aborted"
+  expect_contains "$out" "this check needs your own terminal" "no terminal: the message"
+  expect_absent "$fugaro_calls" "accounts add" "no terminal: nothing is declared"
+}
+
+# The two declarations are measured against their OWN bound, and this case is
+# what says so: a terminal is held open with nothing written into it, so the
+# first declaration has no value to read and its row can only end on a bound.
+# The bound it ends on is the declaration's, injected at a second here — which
+# is the whole point of the knob beside the pacing one, since a tight bound on a
+# command that reads at a terminal is a verdict about the machine rather than
+# about the command. A number nothing reads would put that verdict back.
+test_a_declaration_is_measured_against_its_own_bound() {
+  local dir=$work/declare-bound
+  prepare "$dir"
+  need_pty || return 0
+  start_feeder "$dir"
+  run_check "$dir" CHECK631_DECLARE_TIMEOUT_SECONDS=1
+  stop_feeder
+  expect_status "$status" 2 "a declaration nothing answers"
+  expect_contains "$out" "FACT add-anthropic: FAIL — fugaro accounts add $anthropic --type anthropic did not finish inside 1s" "a declaration nothing answers: the row ends on the declaration's own bound"
+  expect_absent "$out" "FACT add-anthropic: PASS" "a declaration nothing answers: no value was read"
+}
+
+# A value is typed at the declaration it belongs to, and at no other time. The
+# command that reads one declaration's value is not the only reader of the
+# terminal this check holds: a command that reads again after its own line — a
+# reader that takes whatever the terminal holds — must not be able to take the
+# value the OTHER declaration reads. The fake below reads its own line and then
+# reads again; with both values written into the terminal ahead of the check, it
+# takes the second one and the second declaration is left with nothing to read,
+# so its row can only end on its own bound.
+test_a_declaration_that_reads_past_its_line_does_not_take_the_other_value() {
+  local dir=$work/reads-ahead
+  prepare "$dir"
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=add-reads-ahead CHECK631_DECLARE_TIMEOUT_SECONDS=5
+  expect_status "$status" 0 "a declaration that reads past its line"
+  expect_contains "$out" "FACT add-anthropic: PASS" "a declaration that reads past its line: the first declaration read its value"
+  expect_contains "$out" "FACT add-openrouter: PASS" "a declaration that reads past its line: the second declaration still read its own"
+}
+
+# The owner's own interrupt, at the command's own hidden prompt. A declaration
+# reads the owner's terminal with the echo off, and a person interrupting has to
+# get both back: the runner is the process that can end the command (it leads a
+# session of its own, so no signal this check sends reaches it) and the one that
+# knows what the terminal looked like. The fake below stands at that prompt, takes
+# the echo off the way the release does, and sends the check the interrupt; the
+# case measures what is here once the check has gone — the command gone, the echo
+# back.
+test_an_interrupt_at_the_prompt_ends_the_command_and_puts_the_terminal_back() {
+  local dir=$work/interrupted
+  prepare "$dir"
+  need_pty || return 0
+  start_feeder "$dir"
+  run_check "$dir" FAKE_MODE=add-interrupts
+  expect_status "$status" 130 "an interrupt at the prompt"
+  local command_pid
+  command_pid=$(cat "$dir/logs/prompt.pid" 2>/dev/null || true)
+  [ -n "$command_pid" ] || fail "an interrupt at the prompt: the command never reached its prompt"
+  if [ -n "$command_pid" ] && kill -0 "$command_pid" 2>/dev/null; then
+    fail "an interrupt at the prompt: the command (pid $command_pid) is still running with the terminal held"
+  fi
+  [ "$(pty_echo "$FEEDER_TTY")" = yes ] || fail "an interrupt at the prompt: the terminal's echo is off after the check has gone"
+  stop_feeder
+}
+
+# The ending a bound asks for is the command's own. bound_loop signals the
+# runner this check starts, and the command runs in a session of its own, so a
+# runner that died on that signal alone would leave the command running with the
+# owner's terminal still on its input — and the row would say "was ended" about a
+# command nothing ended. The fake below outlives its one-second bound by seconds
+# and writes a marker when it does; the owner's terminal stays held open for the
+# whole of it, which is what a surviving command would be holding.
+test_a_command_a_bound_ended_is_not_still_running() {
+  local dir=$work/declare-ended
+  prepare "$dir"
+  need_pty || return 0
+  start_feeder "$dir" \
+    "declaring the Anthropic-key credential" "${CHECK631_TEST_VALUE_ONE:-$value_one}" \
+    "declaring the OpenRouter credential" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
+  run_check "$dir" CHECK631_DECLARE_TIMEOUT_SECONDS=1 FAKE_MODE=add-outlives
+  sleep 6
+  [ ! -e "$dir/logs/outlived" ] || fail "a command a bound ended is still running: $(cat "$dir/logs/outlived") outlived the bound that ended it, with the terminal still held open"
+  stop_feeder
+  expect_status "$status" 2 "a command a bound ended"
 }
 
 test_a_session_that_is_refused() {
   local dir=$work/session
   prepare "$dir"
-  run_check_with_value_file "$dir"
+  need_pty || return 0
+  run_check_with_terminal "$dir"
   expect_status "$status" 0 "a session that is refused"
   expect_contains "$out" "FACT agent-refusal: PASS" "a session that is refused: the row"
-  expect_contains "$out" "No key was stored for credential $anthropic" "a session that is refused: the refusal's own sentence is quoted"
+  expect_contains "$out" "This creates the credential credentials.$anthropic" "a session that is refused: the refusal's own sentence is quoted"
   expect_contains "$out" "names $anthropic no" "a session that is refused: the row says the declaration was not written either"
   expect_contains "$fugaro_calls" "fugaro accounts add $anthropic --type anthropic" "a session that is refused: the act was run"
 }
@@ -803,7 +1057,8 @@ test_a_session_that_is_refused() {
 test_a_session_that_is_not_refused_is_a_finding() {
   local dir=$work/session-accepts
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=session-accepts
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=session-accepts
   expect_status "$status" 1 "a session that is not refused"
   expect_contains "$out" "FACT agent-refusal: FAIL" "a session that is not refused: the row"
   expect_contains "$out" "exited 0 with CLAUDECODE set" "a session that is not refused: the row says what happened"
@@ -812,16 +1067,18 @@ test_a_session_that_is_not_refused_is_a_finding() {
 test_a_session_refusal_that_names_nothing_is_a_finding() {
   local dir=$work/session-unnamed
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=session-unnamed
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=session-unnamed
   expect_status "$status" 1 "a session refusal that names nothing"
   expect_contains "$out" "FACT agent-refusal: FAIL" "a session refusal that names nothing: the row"
-  expect_contains "$out" "do not name the session it refused" "a session refusal that names nothing: the row says what is missing"
+  expect_contains "$out" "does not name the step it may not take" "a session refusal that names nothing: the row says what is missing"
 }
 
 test_the_project_flag_is_passed_through() {
   local dir=$work/with-project
   prepare "$dir"
-  run_check_with_value_file "$dir" CHECK631_PROJECT="$installation"
+  need_pty || return 0
+  run_check_with_terminal "$dir" CHECK631_PROJECT="$installation"
   expect_status "$status" 0 "a named project"
   expect_contains "$fugaro_calls" "fugaro craft ls --json --project $installation" "a named project: the crafts read names it"
   expect_contains "$fugaro_calls" "fugaro accounts pool ls --project $installation" "a named project: the pools read names it"
@@ -841,7 +1098,8 @@ test_the_project_flag_is_passed_through() {
 test_the_agent_refusal_row_reads_the_refusal_own_words() {
   local dir=$work/session-words
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=session-other-words
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=session-other-words
   expect_status "$status" 1 "a refusal in other words"
   expect_contains "$out" "FACT agent-refusal: FAIL" "a refusal in other words: the row"
   expect_contains "$out" "a key is written for the person it belongs to and for nobody else: $anthropic was declared, and its value was not read" "a refusal in other words: the row quotes the refusal's own words"
@@ -850,7 +1108,8 @@ test_the_agent_refusal_row_reads_the_refusal_own_words() {
 test_a_craft_with_no_access_is_not_measured() {
   local dir=$work/craft-no-access
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=craft-no-access
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=craft-no-access
   expect_status "$status" 2 "a craft with no access"
   expect_contains "$out" "FACT declaration: FAIL" "a craft with no access: the row"
   expect_contains "$out" "declares no access" "a craft with no access: the row says what is missing"
@@ -863,7 +1122,8 @@ test_a_craft_with_no_access_is_not_measured() {
 test_an_installation_with_no_craft_is_not_measured() {
   local dir=$work/no-craft
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=no-craft
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=no-craft
   expect_status "$status" 2 "an installation with no craft"
   expect_contains "$out" "names no craft '$craft'" "an installation with no craft: the row names the craft it looked for"
   expect_absent "$fugaro_calls" "accounts pool add" "an installation with no craft: no pool is declared"
@@ -872,7 +1132,8 @@ test_an_installation_with_no_craft_is_not_measured() {
 test_a_read_that_does_not_answer_is_not_measured() {
   local dir=$work/crafts-fail
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=crafts-fail
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=crafts-fail
   expect_status "$status" 2 "a crafts read that does not answer"
   expect_contains "$err" "could NOT measure declaration" "a crafts read that does not answer: it is named as unmeasured"
   expect_absent "$fugaro_calls" "accounts pool add" "a crafts read that does not answer: no pool is declared"
@@ -881,7 +1142,8 @@ test_a_read_that_does_not_answer_is_not_measured() {
 test_a_pool_that_cannot_be_declared_is_not_measured() {
   local dir=$work/pool-add-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=pool-add-fails
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=pool-add-fails
   expect_status "$status" 2 "a pool that cannot be declared"
   expect_contains "$out" "FACT wiring: FAIL" "a pool that cannot be declared: the row"
   expect_contains "$err" "could NOT measure wiring, publish, run-launched" "a pool that cannot be declared: nothing is published and no run is launched"
@@ -892,7 +1154,8 @@ test_a_pool_that_cannot_be_declared_is_not_measured() {
 test_a_publish_that_fails_is_not_measured() {
   local dir=$work/publish-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=publish-fails
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=publish-fails
   # The unmeasured publish row stands the run down, and the same refusal meets
   # the publish that puts the node back: a write this check cannot undo is a
   # finding, so a FAIL outranks the unmeasured row and the exit is 1.
@@ -907,7 +1170,8 @@ test_a_publish_that_fails_is_not_measured() {
 test_a_launch_that_fails_is_a_finding() {
   local dir=$work/launch-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=launch-fails
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=launch-fails
   expect_status "$status" 1 "a launch that fails"
   expect_contains "$out" "FACT run-launched: FAIL" "a launch that fails: the row"
   expect_contains "$out" "never started" "a launch that fails: the row says so"
@@ -917,7 +1181,8 @@ test_a_launch_that_fails_is_a_finding() {
 test_a_run_that_never_ends_is_not_measured() {
   local dir=$work/never-ends
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=run-never-ends \
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=run-never-ends \
     CHECK631_RUN_TIMEOUT_SECONDS=2 CHECK631_POLL_SECONDS=1
   expect_status "$status" 2 "a run that never ends"
   expect_contains "$out" "FACT terminal: FAIL" "a run that never ends: the row"
@@ -928,7 +1193,8 @@ test_a_run_that_never_ends_is_not_measured() {
 test_a_record_that_is_another_runs_is_a_finding() {
   local dir=$work/record-other
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=record-wrong-run
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=record-wrong-run
   expect_status "$status" 1 "a record that is another run's"
   expect_contains "$out" "FACT record: FAIL" "a record that is another run's: the row"
   expect_contains "$out" "the record at that key is another run's" "a record that is another run's: the row says so"
@@ -938,7 +1204,8 @@ test_a_record_that_is_another_runs_is_a_finding() {
 test_a_record_that_cannot_be_read_is_a_finding() {
   local dir=$work/record-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=record-fails
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=record-fails
   expect_status "$status" 1 "a record that cannot be read"
   expect_contains "$out" "FACT record: FAIL" "a record that cannot be read: the row"
   expect_contains "$out" "could not be read" "a record that cannot be read: the row says so"
@@ -947,7 +1214,8 @@ test_a_record_that_cannot_be_read_is_a_finding() {
 test_an_audit_line_naming_another_credential_is_a_finding() {
   local dir=$work/audit-other
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=audit-other
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=audit-other
   expect_status "$status" 1 "an audit line naming another credential"
   expect_contains "$out" "FACT served-by: FAIL" "an audit line naming another credential: the row"
   expect_contains "$out" "some-other-credential" "an audit line naming another credential: the row names what served it"
@@ -956,7 +1224,8 @@ test_an_audit_line_naming_another_credential_is_a_finding() {
 test_an_audit_read_that_does_not_answer_falls_back_to_the_record() {
   local dir=$work/audit-fails
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=audit-fails
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=audit-fails
   expect_status "$status" 0 "an audit read that does not answer"
   expect_contains "$out" "FACT served-by: PASS" "an audit read that does not answer: the record's own stages carry the reading"
   expect_contains "$out" "the run's own record names $anthropic as the credential its stages were served by" "an audit read that does not answer: the row says where it read it"
@@ -965,7 +1234,8 @@ test_an_audit_read_that_does_not_answer_falls_back_to_the_record() {
 test_an_audit_line_that_names_no_credential_is_a_finding() {
   local dir=$work/audit-refused
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=audit-refused \
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=audit-refused \
     FAKE_RECORD_CREDENTIAL=none
   expect_status "$status" 1 "an audit line that names no credential"
   expect_contains "$out" "FACT served-by: FAIL" "an audit line that names no credential: the row"
@@ -974,7 +1244,8 @@ test_an_audit_line_that_names_no_credential_is_a_finding() {
 test_a_removal_accepted_while_a_pool_lists_it_is_a_finding() {
   local dir=$work/rm-accepts
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=rm-accepts
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=rm-accepts
   expect_status "$status" 1 "a removal that is accepted"
   expect_contains "$out" "FACT rm-refusal: FAIL" "a removal that is accepted: the row"
   expect_contains "$out" "exited 0 while the pool $pool listed it" "a removal that is accepted: the row says so"
@@ -983,7 +1254,8 @@ test_a_removal_accepted_while_a_pool_lists_it_is_a_finding() {
 test_a_removal_refused_without_a_next_step_is_a_finding() {
   local dir=$work/rm-unnamed
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=rm-unnamed
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=rm-unnamed
   expect_status "$status" 1 "a removal refused without a next step"
   expect_contains "$out" "FACT rm-refusal: FAIL" "a removal refused without a next step: the row"
   expect_contains "$out" "names no step that clears it" "a removal refused without a next step: the row says what is missing"
@@ -992,7 +1264,8 @@ test_a_removal_refused_without_a_next_step_is_a_finding() {
 test_a_credential_still_declared_after_the_removals_is_a_finding() {
   local dir=$work/removal-sticks
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=removal-does-not-stick
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=removal-does-not-stick
   expect_status "$status" 1 "a credential still declared after the removals"
   expect_contains "$out" "FACT rm-clears: FAIL" "a credential still declared after the removals: the row"
   expect_contains "$out" "still names $anthropic" "a credential still declared after the removals: the row names it"
@@ -1011,7 +1284,8 @@ test_the_session_guard_stops_the_check() {
 test_a_doctor_read_that_names_belong_stops_the_check() {
   local dir=$work/belong-project
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=doctor-belong
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=doctor-belong
   expect_status "$status" 1 "an installation naming belong"
   expect_contains "$out" "FACT aborted: FAIL" "an installation naming belong: the run is aborted"
   expect_contains "$out" "belongs to belong-sandbox" "an installation naming belong: the message names the project"
@@ -1021,7 +1295,7 @@ test_a_doctor_read_that_names_belong_stops_the_check() {
 test_a_credential_naming_belong_is_refused() {
   local dir=$work/belong-cred
   prepare "$dir"
-  run_check_with_value_file "$dir" CHECK631_POOL=belong-pool
+  run_check "$dir" CHECK631_POOL=belong-pool
   expect_status "$status" 1 "a pool naming belong"
   expect_contains "$out" "FACT belong: FAIL" "a pool naming belong: the row"
   expect_contains "$out" "names belong: this check is never run there" "a pool naming belong: the message says so by name"
@@ -1031,18 +1305,20 @@ test_a_credential_naming_belong_is_refused() {
 test_a_doctor_read_that_answers_no_project_is_not_measured() {
   local dir=$work/no-project
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=doctor-no-project
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=doctor-no-project
   expect_status "$status" 2 "a doctor read with no project line"
   expect_contains "$out" "FACT installation: FAIL" "a doctor read with no project line: the row"
-  expect_contains "$err" "could NOT measure installation, declaration" "a doctor read with no project line: the value is never asked for"
-  expect_contains "$err" "value-read, add-anthropic" "a doctor read with no project line: the paste step is unmeasured too"
+  expect_contains "$err" "could NOT measure installation, declaration" "a doctor read with no project line: the values are never asked for"
+  expect_contains "$err" "add-anthropic, add-openrouter, prompt-hidden, nothing-echoed" "a doctor read with no project line: the declaration steps are unmeasured too"
   expect_absent "$fugaro_calls" "accounts add" "a doctor read with no project line: nothing is declared"
 }
 
 test_a_doctor_read_that_does_not_answer_is_not_measured() {
   local dir=$work/doctor-fail
   prepare "$dir"
-  run_check_with_value_file "$dir" FAKE_MODE=doctor-fail
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=doctor-fail
   expect_status "$status" 2 "a doctor read that does not answer"
   expect_contains "$err" "could NOT measure installation" "a doctor read that does not answer: it is named as unmeasured"
   expect_absent "$fugaro_calls" "accounts add" "a doctor read that does not answer: nothing is declared"
@@ -1051,7 +1327,7 @@ test_a_doctor_read_that_does_not_answer_is_not_measured() {
 test_xtrace_refused() {
   local dir=$work/xtrace
   prepare "$dir"
-  run_check_with_value_file "$dir" -- --xtrace
+  run_check "$dir" -- --xtrace
   expect_status "$status" 1 "a traced shell"
   expect_contains "$out" "FACT xtrace: FAIL" "a traced shell: the row"
   expect_contains "$out" "this shell is tracing" "a traced shell: the message"
@@ -1070,26 +1346,17 @@ test_a_path_that_is_not_a_checkout_is_refused() {
   local dir=$work/not-a-checkout
   prepare "$dir"
   rm -f "$dir/sandbox/fugaro.yaml"
-  run_check_with_value_file "$dir"
+  run_check "$dir"
   expect_status "$status" 2 "a path that is not a checkout"
   expect_contains "$err" "carries no fugaro.yaml" "a path that is not a checkout: the message"
   expect_absent "$fugaro_calls" "accounts add" "a path that is not a checkout: nothing is declared"
 }
 
-test_an_empty_value_file_is_not_measured() {
-  local dir=$work/empty-value
-  prepare "$dir"
-  printf '\n' >"$dir/value.txt"
-  run_check "$dir" CHECK631_VALUE_FILE="$dir/value.txt"
-  expect_status "$status" 2 "an empty value file"
-  expect_contains "$out" "FACT value-read: FAIL" "an empty value file: the row"
-  expect_contains "$err" "could NOT measure value-read, add-anthropic" "an empty value file: nothing is declared"
-}
-
 test_kept_scratch_is_reported() {
   local dir=$work/kept
   prepare "$dir"
-  run_check_with_value_file "$dir" CHECK631_KEEP_SCRATCH=1
+  need_pty || return 0
+  run_check_with_terminal "$dir" CHECK631_KEEP_SCRATCH=1
   expect_status "$status" 1 "a kept scratch directory"
   expect_contains "$out" "FACT scratch-removed: FAIL" "a kept scratch directory: the row"
   expect_contains "$out" "is still there, at $scratch" "a kept scratch directory: the row names the directory"
@@ -1166,13 +1433,19 @@ t() {
 t test_help
 t test_dry_run_needs_no_terminal
 t test_the_happy_path_at_a_terminal
-t test_the_value_never_reaches_a_file_or_a_history
-t test_a_value_in_the_config_directory_is_a_finding
-t test_a_value_in_a_shell_history_is_a_finding
-t test_a_command_that_echoes_the_value_is_a_finding
-t test_a_prompt_that_echoes_a_key_shape_is_a_finding
-t test_the_two_pastes_are_read_at_two_different_prompts
-t test_with_no_terminal_and_no_value_file_the_check_stops
+t test_no_key_shape_reaches_a_file_or_a_history
+t test_a_key_shape_the_check_adds_to_the_config_directory_is_a_finding
+t test_a_key_shape_the_check_adds_to_a_shell_history_is_a_finding
+t test_a_key_shape_there_before_the_check_is_not_a_finding
+t test_a_command_that_echoes_a_key_shape_is_a_finding
+t test_the_second_command_echoing_a_key_shape_is_a_finding
+t test_a_command_that_prints_no_prompt_is_a_finding
+t test_both_commands_read_at_their_own_prompts
+t test_with_no_terminal_the_check_stops
+t test_a_declaration_is_measured_against_its_own_bound
+t test_a_declaration_that_reads_past_its_line_does_not_take_the_other_value
+t test_an_interrupt_at_the_prompt_ends_the_command_and_puts_the_terminal_back
+t test_a_command_a_bound_ended_is_not_still_running
 t test_a_session_that_is_refused
 t test_a_session_that_is_not_refused_is_a_finding
 t test_a_session_refusal_that_names_nothing_is_a_finding
@@ -1201,7 +1474,6 @@ t test_a_doctor_read_that_does_not_answer_is_not_measured
 t test_xtrace_refused
 t test_a_missing_sandbox_is_refused
 t test_a_path_that_is_not_a_checkout_is_refused
-t test_an_empty_value_file_is_not_measured
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
 t test_preflight_passes_and_writes_nothing

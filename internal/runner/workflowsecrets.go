@@ -79,6 +79,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 )
 
 // workflowSecretsBudget bounds the whole fetch, every variable of the workflow
@@ -181,7 +182,7 @@ func (r *run) fetchMissingWorkflowSecrets(ctx context.Context, missing []config.
 func (r *run) fetchWorkflowSecret(ctx context.Context, svc *gateway.Service, url string, s config.Secret) error {
 	if config.RepoSecretsOff {
 		a, err := r.askWorkflowSecret(ctx, svc, url, credsvc.WorkflowSecretsRequest{
-			Name: s.Name, Version: credsvc.WorkflowSecretsVersion2}, s.Env)
+			Name: s.Name, Version: credsvc.WorkflowSecretsVersion2, AppID: r.githubAppID()}, s.Env)
 		if err != nil {
 			return err
 		}
@@ -199,7 +200,7 @@ func (r *run) fetchWorkflowSecret(ctx context.Context, svc *gateway.Service, url
 			return refusedWorkflowSecret(s.Env, a.status, a.code)
 		}
 	}
-	a, err := r.askWorkflowSecret(ctx, svc, url, credsvc.WorkflowSecretsRequest{Env: s.Env}, s.Env)
+	a, err := r.askWorkflowSecret(ctx, svc, url, credsvc.WorkflowSecretsRequest{Env: s.Env, AppID: r.githubAppID()}, s.Env)
 	if err != nil {
 		return err
 	}
@@ -218,6 +219,15 @@ type workflowSecretAnswer struct {
 	value  string
 	status int
 	code   string
+}
+
+// githubAppID is the App ID a GitHub repository's read of its own fugaro.yaml
+// is signed as (UO7, D3459). It is the job's own variable -- the platform sets
+// FUGARO_GITHUB_APP_ID on a GitHub job and nothing on a Bitbucket one -- and it
+// is not a secret, which is why it travels in the call and never in the
+// service's environment (githubread.go).
+func (r *run) githubAppID() string {
+	return envLookup(r.d.Env, providers.EnvGitHubAppID)
 }
 
 // askWorkflowSecret sends one call and reads its answer.

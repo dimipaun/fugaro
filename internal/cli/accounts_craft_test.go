@@ -83,68 +83,66 @@ func accountsCraftLocal(t *testing.T, path string) *localcfg.Config {
 	return lc
 }
 
-// TestCraftAccessWritesTheKey is the plan's red step: `fugaro accounts craft set
-// NAME --access X` writes crafts.<NAME>.access — the key no command of this
-// release could write before it, which the generic settings path refuses as a
-// family-owned row (settings_set.go) and which every run of the installation
-// resolves its craft's calls against. The craft's model and the rest of the file
-// are the write's to leave alone.
-func TestCraftAccessWritesTheKey(t *testing.T) {
+// TestCraftAccessIsRetired is MG4's answer for this command: which credential a
+// craft's calls go out on is the project's routing table now (D3170), so
+// `accounts craft set` writes nothing — the key it was the only door to is
+// refused before the file is read, and the sentence names the command that owns
+// the write. The craft's own model is left as the file had it: a refusal is not
+// a write, and half a craft is not this command's to write either.
+func TestCraftAccessIsRetired(t *testing.T) {
 	path := accountsCraftHome(t, "")
+	before := readFileString(t, path)
 
 	out, _, err := execute(t, "accounts", "craft", "set", "coder", "--access", "team-b")
-	if err != nil {
-		t.Fatalf("accounts craft set: %v\n%s", err, out)
+	if err == nil {
+		t.Fatalf("accounts craft set wrote a craft's access:\n%s", out)
 	}
-	lc := accountsCraftLocal(t, path)
-	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "team-b" {
-		t.Errorf("crafts.coder.access = %q, want the credential the command named", got)
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
 	}
-	if got := lc.Crafts.Of(config.CraftCoder).Model; got != "deepseek-v4-1" {
-		t.Errorf("crafts.coder.model = %q, want the model half left alone: this command writes the access and nothing else", got)
+	for _, want := range []string{"crafts.coder.access", "is retired", "`fugaro routing set`", "`fugaro accounts pool add`", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
-	if !strings.Contains(out, "crafts.coder.access = team-b") {
-		t.Errorf("the sentence does not name the key it wrote:\n%s", out)
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused write changed the file:\n%s", got)
 	}
-	// The other craft of the fixture is untouched, and the write is a widening
-	// one: what the owner reads is what it grants, not a confirmation.
-	if !strings.Contains(out, "every coder stage of a run of this installation sends its calls out on it") {
-		t.Errorf("a widening write does not say what it widens:\n%s", out)
-	}
-	if !strings.Contains(out, path) {
-		t.Errorf("the write does not name the file it landed in (%s):\n%s", path, out)
+	if got := accountsCraftLocal(t, path).Crafts.Of(config.CraftCoder).Model; got != "deepseek-v4-1" {
+		t.Errorf("crafts.coder.model = %q, want the craft left as the file had it", got)
 	}
 }
 
-// TestGradeAccessWritesTheKey is the same acceptance for the escalation ladder:
-// `fugaro accounts grade set strong --access X` writes
-// model_grades.strong.access in the repository's own fugaro.yaml, which is the
-// layer the key's registry row defaults to — and the write lands in the working
-// tree and nowhere else, because what makes a repository's change live is the
-// merge of the owner's own branch (D1564).
-func TestGradeAccessWritesTheKey(t *testing.T) {
-	modelsWriteHomeWith(t, "")
-	path := modelsWriteGitCheckout(t, "owner/repo-a",
-		settingsRepoYAML("model_grades:\n  strong:\n    model: claude-sonnet-5-5\n"))
+// TestGradeAccessIsRetired is the same answer for the escalation ladder: a
+// grade's access is the same statement about a model's credential (D3170), so
+// `accounts grade set` writes nothing in either of the two layers the key had —
+// the repository's own file and the project layer are both left as they were —
+// and the refusal names the command that owns the write. The grade's own model
+// is the half the table does not state and it is left alone with the rest.
+func TestGradeAccessIsRetired(t *testing.T) {
+	for _, layer := range []string{"repo", "project"} {
+		t.Run(layer, func(t *testing.T) {
+			modelsWriteHomeWith(t, "")
+			path := modelsWriteGitCheckout(t, "owner/repo-a",
+				settingsRepoYAML("model_grades:\n  strong:\n    model: claude-sonnet-5-5\n"))
+			before := readFileString(t, path)
 
-	out, _, err := execute(t, "accounts", "grade", "set", "strong", "--access", "vertex")
-	if err != nil {
-		t.Fatalf("accounts grade set: %v\n%s", err, out)
-	}
-	file := readFileString(t, path)
-	if !strings.Contains(file, "  strong:\n    model: claude-sonnet-5-5\n    access: vertex\n") {
-		t.Errorf("the repository's file does not carry the access it was asked for:\n%s", file)
-	}
-	if !strings.Contains(out, path) || !strings.Contains(out, "model_grades.strong.access = vertex") {
-		t.Errorf("the sentence does not name the file and the key it wrote:\n%s", out)
-	}
-	// A repository's own file is the owner's to commit: the command says so, and
-	// it makes no commit of its own.
-	if !strings.Contains(out, "the change is in this file's working tree and nowhere else") {
-		t.Errorf("the write does not say it is in a working tree and nowhere else:\n%s", out)
-	}
-	if _, err := config.Parse([]byte(file)); err != nil {
-		t.Errorf("the file this command wrote is one its own reader refuses: %v", err)
+			out, _, err := execute(t, "accounts", "grade", "set", "strong", "--access", "vertex", "--layer", layer)
+			if err == nil {
+				t.Fatalf("accounts grade set wrote a grade's access:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			for _, want := range []string{"model_grades.strong.access", "is retired", "`fugaro routing set`", "`fugaro accounts pool add`", "nothing was written"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -198,92 +196,23 @@ func TestRepoClaudeAccountsAdd(t *testing.T) {
 	}
 }
 
-// TestCraftAccessRefusesAnUnknownCredentialNamingTheKnown is the refusal the
-// command adds to the block's own: a name no layer of this installation defines
-// is a grant that resolves to no credential — every run of the installation
-// would be refused at its next call rather than at this write — so the write is
-// refused before the file is touched and what it prints is what the installation
-// does define, so the person has something to type instead.
-func TestCraftAccessRefusesAnUnknownCredentialNamingTheKnown(t *testing.T) {
+// TestRepoAddRefusesAnUnknownAccountNamingTheKnown is the one refusal of the
+// three grants that survives MG4, and it is the repository's: a name no layer of
+// this installation declares is a grant that resolves to no credential — every
+// run of that repository would be refused at its next call rather than at this
+// write — so the write is refused before the file is touched and what it prints
+// is what the installation does define, so the person has something to type
+// instead. The two access grants are refused a sentence earlier, whatever name
+// they are given (TestCraftAccessIsRetired, TestGradeAccessIsRetired).
+func TestRepoAddRefusesAnUnknownAccountNamingTheKnown(t *testing.T) {
 	path := accountsCraftHome(t, "")
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "accounts", "craft", "set", "coder", "--access", "team-c")
+	_, _, err := execute(t, "accounts", "repo", "add", "owner/repo-a", "team-c")
 	if err == nil {
-		t.Fatal("a craft was pointed at a credential this installation defines nowhere")
+		t.Fatal("a repository was admitted to an account this installation defines nowhere")
 	}
-	for _, want := range []string{"team-c", "names no credential and no pool this installation defines", "team-a", "team-b", config.CredentialVertex} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	if got := readFileString(t, path); got != before {
-		t.Errorf("the refused write changed the file:\n%s", got)
-	}
-
-	// The grade and the repository take the same rule, from the same sentence.
-	if _, _, err := execute(t, "accounts", "grade", "set", "strong", "--access", "team-c", "--layer", "project"); err == nil {
-		t.Error("a grade was pointed at a credential this installation defines nowhere")
-	}
-	if _, _, err := execute(t, "accounts", "repo", "add", "owner/repo-a", "team-c"); err == nil {
-		t.Error("a repository was admitted to an account this installation defines nowhere")
-	}
-}
-
-// TestAccessWithoutTheFlagNamesWhereToLook: --access is the whole of what
-// `craft set` and `grade set` write, so an invocation that carries none is
-// refused by the flag's own sentence — and that sentence says where the names are
-// read (the accounts listing, the pools listing, the built-in vertex) rather than
-// claiming this installation defines none. A sentence built from no config at all
-// said exactly that beside a file that declares two credentials, which sends the
-// owner looking for a lost `credentials:` block instead of at the flag they left
-// out. Nothing is written either way.
-func TestAccessWithoutTheFlagNamesWhereToLook(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{"craft set", []string{"accounts", "craft", "set", "coder"}},
-		{"grade set", []string{"accounts", "grade", "set", "strong"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			path := accountsCraftHome(t, "")
-			before := readFileString(t, path)
-
-			_, _, err := execute(t, tc.args...)
-			if err == nil {
-				t.Fatal("a write ran with no --access at all")
-			}
-			for _, want := range []string{"--access", "accounts ls", "accounts pool ls", config.CredentialVertex} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal does not say %q: %v", want, err)
-				}
-			}
-			if strings.Contains(err.Error(), "defines no credential") {
-				t.Errorf("the refusal says this installation defines nothing, which is false for this fixture: %v", err)
-			}
-			if got := readFileString(t, path); got != before {
-				t.Errorf("the refused write changed the file:\n%s", got)
-			}
-		})
-	}
-}
-
-// TestGradeAccessRefusesAGradeWithNoModel: a grade states the model its rung
-// runs as well as the credential its calls go out on, and one written with an
-// access and no model is a document no reader loads
-// (config.ValidateModelGrades). The refusal names the key that is missing rather
-// than letting the parse error arrive at the owner's next command.
-func TestGradeAccessRefusesAGradeWithNoModel(t *testing.T) {
-	modelsWriteHomeWith(t, "")
-	path := modelsWriteGitCheckout(t, "owner/repo-a", settingsRepoYAML(""))
-	before := readFileString(t, path)
-
-	_, _, err := execute(t, "accounts", "grade", "set", "strong", "--access", "vertex")
-	if err == nil {
-		t.Fatal("a grade was written with an access and no model")
-	}
-	for _, want := range []string{"model_grades.strong.model", "states no", "nothing was written"} {
+	for _, want := range []string{"team-c", "team-a", "team-b", "`fugaro accounts add team-c`"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -316,32 +245,25 @@ func TestAccountsCraftRmRecordsTheRemoval(t *testing.T) {
 	if !strings.Contains(out, "record it as removed, so this write's own publish takes it off the node") {
 		t.Errorf("the sentence does not name the record it wrote:\n%s", out)
 	}
-
-	// Declared again: the record goes with the declaration, or the next publish
-	// would take off the node the craft the owner has just pointed somewhere.
-	if _, _, err := execute(t, "accounts", "craft", "set", "coder", "--access", "team-a"); err != nil {
-		t.Fatalf("accounts craft set after a removal: %v", err)
-	}
-	after := readFileString(t, path)
-	if lc := accountsCraftLocal(t, path); len(removedNames(lc).Crafts) != 0 {
-		t.Errorf("the craft is declared and still recorded as removed:\n%s", after)
-	}
-	if strings.Contains(after, "node_removals") {
-		t.Errorf("the record was left behind holding nothing:\n%s", after)
-	}
+	// The record is what clears itself: once the publish has taken the craft off
+	// the node the name goes with it (clearReconciledRemovals, D2607), so a
+	// record left standing is a name every publish after this one would delete
+	// again. Declaring the craft again is not a road any more — the command that
+	// wrote a craft's access is retired (MG4) — and the removal is a removal the
+	// owner takes back by writing the craft's model where the table now says it.
 }
 
-// TestCraftWritesReachTheNode is the sentence both craft commands end on, read
-// where it can be checked: the crafts block is served to a run off the published
-// node and nowhere else, so `craft set` owes the publish that carries the access
-// there and `craft rm` owes the one that takes the craft off it. Nothing in
-// either command publishes by hand — the registry row of crafts.<name>.access is
-// a `local` one, a `local` write is the policy stage's (settings.layerSteps), and
-// the after-write hook runs the stages the write owes before it returns
-// (contract §3, D2602; write_publish.go). Without that pair the sentences would
-// be an overstatement and the node would go on serving the craft the owner had
-// just taken away.
-func TestCraftWritesReachTheNode(t *testing.T) {
+// TestCraftWriteReachesTheNode is the sentence `craft rm` ends on, read where it
+// can be checked: the crafts block is served to a run off the published node and
+// nowhere else, so the removal owes the publish that takes the craft off it.
+// Nothing in the command publishes by hand — the registry row of
+// crafts.<name>.access is a `local` one, a `local` write is the policy stage's
+// (settings.layerSteps), and the after-write hook runs the stages the write owes
+// before it returns (contract §3, D2602; write_publish.go). Without that pair
+// the sentence would be an overstatement and the node would go on serving the
+// craft the owner had just taken away. The other command of the pair wrote the
+// craft's access and is retired (MG4): the removal is the craft write left.
+func TestCraftWriteReachesTheNode(t *testing.T) {
 	r := newAddRigWith(t, addRigLocal+`
 credentials:
   - name: team-a
@@ -354,15 +276,7 @@ crafts:
     access: team-a
 `)
 
-	out, _, err := execute(t, "accounts", "craft", "set", "coder", "--access", "team-b")
-	if err != nil {
-		t.Fatalf("accounts craft set: %v\n%s", err, out)
-	}
-	if got := publishedCraft(t, r, config.CraftCoder).Access; got != "team-b" {
-		t.Errorf("the published node carries crafts.coder.access = %q as this command returns, want team-b: every coder stage of a run of this installation resolves its calls against the node", got)
-	}
-
-	out, _, err = execute(t, "accounts", "craft", "rm", "coder")
+	out, _, err := execute(t, "accounts", "craft", "rm", "coder")
 	if err != nil {
 		t.Fatalf("accounts craft rm: %v\n%s", err, out)
 	}
@@ -465,19 +379,26 @@ crafts:
 `
 
 // TestAccountsCraftReadsNoStdin is the no-prompt policy's own pin (Fugaro asks
-// for nothing): every leaf of the three families runs with stdin at EOF — the
-// write end of a pipe closed before the run — and returns, writing what it was
-// asked for. Nothing on the way waits for an answer a closed stdin could never
-// give, and none of the three has a confirmation step standing in for one.
+// for nothing): every leaf of the families runs with stdin at EOF — the write
+// end of a pipe closed before the run — and returns, writing what it was asked
+// for or refusing it. Nothing on the way waits for an answer a closed stdin
+// could never give, and none of them has a confirmation step standing in for
+// one. The two retired access writes refuse here as they refuse anywhere (MG4):
+// what their runs prove is the same thing, that the answer is printed and the
+// file is not touched.
 func TestAccountsCraftReadsNoStdin(t *testing.T) {
 	t.Run("craft set", func(t *testing.T) {
 		path := accountsCraftHome(t, "")
+		before := readFileString(t, path)
 		out, _, err := accountsPoolClosedStdin(t, "accounts", "craft", "set", "coder", "--access", "team-b")
-		if err != nil {
-			t.Fatalf("accounts craft set with stdin closed: %v\n%s", err, out)
+		if err == nil {
+			t.Fatalf("accounts craft set wrote with stdin closed:\n%s", out)
 		}
-		if got := accountsCraftLocal(t, path).Crafts.Of(config.CraftCoder).Access; got != "team-b" {
-			t.Errorf("crafts.coder.access = %q after the run, want the write to have landed with stdin closed", got)
+		if !strings.Contains(err.Error(), "is retired") {
+			t.Errorf("the run with stdin closed stopped somewhere other than the retirement refusal: %v", err)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Errorf("the file changed with stdin closed:\n%s", got)
 		}
 	})
 
@@ -495,17 +416,19 @@ func TestAccountsCraftReadsNoStdin(t *testing.T) {
 	t.Run("grade set", func(t *testing.T) {
 		path := accountsCraftHome(t, "")
 		layer := settingsManagedLayerFile(t, accountsCraftLayerFile)
-		before := readFileString(t, path)
+		before, layerBefore := readFileString(t, path), readFileString(t, layer)
 		out, _, err := accountsPoolClosedStdin(t, "accounts", "grade", "set", "strong", "--access", "team-b", "--layer", "project")
-		if err != nil {
-			t.Fatalf("accounts grade set with stdin closed: %v\n%s", err, out)
+		if err == nil {
+			t.Fatalf("accounts grade set wrote with stdin closed:\n%s", out)
 		}
-		after := readFileString(t, layer)
-		if !strings.Contains(after, "    strong:\n      model: claude-sonnet-5-5\n      access: team-b\n") {
-			t.Errorf("the layer file does not carry the access it was asked for:\n%s", after)
+		if !strings.Contains(err.Error(), "is retired") {
+			t.Errorf("the run with stdin closed stopped somewhere other than the retirement refusal: %v", err)
+		}
+		if got := readFileString(t, layer); got != layerBefore {
+			t.Errorf("the layer file changed with stdin closed:\n%s", got)
 		}
 		if got := readFileString(t, path); got != before {
-			t.Errorf("--layer project wrote the local config instead of the layer file:\n%s", got)
+			t.Errorf("the local config changed with stdin closed:\n%s", got)
 		}
 	})
 
@@ -521,44 +444,16 @@ func TestAccountsCraftReadsNoStdin(t *testing.T) {
 	})
 }
 
-// TestAccessWideningRefusedInAnAgentSession is D2617's answer, and it is the one
-// fence these writes carry that no gate can lift: an access decides whose token
-// a stage or a repository's runs may spend, so a coding agent's session writes
-// none of the three. Each command is run in a session a marker names and inside a
-// repository, which is the shape the fence is read in: a local or a layer
-// document is refused there on the marker alone, whatever the edit says, while
-// the repository's own file is refused by the edit's own Typed flag — the grade's
-// run is the repository document and is therefore this file's mutation check
-// (settings_write.go's `!e.insideRepo() || e.Typed`): drop Typed from that edit
-// and the write lands. For the craft and the repository's list, whose documents
-// are the local config, dropping Typed would change only the sentence printed,
-// not the refusal — the flag is pinned for them by the two sentences
-// TypedWhy puts on their output instead (the widening line each run prints).
-func TestAccessWideningRefusedInAnAgentSession(t *testing.T) {
+// TestRepoAddRefusedInAnAgentSession is D2617's answer for the one grant of the
+// three that survives MG4: a repository's accounts list decides which account's
+// token that repository's runs may spend, so a coding agent's session writes it
+// not at all. The run is made in a session a marker names, and it is the local
+// config's own document — so the refusal is the marker fence whatever the edit
+// says, and the Typed flag the edit carries is what the sentence on the output
+// pins (TypedWhy's widening line) rather than what refuses the run.
+func TestRepoAddRefusedInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
-			t.Run("craft set", func(t *testing.T) {
-				path := accountsCraftHome(t, "")
-				before := readFileString(t, path)
-				t.Setenv(marker, "1")
-
-				out, _, err := execute(t, "accounts", "craft", "set", "coder", "--access", "team-b")
-				assertAccessWriteRefused(t, err, out, marker, path, before,
-					"fugaro accounts craft set coder --access team-b")
-			})
-
-			t.Run("grade set", func(t *testing.T) {
-				modelsWriteHomeWith(t, "")
-				path := modelsWriteGitCheckout(t, "owner/repo-a",
-					settingsRepoYAML("model_grades:\n  strong:\n    model: claude-sonnet-5-5\n"))
-				before := readFileString(t, path)
-				t.Setenv(marker, "1")
-
-				out, _, err := execute(t, "accounts", "grade", "set", "strong", "--access", "vertex")
-				assertAccessWriteRefused(t, err, out, marker, path, before,
-					"fugaro accounts grade set strong --access vertex")
-			})
-
 			t.Run("repo add", func(t *testing.T) {
 				path := accountsCraftHome(t, "")
 				before := readFileString(t, path)
@@ -600,11 +495,12 @@ func assertAccessWriteRefused(t *testing.T, err error, out, marker, path, before
 }
 
 // TestCraftWritesRefuseAForeignLayerNamingTheRight is the resolver's own refusal
-// (T3, contract §6) on this family: a craft's access and a repository's own
-// accounts list are the installation's own config and have no other layer, and a
-// grade is a repository's or the project layer's and has neither local nor a
-// choice. Each command refuses the layer its key does not have by naming the ones
-// it does, and the file is left alone.
+// (T3, contract §6) on the two writes of this family that still resolve a layer:
+// a craft's block and a repository's own accounts list are the installation's own
+// config and have no other layer, so each refuses the layer its key does not have
+// by naming the ones it does, and the file is left alone. The grade's two layers
+// are not read here any more: that command refuses its retired key before it
+// resolves anything (MG4).
 func TestCraftWritesRefuseAForeignLayerNamingTheRight(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -612,10 +508,8 @@ func TestCraftWritesRefuseAForeignLayerNamingTheRight(t *testing.T) {
 		layer string
 		has   []string
 	}{
-		{"craft set", []string{"accounts", "craft", "set", "coder", "--access", "team-b"}, "project", []string{"local"}},
 		{"craft rm", []string{"accounts", "craft", "rm", "coder"}, "repo", []string{"local"}},
 		{"repo add", []string{"accounts", "repo", "add", "owner/repo-a", "team-a"}, "project", []string{"local"}},
-		{"grade local", []string{"accounts", "grade", "set", "strong", "--access", "vertex", "--layer", "local"}, "local", []string{"project", "repo"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := accountsCraftHome(t, "")
@@ -640,10 +534,11 @@ func TestCraftWritesRefuseAForeignLayerNamingTheRight(t *testing.T) {
 // TestAccountsCraftWritersRegisterTheirKeys is the registration's own half
 // (contract §2, §4): every leaf these commands write is registered under its own
 // pattern, with the argv that changes exactly that leaf, the store it lands in
-// and whether the node serves the key besides it. The layer flag is in the two
-// grade templates because a grade has two layers and the argv is the sentence a
-// refusal prints for either of them; a craft and a repository's list carry no
-// flag because they have the one layer and no choice to state.
+// and whether the node serves the key besides it. A craft's access and a
+// grade's are registered too, under the writer of the command that replaced
+// them (MG4): the row keeps answering so that a refusal prints a line, and the
+// line is `fugaro routing set` — the retired command itself would be a line
+// that refuses.
 func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 	for _, tc := range []struct {
 		key     string
@@ -652,11 +547,11 @@ func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 		node    bool
 		argv    string
 	}{
-		{"crafts.coder.access", "fugaro accounts craft set", settings.StoreLocal, true, "accounts craft set coder --access <value>"},
+		{"crafts.coder.access", "fugaro routing set", settings.StoreLocal, true, "routing set <pattern> <source>"},
 		{"node_removals.crafts", "fugaro accounts craft rm", settings.StoreLocal, true, "accounts craft rm <value>"},
 		{"node_removals.craft_credentials", "fugaro accounts rm", settings.StoreLocal, true, "accounts rm <value>"},
-		{"model_grades.strong.access", "fugaro accounts grade set", settings.StoreRepo, false, "accounts grade set strong --access <value> --layer repo"},
-		{"layer.defaults.model_grades.strongest.access", "fugaro accounts grade set", settings.StoreProject, false, "accounts grade set strongest --access <value> --layer project"},
+		{"model_grades.strong.access", "fugaro routing set", settings.StoreLocal, true, "routing set <pattern> <source>"},
+		{"layer.defaults.model_grades.strongest.access", "fugaro routing set", settings.StoreLocal, true, "routing set <pattern> <source>"},
 		{"repos.owner/repo-a.claude_accounts", "fugaro accounts repo add", settings.StoreLocal, true, "accounts repo add owner/repo-a <value>"},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
@@ -691,15 +586,13 @@ func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 			t.Errorf("%s: %+v (found %v), want a writer that states the node serves it (D2615)", key, w, ok)
 		}
 	}
-	// The two grade rows state none, and not for the crafts' reason: the node's
-	// model_grades block is published from the local config's own model_grades
-	// carrier, which no command of this release writes, while these two write the
-	// project layer file and a checkout's own file — and each of those reaches
-	// runs by the stage its own store names (the layer stage, or the merge).
-	for _, key := range []string{"model_grades.strong.access", "layer.defaults.model_grades.strong.access"} {
+	// A retired access row states it too, and for the routing table's own
+	// reason: the entry lands in this machine's config and reaches runs out of
+	// the published policy, so the store alone names no stage (D2615).
+	for _, key := range []string{"crafts.coder.access", "model_grades.strong.access", "layer.defaults.model_grades.strongest.access"} {
 		w, ok := settings.WriterOf(key)
-		if !ok || w.Node {
-			t.Errorf("%s: %+v (found %v), want no node stated beside that store", key, w, ok)
+		if !ok || !w.Node {
+			t.Errorf("%s: %+v (found %v), want a writer that states the node serves it (D2615)", key, w, ok)
 		}
 	}
 }

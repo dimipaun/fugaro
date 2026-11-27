@@ -1,6 +1,6 @@
 # Managed flag ergonomics: implementation plan
 
-**Status: plan only. Nothing is implemented and no task is approved; each task needs the owner's explicit go.**
+**Status as of 2026-11-27: in progress, 9/12 merged; see [docs/status.md](../status.md) for the current table.**
 
 It builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). The answers that shaped it:
 

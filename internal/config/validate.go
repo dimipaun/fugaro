@@ -101,8 +101,12 @@ func Validate(c *Config) []Problem {
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
-	if c.Version != 1 {
-		add("version", "must be 1")
+	// The loader already lifted every supported version to CurrentVersion and
+	// refused a newer file (D3422), so this rule is the one that speaks for a
+	// file no release supports any more — and for a config built in Go rather
+	// than read from a file.
+	if c.Version != CurrentVersion {
+		add("version", "must be %d", OldestVersion())
 	}
 	switch {
 	case c.Project == "":

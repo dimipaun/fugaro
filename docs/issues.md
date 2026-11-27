@@ -158,9 +158,9 @@ same two flags.
 
 Like `list`, it syncs first: this machine's own pending issues are uploaded
 before the project is read, and an upload that fails is one line, never an error
-that stops the listing. In a coding agent's session nothing is uploaded and
-nothing is read from the project at all: the rows are this machine's own files
-and the last shared read it cached.
+that stops the listing. A coding agent's session reads the project like any
+other run and uploads nothing: the rows are the project's issues and this
+machine's own files together.
 
 ### The rows
 
@@ -274,16 +274,16 @@ counts included; no other reporter's name or digest is in the document.
 
 ## In a coding agent's session
 
-An agent's session may read what is on this machine and may not write to the
-cloud, so the family splits there. `list` and `show` print this machine's own
-files and read nothing from the project; `mine` is the one of the three that
-also prints the last shared read it cached, because the rows it shows are the
-project's and an offline `mine` would otherwise have none. `sync` refuses,
-because uploading is a write to the project's store. `dismiss` refuses even for
-an issue that exists only on this machine: a steered diagnosis could otherwise
-bury a real bug, so a person sets one aside. `submit` previews as usual, and
+An agent's session reads what a person's run reads and writes the project's
+issues with the same commands a person does. `list`, `show` and `mine` read the
+project's store exactly as any other run does, so the rows are the project's
+issues and this machine's own files together; `mine` falls back on the last
+shared read it cached only when the store cannot be reached, as an offline run
+does. `sync` uploads this machine's pending issues to the project's store, and
+`dismiss` sets one aside as not worth filing: both write the project's store,
+and a session runs them like any other command. `submit` previews as usual, and
 what it previews is the bytes this machine holds rather than the project's
 record of a numbered issue; `--ask` refuses, because the upload and the claim
 are writes, so a person's own run re-reads that record and shows what it will
-file. Each refusal names the command a person runs at their own terminal
-rather than saying that an agent may not.
+file. That refusal names the command a person runs at their own terminal rather
+than saying that an agent may not.
