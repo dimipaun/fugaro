@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -27,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/selfupgrade"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -184,6 +186,14 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	} else if slug, runID, err = runstore.ParseRef(o.run); err != nil {
 		return err
 	}
+	store := runstore.Open(bucket.Bucket, slug, runID)
+	// A task a newer launcher stamped upgrades this runner before it does
+	// anything else (spec §6, D3441). Nothing below this line runs in the
+	// process when it upgrades: the installed binary is re-exec'd, and the
+	// strict read of the task the runner makes is the stamped release's own.
+	if err := upgradeToStamp(ctx, cmd, store, runID, platform); err != nil {
+		return err
+	}
 
 	workDir, err := filepath.Abs(o.workDir)
 	if err != nil {
@@ -200,12 +210,16 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	log = runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
 	prices := execPrices(platform, os.Getenv, warn)
 	rec, runErr := runner.Run(ctx, runner.Deps{
-		Store: runstore.Open(bucket.Bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
+		Store: store, OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
 		Prices: prices, Spend: spend, SpendErr: spendErr, Providers: providers, Backend: be, BackendErr: beErr,
 		GatewayUpstream: o.gatewayUpstream, ManagedSettingsPath: o.managedSettings,
+		// What a self-upgrade left, when this process is the one that
+		// re-execed it: the runner re-checks the install before every later
+		// stage (F33).
+		UpgradedDir: os.Getenv(selfupgrade.EnvDir), UpgradedSha: os.Getenv(selfupgrade.EnvSum),
 		// A job belongs to one Fugaro project; a run in the cloud that
 		// doesn't say which is refused at bootstrap. Local is the
 		// exception the runner reads, and its zero value is the cloud, so
@@ -225,6 +239,62 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		return fmt.Errorf("writing run record: %w", writeErr)
 	}
 	return nil
+}
+
+// execSelf replaces this process with the binary an upgrade installed. It
+// is syscall.Exec, and a variable so a test can read what a run would
+// re-exec instead of letting the test process itself be replaced.
+var execSelf = syscall.Exec
+
+// upgradeToStamp upgrades this runner to the release the run's task was
+// stamped with, when that release is newer, and re-execs the installed
+// binary: the job image's runner is the image's own release, and the
+// launcher that wrote the task may be a newer one (spec §6, D3441, F29). A
+// stamp that cannot be fetched ends the run in one line naming the version
+// (D3443), recorded like any other failure that happens before the runner
+// starts the run.
+func upgradeToStamp(ctx context.Context, cmd *cobra.Command, store *runstore.Store, runID string, platform backend.Platform) error {
+	// A local invocation is a person's own binary on a person's own
+	// machine: `--task-file` names it, and it never upgrades itself.
+	if !platform.InCloud() {
+		return nil
+	}
+	stamp := storedStamp(ctx, store)
+	if stamp == "" {
+		return nil
+	}
+	inst, err := selfupgrade.Ensure(ctx, stamp, Version)
+	if err != nil {
+		return recordExecFailure(ctx, cmd, store, runID, err.Error(), time.Now)
+	}
+	if inst.Exe == "" {
+		return nil
+	}
+	env := append(os.Environ(), selfupgrade.EnvDir+"="+inst.Dir, selfupgrade.EnvSum+"="+inst.Sum)
+	if err := execSelf(inst.Exe, append([]string{inst.Exe}, os.Args[1:]...), env); err != nil {
+		return recordExecFailure(ctx, cmd, store, runID, "could not run the upgraded fugaro: "+err.Error(), time.Now)
+	}
+	return nil
+}
+
+// storedStamp reads the launcher's stamp (task.Spec.CLIVersion) out of the
+// run's task with a lenient decode: the task was written by a newer launcher
+// and may carry fields this binary does not know, which the runner's strict
+// parse refuses (F41). Anything else — a missing object, a value that is not
+// JSON — is no stamp, and the strict parse is where that failure is
+// reported.
+func storedStamp(ctx context.Context, store *runstore.Store) string {
+	data, err := store.ReadFile(ctx, "task.json")
+	if err != nil {
+		return ""
+	}
+	var head struct {
+		CLIVersion string `json:"cli_version"`
+	}
+	if json.Unmarshal(data, &head) != nil {
+		return ""
+	}
+	return head.CLIVersion
 }
 
 // checkTestHooks refuses the hidden test flags where they could take the
@@ -296,20 +366,30 @@ func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, pla
 		return nil
 	}
 	reason := oldJobEnvReason(missing)
-	fail := &ExitError{Code: ExitRemoteError, Err: errors.New(reason)}
+	fail := func() error { return &ExitError{Code: ExitRemoteError, Err: errors.New(reason)} }
 	if o.taskFile != "" {
-		return fail // the later check refuses --task-file on Cloud Run
+		return fail() // the later check refuses --task-file on Cloud Run
 	}
 	slug, runID, err := runstore.ParseRef(o.run)
 	if err != nil {
-		return fail
+		return fail()
 	}
 	bucket, err := blobx.Open(ctx, o.bucket)
 	if err != nil {
-		return fail
+		return fail()
 	}
 	defer bucket.Close()
-	store := runstore.Open(bucket.Bucket, slug, runID)
+	return recordExecFailure(ctx, cmd, runstore.Open(bucket.Bucket, slug, runID), runID, reason, now)
+}
+
+// recordExecFailure ends a run that never reached the runner: an upgrade
+// that could not be fetched or run, and a job environment from before M9a.
+// It records an infra_error carrying reason, create-if-absent so it never
+// replaces another execution's, writes the run's summary beside it, and
+// returns the exit-2 error. The record is what makes the run visible: without
+// it `runs ls` would list nothing and no reader would see why the job died.
+func recordExecFailure(ctx context.Context, cmd *cobra.Command, store *runstore.Store, runID, reason string, now func() time.Time) error {
+	fail := &ExitError{Code: ExitRemoteError, Err: errors.New(reason)}
 	rec := &runstore.Record{Version: 1, RunID: runID, Status: runstore.StatusInfraError, Stage: "bootstrap",
 		Outcome: runstore.OutcomeNone, Reason: reason, StartedAt: now().UTC()}
 	spec, terr := store.ReadTask(ctx)

@@ -51,6 +51,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/selfupgrade"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -158,6 +159,15 @@ type Deps struct {
 	// before the coder stage ends (rule 3). The owner's own bound is fifteen
 	// minutes, which no test can wait for; zero means that bound.
 	WrapUpBound time.Duration
+	// UpgradedDir and UpgradedSha, when set, are the read-only install a
+	// self-upgrade left (selfupgrade.EnvDir and EnvSum, set by exec before it
+	// re-execs): before every stage the runner checks the directory still
+	// holds exactly that binary. The job runs as one non-root user, which
+	// could undo the read-only mode and write its own tool beside the binary
+	// for a later review or finalize stage to find (F33). Empty is a run
+	// that never upgraded, and nothing is checked for it.
+	UpgradedDir string
+	UpgradedSha string
 }
 
 type run struct {
@@ -6152,6 +6162,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	if h := r.haltValue(); h != nil {
 		r.save(ctx)
 		return agent.Result{}, false, &HaltError{*h}
+	}
+	// A run that upgraded itself re-checks the install before every stage:
+	// the binary it re-exec'd is read-only, but the job runs as one non-root
+	// user, which could plant a tool beside it for a later stage to find
+	// (F33).
+	if err := selfupgrade.Check(r.d.UpgradedDir, r.d.UpgradedSha); err != nil {
+		r.fail("stage " + name + ": " + err.Error())
+		return agent.Result{}, false, err
 	}
 	if r.budget.Exhausted() {
 		r.fail("time budget exhausted before stage " + name)
