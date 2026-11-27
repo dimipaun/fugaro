@@ -179,7 +179,7 @@ func aheadOfTheSharedParse(r *http.Request) bool {
 		return r.Header.Get(HeaderBuild) != ""
 	}
 	switch r.URL.Path {
-	case VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, BuildTokenPath, BuildCredentialsPath, IssuePath, SlipPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath:
+	case VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, BuildTokenPath, BuildCredentialsPath, IssuePath, SlipPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath, PauseCancelPath:
 		return true
 	}
 	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {

@@ -105,6 +105,7 @@ func TestInstallationScopeIsTodaysBehaviour(t *testing.T) {
 	}
 	early := []string{VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, BuildTokenPath,
 		BuildCredentialsPath, IssuePath, SlipPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath,
+		PauseCancelPath,
 		identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath,
 		identitywire.ProbePath}
 	for _, path := range early {
