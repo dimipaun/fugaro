@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // tightenPlanCfg is a repository file and a project layer that says nothing
@@ -125,10 +126,14 @@ func stageBudgetLayer(t *testing.T, usd, stop float64) *config.ProjectLayer {
 // where the file asks, exactly as the launcher's preview already quotes them.
 func TestStageBudgetTakesTheBaseline(t *testing.T) {
 	start := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	f64 := func(v float64) *float64 { return &v }
 	for _, tc := range []struct {
-		name    string
-		cfg     *config.Config
-		wantCap float64
+		name string
+		cfg  *config.Config
+		// override is the task's own overrides.max_budget_usd, the figure a
+		// launch may write into the same field (Spec.Apply).
+		override *float64
+		wantCap  float64
 		// wantStop is the instant the loop must stop starting rounds: the
 		// baseline's share of a ten-minute budget for a looser value under a
 		// silent project, and the file's own share where it stands.
@@ -152,9 +157,23 @@ func TestStageBudgetTakesTheBaseline(t *testing.T) {
 			wantCap:  100,
 			wantStop: start.Add(2 * time.Minute),
 		},
+		{
+			// The task's override is this run's word and not a repository's
+			// figure, so the baseline judges it nowhere: it stands over a
+			// silent project exactly as Overrides.ReviewRounds does (planOf).
+			// The stop rule has no such override and takes the baseline.
+			name:     "a task override stands over a silent project",
+			cfg:      &config.Config{Agent: config.Agent{MaxBudgetUSD: 100, ReviewStopFraction: 0.2}},
+			override: f64(40),
+			wantCap:  40,
+			wantStop: start.Add(8 * time.Minute),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &run{cfg: tc.cfg, rec: &runstore.Record{}}
+			r := &run{cfg: tc.cfg, spec: &task.Spec{}, rec: &runstore.Record{}}
+			if tc.override != nil {
+				r.spec.Overrides.MaxBudgetUSD = tc.override
+			}
 			if got := r.stageBudget(stageOpts{}); got != tc.wantCap {
 				t.Errorf("stageBudget = %v, want %v (R20: the stage cap takes the tighter of the file's figure and the baseline)", got, tc.wantCap)
 			}

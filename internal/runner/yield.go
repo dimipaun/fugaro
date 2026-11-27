@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 )
@@ -401,16 +402,35 @@ func (r *run) stageSpend() float64 {
 // below zero rather than at it, and a stop refuses to resume on anything under
 // yieldBudgetFloor (yieldStopped).
 func (r *run) stageRemaining(ys *yieldStage) float64 {
-	return r.cfg.Agent.MaxBudgetUSD - (r.stageSpend() - ys.before)
+	return r.stageCapUSD() - (r.stageSpend() - ys.before)
+}
+
+// stageCapUSD is agent.max_budget_usd as this run's stages really spend it
+// (R20, RT2): the repository's figure where it tightens Fugaro's own per-stage
+// cap, and the cap where the project layer says nothing about the key and the
+// figure is larger, so a silent project's runs stop at the baseline. The
+// launcher's preview takes the same judgement (internal/cli's budget preview),
+// so the figure quoted and the figure a stage runs under agree.
+//
+// The task's own override is not a repository's figure and is kept: it is this
+// run's word, taken ahead of every layer exactly as the plan takes
+// Overrides.ReviewRounds (planOf), and Spec.Apply wrote it into the field this
+// reads.
+func (r *run) stageCapUSD() float64 {
+	if o := r.spec.Overrides.MaxBudgetUSD; o != nil && *o > 0 {
+		return *o
+	}
+	return config.TightenUSD(r.cfg, r.cfg.Agent.MaxBudgetUSD)
 }
 
 // stageBudget is the --max-budget-usd an attempt runs under: the run's own
-// agent.max_budget_usd, or, for a segment resumed after a stop, the stage's
-// remainder — which a stop only ever resumes on above yieldBudgetFloor, so a
-// resumed segment is never run without a cap.
+// agent.max_budget_usd as the run really reads it (stageCapUSD), or, for a
+// segment resumed after a stop, the stage's remainder — which a stop only ever
+// resumes on above yieldBudgetFloor, so a resumed segment is never run without
+// a cap.
 func (r *run) stageBudget(o stageOpts) float64 {
 	if o.BudgetUSD == nil {
-		return r.cfg.Agent.MaxBudgetUSD
+		return r.stageCapUSD()
 	}
 	return *o.BudgetUSD
 }
