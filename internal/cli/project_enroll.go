@@ -948,8 +948,9 @@ func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	// D3425 lifted the refusal this command used to carry: sync writes the same
 	// allow_repos `repos add` writes, and an agent may make that edit (D3424).
 	// What a session still cannot do is the credential read the write is built
-	// from — the GitHub App's private key is refused at its own door
-	// (refuseAppKeyReadInAgent, which guards the secret and not the write).
+	// from: the GitHub App's private key is refused at its own door
+	// (refuseAppKeyReadInAgent) and the Bitbucket workspace token at its own
+	// (syncBitbucketSource), each guarding the secret and not the write.
 	declined := "nothing was added to the allow-list"
 	if o.check {
 		declined = "nothing was written"
