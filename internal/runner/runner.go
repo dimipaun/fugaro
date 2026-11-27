@@ -287,6 +287,14 @@ type run struct {
 	// the tree this run found, never a value in the job's environment: what
 	// decides is whether a usable tree is there (CF1, D3440).
 	cloned bool
+	// bakeDiscarded is whether the tree the image laid down was removed and
+	// this run clones instead (discardBakedCheckout). It is what tells the two
+	// ways a cloud run comes to `cloned` apart: a job whose image baked a
+	// checkout carries no FUGARO_REMOTE — the deployer writes one only on a job
+	// whose image holds none — so for that one the tree that went was the only
+	// thing naming the repository, and the clone URL is computed where no tree
+	// is (cloneURL, CF1).
+	bakeDiscarded bool
 	// jobDir is the work directory the job started in, before any adoption of
 	// a tree the image laid down (openBakedCheckout and
 	// checkProjectCheckoutOrigin rewrite Deps.WorkDir when they adopt one). A
@@ -2721,8 +2729,9 @@ const bashTimeoutSlack = 2 * time.Minute
 //
 // A clone is held to the push binding like a tree the image laid down
 // (checkBakedCheckoutOrigin, CF1, F39): a checkout is where the run's branch
-// lands, and a fresh clone can still carry a rewrite from the environment's own
-// git configuration.
+// lands, and a clone can still carry a rewrite from the machine's own git
+// configuration. What the binding reads is the checkout and not the environment
+// the clone was made with (heldCheckout).
 func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[string]string) (*gitops.Repo, error) {
 	env := gitops.WithVars(gitops.IdentityEnvFor(r.identity), cloneVars)
 	if !r.cloned {
@@ -2737,17 +2746,43 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 	}
 	// The push binding holds a clone the run made for itself too (CF1, F39):
 	// what it protects is where the run's branch lands, and a clone carries a
-	// rewrite from the environment's own git configuration as readily as a
-	// baked tree carries one (TestPushBindingOnFreshClone). A local invocation
-	// is not held to it here, though its baked tree is: this clone is of the
-	// remote the caller's own invocation named (F24), while a tree already in
-	// the caller's work directory is one the run did not make.
+	// rewrite from the machine's own git configuration as readily as a baked
+	// tree carries one (TestPushBindingOnFreshClone). It is read through
+	// heldCheckout and not through the environment the clone was made with. A
+	// local invocation is not held to it here, though its baked tree is: this
+	// clone is of the remote the caller's own invocation named (F24), while a
+	// tree already in the caller's work directory is one the run did not make.
 	if kind, ok := r.checkoutKind(); ok && !r.d.Local {
-		if err := r.checkBakedCheckoutOrigin(ctx, kind, repo); err != nil {
+		held, err := r.heldCheckout(repo)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.checkBakedCheckoutOrigin(ctx, kind, held); err != nil {
 			return nil, err
 		}
 	}
 	return repo, nil
+}
+
+// heldCheckout is the checkout a run cloned for itself as the push binding reads
+// it: the same tree, opened on its own configuration instead of through the git
+// environment the clone was made with (cloneVars).
+//
+// That environment carries exactly one rewrite, and it is this run's own route
+// to the credentials service's forwarder — every bitbucket.org URL onto this
+// execution's loopback listener (credentialVars). Read through it, a fresh clone
+// of a proxied run answers the guard with an http endpoint and the run stops on
+// the one rewrite Fugaro itself wrote (the review finding on this change). What
+// the binding decides is what the checkout says about where a push lands — the
+// origin git recorded for the clone, the pushurls the checkout carries, a remote
+// section named by the URL, and the rules it meets in the machine's own git
+// configuration, which this read keeps.
+func (r *run) heldCheckout(repo *gitops.Repo) (*gitops.Repo, error) {
+	held, err := gitops.Open(repo.Dir, nil)
+	if err != nil {
+		return nil, err
+	}
+	return strip(held), nil
 }
 
 // checkoutKind is the git provider kind the repository this run is for is named
@@ -2932,6 +2967,7 @@ func (r *run) discardBakedCheckout(ctx context.Context, reason error) error {
 	}
 	r.d.WorkDir = r.jobDir
 	r.cloned = true
+	r.bakeDiscarded = true
 	return nil
 }
 
@@ -3258,8 +3294,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// job's own provider and the policy's clone URL for it, so FUGARO_REMOTE
 	// is not read at all and a launcher who overrode it cannot point the run
 	// at another repository; on a per-repository job it is the phase-1 answer
-	// (a checkout's origin, else the job's remote), unchanged — and that origin
-	// is the adopted checkout's when openBakedCheckout adopted one.
+	// (a checkout's origin, else the job's remote) — that origin being the
+	// adopted checkout's when openBakedCheckout adopted one — and, where the
+	// image's tree was discarded and the job names no remote, the same computed
+	// URL (cloneURL).
 	remote, err := r.cloneURL(ctx)
 	if err != nil {
 		return err

@@ -702,3 +702,66 @@ func TestLFSEndpointStaysOffWithoutAForwarder(t *testing.T) {
 		t.Errorf("a run with no forwarder wrote a route into its checkout:\n%s", got)
 	}
 }
+
+// TestPushBindingReadsTheCloneNotItsEnvironment: the push binding holds a fresh
+// clone (openCheckout, CF1, F39), and what it reads is the checkout's own
+// configuration and not the environment the clone was made with. That
+// environment carries this run's own route to the forwarder -- every
+// bitbucket.org URL rewritten onto this execution's loopback listener
+// (credentialVars) -- and git applies that rewrite to the origin it answers
+// with: read through it, a fresh clone of a proxied run's own repository answers
+// with an http endpoint, which the admission refuses, so no proxied run that has
+// to clone can bootstrap at all (the review finding on this change).
+//
+// Real git, a proxied run's own forwarder and the run's own credentialVars,
+// because what the rewrite does to `git remote get-url origin` is the whole
+// claim: the two reads below differ in that environment and in nothing else.
+//
+// Mutation (run, restored): hand the clone itself (strip(repo)) to
+// checkBakedCheckoutOrigin in place of heldCheckout. The refusal the third check
+// below asserts against comes back instead of nil and the run stops before it
+// clones anything.
+func TestPushBindingReadsTheCloneNotItsEnvironment(t *testing.T) {
+	r := admitProjectProxyRun(t, sharedBitbucketRun(t, nil), "")
+	startSharedBitbucketJob(t, r)
+	ctx := context.Background()
+	remote, err := r.cloneURL(ctx)
+	if err != nil {
+		t.Fatalf("the remote a proxied run clones from: %v", err)
+	}
+	vars, err := r.authVars()
+	if err != nil {
+		t.Fatalf("building the git environment of a proxied run: %v", err)
+	}
+	slug, err := task.Slug(gitprov.KindBitbucket, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main", ".")
+	testutil.Git(t, dir, "remote", "add", "origin", remote)
+	// The clone openCheckout opens: a checkout of the launcher's remote, opened
+	// on the environment the clone was made with (the run's own vars, the
+	// identity included).
+	clone, err := gitops.Open(dir, gitops.WithVars(gitops.IdentityEnvFor(r.identity), vars))
+	if err != nil {
+		t.Fatalf("opening the fresh clone: %v", err)
+	}
+	throughTheEnv, err := clone.OriginURL(ctx)
+	if err != nil {
+		t.Fatalf("reading the clone's origin through the environment it was cloned with: %v", err)
+	}
+	if !strings.Contains(throughTheEnv, "127.0.0.1") {
+		t.Fatalf("the clone's origin through its own environment is %q, want the forwarder this run's vars route it to: this test's premise is gone", throughTheEnv)
+	}
+	if err := remoteAdmissionErr(throughTheEnv, gitprov.KindBitbucket, "acme/app", slug); err == nil {
+		t.Fatal("the run's admission admits the forwarder's own endpoint: this test's premise is gone")
+	}
+	held, err := r.heldCheckout(clone)
+	if err != nil {
+		t.Fatalf("opening the fresh clone on its own configuration: %v", err)
+	}
+	if err := r.checkBakedCheckoutOrigin(ctx, gitprov.KindBitbucket, held); err != nil {
+		t.Fatalf("the binding refused a fresh clone of this run's own repository: %v", err)
+	}
+}

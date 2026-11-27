@@ -79,6 +79,23 @@ var bakedPlaces = []struct {
 	{"the directory the run would adopt", func(t *testing.T, h *harness) string { return bakedDir(t, h, repoSlug) }},
 }
 
+// noRemoteJob makes h the job a baked image runs in: the deployer writes
+// FUGARO_REMOTE only for a job whose image holds no checkout of this run's
+// repository (a clone or shared workflow's, a prebuilt entry's), so a job whose
+// image baked one names no remote at all and the bake was the only thing that
+// named the repository. What the run clones its own repository from then is the
+// URL it computes (cloneURL) — task.json's repository under the kind its own
+// slug derives — and the rewrite is what makes that URL reachable without a
+// network: git is told to open the fixture's remote in place of github's own
+// URL. It returns the URL the run computed, which is where the clone lands from.
+func noRemoteJob(t *testing.T, h *harness) string {
+	t.Helper()
+	url := "https://github.com/acme/app.git"
+	h.deps.Remote = ""
+	urlRewrite(t, map[string]string{"https://github.com/acme/app.git": h.remote})
+	return url
+}
+
 // TestForeignBakeRemovedAndCloned (CF1, D3440, F39): the checkout the image
 // holds is not this run's repository's — a shared catalog image built for
 // another repository, or a warm container an earlier execution left behind — so
@@ -100,10 +117,17 @@ var bakedPlaces = []struct {
 // directory as the remote the run would clone from. That refusal is a halt and
 // not this fallback, since it is about the remote the run was launched with
 // rather than about a tree the image baked for it.
+//
+// The job names no remote (noRemoteJob), because the job this is about is one
+// whose image baked a checkout and the deployer writes FUGARO_REMOTE only for a
+// job whose image holds none: the tree the run would have cloned from went with
+// the fallback, so the URL the clone is made from is the one the run computes
+// from its own task (cloneURL, the review finding on this change).
 func TestForeignBakeRemovedAndCloned(t *testing.T) {
 	h := jobHarness(t, nil)
 	var logs bytes.Buffer
 	h.deps.Log = runner.NewLogger(&logs)
+	computed := noRemoteJob(t, h)
 	foreign := bakedDir(t, h, repoSlug)
 	otherRepositoryCheckout(t, h, foreign)
 	mark := filepath.Join(foreign, "secret.txt")
@@ -135,8 +159,8 @@ func TestForeignBakeRemovedAndCloned(t *testing.T) {
 	if got := h.agent.calls[0].Dir; got != want {
 		t.Errorf("the run worked in %q, want the checkout it cloned into %q", got, want)
 	}
-	if got := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.url"); got != h.remote {
-		t.Errorf("the checkout's origin = %q, want the job's own remote %q", got, h.remote)
+	if got := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.url"); got != computed {
+		t.Errorf("the checkout's origin = %q, want the URL the run computed for its own repository %q", got, computed)
 	}
 	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "feature.txt")); err != nil {
 		t.Errorf("the run did not work in the checkout it cloned: %v", err)
@@ -152,10 +176,11 @@ func TestForeignBakeRemovedAndCloned(t *testing.T) {
 // TestBrokenBakeClonesFresh (CF1, D3440, F26): the tree the image holds is this
 // run's repository's and cannot be brought to the state the run works from, so
 // the run clones its own rather than ending bootstrap. What is broken is the
-// tree and not the remote the run clones from: the origin is this run's own,
-// live, and it is the source of the clone that replaces the tree — which is
-// where a baked job's repository URL lives at all, since a job whose image bakes
-// a checkout is launched with no FUGARO_REMOTE.
+// tree and not the remote the run clones from: the tree's origin is this run's
+// own, live, and the clone that replaces the tree is made from the URL the run
+// computes for its own repository, on a job that names no remote at all
+// (noRemoteJob) because a job whose image bakes a checkout is launched with
+// none.
 //
 // Mutation (run, restore): return the fetch error instead of falling back — this
 // test fails with the run in infra_error.
@@ -165,13 +190,14 @@ func TestBrokenBakeClonesFresh(t *testing.T) {
 			h := jobHarness(t, nil)
 			var logs bytes.Buffer
 			h.deps.Log = runner.NewLogger(&logs)
+			computed := noRemoteJob(t, h)
 			brokenCheckout(t, tc.at(t, h), h.remote)
 			rec, err := h.run(t, implement("feature"), review("ship", 0))
 			if err != nil || rec.Status != runstore.StatusSucceeded {
 				t.Fatalf("rec = %+v, err = %v: the run did not clone over a tree it could not fetch", rec, err)
 			}
-			if got := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.url"); got != h.remote {
-				t.Errorf("the checkout's origin = %q, want the job's own remote %q", got, h.remote)
+			if got := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.url"); got != computed {
+				t.Errorf("the checkout's origin = %q, want the URL the run computed for its own repository %q", got, computed)
 			}
 			if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "feature.txt")); err != nil {
 				t.Errorf("the run did not work in the checkout it cloned: %v", err)
