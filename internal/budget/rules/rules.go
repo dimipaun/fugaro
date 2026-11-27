@@ -701,7 +701,14 @@ func wordMacro(m string, depth int) (string, error) {
 		// stay the schema's. It is a launch's field alone: the schema refuses a
 		// brief beside any other verb, and a field on a kind that cannot carry
 		// one is refused on its own node (PARENTKIND, at the template).
-		return fmt.Sprintf("(newData.parent().child('action').child('verb').val() == 'launch' && newData.isString() && newData.val().length > 0 && newData.val().length <= %d)", MaxBriefLength), nil
+		//
+		// The message carries the agent the brief is for, which the schema and
+		// internal/mailbox refuse a brief without (D161, and the rule the
+		// schema's own comment gives it): a brief from nobody is a turn the
+		// consumer has nothing to route by, and the inbox is write-once, so a
+		// launch the database stores and the consumer refuses is one nobody can
+		// retire — the fence has to be the same one the reader holds.
+		return fmt.Sprintf("(newData.parent().child('agent').exists() && newData.parent().child('action').child('verb').val() == 'launch' && newData.isString() && newData.val().length > 0 && newData.val().length <= %d)", MaxBriefLength), nil
 	case "AGENTID":
 		// An agent id: the schema's identity, at most AGENT_MAX.
 		return boundedMatch(MaxAgentLength, patternIdentity), nil

@@ -495,7 +495,7 @@
               }
             },
             "brief": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && (newData.parent().child('action').child('verb').val() == 'launch' && newData.isString() && newData.val().length > 0 && newData.val().length <= 16384)"
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && (newData.parent().child('agent').exists() && newData.parent().child('action').child('verb').val() == 'launch' && newData.isString() && newData.val().length > 0 && newData.val().length <= 16384)"
             },
             "token": {
               ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 256) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))"
@@ -628,7 +628,7 @@
               }
             },
             "brief": {
-              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && (newData.parent().child('action').child('verb').val() == 'launch' && newData.isString() && newData.val().length > 0 && newData.val().length <= 16384)"
+              ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'action' && (newData.parent().child('agent').exists() && newData.parent().child('action').child('verb').val() == 'launch' && newData.isString() && newData.val().length > 0 && newData.val().length <= 16384)"
             },
             "token": {
               ".validate": "(newData.parent().child('kind').exists() ? newData.parent().child('kind').val() : 'message') == 'registration' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 256) && ((newData.parent().child('mac').isString() && newData.parent().child('mac').val().length == 64 && newData.parent().child('mac').val().matches(/^[0-9a-f]+$/)) || (newData.parent().child('sig').isString() && newData.parent().child('sig').val().length == 86 && newData.parent().child('sig').val().matches(/^[A-Za-z0-9_-]+$/)))"

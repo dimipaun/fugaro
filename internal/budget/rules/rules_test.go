@@ -1449,6 +1449,25 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 	}
 
+	// The brief's own coupling, which the schema states and no bound above can
+	// show: a brief with no agent is a turn the consumer has nothing to route by
+	// (P5.4.2, D161), and a message the database stores and the consumer refuses
+	// is one the write-once inbox can never retire. The fragment is a pin rather
+	// than read from the schema, which exports no rule text — the same way the
+	// action record's required set is pinned below — and it is the reason the two
+	// brief nodes carry a clause beyond the bound.
+	for _, p := range []string{`mailbox/$mb/inbox/$msg/brief`, `mailbox/$mb/outbox/$msg/brief`} {
+		attrs, ok := paths[p]
+		if !ok {
+			t.Errorf("the template does not generate /%s", p)
+			continue
+		}
+		v, _ := attrs[".validate"].(string)
+		if !strings.Contains(v, "newData.parent().child('agent').exists()") {
+			t.Errorf("/%s .validate = %q, want the schema's rule that a brief carries the agent it is for", p, v)
+		}
+	}
+
 	// The kind enumeration is the schema's KINDS, in the schema's own order, on
 	// both messages: a word the schema does not name but the rules accept is a
 	// kind the consumer has to guess at, and a word the schema names and the
