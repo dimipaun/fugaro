@@ -254,9 +254,9 @@ was dropped with D3424's amendment.
   - the CLI reference is regenerated.
 
   The lift tasks (AG2b–AG5d) change no help text, so that this one sweep owns it.
-- Files: `internal/**/*.go` (a sweep), `docs/issues.md`, `website/content/cli-reference.md`, and the
-  console's pins of doctor's `fix` value: `console/docs/json-contract.md`,
-  `console/test/unit/manage-code.test.ts`.
+- Files: `internal/**/*.go` (a sweep), `docs/issues.md`, `plugin/skills/working/SKILL.md`,
+  `website/content/cli-reference.md`, and the console's pins of doctor's `fix` value:
+  `console/docs/json-contract.md`, `console/test/unit/manage-code.test.ts`.
 - Tests: `TestNoMessageNamesRepoFlag`, `TestHelpMatchesAgentKeepList`, CO5's census, `go test ./ee/clidoc/`.
 - Command: `go test ./internal/cli/ -run 'TestNoMessageNamesRepoFlag|TestHelpMatchesAgentKeepList|TestMessagesAreLaconic' -count=1 && go test ./ee/clidoc/ -count=1 && (cd console && npm run test:unit -- --maxWorkers=2 manage-code)`
 - Red step: `TestNoMessageNamesRepoFlag` lists today's 64 files.
