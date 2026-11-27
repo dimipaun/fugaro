@@ -124,6 +124,34 @@ func TestHeartbeatWithoutTTY(t *testing.T) {
 	}
 }
 
+// TestHeartbeatHoldsOffForAQuestion: a prompt is a line a person has to read,
+// so it takes the heartbeat down with it. Off a terminal nothing is drawn, and
+// a "still …" line landing there is written over the question itself (G1).
+func TestHeartbeatHoldsOffForAQuestion(t *testing.T) {
+	was := heartbeatInterval
+	heartbeatInterval = time.Millisecond
+	t.Cleanup(func() { heartbeatInterval = was })
+
+	clock := &fakeClock{at: time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)}
+	var out syncBuf
+	r := New(Options{Out: &out, Getenv: noEnv, Now: clock.now})
+	step := r.Step("Applying infrastructure changes")
+	clock.advance(61 * time.Second)
+	waitForOutput(t, &out, "still Applying infrastructure changes (1m01s)")
+
+	r.Pause()
+	quiet := out.String()
+	time.Sleep(20 * time.Millisecond)
+	if got := out.String(); got != quiet {
+		t.Errorf("the heartbeat ran on while a question was on the screen:\n%q", strings.TrimPrefix(got, quiet))
+	}
+
+	r.Resume()
+	clock.advance(time.Minute)
+	waitForOutput(t, &out, "still Applying infrastructure changes (2m01s)")
+	step.Done("")
+}
+
 // TestElapsedTextIsAClock: the elapsed time is drawn the way a person reads a
 // clock, not as a stopwatch: whole seconds under a minute, then minutes.
 func TestElapsedTextIsAClock(t *testing.T) {
