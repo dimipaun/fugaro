@@ -20,7 +20,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -430,12 +429,9 @@ func newImageAddCmd() *cobra.Command {
 			"so no further command is needed. --no-apply saves the entry and leaves those\n" +
 			"steps to fugaro apply. --default marks the entry a job whose repositories\n" +
 			"name no needs runs; a catalog marks one entry, or none.\n\n" +
-			"In a coding agent's session --inline, --image, --default and --branch are\n" +
-			"refused: the first three define executable content the project's jobs run,\n" +
-			"and --branch reads an entry's Dockerfile from a branch no review here has\n" +
-			"vouched for, which a session may have pushed itself. --dockerfile alone is\n" +
-			"allowed there as it is anywhere else: it reads the project's own repository\n" +
-			"at its base branch, where the file was committed and reviewed.\n\n" +
+			"An entry's source decides where the project's jobs are built from, and a\n" +
+			"coding agent's session may write one like any other (D3425): --inline,\n" +
+			"--image, --default and --branch are all admitted, as --dockerfile is.\n\n" +
 			"--dry-run prints what the add would do and writes nothing: no catalog entry,\n" +
 			"no build, and no step recorded for fugaro apply. --json prints that document,\n" +
 			"in the shape schemas/image-add-plan.schema.json describes, and is accepted\n" +
@@ -448,7 +444,7 @@ func newImageAddCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringSliceVar(&tags, "tags", nil, "the tags the image provides (node, postgres, redis, firebase-emulator, docker); comma-separated or repeated")
 	f.StringVar(&dockerfile, "dockerfile", "", "a Dockerfile in one of the project's repositories, as owner/name:path")
-	f.StringVar(&branch, "branch", "", "the branch --dockerfile reads (default: the repository's base branch; a coding agent's session is refused it)")
+	f.StringVar(&branch, "branch", "", "the branch --dockerfile reads (default: the repository's base branch)")
 	f.StringVar(&inline, "inline", "", "a file whose contents are the entry's Dockerfile")
 	f.StringVar(&image, "image", "", "a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is")
 	f.StringVar(&description, "description", "", "what the entry is for, printed by fugaro image ls")
@@ -458,44 +454,6 @@ func newImageAddCmd() *cobra.Command {
 	noApply = addNoApplyFlag(cmd)
 	addCloudFlags(cmd, &o)
 	return cmd
-}
-
-// imageAddAgentClause is the sentence D1573's refusal is built from, written
-// once so the wording is pinned by a test rather than assembled at the call
-// site: an agent's session is refused the flags whose content a person has not
-// seen.
-const imageAddAgentClause = "nothing was written: an image catalog entry defined by --inline, --image or --default, or a --dockerfile read from a --branch, is executable content the project's jobs run, so it is a person's own entry and not a coding agent's"
-
-// imageAddAgentRefusal is D1573's check, and it is this command's own: an entry
-// defined by --inline (a Dockerfile written out here), --image (a prebuilt image
-// reference) or --default (the entry a job that names no needs runs) is
-// executable content of the kind settingsProfilesRule refuses for profile keys,
-// and a coding agent's session writes none of it. It is not the managed gate's
-// (D1545: that gate judges a write in a managed project, per stage, and this
-// judge has no project in hand) and it does not lean on it: the same flags
-// refuse in an unmanaged project, with --no-apply and without it, and before the
-// config is read or the file --inline names is opened — an agent queues no entry
-// of this kind for the person's next `fugaro apply` either (D1576's rule, one
-// resource over).
-//
-// --dockerfile is deliberately not in the list on its own: the Dockerfile it
-// names is a file in one of the project's own repositories, committed and
-// reviewed in that repository's history, which is not content a session writes
-// here. --branch is, because it is what decides which branch that file is read
-// from: with it an entry points at a branch no review has vouched for, which a
-// session may have pushed itself, and the build the person's next `fugaro apply`
-// runs would bake content the review never saw — the outcome the rest of this
-// refusal exists to prevent. A person's own session keeps the flag: naming a
-// release branch is exactly what it is for.
-func imageAddAgentRefusal(cmd *cobra.Command, inline, image, branch string, def bool) error {
-	if inline == "" && image == "" && branch == "" && !def {
-		return nil
-	}
-	m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
-	if m == "" {
-		return nil
-	}
-	return userErr("%s: %s", imageAddAgentClause, initflow.AgentRefusal(m))
 }
 
 // runImageAdd writes the entry into this machine's project config, backing
@@ -518,11 +476,6 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	// shared one, so the GODEBUG that prints requests with their credentials
 	// is refused before anything is read (the rule every such command keeps).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
-		return err
-	}
-	// D1573's refusal comes before the entry is built from the flags and before
-	// anything they name is read: what it refuses is the content itself.
-	if err := imageAddAgentRefusal(cmd, inline, image, branch, def); err != nil {
 		return err
 	}
 	e, err := catalogEntryFromFlags(name, tags, dockerfile, branch, inline, image, description, def)

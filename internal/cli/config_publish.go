@@ -42,27 +42,21 @@ func newConfigPublishCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			// A coding agent's session may proceed only where the project is
-			// managed and this document passes the gate (D1012). The marker is
-			// read first and a person's own run never consults the gate at all:
-			// no mark is read, no client is built and no bucket is touched for a
-			// publish at a terminal, which is what keeps that path today's.
+			// A coding agent's session may publish (D3425): what stands in its
+			// way is the fence at the door (D2217), the managed gate's judgement
+			// of the document where the project is managed (D1012), and
+			// --executable-changes, which stays the owner's word (D3455). The
+			// marker is read first and a person's own run never consults the gate
+			// at all: no mark is read, no client is built and no bucket is
+			// touched for a publish at a terminal, which is what keeps that path
+			// today's.
 			marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
-			// refuseAgent is the refusal this command has always given a coding
-			// agent's session, written once because the two answers that keep it
-			// — the marks are not there, and the project stopped being managed
-			// between the gate's two reads — are read at two different points
-			// below, and a session must not be able to tell which of them it met.
-			refuseAgent := func() error {
-				return userErr("nothing was published: fugaro config publish writes to the cloud and changes what every repository of the project runs: %s", initflow.AgentRefusal(marker))
-			}
+			// The project header selectProject prints is held until the fence has
+			// answered, because a session the fence refuses reads its refusal and
+			// nothing else — the header would be a line no such run ever printed.
 			var held *bytes.Buffer
 			open := o
 			if marker != "" {
-				// The project header selectProject prints is held until the gate
-				// has answered, because a session whose project is not managed
-				// reads the refusal this command has always given it and nothing
-				// else — the header would be a line no such run ever printed.
 				held = &bytes.Buffer{}
 				open.stderr = func() io.Writer { return held }
 			}
@@ -86,6 +80,11 @@ func newConfigPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The fence let the run through: the header — and the warning its own
+			// failed read printed (D2218) — is released to stderr, once.
+			if held != nil {
+				_, _ = io.Copy(cmd.ErrOrStderr(), held)
+			}
 			defer env.Close()
 			// The layer this publishes is what every repository of the project
 			// resolves and what every run of it reads, so it is a project-level
@@ -105,12 +104,19 @@ func newConfigPublishCmd() *cobra.Command {
 			var gate *managedGate
 			if marker != "" {
 				gate = configPublishGate(ctx, env, marker)
-				if gate == nil {
-					return refuseAgent()
+			}
+			// --executable-changes is the owner's word (D3455), and this is
+			// where a coding agent's session is refused it. Where the gate judged
+			// the document its own rules refuse every executable change whatever
+			// the flag says (configPublishRules), so the flag is never what
+			// admits one there and this stays silent; where no gate proved
+			// anything — the marks could not be read, and the fence went on with
+			// its warning (D2218) — the flag is the only thing left that could,
+			// so it is refused.
+			if gate == nil {
+				if err := configPublishAgentExecutable(marker, executable); err != nil {
+					return err
 				}
-				// The marks have answered managed: the header the person's own run
-				// prints is released to stderr, once.
-				_, _ = io.Copy(cmd.ErrOrStderr(), held)
 			}
 			// The defaulted path is derived from the selected project, which
 			// openCloud is what resolves: the file is named after the project
@@ -162,10 +168,15 @@ func newConfigPublishCmd() *cobra.Command {
 				if aerr != nil {
 					return aerr
 				}
-				if !m.Removes() {
-					return refuseAgent()
+				// A step whose admission the gate kept reads the coding agent's
+				// sentence for a session that proceeds; one the gate did not
+				// admit — the project stopped being managed between the two
+				// reads, which leaves the step the confirmation a project that
+				// is not managed has — proceeds without it, exactly as a publish
+				// the gate never judged does.
+				if m.Removes() {
+					fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), initflow.AgentProceeded(marker))
 				configPublishRace(ctx, env.bucket)
 			}
 			if note := projectRecipesNote(env.lc); note != "" {
@@ -227,7 +238,7 @@ func newConfigPublishCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&executable, "executable-changes", false, "allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a managed project refuses such a change in a coding agent's session whatever this flag says")
+	cmd.Flags().BoolVar(&executable, "executable-changes", false, "allow a change to a profile's commands, image.apt or image.setup (they run as shell in every repository that takes the profile); a coding agent's session is refused it")
 	addCloudFlags(cmd, &o)
 	return cmd
 }

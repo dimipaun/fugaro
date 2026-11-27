@@ -75,11 +75,12 @@ type refreshManaged struct {
 // openRefreshManaged is the door: the gate's read, made once per command, in
 // the one session that would otherwise be refused before anything ran.
 //
-// Why nil is the answer to every way of not being managed. The refusal it
-// stands in for is refuseRefreshHere's own — a coding agent's session applies
-// nothing — and in a session that is not a managed project's that refusal is
-// exactly what the run gets, with the sentence it has always had. A mark that
-// cannot be read is not a permission (the direction every read in
+// Why nil is the answer to every way of not being managed. Where no gate
+// answers, the run keeps the confirmations this command has always asked for —
+// the project's name at each step that asks — and a run that cannot be asked
+// (no terminal, and no --yes to answer for it) is refused by
+// refreshNeedsATerminal, which is the command's own rule and not the gate's. A
+// mark that cannot be read is not a permission (the direction every read in
 // internal/infra/managed takes), a config that cannot be selected is a project
 // this command has nothing to read about, and a client that cannot be built is
 // an account that cannot act: each of them is "the gate did not admit this",
