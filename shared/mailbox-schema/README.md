@@ -47,6 +47,7 @@ verifyMac({ …message, text: 'merge it' }, key, 'inbox');   // => false: the by
 | `options` | string[] | on a `prompt`, optional | 1–8 entries, each 1–200 code units, distinct, single-line | §3.2: the app reads them aloud and the answer names one by position |
 | `reply_to` | string | on an `answer`, optional on an `action` | a message id | D168 (as amended) for the answer; §3.5 for the action that settles a prompt |
 | `action` | object | on an `action` | the record below | D169's typed destructive command |
+| `brief` | string | **on a `launch`** | 1–16384 code units, line breaks allowed | P5.4.2: the shaped task a "go" carries — the text a run's stored task record is made of. A field of the **message**, not of the action record, so `action.target` stays "a repo alone"; a message carrying one carries `agent` too |
 | `token` | string | on a `registration` | 1–256 code units, single-line | P5.2.1, §3.5(b): the push token the phone's service minted, **opaque** — the bound and the character rule are the whole of what the schema asks of it |
 | `platform` | string | on a `registration` | `ios` · `android` | P5.2.1, §3.4: the node shape names the pair |
 | `prefs` | object | on a `registration`, optional | the five switches, each a boolean, and an optional window | P5.2.1, §3.8: the user's controls, **the whole state** rather than a delta |
@@ -65,7 +66,7 @@ proves nothing.
 | `message` (or no `kind`) | — | — | something said to, or by, an agent (§3.1) |
 | `prompt` | `options` | — | a question the agent wants answered (§3.2), with or without choices |
 | `answer` | — | `reply_to` | the answer to a prompt; the chosen words are `text`, because the answer is *spoken*, not selected |
-| `action` | `reply_to` | `action` | D169's destructive command |
+| `action` | `reply_to`, `brief` | `action` (and `brief` on a `launch`) | D169's destructive command; P5.4.2's "go", which carries the brief it starts a run from |
 | `registration` | `prefs` | `token`, `platform` | P5.2.1, §3.5(b): the phone's push registration, the **only** path that writes §3.4's node |
 | `stop` | — | — | P5.1g, Q10(c): the phone's **stop request** — the phone asking a human to stop what it is looking at. Nothing raises a prompt for it and nothing ever executes it — the human at the console or the laptop acts on the request — and it is not an `action` record, so it carries no verb and no confirmation |
 
@@ -104,6 +105,13 @@ than tidiness:
   shape, `bad-character` for the alphabet — so a caller can say which of its inputs to
   fix. A merge's head SHA is re-read by the consumer before it merges: the record names
   a state of the world, not just an intention.
+
+**The brief travels beside the action and never inside it** (P5.4.2, question 3). It is a
+field of the message, like `text`, so `action.target` stays the repository alone and a
+launch means what it always meant; a launch that carries none is refused, because a start
+with nothing to work from is the one thing the front agent exists to prevent; and a
+message carrying one carries `agent` (D161), because a brief is the agent's own text and
+a brief with no agent is a brief from nobody.
 
 A launch **is** a verb (J5a, O10): a start names the `mode` it would run in beside its
 target, and its target is the repository alone — a start has no run id yet and no pull
@@ -245,13 +253,14 @@ is narrow, which is exactly why a port that used `.sort()` would otherwise ship 
 
 That is the hard part of this task, because the two ends are JavaScript (the phone) and
 Go (the consumer), and the Go end cannot call into JavaScript. It reimplements the
-serialisation and **tests against [`vectors.json`](vectors.json)**: 29 cases — the five
+serialisation and **tests against [`vectors.json`](vectors.json)**: 31 cases — the five
 kinds, the heartbeat, the argv-shaped targets, HTML characters Go escapes by default,
 an emoji, an unknown field inside the bytes, the key order above, O10's typed launch (a
-costly start with its read-back and a plain one without), and the swaps a
+costly start with its read-back and a plain one without), P5.4.2's turn (a prompt for a
+named agent) and the go it produces, and the swaps a
 token-holder without the key would try (text, options, option order, `reply_to`, answer,
-agents, agent name, target, head SHA, mode, confirmation, verb) and the three reflections across directions — each pinning the message,
-the exact bytes, the tag and whether it verifies — three `direction_pairs`, and **48 schema refusals**
+agents, agent name, target, head SHA, mode, confirmation, verb, brief) and the three reflections across directions — each pinning the message,
+the exact bytes, the tag and whether it verifies — three `direction_pairs`, and **56 schema refusals**
 (`refusals`: an unsigned message of every kind and an unsigned heartbeat, a short, long,
 uppercase or null tag, an unknown verb, a short or uppercase head SHA, a merge without
 one, a launch without a mode, a target or a mode on a verb that takes neither, a mode
@@ -261,7 +270,9 @@ token, its platform or one of its switches, a token on a plain message and one a
 unit past its bound, an unknown platform, a zone that is not a name or carries a path
 step, a window that is partial, has an unknown field inside it, ends on the same minute
 or names a minute outside the day or not whole, prefs with an unknown field, a switch
-that is not a boolean, and a stored `direction` on a message and on a heartbeat), each with the value, the
+that is not a boolean, a launch with no brief, an empty or oversize brief, a brief with
+no agent, a brief on a verb or a kind that does not carry one and one written inside the
+action record or inside the target, and a stored `direction` on a message and on a heartbeat), each with the value, the
 record it is judged as and the code and field this validator answers. The Go consumer
 need not copy the codes' wording, but it must refuse every one of those values. A
 disagreement about key order, whitespace or escaping fails on the side that is wrong,
@@ -380,7 +391,7 @@ from a malformed write instead of seeing "no message" for both:
 | `unknown-kind` | a `kind` outside `message` · `prompt` · `answer` · `action` · `registration` · `stop` |
 | `unknown-verb` | an action's verb outside `cancel` · `merge` · `confirm` · `launch` |
 | `unknown-platform` | a registration's `platform` outside `ios` · `android` |
-| `field-not-allowed` | a field on a kind of message that does not carry it (a `reply_to` on a prompt, an `action` on an answer, a head SHA on a cancel) |
+| `field-not-allowed` | a field on a kind of message that does not carry it (a `reply_to` on a prompt, an `action` on an answer, a head SHA on a cancel, a `brief` on anything but a `launch`) |
 | `bad-target` | a target that is not one of the two shapes, or that its verb cannot resolve to |
 | `bad-sha` | a head SHA that is not 40 or 64 **lowercase** hex characters |
 | `bad-zone` | a quiet-hours zone that is not an IANA-shaped name (`Europe/Berlin` and `America/Argentina/Buenos_Aires` are, `Europe//Berlin` and `/Berlin` are not; whether the name is one the tz database has is the consumer's zone loader's question) |

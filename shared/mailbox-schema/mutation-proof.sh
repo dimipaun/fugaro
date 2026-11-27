@@ -379,6 +379,24 @@ run "action: the head SHA is one of the two object-name lengths" \
 run "action: the head SHA is hex" \
   "  if (!HEX_PATTERN.test(value)) return { bad: refuse(REFUSALS.BAD_SHA, 'action.head_sha') };" ""
 
+# P5.4.2's guards: the brief, and the four rules that keep it the field it is.
+# Each one is a whole rule rather than a bound: the brief is the field a person's
+# words and the authority to start a run meet in, so what these prove is that a
+# launch without one, a brief with no agent, a brief on another verb, and a
+# brief inside the target are each caught by a test and not by a comment.
+run "brief: a launch without one is refused" \
+  "  if (verb === 'launch' && !Object.hasOwn(value, 'brief')) {" "  if (false) {"
+run "brief: a brief with no agent is refused (D161)" \
+  "  if (Object.hasOwn(value, 'brief') && !Object.hasOwn(value, 'agent')) {" "  if (false) {"
+run "brief: only a launch carries one" \
+  "    if (verb !== 'launch') return refuse(REFUSALS.FIELD_NOT_ALLOWED, 'brief');" ""
+run "brief: the (kind, field) table names it, so no other kind carries it" \
+  "  for (const field of ['options', 'reply_to', 'action', 'brief', 'token', 'platform', 'prefs']) {" \
+  "  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {"
+run "action: the launch target does not grow a brief" \
+  "const REPO_TARGET_FIELDS = Object.freeze(['repo', 'pr']);" \
+  "const REPO_TARGET_FIELDS = Object.freeze(['repo', 'pr', 'brief']);"
+
 # The tag itself: required, and 32 bytes of lowercase hex.
 run "mac: required on every message" \
   "export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at', 'mac']);" \
@@ -605,6 +623,12 @@ run "registration: the zone's length bound, widened by one" \
 run "registration: the zone's length bound, narrowed by one" \
   "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX, false);" \
   "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX - 1, false);"
+run "brief: the length bound, widened by one (P5.4.2)" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX, true);" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX + 1, true);"
+run "brief: the length bound, narrowed by one (P5.4.2)" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX, true);" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX - 1, true);"
 
 # ---------------------------------------------------------------------------
 # 7. mac.js, and the boundary that keeps the entry point loadable by the phone.

@@ -22,7 +22,7 @@
 // artifact can be re-derived rather than hand-edited.
 
 import { writeFileSync } from 'node:fs';
-import { MODE_MAX, TOKEN_MAX, canonicalBytes, validateHeartbeat, validateMessage } from './index.js';
+import { BRIEF_MAX, MODE_MAX, TOKEN_MAX, canonicalBytes, validateHeartbeat, validateMessage } from './index.js';
 import { macOf } from './mac.js';
 
 const KEY = ['not', 'a', 'secret', 'test', 'key', '0001'].join('-');
@@ -123,20 +123,41 @@ const mergeOne = verified(
 // set around it is `mode` beside `target`, not inside it. The mode is inside
 // the tagged bytes like every other field, which is what makes a mode swapped
 // for a cheaper one under a read-back's tag a message that does not verify.
+//
+// P5.4.2 made the brief a launch's own field, so the start below carries one
+// and it is inside the tagged bytes too: a brief swapped under the tag its
+// read-back produced is a run started from a task nobody confirmed. The brief
+// is a field of the MESSAGE and not of the action record, which is what keeps
+// `action.target` the repository alone.
+const A_BRIEF = '# Task: fix the retry path\n\nRetry three times, then report.\n';
+
 const launchOne = verified(
   'action: launch in a costly mode',
   'O10\'s typed start: the mode is the field the record exists for, and a costly mode\'s read-back carries the confirmation that authorises it (D2786)',
-  message({ kind: 'action', agent: 'orchestrator', text: 'start it in pro', action: { id: 'a-0003', verb: 'launch', mode: 'pro', target: { repo: 'dimipaun/fugaro' }, confirmation: { id: 'c-0003', at: AT } } }),
+  message({ kind: 'action', agent: 'orchestrator', text: 'start it in pro', brief: A_BRIEF, action: { id: 'a-0003', verb: 'launch', mode: 'pro', target: { repo: 'dimipaun/fugaro' }, confirmation: { id: 'c-0003', at: AT } } }),
 );
 
 // The other half of the mode rule, and the reason `confirmation` is conditional
 // on the verb rather than required on every action: a start in a mode the
 // session does not call costly is D162's pass-through, so it carries no
 // confirmation at all — and the bytes omit the field rather than writing null.
+// This is the "go" P5.4.2 shapes: the typed start with the brief the
+// conversation produced beside it.
 verified(
   'action: a plain launch',
   'a start in a mode the session does not call costly needs no read-back, so the record carries no confirmation (D162, D2786)',
-  message({ kind: 'action', agent: 'orchestrator', text: 'start it', action: { id: 'a-0004', verb: 'launch', mode: 'default', target: { repo: 'dimipaun/fugaro' } } }),
+  message({ kind: 'action', agent: 'orchestrator', text: 'start it', brief: A_BRIEF, action: { id: 'a-0004', verb: 'launch', mode: 'default', target: { repo: 'dimipaun/fugaro' } } }),
+);
+
+// P5.4.2's turn: a prompt carrying D161's `agent`, which is how a turn says
+// which agent it is for. It is here because the front agent's conversation
+// travels over the kinds that already exist, so the field set the turn needs is
+// pinned rather than assumed — and `agent` is inside the tagged bytes like
+// every other field, so a turn re-addressed to another agent does not verify.
+verified(
+  'a turn: a prompt for a named agent',
+  'P5.4.2, D161: the front agent\'s turn reuses the prompt kind and says which agent it is for, and the agent is covered by the tag like every other field',
+  message({ kind: 'prompt', agent: 'front-agent', options: ['make it a brief', 'keep talking'], text: 'shall I shape this into a task?' }),
 );
 
 // P5.1g's kind, and the one record here whose whole point is what it does NOT
@@ -248,6 +269,9 @@ cases.push(
 cases.push(
   tampered('mode swapped', 'a costly start relabelled as a cheap one under the tag its read-back produced: the mode is what the session read back, so a swap has to break the tag', launchOne, { ...launchOne, action: { ...launchOne.action, mode: 'default' } }),
 );
+cases.push(
+  tampered('brief swapped', 'another task under the tag the read-back produced: the brief is what the run is started from, so a swap would start work nobody confirmed (P5.4.2)', launchOne, { ...launchOne, brief: '# Task: something else entirely\n' }),
+);
 
 const cancelOne = signed(message({ kind: 'action', agent: 'orchestrator', text: 'cancel the run', action: { id: 'a-0001', verb: 'cancel', target: { run: '20261018-125859-d3c8' }, confirmation: { id: 'c-0001', at: AT } } }));
 cases.push(
@@ -324,6 +348,19 @@ refused('a launch whose target carries a pull request', 'a start has no pull req
 refused('a mode one code unit past its bound', 'a mode is a short word (64 code units), not a body: 65 is the first length that is not one', 'message', message({ kind: 'action', action: { ...actionLaunch, mode: 'x'.repeat(MODE_MAX + 1) } }));
 refused('a mode carrying a space', 'a mode is an identity string, and a space in one is a phrase where the session expects a word', 'message', message({ kind: 'action', action: { ...actionLaunch, mode: 'pro mode' } }));
 refused('a head SHA on a launch', 'the head SHA belongs to a merge: a start has no branch state that was read back', 'message', message({ kind: 'action', action: { ...actionLaunch, head_sha: 'a'.repeat(40) } }));
+
+// P5.4.2's brief, refused at the schema: the shape the consumer reads before
+// anything is started. A launch carries one and no other verb does, a brief is
+// bounded and non-empty, and a message carrying one carries the agent it is for
+// (D161) — the four rules the launch path would otherwise have to invent.
+refused('a launch with no brief', 'a start with no brief would start a run with nothing to work from, and the brief is the one thing the front agent exists to produce (P5.4.2, question 3)', 'message', message({ kind: 'action', agent: 'front-agent', action: actionLaunch }));
+refused('an empty brief', 'a brief that says nothing is a run with nothing to work from: the empty string is not a brief (P5.4.2)', 'message', message({ kind: 'action', agent: 'front-agent', brief: '', action: actionLaunch }));
+refused('a brief one code unit past its bound', 'a brief is bounded (P5.4.2): 16385 code units is a document, not the task a conversation shaped', 'message', message({ kind: 'action', agent: 'front-agent', brief: 'x'.repeat(BRIEF_MAX + 1), action: actionLaunch }));
+refused('a brief with no agent', 'a brief is the front agent\'s own text, so the message that carries one carries the agent it is for (D161): a brief with no agent is a brief from nobody (P5.4.2)', 'message', message({ kind: 'action', brief: A_BRIEF, action: actionLaunch }));
+refused('a brief on a cancel', 'a brief is a launch\'s field and no other verb\'s: a cancel acts on work that already exists, so a brief beside it is a field the consumer would have to guess the meaning of (P5.4.2)', 'message', message({ kind: 'action', agent: 'front-agent', brief: A_BRIEF, action: actionCancel }));
+refused('a brief on a plain message', 'the brief is a message-level field the (kind, field) table admits on one kind only, so a kind that cannot carry one is refused at it rather than read as free text (P5.4.2)', 'message', message({ brief: A_BRIEF }));
+refused('a brief inside the launch target', 'the brief travels beside the action and never inside `action.target`, which is the repository alone: a launch whose target grew a field is a launch whose meaning changed (P5.4.2, O10)', 'message', message({ kind: 'action', agent: 'front-agent', action: { ...actionLaunch, target: { repo: 'dimipaun/fugaro', brief: A_BRIEF } } }));
+refused('a brief inside the action record', 'the action record is closed and the brief is not one of its fields: a brief written there is an unknown field rather than a second spelling of the message\'s (P5.4.2)', 'message', message({ kind: 'action', agent: 'front-agent', action: { ...actionLaunch, brief: A_BRIEF } }));
 refused('too many options', 'a prompt carries at most eight options', 'message', message({ kind: 'prompt', options: Array.from({ length: 9 }, (_, i) => `option ${i}`) }));
 refused('too long text', 'a body is at most 4096 code units', 'message', message({ text: 'x'.repeat(4097) }));
 refused('unknown field', 'a field the schema does not name is refused, so the field set is the version', 'message', message({ expires_at: AT }));

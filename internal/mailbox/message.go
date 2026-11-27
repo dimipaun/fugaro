@@ -71,6 +71,11 @@ const (
 	SenderMax = 200
 	// TextMax bounds a message's body, in code units.
 	TextMax = 4096
+	// BriefMax bounds a brief: the shaped task a launch carries (P5.4.2), in
+	// code units. Four times TextMax because the brief becomes a run's stored
+	// task and is a document rather than a spoken turn, and the same 16 KiB
+	// internal/task already allows a spec a run works from.
+	BriefMax = 16384
 	// AgentMax bounds an agent id. A boot id is drawn from the same alphabet
 	// (both are identityField values) but is bounded by BootMax, not by this.
 	AgentMax = 64
@@ -148,7 +153,7 @@ var (
 	// Fields is the exact field set of a message; any other field is refused.
 	Fields = []string{
 		"id", "sender", "text", "at", "mac", "sig", "acked",
-		"agent", "kind", "options", "reply_to", "action",
+		"agent", "kind", "options", "reply_to", "action", "brief",
 		"token", "platform", "prefs",
 	}
 	// RequiredFields is the fields a message must have, in the order they are
@@ -675,6 +680,10 @@ type Message struct {
 	// is not covered by it — and it is only meaningful with HasAcked.
 	Acked    bool
 	HasAcked bool
+	// Brief is the shaped task a launch carries (P5.4.2): the text a run is
+	// started from, bounded and never the message's free `text`.
+	Brief    string
+	HasBrief bool
 	// Options is a prompt's options, in the order they are read aloud.
 	Options []string
 	// ReplyTo is the prompt an answer settles.
@@ -876,10 +885,17 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 	// The (kind, field) table, in the order that names the more useful fault
 	// first: a field the kind cannot carry at all, then one it must carry and
 	// does not, then the fields themselves.
-	for _, field := range []string{"options", "reply_to", "action", "token", "platform", "prefs"} {
+	for _, field := range []string{"options", "reply_to", "action", "brief", "token", "platform", "prefs"} {
 		if r.has(field) && !kindOptional[message.Kind][field] {
 			return nil, refuse(CodeFieldNotAllowed, field)
 		}
+	}
+	// D161, read for the turn a brief travels in (P5.4.2): the brief is the
+	// front agent's own text, so the message that carries one carries the agent
+	// it is for. A brief with no agent is a brief from nobody, and the consumer
+	// would have nothing to route the turn by.
+	if r.has("brief") && !r.has("agent") {
+		return nil, refuse(CodeMissingField, "agent")
 	}
 	for _, field := range kindRequired[message.Kind] {
 		if !r.has(field) {
@@ -906,6 +922,29 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 			return nil, action.bad
 		}
 		message.Action = action.value
+	}
+	// The brief, and the verb that carries it (P5.4.2). A launch is the one
+	// verb that starts work, so it is the one verb with something to start
+	// from: a launch with no brief would start a run with nothing to work
+	// from, and a brief beside a cancel, a merge or a confirm is a field the
+	// consumer would have to guess the meaning of. The verb is read from the
+	// record the action check above already validated.
+	verb := ""
+	if message.Action != nil {
+		verb = message.Action.Verb
+	}
+	if verb == "launch" && !r.has("brief") {
+		return nil, refuse(CodeMissingField, "brief")
+	}
+	if r.has("brief") {
+		if verb != "launch" {
+			return nil, refuse(CodeFieldNotAllowed, "brief")
+		}
+		brief := stringField(r["brief"], "brief", BriefMax, true)
+		if brief.bad != nil {
+			return nil, brief.bad
+		}
+		message.Brief, message.HasBrief = brief.value, true
 	}
 	if r.has("acked") {
 		acked, isBool := r["acked"].(bool)
@@ -1105,7 +1144,7 @@ var (
 		"message":      {},
 		"prompt":       {"options": true},
 		"answer":       {"reply_to": true},
-		"action":       {"action": true, "reply_to": true},
+		"action":       {"action": true, "reply_to": true, "brief": true},
 		"registration": {"token": true, "platform": true, "prefs": true},
 		// The phone's stop request (P5.1g, Q10's answer (c)) carries nothing but
 		// its sentence: it is never executed, so it has no action record, no

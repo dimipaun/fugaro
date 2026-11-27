@@ -47,6 +47,7 @@ import {
   AGENT_MAX,
   AGENT_NAME_MAX,
   AT_MAX,
+  BRIEF_MAX,
   FIELDS,
   ID_MAX,
   KINDS,
@@ -143,9 +144,33 @@ function anAction(over = {}) {
   return record;
 }
 
-// withAction wraps an action record in a well-formed action message.
+// withAction wraps an action record in a well-formed action message. A launch
+// carries a brief wherever it appears (P5.4.2), so one built here gets a brief
+// unless the case supplies its own — the cases that are about the brief pass
+// one, and the cases about a launch WITHOUT one delete it from the returned
+// message.
 function withAction(over = {}) {
-  return good({ kind: 'action', agent: 'orchestrator', action: anAction(over), text: 'cancel the run' });
+  const action = anAction(over);
+  const value = good({ kind: 'action', agent: 'orchestrator', action, text: 'cancel the run' });
+  if (action.verb === 'launch') value.brief = over.brief ?? A_BRIEF;
+  return value;
+}
+
+// A_BRIEF is the shaped task these cases carry: a task file, so its first line
+// is the `# Task: <title>` line the hard rule reads a title from.
+const A_BRIEF = '# Task: fix the retry path\n\nRetry three times, then report.\n';
+
+// aGo returns a fresh well-formed "go" (P5.4.2): the front agent's typed start,
+// with the brief BESIDE the action and never inside it. `over` is the message's
+// own overrides, so a case replaces the brief, the agent or the action whole —
+// anAction's own overrides are reached by passing the action.
+function aGo(over = {}) {
+  return {
+    ...withAction({ verb: 'launch' }),
+    agent: 'front-agent',
+    text: 'go',
+    ...over,
+  };
 }
 
 // aHeartbeat returns a fresh well-formed heartbeat.
@@ -698,6 +723,102 @@ test('a launch names the mode it starts in, and only a launch names a mode', () 
   // The head SHA is a merge's alone: a start has no branch state that was read
   // back, so the field is not one a launch may carry.
   refusal(withAction({ verb: 'launch', head_sha: 'a'.repeat(40) }), REFUSALS.FIELD_NOT_ALLOWED, 'action.head_sha');
+});
+
+test('a go carries its brief beside the action, and the target stays a repo alone', () => {
+  // P5.4.2, the design's §3.3 and §3.4 and its question 3: the brief is the
+  // shaped task the conversation produced, the "go" that starts the run is the
+  // typed `launch`, and the brief travels in a field of its OWN — beside the
+  // action and never inside `action.target`, which is "a repo alone" and whose
+  // widening would change what a launch means (D169's enforcement reads this
+  // field set). So the accepted record is asserted whole, target included: a
+  // change that admitted the brief onto the target fails here rather than
+  // shipping a launch nobody can read.
+  const go = aGo();
+  const verdict = validateMessage(go);
+  assert.equal(verdict.ok, true);
+  assert.equal(verdict.message.brief, '# Task: fix the retry path\n\nRetry three times, then report.\n');
+  assert.equal(verdict.message.agent, 'front-agent');
+  assert.deepEqual(verdict.message.action, {
+    id: 'a-0001',
+    verb: 'launch',
+    mode: 'pro',
+    target: { repo: 'dimipaun/fugaro' },
+  });
+  assert.deepEqual(verdict.message.action.target, { repo: 'dimipaun/fugaro' }, 'the target is the repository alone');
+  assert.equal(Object.hasOwn(verdict.message.action, 'brief'), false, 'the brief is not inside the action');
+
+  // Inside the target or inside the action the brief is an unknown field: both
+  // records are closed, so a brief written in either place is refused where it
+  // was written rather than read as the record's own.
+  refusal(
+    aGo({ action: anAction({ verb: 'launch', target: { repo: 'dimipaun/fugaro', brief: 'x' } }) }),
+    REFUSALS.UNKNOWN_FIELD,
+    'action.target.brief',
+  );
+  refusal(aGo({ action: anAction({ verb: 'launch', brief: 'x' }) }), REFUSALS.UNKNOWN_FIELD, 'action.brief');
+
+  // A brief is a task file, so the line breaks and tabs a task has are allowed
+  // — the same rule `text` carries — and the control characters it may not
+  // contain are refused like anywhere else.
+  assert.equal(validateMessage(aGo({ brief: '# Task: a\n\n\tindented\n' })).ok, true, 'a task file has lines');
+  refusal(aGo({ brief: '# Task: a\u0000b' }), REFUSALS.BAD_CHARACTER, 'brief');
+  refusal(aGo({ brief: 'a b' }), REFUSALS.BAD_CHARACTER, 'brief');
+  refusal(aGo({ brief: '\ud800' }), REFUSALS.BAD_CHARACTER, 'brief');
+});
+
+test('a go with no brief is refused, and only a go carries one', () => {
+  // The brief is what the run is started from: a launch that carries none
+  // starts a run with nothing to work from, which is the one thing the front
+  // agent exists to prevent (§3.3, question 3's "yes").
+  const noBrief = aGo();
+  delete noBrief.brief;
+  refusal(noBrief, REFUSALS.MISSING_FIELD, 'brief');
+
+  // The other three verbs act on work that already exists, so a brief beside
+  // one is a field the consumer would have to guess the meaning of.
+  for (const verb of ['cancel', 'merge', 'confirm']) {
+    refusal(
+      aGo({ action: anAction({ verb }), brief: '# Task: something\n' }),
+      REFUSALS.FIELD_NOT_ALLOWED,
+      'brief',
+    );
+  }
+  // And the kinds that are not an action cannot carry one at all: the brief is
+  // a field of the (kind, field) table, and the table is the version.
+  for (const kind of ['message', 'prompt', 'answer', 'stop']) {
+    refusal(good({ kind, brief: '# Task: something\n' }), REFUSALS.FIELD_NOT_ALLOWED, 'brief');
+  }
+
+  // The brief is bounded, and the bound is exact on both sides.
+  assert.equal(validateMessage(aGo({ brief: 'x'.repeat(BRIEF_MAX) })).ok, true, 'exactly at the bound');
+  refusal(aGo({ brief: 'x'.repeat(BRIEF_MAX + 1) }), REFUSALS.TOO_LONG, 'brief');
+  refusal(aGo({ brief: '' }), REFUSALS.EMPTY_STRING, 'brief');
+  refusal(aGo({ brief: 1 }), REFUSALS.WRONG_TYPE, 'brief');
+  refusal(aGo({ brief: null }), REFUSALS.WRONG_TYPE, 'brief');
+});
+
+test('the brief carries the agent it belongs to, and one without an agent is refused', () => {
+  // D161, read for the turn the brief travels in: a brief is the front agent's
+  // own text, so the message that carries one carries the agent it is for. A
+  // brief with no agent is a brief from nobody — the consumer would have
+  // nothing to route the turn by — and it is refused before its own value is
+  // judged, which is why the field at fault is `agent` and not `brief`.
+  const noAgent = aGo();
+  delete noAgent.agent;
+  refusal(noAgent, REFUSALS.MISSING_FIELD, 'agent');
+
+  // A turn that carries no brief is unaffected: the requirement is the brief's
+  // and not the kind's, so the prompt and answer kinds are what they were.
+  for (const kind of ['message', 'prompt', 'answer']) {
+    assert.equal(validateMessage(good({ kind, ...(kind === 'answer' ? { reply_to: 'm-0000' } : {}) })).ok, true);
+  }
+  // A field the message does not carry is not asked for: an agent is not
+  // required of a message with no brief, and the value itself is checked where
+  // it always was.
+  refusal(aGo({ agent: '' }), REFUSALS.EMPTY_STRING, 'agent');
+  refusal(aGo({ agent: 'front agent' }), REFUSALS.BAD_CHARACTER, 'agent');
+  refusal(aGo({ agent: 'x'.repeat(AGENT_MAX + 1) }), REFUSALS.TOO_LONG, 'agent');
 });
 
 test('a verb and its target have to agree, and the target is one shape or the other', () => {
@@ -1360,6 +1481,7 @@ test('every field the schema names is covered by the tag, or excluded by name', 
     { ...withAction({ verb: 'merge' }), reply_to: 'm-0000', acked: false },
     aRegistration(),
     signed(),
+    aGo(),
   ];
   for (const m of maximal) assert.equal(validateMessage(m).ok, true, JSON.stringify(m));
   const carried = new Set(maximal.flatMap((m) => Object.keys(m)));
