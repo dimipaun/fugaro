@@ -21,8 +21,9 @@ import (
 //
 // Uploading is a cloud write, so every one of them goes through the guard
 // `recipes publish` uses (F10): in a coding agent's session nothing is
-// uploaded, `sync` refuses and names the command a person runs, and the
-// listing commands read this machine's own files only (D1734).
+// uploaded, and `sync` refuses and names the command a person runs. The
+// listing commands read the project's store too (D3425 lifts the read) and
+// upload nothing on the way.
 
 // issueShared is the project's shared store as one `issue` command reaches it:
 // the bucket, the name of the project it belongs to, and the lines the run has
@@ -37,9 +38,12 @@ type issueShared struct {
 	// installation is the digest of the runs bucket URL: the name this
 	// machine's own records and snapshots are filed under (F8b).
 	installation string
-	// deps is what the identity lookup runs against. A coding agent's session
-	// sets NoLookup, so the credential is never asked (F10).
-	deps  issues.Deps
+	// deps is what the identity lookup runs against.
+	deps issues.Deps
+	// agent marks a coding agent's session. The session reads the project's
+	// store like any other (D3425 lifts the read) and uploads nothing: the
+	// upload is `issue sync`'s write, and a listing must not make it on the way.
+	agent bool
 	notes []string
 }
 
@@ -56,10 +60,10 @@ func (s *issueShared) Close() {
 // notes and a nil bucket, never an error, because the commands that call it
 // have this machine's own records to answer with either way.
 //
-// It reads the checkout and the local config and nothing else — no credential,
-// no network — which is why a coding agent's session may call it and still
-// reach no shared store (F10): what a session must not do is upload, and the
-// project's own name is a local file.
+// A coding agent's session reads the store too (D3425 lifts the read): it
+// resolves the project, opens the bucket and asks the credential exactly as a
+// person's session does. What it does not do is upload — that is `issue sync`'s
+// write, still refused to a session — so uploadPending skips it here.
 //
 // The second return is D1541's fence and never a store problem: the store's
 // own failures stay the notes they always were. The project's issues are the
@@ -71,15 +75,16 @@ func (s *issueShared) Close() {
 // it; a caller that ignores the error would be writing the store of a project
 // the fence refused, which is why every caller returns it.
 func openIssueShared(ctx context.Context, agent string) (*issueShared, error) {
-	sh := &issueShared{deps: issues.Deps{
-		Lookup:   mineCaller,
-		NoLookup: agent != "",
-		Getenv:   os.Getenv,
-		GOOS:     runtime.GOOS,
-	}}
-	if agent != "" {
-		sh.notes = append(sh.notes, "note: this is a coding agent's session: nothing is uploaded, and the project's issues are not read")
-		return sh, nil
+	sh := &issueShared{
+		agent: agent != "",
+		deps: issues.Deps{
+			Lookup: mineCaller,
+			Getenv: os.Getenv,
+			GOOS:   runtime.GOOS,
+		},
+	}
+	if sh.agent {
+		sh.notes = append(sh.notes, "note: this is a coding agent's session: the project's issues are read, and nothing is uploaded")
 	}
 	lc, err := mineProject(ctx)
 	if err != nil {
@@ -183,7 +188,7 @@ func sharedIssueRef(ctx context.Context, sh *issueShared, ref string) (issues.Is
 // line here too: an upload that did not happen leaves the issue where it is and
 // the next run retries it, which is no reason to take a listing down.
 func (s *issueShared) uploadPending(ctx context.Context, store *issues.Store) {
-	if s.bucket == nil {
+	if s.bucket == nil || s.agent {
 		return
 	}
 	res, err := issues.SyncPending(ctx, store, s.bucket, s.installation, s.deps)
