@@ -128,7 +128,6 @@ func TestAForeignFlagIsHiddenFromItsDoorsHelp(t *testing.T) {
 		{"update", "create-project"},
 		{"update", "display-name"},
 		{"update", "parent"},
-		{"update", "managed"},
 		{"update", "link-billing"},
 		{"update", "provision-batch"},
 	} {
@@ -360,10 +359,12 @@ func TestSetupRefusesAnUpdateOnlyFlag(t *testing.T) {
 }
 
 // TestUpdateRefusesASetupOnlyFlag is the mirror: everything that creates is
-// `fugaro setup`'s — the project, its display name and parent, the managed
-// flag that goes with them, the billing link, and the Batch backend's
-// provisioning, which rides a stage `update` does not register. `fugaro
-// update` creates nothing, so each is refused by name. Each flag is passed
+// `fugaro setup`'s — the project, its display name and parent, the billing
+// link, and the Batch backend's provisioning, which rides a stage `update`
+// does not register. `fugaro update` creates nothing, so each is refused by
+// name. --managed, the other creating flag, went with the flag (T2c, D2214),
+// so it is refused by the removal's own sentence on both doors
+// (TestUpdateManagedFlagIsGone) and is not a row here. Each flag is passed
 // the way its own type takes it, so the refusal under test is the door's and
 // not cobra's "invalid argument".
 func TestUpdateRefusesASetupOnlyFlag(t *testing.T) {
@@ -372,7 +373,6 @@ func TestUpdateRefusesASetupOnlyFlag(t *testing.T) {
 		{"create-project", "--create-project"},
 		{"display-name", "--display-name=acme"},
 		{"parent", "--parent=folders/123"},
-		{"managed", "--managed"},
 		{"link-billing", "--link-billing=0123AB-4567CD-89EF01"},
 		{"provision-batch", "--provision-batch"},
 	} {

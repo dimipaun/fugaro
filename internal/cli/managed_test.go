@@ -998,7 +998,6 @@ var initFlagCases = map[string]string{
 	"ask":       "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
 	// Flags whose steps confirm through the paths the property drives.
 	"create-project":   "its creation confirms through askTyped/canType, both covered",
-	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through askTyped/canType (covered)",
 	"link-billing":     "the billing link confirms through askTyped/canType, both covered",
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
@@ -1049,7 +1048,7 @@ var initFlagCases = map[string]string{
 	"image-source": "value", "location": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value", "rigor": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
-	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
+	"state-bucket": "value; a creating run's value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
 }
 
 // Every flag `fugaro setup` declares has an entry above, and every entry is a

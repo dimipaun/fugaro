@@ -1418,7 +1418,6 @@ func TestManagedInitFactReadErrorFailsClosed(t *testing.T) {
 func TestManagedInitCreationRunIsManagedBeforeTheMarker(t *testing.T) {
 	reads := stubManagedFact(t, false, nil)
 	run := &initRun{o: &initOptions{}, projectName: initProjectName, gcpProject: initProject}
-	run.o.managed = true
 	run.res.Created = initProject
 	if ok, err := run.managedProject(context.Background(), nil); err != nil || !ok {
 		t.Errorf("a managed creation run reads %v, %v before its marker", ok, err)

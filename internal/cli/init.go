@@ -167,17 +167,6 @@ type initOptions struct {
 	createProject                    bool
 	displayName, parent, linkBilling string
 
-	// --managed is a creation of a managed project (Task 4.2, design D68's
-	// spelling of the command): the monthly budget amount is required, with
-	// no default (D64), and it is written into the project's creation fact
-	// so a later run and a restore can read what was chosen
-	// (internal/infra/managed, MarkerVersionBuilds). It goes with
-	// --create-project and nothing else — a project that already exists is
-	// made managed by the owner's own command instead, `fugaro managed flag`
-	// (D58; Task 6.1), never by init — and it removes no confirmation: a
-	// managed creation is a creation with more guards, not fewer.
-	managed bool
-
 	// name is the project's name, for a project config fugaro setup
 	// creates; with one, it must be that config's name.
 	name string
@@ -429,14 +418,6 @@ const retiredCredentialsFlag = "provision-credentials"
 // keeps the retired name out of the help.
 const retiredManagedFlag = "managed"
 
-// managedFlaggingSentence is the tail of --managed's help about a project that
-// already exists. It describes the FLAG, and that is what makes it one sentence
-// for both doors: --managed records a budget in the creation fact of a project
-// the run creates (markCreated), so the flag itself reaches no project that
-// already exists — on setup by D73's answer and the wizard's own rule, and on
-// update because that door creates nothing.
-const managedFlaggingSentence = "and --managed never flags one: it records the budget of a project the run creates"
-
 // budgetFlagHelp is --budget's help, and on `fugaro update` it carries the two
 // things that door does with the budget besides recording it: an installation
 // the managed read answers is not managed is refused, with the one command that
@@ -448,11 +429,9 @@ const managedFlaggingSentence = "and --managed never flags one: it records the b
 // output.
 //
 // It is a function of the door for the reason the sentences beside it are: the
-// help of a flag on the door the reader is running must be true of that door.
-// `--managed` cannot be where the update door says this — it is declared there,
-// hidden and refused by name (see managedFlaggingSentence) — and on `fugaro
-// setup` the trio is only the budget the installation records, because setup
-// flags nothing it did not create.
+// help of a flag on the door the reader is running must be true of that door —
+// on `fugaro setup` the trio is only the budget the installation records,
+// because setup flags nothing it did not create.
 func budgetFlagHelp(d convergeDoor) string {
 	help := "a monthly budget on the project, in whole units of --budget-currency"
 	if d.name != updateDoor.name {
@@ -589,6 +568,12 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		if err.Error() == "unknown flag: --"+retiredCredentialsFlag {
 			return userErr("--%s is gone: fugaro update deploys the credentials service on every installation now, so there is no opt-in for the flag to be, and passing it does nothing a plain fugaro update does not do (fugaro update --help)", retiredCredentialsFlag)
 		}
+		if err.Error() == "unknown flag: --"+retiredManagedFlag {
+			// One sentence for both doors (R3): the flag was fugaro setup's,
+			// so where the reason sends the reader is that door whichever one
+			// they typed, and neither door can say more than "gone".
+			return userErr("--%s is gone: every project fugaro setup creates records its budget, so there is nothing left for the flag to do (fugaro setup --help)", retiredManagedFlag)
+		}
 		return err
 	})
 	addCloudFlags(cmd, &o.cloud)
@@ -645,7 +630,6 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
 	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
-	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, "+managedFlaggingSentence)
 	f.StringVar(&o.linkBilling, "link-billing", "", "on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account, and no flag confirms it. It never changes a project's existing billing link")
 	// --check is the update door's alone (D948): the read-only half of the
 	// retired `fugaro upgrade`, and the mode the skills ask for, because it
@@ -890,8 +874,8 @@ type initRun struct {
 
 	// projectExisted is whether the project this run installs into was
 	// already there when the project stage read it (projectStage.read). It
-	// is the fact markCreated's --managed warning needs and r.res.Created
-	// cannot give: an empty Created says this run created no project, which
+	// is what the created account's Existed needs and r.res.Created cannot
+	// give: an empty Created says this run created no project, which
 	// is what resuming an earlier run's creation leaves behind — and also what --plan-only, a declined
 	// or unaskable typed confirmation, an environment refusal and a failure
 	// before the project stage leave behind.
@@ -1618,8 +1602,8 @@ func (r *initRun) confirmResumedMark() bool {
 	if r.resumedCreation == infra.AdoptedLabelValue {
 		made, says = "an earlier run of fugaro setup adopted it", "which says fugaro setup adopted it"
 	}
-	later := fmt.Sprintf("project %s carries %s=%s (%s) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
-		id, infra.CreatedLabelKey, r.resumedCreation, made, id)
+	later := fmt.Sprintf("project %s carries %s=%s (%s) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag",
+		id, infra.CreatedLabelKey, r.resumedCreation, made)
 	if r.stepConfirmation(false) != stepTyped {
 		r.warn(later)
 		return false
@@ -1725,13 +1709,11 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		made, noun = "adopted", "adoption"
 	}
 	if created == "" {
-		// --managed asked for a managed creation and this run made no project
-		// Fugaro's, so there is no fact to record — and the owner must not
-		// silently get an unmarked project where they asked for a managed
-		// one.
-		if r.o.managed {
-			r.warn(fmt.Sprintf("--managed was not applied: this run created no project (it stopped before creating one, or the creation did not finish), so no creation fact was written and %s is not managed", r.gcpProject))
-		}
+		// This run made no project Fugaro's, so there is no fact to record.
+		// Nothing is said: every way here is one the run's own output already
+		// names (a step left for the person, a stage that stopped), and there
+		// is no flag left whose promise a reader has to be told was not kept
+		// (R3, D2214).
 		return
 	}
 	if e.c == nil {
@@ -1765,12 +1747,11 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// The number is what makes the marker about this project and not about a
 	// bucket of the same name in someone else's project (managed.WriteMarker
 	// checks the bucket against it).
-	// The amount EVERY creating run records, and nothing else (T2a of
-	// docs/managed-flag-ergonomics, D2212): --managed was what used to say a
-	// creation carried a budget, and the record is now the fact of the run
-	// rather than of the flag — it is what a later run and the carry read the
-	// alert by (R5, R7), and a creation that recorded none leaves an alert
-	// with nothing to keep it by. The figures are the run's own where it has
+	// The amount EVERY creating run records, and nothing else (T2a and T2c of
+	// docs/managed-flag-ergonomics, D2212, D2214): the budget is a fact of the
+	// run that creates the project, not of any flag — it is what a later run
+	// and the carry read the alert by (R5, R7), and a creation that recorded
+	// none leaves an alert with nothing to keep it by. The figures are the run's own where it has
 	// any and the defaults where it does not (budgetFigures); the
 	// installation's own block carries the same ones, unless the run linked no
 	// account, and then it carries none at all (installOptionsCarrying). No
@@ -1849,12 +1830,12 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// What completes it is an owner's own command, and which one depends
 		// on what the object records — the split restore's own refusal draws
 		// (restore.go): the flag replaces a fact that records no amount and
-		// writes both halves in one command, while the fact a --managed
-		// creation writes already records one, no command of ours rewrites a
-		// fact that does, and there the label goes on the project itself. The
+		// writes both halves in one command, while the fact a creating run
+		// writes already records one, no command of ours rewrites a fact that
+		// does, and there the label goes on the project itself. The
 		// warning this replaced gave both halves to the creating run alone
 		// and offered the flag for both states, which for the second refuses.
-		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s holds the creation fact and the project does not carry the label %s=%s, and the read requires both, so nothing is skipped for it. What completes the mark is the owner's own command at their terminal, and which one depends on what the object records: `fugaro managed flag %s --budget N --budget-currency CCC` replaces a creation fact that records no amount, writing the amount and the label in the same command, while a fact that already records one is replaced by no command of ours — for it the label goes on the project itself (gcloud projects update %s --update-labels %s=%s), the backfill docs/managed-projects/spec.md carries", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created, created, managed.ProjectLabelKey, managed.ProjectLabelValue))
+		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s holds the creation fact and the project does not carry the label %s=%s, and the read requires both, so nothing is skipped for it. What completes the mark is the owner's own command at their terminal, and which one depends on what the object records: `fugaro managed flag` replaces a creation fact that records no amount, writing the amount and the label in the same command, while a fact that already records one is replaced by no command of ours — for it the label goes on the project itself (gcloud projects update %s --update-labels %s=%s), the backfill docs/managed-projects/spec.md carries", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created, managed.ProjectLabelKey, managed.ProjectLabelValue))
 	default:
 		// Nothing of the fact is there, so the read answers "not managed"
 		// for a project no half of it describes. The flag is still the way
@@ -1862,7 +1843,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// replaces the version-1 one (managed.writeFlag), on the owner's own
 		// credentials at their terminal, and a later run of ours cannot —
 		// this function returns above for every run that creates no project.
-		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s was not written and the project carries no %s=%s label, and the read requires both, so nothing is skipped for it. No later run of ours writes either half — a run that creates no project records nothing — and the mark is completed by the owner's own command at their terminal: `fugaro managed flag %s --budget N --budget-currency CCC` writes the creation fact and the label in the same command", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created))
+		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s was not written and the project carries no %s=%s label, and the read requires both, so nothing is skipped for it. No later run of ours writes either half — a run that creates no project records nothing — and the mark is completed by the owner's own command at their terminal: `fugaro managed flag` writes the creation fact and the label in the same command", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue))
 	}
 
 	// D77's state bucket, the other half of what a managed project needs
@@ -1874,9 +1855,9 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// belongs here for the same reason the marker does: it is setup on the
 	// operator's own credentials, by the run that creates the project, and no
 	// other command in the tree writes it. "The creation" here is every
-	// project this run creates and not the --managed one alone — the step is
-	// not gated on the flag, for the reason the paragraph below gives for the
-	// mark. The region is the installation's, so the managed state sits where
+	// project this run creates — the step is not gated on anything, for the
+	// reason the paragraph below gives for the mark. The region is the
+	// installation's, so the managed state sits where
 	// the rest of the project's storage does. Like the marker, this never changes
 	// the outcome of the run — a project that is marked but has no state
 	// bucket is the fail-closed direction (a managed apply finds nowhere to
@@ -2186,11 +2167,12 @@ func checkFirebaseProject(fp, gcpProject string) error {
 
 // check refuses flag combinations that mean nothing.
 //
-// Two features were once refused here before any cloud call, and neither is
-// any more: --managed until 0.10.0 (managedDeployerShipped) and
-// --provision-batch until 0.9.5, when the compute module's reaper role stopped
-// naming a permission Google does not have (batchProvisionShipped). The flags
-// themselves stay: they still select what they always selected.
+// One feature was once refused here before any cloud call, and is not any
+// more: --provision-batch until 0.9.5, when the compute module's reaper role
+// stopped naming a permission Google does not have (batchProvisionShipped).
+// The flag itself stays: it still selects what it always selected. The other,
+// --managed until 0.10.0 (managedDeployerShipped), went with the flag (T2c,
+// D2214), because every creating run records its budget now.
 func (o *initOptions) check() error {
 	if o.noBuild || o.allowJobDelete || o.retire {
 		// The door, not `update`: check() runs for both doors, and neither flag
@@ -2659,11 +2641,13 @@ func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []strin
 	if err != nil {
 		return infra.InstallationSpec{}, initErr(err)
 	}
-	if o.managed {
-		// The managed creation's one rule about the state bucket, checked on
-		// the RESOLVED name: the flag and the project config are both inputs to
-		// it (infra.Installation's firstOf), so the check is here rather than on
-		// --state-bucket alone.
+	if o.createProject {
+		// Every project this run creates is managed (markCreated records the
+		// fact and the label whichever flags were passed, T2a), so every
+		// creating run is held to the managed project's one rule about the
+		// state bucket, checked on the RESOLVED name: --state-bucket and the
+		// project config are both inputs to it (infra.Installation's firstOf),
+		// so the check is here rather than on the flag alone.
 		if err := checkManagedStateBucket(spec); err != nil {
 			return infra.InstallationSpec{}, err
 		}
@@ -3354,16 +3338,16 @@ var isManagedFact = managed.IsManaged
 // It fails closed: an error reading the fact is returned, never read as "not
 // managed", because not managed is the mode whose refusal names the flag; and
 // a run with no clients to read with is that error too. Only a managed answer
-// is kept for the rest of the run (r.managed): a run that creates a managed
-// project is managed from the moment its project stage created it, before the
-// marker is written at the end of the converge (markCreated) and without
-// reading it, and an answer of "not managed" or an error is read again by the
-// next refusal rather than remembered.
+// is kept for the rest of the run (r.managed): a run that created this
+// installation's project is managed from the moment its project stage created
+// it, before the marker is written at the end of the converge (markCreated) and
+// without reading it, and an answer of "not managed" or an error is read again
+// by the next refusal rather than remembered.
 func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, error) {
 	if r.managed {
 		return true, nil
 	}
-	if c := r.creation(); r.o.managed && c != "" && c == r.gcpProject {
+	if c := r.creation(); c != "" && c == r.gcpProject {
 		return true, nil
 	}
 	if c == nil {
@@ -3800,12 +3784,12 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// roles and their seven conditioned bindings (managedDeployerShipped,
 	// deploy/terraform/gcp/modules/installation/deployer.tf). The fact is the
 	// project's own — the creation fact init's guard refusal reads, and the
-	// only record of it that outlives one run — so the run that creates a
-	// managed project (--managed) and every later run that reaches this
-	// function (the setup and update doors, which are the only ones that plan
-	// and apply the installation root) write the variable; an installation that
-	// never asked for managed writes the same tfvars it wrote before the
-	// variable existed. A project the owner flags with `fugaro managed flag`
+	// only record of it that outlives one run — so the run that creates the
+	// project and every later run that reaches this function (the setup and
+	// update doors, which are the only ones that plan
+	// and apply the installation root) write the variable; an installation with
+	// no creation fact writes the same tfvars it wrote before the variable
+	// existed. A project the owner flags with `fugaro managed flag`
 	// gets the fence here, at the next such run, because that command writes
 	// the fact and applies nothing. Read here, and not in installOptions,
 	// because the answer is a cloud fact: a plain `fugaro update` of a managed
@@ -5340,7 +5324,7 @@ func (o *initOptions) installationFlags() []string {
 		"--admin": o.adminsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase-project": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
-		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
+		"--create-project": o.createProject, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
 		// The bake switch is a project-wide setting the local config carries
 		// (IS7, D1901), so a --repo run — which onboards a repository and
 		// writes no local config of its own shape — would drop a value it was

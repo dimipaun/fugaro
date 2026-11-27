@@ -442,7 +442,7 @@ const imageContextShipped = true
 // guard refusal makes, and the one that survives a run that did not create the
 // project — and writes the module's variable from it
 // (infra.InstallOptions.ManagedDeployerScoped). So a run that creates a
-// managed project (--create-project --managed) writes the scoped half, and
+// managed project (a creation) writes the scoped half, and
 // every later run that reaches installRoot — `fugaro setup` and `fugaro
 // update`, the two doors that plan and apply the installation root — writes it
 // again from the same fact, so the variable cannot be dropped by a later run

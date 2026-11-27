@@ -313,8 +313,10 @@ is never the gcloud default project. Without a billing link, setup pauses at
 billing (above) and the rerun resumes the project it created. The project is labelled fugaro_created=true at its creation, and the
 run that created it marks it Fugaro-managed (its runs bucket's
 fugaro/managed.json and the label fugaro_managed=true) once it has applied the
-installation; --managed with --budget, --budget-currency and --billing-account
-also records the monthly budget the managed apply needs. A creation that a
+installation, and the same run records the monthly budget the managed apply
+needs: --budget and --budget-currency where they were given, and 100 USD
+where nobody chose (they are the alert's threshold, not a cap, and the
+alerts fire at 50%, 90% and 100% of it). A creation that a
 later run finished is marked by that run only where the person at your own
 terminal confirms it: the fugaro_created=true label anyone may set says which
 project to ask about, and never marks one by itself (--json
@@ -929,7 +931,7 @@ func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
 // not known until its project config was looked for. A run that creates is held
 // to the creation's rules (the ID's, Google's restricted words among them, and
 // the --firebase-project pairing); one that does not refuses --link-billing,
-// --managed, --parent and --display-name by name.
+// --parent and --display-name by name.
 func (r *initRun) settleCreation(firstRun bool) error {
 	o := r.o
 	if o.setupCreates(firstRun) {

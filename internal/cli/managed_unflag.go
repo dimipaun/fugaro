@@ -67,7 +67,7 @@ func newManagedUnflagCmd() *cobra.Command {
 		Long: `Remove the marks that make GCP project PROJECT_ID a managed project.
 
 A managed project carries two marks, written together by the run that created
-it (fugaro setup --create-project --managed) or by fugaro managed flag: the
+it (fugaro setup --create-project) or by fugaro managed flag: the
 creation fact gs://<runs bucket>/fugaro/managed.json in that project's own runs
 bucket, and the label fugaro_managed=true on the GCP project itself. The read
 requires both, so the project is managed only while the two are there — and

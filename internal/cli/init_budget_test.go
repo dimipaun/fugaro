@@ -15,12 +15,8 @@ import (
 
 // The budget of a creation: the amount and the currency, recorded in the
 // project's own creation fact so a later run and a restore can read what was
-// chosen. Since T2a of docs/managed-flag-ergonomics the fact records one for
-// EVERY creating run, whether or not --managed was passed (D2212), and a run
-// nobody chose a figure on records the defaults (D2211). What D64 asked of a
-// --managed creation alone — an amount, its currency and the billing account,
-// refused by name where any of the three is missing — is what
-// TestManagedBudgetIsRequiredAtCreation pins, and T2c drops with the flag.
+// chosen. Every creating run records one (T2a of docs/managed-flag-ergonomics,
+// D2212), and a run nobody chose a figure on records the defaults (D2211).
 //
 // The harness is init_managed_test.go's case (c), the one run in the tree
 // that really writes the fact: the project this run creates through
@@ -125,99 +121,16 @@ func refusalText(out, errOut string, err error) string {
 	return s
 }
 
-// A managed creation with no amount is refused, and the refusal is one a
-// person can act on: it names the three flags and prints a value to start
-// from, and the run does nothing at all — no project, no Firebase, no
-// billing link, and no creation fact (a run that created nothing has nothing
-// to record).
-func TestManagedBudgetIsRequiredAtCreation(t *testing.T) {
-	t.Run("--create-project --managed with no amount", func(t *testing.T) {
-		r, bucket := newManagedCreateRig(t)
-		out, errOut, err := r.run(t, true, createStdin,
-			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New", "--managed")
-		if err == nil {
-			t.Fatalf("the run created the project with no amount (D64 requires one):\n%s", refusalText(out, errOut, nil))
-		}
-		s := refusalText(out, errOut, err)
-		if code := ExitCode(err); code != ExitUserError {
-			t.Errorf("exit %d, want %d: a missing amount is the caller's to fix:\n%s", code, ExitUserError, s)
-		}
-		if !strings.Contains(s, "--managed") {
-			t.Errorf("the refusal does not say which flag requires the amount:\n%s", s)
-		}
-		for _, want := range []string{"--budget", "--budget-currency", "--billing-account"} {
-			if !strings.Contains(s, want) {
-				t.Errorf("the refusal does not name %s:\n%s", want, s)
-			}
-		}
-		// The suggestion is the point of the refusal: D64 asks for a value a
-		// person can act on rather than a bare "missing flag". It is a
-		// suggestion and not a default — the run records nothing (below), and
-		// no constant carries it (TestManagedBudgetHasNoDefault).
-		if !strings.Contains(s, "--budget 50 --budget-currency USD") {
-			t.Errorf("the refusal prints no suggested amount to start from:\n%s", s)
-		}
-		r.nothingDone(t, "a managed creation refused for its missing amount")
-		noMarker(t, r.gcs, bucket)
-	})
-
-	// One of the three flags without the other two is the same refusal: the
-	// amount is a triple (--budget, --budget-currency, --billing-account) or
-	// it is nothing, and a managed creation never has half of one.
-	t.Run("--create-project --managed with half an amount", func(t *testing.T) {
-		r, bucket := newManagedCreateRig(t)
-		out, errOut, err := r.run(t, true, createStdin,
-			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New", "--managed", "--budget", "7")
-		if err == nil {
-			t.Fatalf("the run created the project with an amount and no currency:\n%s", refusalText(out, errOut, nil))
-		}
-		s := refusalText(out, errOut, err)
-		if code := ExitCode(err); code != ExitUserError {
-			t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
-		}
-		for _, want := range []string{"--budget-currency", "--billing-account"} {
-			if !strings.Contains(s, want) {
-				t.Errorf("the refusal does not name %s:\n%s", want, s)
-			}
-		}
-		r.nothingDone(t, "a managed creation refused for half an amount")
-		noMarker(t, r.gcs, bucket)
-	})
-
-	// --managed is about the project this run creates: a project setup
-	// created earlier gets its budget from the owner's own command instead,
-	// never from init (D58, Task 6.1), and update --firebase-project adds Firebase to such a project, which is
-	// never what makes one managed (D73).
-	t.Run("--managed without --create-project", func(t *testing.T) {
-		r := newProjectRig(t)
-		r.existing(true)
-		out, errOut, err := r.run(t, true, "", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
-		if err == nil {
-			t.Fatalf("--managed was accepted without --create-project:\n%s", refusalText(out, errOut, nil))
-		}
-		s := refusalText(out, errOut, err)
-		if code := ExitCode(err); code != ExitUserError {
-			t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
-		}
-		if !strings.Contains(s, "first run of fugaro setup") {
-			t.Errorf("the refusal does not say what --managed goes with:\n%s", s)
-		}
-		r.nothingDone(t, "--managed without --create-project")
-	})
-}
-
 // The positive half: the amount and the currency a run was given are the ones
-// the project's creation fact carries, and the fact is the marker's new
-// version — the object Task 0.1 writes extended, not a second object
-// (Task 4.2's own step: the read of Task 0.2 is taught the new version, and
-// the two live side by side because a project created before this task keeps
-// reading as managed).
+// the project's creation fact carries, and the fact is the object extended to
+// record them rather than a second object — a project created before the
+// version that carries a budget keeps reading as managed (D1543).
 func TestManagedCreationRecordsTheAmount(t *testing.T) {
-	t.Run("--managed records the amount and the currency in the fact", func(t *testing.T) {
+	t.Run("a creation records the amount and the currency in the fact", func(t *testing.T) {
 		r, bucket := newManagedCreateRig(t)
 		out, errOut, err := r.run(t, true, createStdin,
 			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-			"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+			"--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 		if err != nil {
 			t.Fatalf("%v\n%s", err, refusalText(out, errOut, nil))
 		}
@@ -393,77 +306,33 @@ func TestSetupNoLinkedAccountRecordsAmountAndPrintsCommand(t *testing.T) {
 	}
 }
 
-// The flag carries no amount of its own, on a managed creation or any other:
-// an absent --budget is 0, and D2212's 100 is a figure a creating run's own
-// code takes (budgetFigures), never one the flag's default puts there. What
-// D64 keeps while the flag lives is the other half: a --managed creation with
-// no amount is still refused, and the refusal is the amount's rather than the
-// three flags' — so a constant such as `defaultManagedBudget = 50` wired into
-// the flag or into the refusal (a run given no amount creates nothing, so a
-// fallback has nowhere to be written from) fails here. T2c drops the flag and
-// with it the refusal; the flag's own default is pinned by no other test.
+// The flag carries no amount of its own: an absent --budget is 0, and
+// D2212's 100 is a figure a creating run's own code takes (budgetFigures),
+// never one the flag's default puts there — a constant such as
+// `defaultManagedBudget = 50` wired into the flag's default would turn every
+// creating run nobody chose a figure on into a project whose monthly line is
+// 50 rather than the default.
 func TestManagedBudgetHasNoDefault(t *testing.T) {
 	f := newSetupCmd().Flags().Lookup("budget")
 	if f == nil {
 		t.Fatal("fugaro setup has no --budget flag")
 	}
 	if f.DefValue != "0" {
-		t.Errorf("fugaro setup --budget defaults to %q, want 0: a managed creation has no amount to fall back on (D64), and 0 is what an absent flag means", f.DefValue)
+		t.Errorf("fugaro setup --budget defaults to %q, want 0: a run nobody chose a figure on records the defaults (D2212), and 0 is what an absent flag means", f.DefValue)
 	}
-
-	r, bucket := newManagedCreateRig(t)
-	out, errOut, err := r.run(t, true, createStdin,
-		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New", "--managed")
-	if err == nil {
-		t.Fatalf("a managed creation chose an amount by itself:\n%s", refusalText(out, errOut, nil))
-	}
-	if s := refusalText(out, errOut, err); !strings.Contains(s, "--budget") {
-		t.Fatalf("a managed creation with no amount was not refused for the missing amount:\n%s", s)
-	}
-	noMarker(t, r.gcs, bucket)
-	r.nothingDone(t, "a managed creation refused for its missing amount")
-
-	// The same property where a fallback has room to live: the amount is
-	// absent while the other two flags are there, so a refusal that only
-	// counts flags sees a complete trio. Nothing else in this file reaches
-	// that state — the subtest above passes none of the three and the one in
-	// TestManagedBudgetIsRequiredAtCreation passes an amount without its
-	// currency — and it is the state a constant such as
-	// `if o.budget <= 0 { o.budget = 50 }` turns into a managed project whose
-	// monthly line nobody chose. An absent amount and `--budget 0` are the
-	// same run (the flag defaults to 0), and D64 refuses both: the refusal is
-	// the amount's, not the other two flags'.
-	t.Run("--managed with a currency and a billing account and no amount", func(t *testing.T) {
-		r, bucket := newManagedCreateRig(t)
-		out, errOut, err := r.run(t, true, createStdin,
-			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-			"--managed", "--budget-currency", "USD", "--billing-account", billingAcc)
-		if err == nil {
-			t.Fatalf("a managed creation with no amount was accepted because the other two flags were there:\n%s", refusalText(out, errOut, nil))
-		}
-		s := refusalText(out, errOut, err)
-		if code := ExitCode(err); code != ExitUserError {
-			t.Errorf("exit %d, want %d: a missing amount is the caller's to fix:\n%s", code, ExitUserError, s)
-		}
-		if !strings.Contains(s, "--budget ") {
-			t.Errorf("the refusal does not name the missing amount:\n%s", s)
-		}
-		r.nothingDone(t, "a managed creation refused for its missing amount")
-		noMarker(t, r.gcs, bucket)
-	})
 }
 
-// --create-project --managed on a project an earlier run of fugaro setup
-// created (it carries the creation label fugaro_created=true, which only the
-// creating run's create request writes): the project stage resumes it and
-// creates nothing in this run, and the project is still Fugaro's creation, so
+// --create-project on a project an earlier run of fugaro setup created (it
+// carries the creation label fugaro_created=true, which only the creating
+// run's create request writes): the project stage resumes it and creates
+// nothing in this run, and the project is still Fugaro's creation, so
 // markCreated records the fact — the object with the budget this run was
 // given, and the fugaro_managed label — exactly as the creating run would have
-// (the owner's ruling of 2026-10-23: a resumed setup is managed by default). The owner asked for a managed project, and
-// getting an unmarked one with no word about it is the failure this pins:
-// the run must say --managed was not applied and that no fact was written.
-// The bucket is seeded as the managed creation's is, so the absence of the
-// fact is about the gate and not about an unwritable bucket.
+// (the owner's ruling of 2026-10-23: a resumed setup is managed). The owner
+// asked for a project Fugaro creates, and getting an unmarked one with no word
+// about it is the failure this pins. The bucket is seeded as the managed
+// creation's is, so the absence of the fact is about the gate and not about an
+// unwritable bucket.
 func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 	r := newProjectRig(t)
 	const number = 424242
@@ -486,7 +355,7 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 	})}
 	r.save(t)
 	out, errOut, err := r.run(t, true, newProj+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n",
-		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+		"--create-project", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err != nil {
 		t.Fatalf("the run failed, so the warning would be about a failure rather than about the resume: %v\n%s", err, all)
@@ -507,47 +376,6 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 	if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != managed.ProjectLabelValue {
 		t.Errorf("a resumed creation is not labelled %s=%s (got %q):\n%s", managed.ProjectLabelKey, managed.ProjectLabelValue, v, all)
 	}
-	if strings.Contains(all, "--managed was not applied") {
-		t.Errorf("the run said --managed was not applied, and it marked the resumed creation:\n%s", all)
-	}
-}
-
-// The other half of that warning, and the reason it is two: an empty
-// r.res.Created is what a resumed creation leaves behind and also what every other way
-// a --managed run creates nothing leaves behind, so the message may only say
-// "already existed" when the project stage actually read a project that was
-// already there. Here it does not exist and no person is at the run: the
-// confirmation the run stops at is one nothing but a person at a terminal
-// gives (T7, docs/no-prompt-policy), and the run leaves the step for them, so
-// nothing was adopted and nothing was created: the warning says the creation
-// did not happen, and a reader is not sent to look for a project that is not
-// there.
-func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
-	r := newProjectRig(t)
-	r.bill.AddAccount(billingAcc, true)
-	noTerminal(t)
-	out, errOut, err := r.run(t, false, "",
-		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
-	all := refusalText(out, errOut, err)
-	if err == nil {
-		t.Fatalf("a creation nobody was at to confirm returned no error:\n%s", all)
-	}
-	// The run really did reach a step that wanted a person and stop there
-	// rather than refuse earlier, so the warning below is about a creation
-	// that did not happen.
-	r.nothingDone(t, "a managed creation whose confirmation nobody was at to give")
-	if !strings.Contains(all, "needs your own confirmation, which no flag gives") {
-		t.Fatalf("the run did not stop at the project's own confirmation, which no flag gives:\n%s", all)
-	}
-	if !strings.Contains(all, "--managed was not applied") {
-		t.Errorf("the run created no project under --managed and did not say --managed was not applied:\n%s", all)
-	}
-	if strings.Contains(all, "already existed") {
-		t.Errorf("the run says the project already existed, and it does not (nothing was adopted and nothing was created):\n%s", all)
-	}
-	if !strings.Contains(all, "no creation fact was written") {
-		t.Errorf("the run did not say that no creation fact was written:\n%s", all)
-	}
 }
 
 // The figures a managed creation records are held, before anything is
@@ -567,7 +395,7 @@ func TestManagedBudgetFiguresAreChecked(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, bucket := newManagedCreateRig(t)
 			args := append([]string{"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-				"--managed", "--billing-account", billingAcc}, flags...)
+				"--billing-account", billingAcc}, flags...)
 			out, errOut, err := r.run(t, true, createStdin, args...)
 			if err == nil {
 				t.Fatalf("a managed creation with %s was accepted:\n%s", name, refusalText(out, errOut, nil))
@@ -590,7 +418,7 @@ func TestManagedBudgetFiguresAreChecked(t *testing.T) {
 		r, bucket := newManagedCreateRig(t)
 		out, errOut, err := r.run(t, true, createStdin,
 			"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-			"--managed", "--budget", "10000000", "--budget-currency", "EUR", "--billing-account", billingAcc)
+			"--budget", "10000000", "--budget-currency", "EUR", "--billing-account", billingAcc)
 		if err != nil {
 			t.Fatalf("%v\n%s", err, refusalText(out, errOut, nil))
 		}
@@ -618,7 +446,7 @@ func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
 	r.save(t)
 	out, errOut, err := r.run(t, true, createStdin,
 		"--create-project", "--link-billing", billingAcc, "--display-name", "Fugaro New",
-		"--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+		"--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	if err == nil {
 		t.Fatalf("the installation apply failed, yet init succeeded:\n%s", refusalText(out, errOut, nil))
 	}

@@ -49,9 +49,9 @@ func TestMarkCreatedSetsUpTheManagedStateBucket(t *testing.T) {
 		r.gcs.AddBucket(bucket, number, managedBucketLabels)
 
 		var out bytes.Buffer
-		// --managed with its required budget trio (Task 4.2): markCreated
-		// reads the options for the amount the creation fact records.
-		o := &initOptions{managed: true, budget: 100, budgetCurrency: "USD", billingAccount: "000000-000000-000000"}
+		// The budget trio a creating run takes: markCreated reads the options
+		// for the amount the creation fact records (Task 4.2).
+		o := &initOptions{budget: 100, budgetCurrency: "USD", billingAccount: "000000-000000-000000"}
 		run := &initRun{o: o, cmd: NewRootCmd(), w: &out, gcpProject: newProj}
 		// The account the run's own variables carry the alert on, as the
 		// carried budget sets it on a converge (initRun.budgetAccount): this rig
