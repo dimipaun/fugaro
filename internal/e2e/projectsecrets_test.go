@@ -986,6 +986,10 @@ func (r *psRig) newRun(t *testing.T) *psRun {
 		t.Fatal(err)
 	}
 	tmp := t.TempDir()
+	// The checkout the job's image baked: a run with none clones its own and
+	// installs the tools the checkout declares, which a hermetic test has no
+	// mise to do.
+	testutil.Git(t, tmp, "clone", "--quiet", remote, filepath.Join(tmp, "work"))
 	managed := filepath.Join(tmp, "claude-code")
 	if err := os.Mkdir(managed, 0o755); err != nil {
 		t.Fatal(err)

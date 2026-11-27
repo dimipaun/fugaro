@@ -448,12 +448,13 @@ func nestedE2EClone(t *testing.T, allow []string, lfs bool) *nestedE2E {
 	home := t.TempDir()
 	r := proxiedRun(t, pushIdentity(t), func(r *run) {
 		r.d.WorkDir = filepath.Join(t.TempDir(), "work")
+		// A job whose image baked no checkout: the run clones its own
+		// (openCheckout reads cloned, which openBakedCheckout settles).
+		r.cloned = true
+		r.d.Local = true
 		r.d.Env = []string{
 			providers.EnvCredentialsServiceURL + "=" + p.srv.URL,
 			metadataHostEnv + "=" + strings.TrimPrefix(meta.URL, "http://"),
-			// A job with no checkout baked into its image: this run clones
-			// (openCheckout, which has no choice to make for it).
-			CheckoutEnv + "=" + config.CheckoutClone,
 		}
 		r.projPolicy = policyRead{done: true, found: true, policy: &projectpolicy.Policy{
 			Version:        projectpolicy.Version,

@@ -2752,7 +2752,7 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 	// local invocation is not held to it here, though its baked tree is: this
 	// clone is of the remote the caller's own invocation named (F24), while a
 	// tree already in the caller's work directory is one the run did not make.
-	if kind, ok := r.checkoutKind(); ok && !r.d.Local {
+	if kind, ok := r.cloneKind(); ok {
 		held, err := r.heldCheckout(repo)
 		if err != nil {
 			return nil, err
@@ -2792,6 +2792,15 @@ func (r *run) heldCheckout(repo *gitops.Repo) (*gitops.Repo, error) {
 // (providerForSlug). A run that can name none — a local invocation launched with
 // a provider kind no slug derives — has no repository to hold a checkout to, and
 // so nothing for the binding to decide.
+// cloneKind is checkoutKind for a clone the run made for itself: a local
+// invocation is held to no push binding there (F24).
+func (r *run) cloneKind() (string, bool) {
+	if r.d.Local {
+		return "", false
+	}
+	return r.checkoutKind()
+}
+
 func (r *run) checkoutKind() (string, bool) {
 	if job, project := r.projectJob(); project {
 		return job.Provider, true
@@ -2904,7 +2913,12 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 		// this repository (a shared dependency layer, F35, or an entry whose
 		// bake leaves it out), so the run clones its own (D3440).
 		if repo, err = gitops.Open(dir, nil); err != nil {
-			r.cloned = true
+			// A local invocation's work directory is its caller's: one that
+			// holds no checkout is filled by the whole clone it always got,
+			// not by the blobless clone of a job that found no bake.
+			if !r.d.Local {
+				r.cloned = true
+			}
 			return nil
 		}
 		// The run's state stays outside the checkout it works on, and from
@@ -3427,9 +3441,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	default:
 		branch := "fugaro/" + spec.RunID
-		if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
-			return fmt.Errorf("checking out %s: %w", spec.Ref, err)
-		}
 		r.rec.Branch = branch
 		// The start commit, read at once and locally: a checkpoint never
 		// pushes a tip at or behind it (nothing of the agent's yet), and it
