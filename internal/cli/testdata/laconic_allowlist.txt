@@ -320,7 +320,6 @@
 "  %s: image %s -> %s\n  %s base_images:\n%s  no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back\n"
 "  %s runs on the project's shared jobs, so its workflows' images are the project's catalog entries: this run rebuilds none of them (M7, D2312)\n"
 "project %s lists no repositories in its local config, so there is nothing to survey: the repository stage of fugaro setup and of fugaro update records the checkouts this machine has, and their repos entries are what the survey reads\n"
-"fugaro image check --job submits billable rebuilds and runs only as %s Cloud Run job (CLOUD_RUN_JOB is not set here); from a checkout, fugaro image check only prints the decision, and fugaro image build starts a rebuild, which you confirm by typing"
 "the project layer needs a base image whose fugaro reads it (fugaro %s or later), but %s's %s base is %s, release %s: rebuild the base image first (fugaro image refresh)"
 "--catalog decides the project's image catalog, which is the project's own check job's work (fugaro image check --job --catalog); from a checkout, fugaro image ls lists the entries and fugaro image build <entry> builds one"
 "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then need no confirmation at all, and the deterministic gate, the inventory and the owner's delete list stand in for one. It carries %s=%s, %s.\n"

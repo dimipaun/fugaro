@@ -98,18 +98,20 @@ func TestImageBuildLocalNeedsNoConfirmation(t *testing.T) {
 	}
 }
 
-// The check job runs in Cloud Run, where CLOUD_RUN_JOB is set and no coding
-// agent's marker is: anywhere else it submits nothing. --dry-run submits
-// nothing either, so it is always allowed.
+// The check job runs in Cloud Run, where CLOUD_RUN_JOB is set: anywhere else
+// it submits nothing, whoever is running it. A coding agent's session is
+// admitted like any other session (D3425): no build asks a session for an
+// answer, and the lease each submission takes is what bounds it (T4, D1543).
+// --dry-run submits nothing either, so it is always allowed.
 func TestImageCheckJobRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name, job, agent string
 		args             []string
 		refused          string
 	}{
-		{"an agent session, in a job", "j", "CLAUDECODE", []string{"--force"}, "CLAUDECODE is set"},
+		{"an agent session, in a job", "j", "CLAUDECODE", []string{"--force"}, ""},
 		{"no job marker", "", "", []string{"--force"}, "Cloud Run job"},
-		{"no job marker, an agent", "", "CLAUDECODE", nil, "CLAUDECODE is set"},
+		{"no job marker, an agent", "", "CLAUDECODE", nil, "Cloud Run job"},
 		{"--dry-run, an agent, no marker", "", "CLAUDECODE", []string{"--dry-run"}, ""},
 		{"--dry-run, no marker", "", "", []string{"--dry-run"}, ""},
 		{"the marker set", "j", "", nil, ""},
