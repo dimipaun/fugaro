@@ -456,6 +456,11 @@ export function mergeHeldNames(entries, held) {
  * applied, because a stored value this module could not have written is not
  * repaired into one: "nearly the right list" is a list that restores a project
  * with the wrong endpoint.
+ *
+ * The mutating call is `put`, as M1's and M3's stores spell theirs: `.write(`
+ * is the mailbox store port's own call, and `src/mailbox/write-path.test.js`
+ * allows it in the mailbox client and nowhere else. A keychain item is not the
+ * Realtime Database, and a different name is cheaper than a wider allow-list.
  */
 export class PairedListStore {
   #port;
@@ -491,7 +496,7 @@ export class PairedListStore {
    * the platform's backup, and it is refused past the platform's own value
    * bound rather than written (see the header).
    */
-  async write(identityId, entries, { synced = false } = {}) {
+  async put(identityId, entries, { synced = false } = {}) {
     if (!isIdentityKeyId(identityId)) return refuse(SYNC_CODES.BAD_IDENTITY, 'identityId');
     const read = readEntries(entries, 'local');
     if (!read.ok) return read;
@@ -552,7 +557,7 @@ export async function recordPairing({ identityId, entry, sync, store, identityEn
   const held = await store.read(identityId);
   if (!held.ok) return held;
   const entries = upsertPairedEntry(held.entries, made.entry);
-  const written = await store.write(identityId, entries, { synced: sync === false });
+  const written = await store.put(identityId, entries, { synced: sync === false });
   if (!written.ok) return written;
   if (sync === false) return Object.freeze({ ok: true, entries, sent: false });
   if (typeof fetch !== 'function') return refuse(SYNC_CODES.BAD_CONFIG, 'fetch');

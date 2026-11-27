@@ -388,7 +388,7 @@ test('one project’s refusal does not hold up another', async () => {
 
 test('with the sync switch off the list comes from the phone and the identity project is not called', async () => {
   const { deviceKey, projectStore, list } = stores();
-  await list.write(IDENTITY, [ENTRY], { synced: true });
+  await list.put(IDENTITY, [ENTRY], { synced: true });
   const { assertionFor } = assertionOf(ASSERTION);
   let reached = 0;
   const fetch = async (url) => {
@@ -426,7 +426,7 @@ test('with the sync switch off the list comes from the phone and the identity pr
 
 test('with the sync switch on the list comes from the identity project and keeps the names the phone had', async () => {
   const { deviceKey, projectStore, list } = stores();
-  await list.write(IDENTITY, [ENTRY]);
+  await list.put(IDENTITY, [ENTRY]);
   const { assertionFor } = assertionOf(ASSERTION);
   const calls = [];
   const fetch = async (url, options = {}) => {
@@ -466,7 +466,7 @@ test('with the sync switch on the list comes from the identity project and keeps
 
 test('a list the identity project could not be asked for restores nothing', async () => {
   const { deviceKey, projectStore, list } = stores();
-  await list.write(IDENTITY, [ENTRY]);
+  await list.put(IDENTITY, [ENTRY]);
   const { assertionFor } = assertionOf(ASSERTION);
   const restored = await restoreIdentity({
     identityId: IDENTITY,

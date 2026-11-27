@@ -463,7 +463,7 @@ export async function restoreIdentity({
   ...rest
 } = {}) {
   if (typeof sync !== 'boolean') return refuse(RESTORE_CODES.BAD_SWITCH, 'sync');
-  if (store === null || typeof store !== 'object' || typeof store.read !== 'function' || typeof store.write !== 'function') {
+  if (store === null || typeof store !== 'object' || typeof store.read !== 'function' || typeof store.put !== 'function') {
     return refuse(RESTORE_CODES.BAD_CONFIG, 'store');
   }
   const held = await store.read(identityId);
@@ -478,6 +478,6 @@ export async function restoreIdentity({
     entries = mergeHeldNames(remote.entries, held.entries);
   }
   const restored = await restoreAll({ identityId, entries, ...rest });
-  const stored = await store.write(identityId, entries, { synced: sync === false });
+  const stored = await store.put(identityId, entries, { synced: sync === false });
   return Object.freeze({ ...restored, stored: stored.ok, ok: restored.ok && stored.ok });
 }

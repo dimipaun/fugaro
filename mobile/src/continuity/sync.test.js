@@ -249,7 +249,7 @@ test('the phone’s item round-trips, and a value it could not have written is r
   const keychain = port();
   const store = new PairedListStore({ port: keychain });
   assert.deepEqual((await store.read(IDENTITY)).entries, []);
-  assert.equal((await store.write(IDENTITY, [ENTRY])).ok, true);
+  assert.equal((await store.put(IDENTITY, [ENTRY])).ok, true);
   assert.deepEqual((await store.read(IDENTITY)).entries, [ENTRY]);
   assert.equal(await keychain.getItem(pairedListItem(IDENTITY)) !== null, true);
 
@@ -266,8 +266,8 @@ test('the phone’s item round-trips, and a value it could not have written is r
   assert.equal((await store.read(IDENTITY)).code, SYNC_CODES.UNREADABLE);
 
   assert.equal((await store.read('not an identity')).code, SYNC_CODES.BAD_IDENTITY);
-  assert.equal((await store.write('', [])).code, SYNC_CODES.BAD_IDENTITY);
-  assert.equal((await store.write(IDENTITY, [ENTRY, ENTRY])).field, 'project_id');
+  assert.equal((await store.put('', [])).code, SYNC_CODES.BAD_IDENTITY);
+  assert.equal((await store.put(IDENTITY, [ENTRY, ENTRY])).field, 'project_id');
   assert.equal((await store.delete(IDENTITY)).ok, true);
   assert.deepEqual((await store.read(IDENTITY)).entries, []);
 });
@@ -280,12 +280,12 @@ test('a list the platform cannot hold is refused rather than written', async () 
     project_id: `project-${index}`,
     name: 'n'.repeat(64),
   }));
-  const written = await store.write(IDENTITY, big);
+  const written = await store.put(IDENTITY, big);
   assert.equal(written.code, SYNC_CODES.LIST_TOO_BIG);
   assert.deepEqual(keychain.writes, []);
   assert.ok(JSON.stringify(big).length > SECRET_VALUE_MAX);
   // ... and a list the platform does hold is written.
-  assert.equal((await store.write(IDENTITY, [ENTRY])).ok, true);
+  assert.equal((await store.put(IDENTITY, [ENTRY])).ok, true);
 });
 
 test('a value the platform refuses is a refusal and never a stored list', async () => {
@@ -293,7 +293,7 @@ test('a value the platform refuses is a refusal and never a stored list', async 
     throw new Error('locked');
   };
   const store = new PairedListStore({ port: { getItem: locked, setItem: locked, deleteItem: locked } });
-  assert.equal((await store.write(IDENTITY, [ENTRY])).code, SYNC_CODES.STORE_FAILED);
+  assert.equal((await store.put(IDENTITY, [ENTRY])).code, SYNC_CODES.STORE_FAILED);
   assert.equal((await store.read(IDENTITY)).code, SYNC_CODES.STORE_FAILED);
   assert.equal((await store.delete(IDENTITY)).code, SYNC_CODES.STORE_FAILED);
 });

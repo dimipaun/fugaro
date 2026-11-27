@@ -174,7 +174,26 @@ const RULES = [
     // (D2783, D2794). It is a second egress on purpose and named here for the
     // same reason as the other two -- it is the file where a token that reaches
     // a project leaves the phone, so it is a file a reviewer reads whole.
-    allow: ['src/voice-switch/hop.js', 'spike/src/firebase/idp.js', 'src/identity/providers.js', 'src/session/refresh.js'],
+    //
+    // `src/continuity/sync.js` and `src/continuity/restore.js` are K3's, and
+    // they are two files because they are two different conversations: the
+    // first carries the paired list to the identity project's `/paired-list`
+    // (K1's route, with an identity's ID token as the bearer), the second
+    // carries a new device's public key and an assertion to a project's own
+    // restore routes. Both are here deliberately: `sync.js` is where a list of
+    // a person's projects leaves the phone (and it is the file that does not
+    // open the network at all while the project's sync switch is off -- the
+    // task's red step), and `restore.js` is where an assertion and a new
+    // device's public key do. Every other module in `src/continuity/` builds or
+    // reads a value and touches no port.
+    allow: [
+      'src/voice-switch/hop.js',
+      'spike/src/firebase/idp.js',
+      'src/identity/providers.js',
+      'src/session/refresh.js',
+      'src/continuity/sync.js',
+      'src/continuity/restore.js',
+    ],
     why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
   },
 ];
@@ -216,6 +235,13 @@ test('the scan walks the app, and not an empty list', () => {
     'src/accounts/store.js',
     'src/accounts/secure-store.js',
     'src/accounts/expo-secure-store.js',
+    // The continuity module (K3) is on a credential path in both directions:
+    // its store writes a person's paired list into the platform keychain, and
+    // its two egress files carry that list to the identity project and a new
+    // device's public key to a project. Naming the door here means the rules
+    // above cover it like any other directory, and a walk that stopped reaching
+    // `src/continuity/` is a failure rather than silence.
+    'src/continuity/index.js',
     'src/app/root.js',
     // The voice switch (P5.3.6) is on a credential path -- it is the app's own
     // half of where an utterance may go -- so its door is named here on
