@@ -110,7 +110,14 @@ func (c *Config) SHA256() string {
 // the resolved config as the text and tag it was written with, so 1.10 stays
 // "1.10" and 010 stays "010", exactly as Parse reads them.
 func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
-	repo, ps := decodeRepo(data)
+	// The version is read first: everything below — the strict decode, the
+	// tree the merge and the drop work on — reads the file at CurrentVersion
+	// (D3422).
+	data, ps := upgradeVersion(data)
+	if len(ps) > 0 {
+		return nil, nil, ps
+	}
+	repo, ps := decodeBytes(data)
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
