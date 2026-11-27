@@ -7,7 +7,7 @@
 # `npm test` fail. A guard whose mutation survives is a guard no test defends,
 # which for this module -- the protocol P1.1, P3.6 and P4.1 speak -- is the
 # difference between a fence and a comment. Section 6 is the group about the
-# bounds: nineteen of its twenty-four rows move a comparison by one, which is the
+# bounds: twenty-one of its twenty-six rows move a comparison by one, which is the
 # mutation this module has actually been wrong about; four more narrow a rule by
 # removing one of its terms instead (the carriage return from the line-break
 # rule, DEL from the two character rules, and the second head-SHA length from the
@@ -285,10 +285,10 @@ run "kind: the defaults are the table's, not a fallthrough" \
   "  message: Object.freeze([]),
   prompt: Object.freeze(['options']),
   answer: Object.freeze(['reply_to']),
-  action: Object.freeze(['action', 'reply_to'])," "  message: Object.freeze(['options']),
+  action: Object.freeze(['action', 'reply_to', 'brief'])," "  message: Object.freeze(['options']),
   prompt: Object.freeze(['options']),
   answer: Object.freeze(['reply_to']),
-  action: Object.freeze(['action', 'reply_to']),"
+  action: Object.freeze(['action', 'reply_to', 'brief']),"
 
 # P5.1g's kind, and the one guard of it that is not P6.3's generic one: the
 # (kind, field) table has to NAME the stop request, or a message of that kind
@@ -324,8 +324,12 @@ run "agents: two agents under one id are refused" \
 run "agents: only id and name, nothing else" \
   "      if (!AGENT_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD, \`agents[\${i}].\${key}\`) };" "      if (false) {"
 run "heartbeat: the tag is required (O7)" \
-  "const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot', 'mac']);" \
-  "const HEARTBEAT_REQUIRED = Object.freeze(['at', 'boot']);"
+  "  const tags = tagFields(value, 'mac');
+  if (tags.bad) return tags.bad;
+
+  const heartbeat = {" "  const tags = tagFields(value, 'mac');
+
+  const heartbeat = {"
 
 # An action record: complete, or refused.
 run "action: the unknown-field guard" \
@@ -379,10 +383,34 @@ run "action: the head SHA is one of the two object-name lengths" \
 run "action: the head SHA is hex" \
   "  if (!HEX_PATTERN.test(value)) return { bad: refuse(REFUSALS.BAD_SHA, 'action.head_sha') };" ""
 
+# P5.4.2's guards: the brief, and the three rules that keep it the field it is.
+# Each one is a whole rule rather than a bound: the brief is the field a person's
+# words and the authority to start a run meet in, so what these prove is that a
+# brief with no agent, a brief on another verb, and a brief inside the target are
+# each caught by a test and not by a comment. That a launch may carry no brief at
+# all is the owner's ruling of 2026-11-27, and it is pinned the other way round:
+# the accepted case in vectors.json ("the app's typed start, with the task in
+# text") is what a guard requiring one would fail, so no mutation of it exists to
+# disable.
+run "brief: a brief with no agent is refused (D161)" \
+  "  if (Object.hasOwn(value, 'brief') && !Object.hasOwn(value, 'agent')) {" "  if (false) {"
+run "brief: only a launch carries one" \
+  "    if (verb !== 'launch') return refuse(REFUSALS.FIELD_NOT_ALLOWED, 'brief');" ""
+run "brief: the (kind, field) table names it, so no other kind carries it" \
+  "  for (const field of ['options', 'reply_to', 'action', 'brief', 'token', 'platform', 'prefs']) {" \
+  "  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {"
+run "action: the launch target does not grow a brief" \
+  "const REPO_TARGET_FIELDS = Object.freeze(['repo', 'pr']);" \
+  "const REPO_TARGET_FIELDS = Object.freeze(['repo', 'pr', 'brief']);"
+
 # The tag itself: required, and 32 bytes of lowercase hex.
 run "mac: required on every message" \
-  "export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at', 'mac']);" \
-  "export const REQUIRED_FIELDS = Object.freeze(['id', 'sender', 'text', 'at']);"
+  "  const tags = tagFields(value, 'mac');
+  if (tags.bad) return tags.bad;
+
+  const message = {" "  const tags = tagFields(value, 'mac');
+
+  const message = {"
 run "mac: 64 hex characters, or it is not a tag" \
   "  if (value.length !== MAC_MAX || !HEX_PATTERN.test(value)) {" "  if (false) {"
 run "mac: lowercase only (one tag, one spelling)" \
@@ -400,7 +428,7 @@ run "registration: the platform is required" \
   "  registration: Object.freeze(['token', 'platform'])," \
   "  registration: Object.freeze(['token']),"
 run "registration: the (kind, field) table is two-sided for its own three fields" \
-  "  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {" \
+  "  for (const field of ['options', 'reply_to', 'action', 'brief', 'token', 'platform', 'prefs']) {" \
   "  for (const field of ['options', 'reply_to', 'action']) {"
 run "registration: the platform is one of the two" \
   "  if (!PLATFORMS.includes(value)) return { bad: refuse(REFUSALS.UNKNOWN_PLATFORM, 'platform') };" \
@@ -453,11 +481,11 @@ run "the two encoders' separators are refused (Go escapes them, JavaScript does 
   "  const code = s.charCodeAt(i);
   return code === 0x2028 || code === 0x2029;" "  return false;"
 run "canonicalBytes: the tag itself is not covered" \
-  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'acked') covered[key] = record[key];"
+  "    if (key !== 'mac' && key !== 'sig' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'sig' && key !== 'acked') covered[key] = record[key];"
 run "canonicalBytes: the ack is outside the bytes" \
-  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac') covered[key] = record[key];"
+  "    if (key !== 'mac' && key !== 'sig' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac' && key !== 'sig') covered[key] = record[key];"
 run "canonicalBytes: a covered field is never dropped (reply_to)" \
-  "    if (key !== 'mac' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac' && key !== 'acked' && key !== 'reply_to') covered[key] = record[key];"
+  "    if (key !== 'mac' && key !== 'sig' && key !== 'acked') covered[key] = record[key];" "    if (key !== 'mac' && key !== 'sig' && key !== 'acked' && key !== 'reply_to') covered[key] = record[key];"
 run "canonicalBytes: the direction is inside the covered bytes" \
   "  covered[DIRECTION_FIELD] = direction;" ""
 run "canonicalBytes: the direction is one of the three" \
@@ -497,7 +525,7 @@ run "canonicalBytes: -0 is refused" \
 #
 # Every guard above is DISABLED: a check deleted, a pattern replaced by `false`.
 # None of them moves a comparison by one, and that is the mutation this module
-# was actually wrong about. Nineteen of the twenty-four rows below move one
+# was actually wrong about. Twenty-one of the twenty-six rows below move one
 # instead. Four more drop a term of a rule without moving anything: `string: a
 # body loses the carriage return` drops the `code === 0x0d` term of the
 # line-break rule, `string: DEL is no longer refused` and `id: DEL is no longer
@@ -605,6 +633,12 @@ run "registration: the zone's length bound, widened by one" \
 run "registration: the zone's length bound, narrowed by one" \
   "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX, false);" \
   "  const zone = stringField(value.zone, 'prefs.quiet_hours.zone', ZONE_MAX - 1, false);"
+run "brief: the length bound, widened by one (P5.4.2)" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX, true);" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX + 1, true);"
+run "brief: the length bound, narrowed by one (P5.4.2)" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX, true);" \
+  "    const brief = stringField(value.brief, 'brief', BRIEF_MAX - 1, true);"
 
 # ---------------------------------------------------------------------------
 # 7. mac.js, and the boundary that keeps the entry point loadable by the phone.

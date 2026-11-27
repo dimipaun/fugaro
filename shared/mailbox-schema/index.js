@@ -78,6 +78,25 @@
 // server-written, so the message cannot carry one and the consumer stamps its
 // own clock.
 //
+// ## What P5.4.2 adds, and why the field is here
+//
+//   brief       the shaped task a "go" MAY carry, accepted on a `launch` and
+//               refused on every other verb and kind. It is OPTIONAL: the
+//               owner's ruling of 2026-11-27 keeps a launch that carries its
+//               task in the message's own `text` — the app's typed start —
+//               valid, so a launch with no brief validates exactly as it did
+//               before the field existed (P5.4.2). It is a field of
+//               the MESSAGE and not of the action record, which is what keeps
+//               `action.target` "a repo alone" (O10, D169): a brief written
+//               inside the target would be a launch whose meaning changed for
+//               every reader of the field set. When present it is bounded
+//               (BRIEF_MAX) and never the free `text` of the message, because
+//               the two say different things — `text` is what a person is
+//               shown, the brief is what a run is started from. A message
+//               carrying one carries D161's `agent` too: the brief is the
+//               front agent's own text, and a brief with no agent is a brief
+//               from nobody.
+//
 // **A new kind moves no version constant, because there is none to move.** The
 // field set IS the version (below), so a reader that predates this kind refuses
 // a registration message as an unknown kind and a writer that predates it
@@ -168,6 +187,16 @@ export const SENDER_MAX = 200;
  * that one write cannot carry a document.
  */
 export const TEXT_MAX = 4096;
+
+/**
+ * The permitted length of a brief, in UTF-16 code units (P5.4.2): the shaped
+ * task a "go" carries, which becomes a run's stored task record. Four times
+ * `TEXT_MAX` because it is a document rather than a spoken turn, and the same
+ * 16 KiB `internal/task` already allows a spec a run works from — bounded
+ * because a conversation must not be able to hand the launch path a document
+ * either, and refused where it is written rather than where it is handed off.
+ */
+export const BRIEF_MAX = 16384;
 
 /**
  * The largest timestamp the schema accepts, in epoch milliseconds: the largest
@@ -389,6 +418,7 @@ export const FIELDS = Object.freeze([
   'options',
   'reply_to',
   'action',
+  'brief',
   'token',
   'platform',
   'prefs',
@@ -414,7 +444,7 @@ const KIND_OPTIONAL = Object.freeze({
   message: Object.freeze([]),
   prompt: Object.freeze(['options']),
   answer: Object.freeze(['reply_to']),
-  action: Object.freeze(['action', 'reply_to']),
+  action: Object.freeze(['action', 'reply_to', 'brief']),
   registration: Object.freeze(['token', 'platform', 'prefs']),
   stop: Object.freeze([]),
 });
@@ -617,10 +647,17 @@ export function validateMessage(value) {
   // The (kind, field) table, in the order that names the more useful fault
   // first: a field the kind cannot carry at all, then one it must carry and
   // does not, then the fields themselves.
-  for (const field of ['options', 'reply_to', 'action', 'token', 'platform', 'prefs']) {
+  for (const field of ['options', 'reply_to', 'action', 'brief', 'token', 'platform', 'prefs']) {
     if (Object.hasOwn(value, field) && !KIND_OPTIONAL[kind].includes(field)) {
       return refuse(REFUSALS.FIELD_NOT_ALLOWED, field);
     }
+  }
+  // D161, read for the turn a brief travels in (P5.4.2): the brief is the front
+  // agent's own text, so the message that carries one carries the agent it is
+  // for. A brief with no agent is a brief from nobody, and the consumer would
+  // have nothing to route the turn by.
+  if (Object.hasOwn(value, 'brief') && !Object.hasOwn(value, 'agent')) {
+    return refuse(REFUSALS.MISSING_FIELD, 'agent');
   }
   for (const field of KIND_REQUIRED[kind]) {
     if (!Object.hasOwn(value, field)) {
@@ -641,6 +678,20 @@ export function validateMessage(value) {
     const action = actionField(value.action, kind);
     if (action.bad) return action.bad;
     message.action = action.value;
+  }
+  // The brief, and the verb that carries it (P5.4.2). The brief is OPTIONAL
+  // (the owner's ruling of 2026-11-27): a launch carrying its task in `text`
+  // stays valid, so the schema does not require one. When a brief is present it
+  // must sit on a launch — the one verb that starts work, so the one verb with
+  // something to start from — and a brief beside a cancel, a merge or a confirm
+  // is a field the consumer would have to guess the meaning of. The verb is
+  // read from the record the action check above already validated.
+  const verb = Object.hasOwn(value, 'action') ? value.action.verb : null;
+  if (Object.hasOwn(value, 'brief')) {
+    if (verb !== 'launch') return refuse(REFUSALS.FIELD_NOT_ALLOWED, 'brief');
+    const brief = stringField(value.brief, 'brief', BRIEF_MAX, true);
+    if (brief.bad) return brief.bad;
+    message.brief = brief.value;
   }
   if (Object.hasOwn(value, 'token')) {
     const token = tokenField(value.token);

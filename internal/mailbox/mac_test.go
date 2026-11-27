@@ -47,7 +47,7 @@ func TestTheVectorsReplayThroughTheMACFunction(t *testing.T) {
 	vectors := loadVectors(t)
 	key := []byte(vectorKey(t))
 	cases := list(t, vectors["cases"], "cases")
-	if len(cases) != 29 {
+	if len(cases) != 32 {
 		t.Errorf("the vector file carries %d cases: a case is a tag to verify, not to skip", len(cases))
 	}
 	verified, refused := 0, 0
@@ -161,6 +161,7 @@ func TestTheCoveredFieldSetIsEveryFieldButMacAndAcked(t *testing.T) {
 		"the answer with reply_to": vectorCase(t, "answer"),
 		"the merge action":         vectorCase(t, "action: merge a pull request"),
 		"the registration":         vectorCase(t, "registration"),
+		"the go with its brief":    vectorCase(t, "action: a plain launch"),
 		"the signed message":       signedMessage(t),
 	}
 	seen := map[string]bool{}
