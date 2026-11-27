@@ -406,15 +406,18 @@ Numbers D3120–D3137 are used; the block is D3120–D3139 (see the README for t
 | **D3132** | Asked after the pull request opened (open item O17). A launch from a phone reaches the issuer as the resident orchestrator, whose asks are not scope-checked. Recommended: trace what the orchestrator checks, then decide. Alternatives: scope its asks by the person at once; accept as is. | **Trace it now, then decide.** As recommended. The trace is F34; the decision is D3136. |
 | **D3133** | The cap is three review rounds and round 3's fixes were unreviewed (O18). A fourth round? Recommended: yes. Alternative: land as it stands, with C1's own review to catch the rest. | **Yes, one more round.** As recommended. It goes past the skill's cap on the owner's word. |
 | **D3134** | D3126 was chosen from an option that said it "closes" H1; it narrows it (O13). Does D3126 stand? Recommended: it stands, and the documents say narrowed. Alternatives: stands, and a backlog entry for the device-held key; reconsider D3126. | **It stands; H1 is narrowed.** As recommended. No backlog entry was asked for. |
-| **D3135** | An installation with no published policy has no lever for an older CLI (O4), and whether one can exist after always-a-budget is unverified (U5). Recommended: LM14's first step settles the fact, and the question returns only if such an installation can exist. Alternatives: accept the gap; `update` publishes a minimal policy. | **Settle the fact first.** As recommended. |
+| **D3135** | An installation with no published policy has no lever for an older CLI (O4), and whether one can exist after always-a-budget is unverified (U5). Recommended: LM14's first step settles the fact, and the question returns only if such an installation can exist. Alternatives: accept the gap; `update` publishes a minimal policy. | **Settled by the fact, then by the owner on 2026-11-26: accept the gap.** LM14's first step settled the fact — an installation that can launch after always-a-budget CAN have no published policy, so U5 is yes — and the question returned to the owner, who accepted the gap. An installation with no published policy keeps no lever for an older CLI: that CLI meets IAM's own 403, and `fugaro project policy publish` fixes it by hand. `update` does not publish a minimal policy. |
 | **D3136** | The trace of D3132 (F34). **Asked twice.** First, on a threat that review round 4 showed was wrong (a person with a modified CLI committing an attempt): recommended, judge the launch scope of the person who committed. Second, with the facts of F34 as corrected (only database admins write the node; an attempt names no committer): recommended, the issuer serves the orchestrator only a run id that is a recorded, unstarted attempt of that repository, and refuses an ask naming context repositories. Alternatives the second time: add a committer field and judge it as well (about 2 more tasks, a schema bump, the field being the admin's word); unscoped, as D3125 first stood. | First answer: "Judge the person who committed". **Amended after review, and answered again by the owner (2026-11-20): bind the ask to a recorded attempt.** As recommended. No committer field and no scope judgement for this class. Cost accepted: 1 task (LM24), no schema change. A compromised orchestrator account can launch only what an admin's patch already committed. **Amends D3125.** **Widened 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)** (D3189, R19): the issuer also serves the orchestrator a resume of a pause the credentials service itself recorded — no attempt on its own record, but a node the service alone writes, its resume time included — and the resumed run keeps the launcher and the pool the pause recorded (D3191). Nothing else moves: an ask it cannot tie to a record still meets the same refusal. |
 | **D3137** | Raised by review round 4 as a decision this document had made unasked (R16, arm 2). After D3130 a roster service account would be the one class with a ticket for any repository and no scope judgement, because the CLI gate admits a service-account credential without judging it today. Recommended: parity, admitted unscoped, and SECURITY.md says so. Alternative: judge it like a person (a pipeline stops until its account is granted a scope; about 1 more task). | **Parity: admitted unscoped.** As recommended. Why: a pipeline that launches keeps working (ask 4). Cost accepted: a leaked roster service-account key launches on every repository. |
 
-No answer departs from its recommendation. No answer was "your call". Two answers were amended
+No answer was "your call". Two answers were amended
 after review and put to the owner again, who answered the same day: D3129 (twice) and D3130.
 D3131 was added by review round 2. D3132 to D3137 were asked after the pull request opened, from
 its open items and from review round 4; D3136 was itself amended after that round and answered
-again, and it amends D3125.
+again, and it amends D3125. D3135's recommendation was to settle the fact first and to return the
+question if such an installation can exist; the fact was settled the way that sends it back (U5
+is yes), and the owner then took the alternative the row already named — **accept the gap**
+(2026-11-26).
 
 ## Resolutions
 
@@ -577,10 +580,12 @@ None. No two answers pull against each other.
   It must settle D3109 (people only) against D3123 (roster service accounts).
 - **O3. #3323 merged while this was in review.** This pull request does not edit that folder;
   LM19 amends it on main. Its README still reads as before D3129.
-- **O4. An installation with no published policy has no lever for an older CLI** (F14; D3135:
-  LM14's first step settles whether one can exist, and the question returns to the owner if so). There the
-  older CLI shows IAM's own error. always-a-budget makes a database required for a launch; whether
-  that also means a policy is always published by then is U5.
+- **O4. An installation with no published policy has no lever for an older CLI** (F14; D3135,
+  settled by the owner on 2026-11-26: **the gap is accepted**). LM14's first step settled the
+  fact — such an installation can exist after always-a-budget, so U5 is yes — and the owner
+  accepted the gap rather than have `update` publish a minimal policy. There the older CLI shows
+  IAM's own error, and `fugaro project policy publish` is the by-hand fix. always-a-budget makes a
+  database required for a launch; a published policy is not required by the same fact.
 - **O5. A launcher's Google ID token is a bearer token.** The class also admits gcloud's audience
   (accepted under D1939 and D1944), replayable for about an hour by any service that received it.
   A replay obtains a ticket as that person, on the record, and the same holds for the pairing
@@ -638,7 +643,8 @@ None. No two answers pull against each other.
   with the service's address and an invoker row. Read off that plan, not off merged code; LM7's
   first step is to check it.
 - **U5.** Whether every installation that can launch after always-a-budget has a published policy
-  (O4).
+  (O4). **Settled by LM14's first step: no.** An installation can launch with no published policy,
+  and the gap that leaves an older CLI is accepted (D3135, the owner's answer of 2026-11-26).
 - **U6.** Whether an operator impersonating the deployer can set the signer's IAM policy where the
   two projects are one; the deployer role's condition was not read. D3127 holds either way.
 - **U7.** That a Batch VM's attestation can guard a claim as it would have guarded the key

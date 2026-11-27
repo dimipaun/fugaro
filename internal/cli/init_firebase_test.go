@@ -894,6 +894,51 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 	}
 }
 
+// TestTheFirebaseRootKeepsThePeopleMinterSwitchOff is the other half of the
+// launcher-does-not-mint move (LM14): the run that turns the switch off is not
+// the only run that rewrites this root's tfvars, and a later run that dropped
+// the key would hand the module its default — on — and plan the people's minter
+// rows back. Nothing refuses that plan: the rows are creates, and the guard
+// admits creates.
+//
+// The document is written with the switch alone, which is a document this test
+// could have written and no run could: the key the run leaves behind beside it
+// is what says the run rebuilt the document rather than left the test's.
+func TestTheFirebaseRootKeepsThePeopleMinterSwitchOff(t *testing.T) {
+	// Before the rig: it puts its own bin directory on PATH and moves HOME and
+	// the XDG directories aside, and the fake terraform is built with the go
+	// this run was started with (newConvergeRigYAML builds it first for the
+	// same reason).
+	fakeTerraform(t)
+	r := newFBRig(t)
+	r.historyImage()
+	fakeTerminal(t)
+	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe"); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := infra.FirebaseWorkdir(os.Getenv, initProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(infra.WorkdirVarsPath(dir, "firebase"), []byte(`{"people_minter": false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.save(t)
+
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	after := workdirVars(t, "firebase")
+	if !strings.Contains(string(after), `"history_account"`) {
+		t.Fatalf("the run left the document this test wrote, so nothing here reads the carry:\n%s", after)
+	}
+	if off, err := infra.PeopleMinterOff(after); err != nil || !off {
+		t.Errorf("the Firebase root's tfvars lost the launcher-does-not-mint switch (err %v), so the next run plans the people's minter rows back:\n%s", err, after)
+	}
+}
+
 // TestTheRunIndexIndexesWaitForTheDatabase is RI2's own gate at this level:
 // the Firebase root is applied with the answer its composite indexes need, and
 // it is an answer about the database as it will be when that apply runs.

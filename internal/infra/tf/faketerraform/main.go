@@ -28,6 +28,12 @@
 // directory) to FAKE_TERRAFORM_LOG, and an -out=<file> argument makes it write
 // a plan file holding PlanMarker.
 //
+// The plan's own document gains one variable of its own: people_minter, read
+// out of the working directory's terraform.tfvars.json and merged into
+// `variables`, because terraform reports the values it planned with and a plan
+// that said otherwise about that switch would be one the run did not make
+// (withPlannedSwitch).
+//
 // A -var-file argument that does not exist is refused with the error terraform
 // itself prints and exit 1, in either form terraform accepts it
 // ("-var-file=<file>" and "-var-file <file>"): the CLI writes the root's
@@ -140,10 +146,75 @@ func run(args []string) int {
 			return 3
 		}
 	}
+	if key == "show" {
+		st.Stdout, err = withPlannedSwitch(dir, st.Stdout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "faketerraform:", err)
+			return 3
+		}
+	}
 	repeat := max(st.Repeat, 1)
 	fmt.Fprint(os.Stdout, strings.Repeat(st.Stdout, repeat))
 	fmt.Fprint(os.Stderr, strings.Repeat(st.Stderr, repeat))
 	return st.Exit
+}
+
+// withPlannedSwitch merges the launcher-does-not-mint switch out of the
+// working directory's terraform.tfvars.json into the plan document's own
+// `variables`, which is what terraform reports there: the plan's variables are
+// the values it planned with, and a root's tfvars file is where it reads them.
+//
+// It is the one variable a reader of the plan asks about
+// (infra.PeopleMinter, the guard's allow-list for the rows that switch owns: a
+// plan whose document says false is the one that removes them), and it is
+// merged rather than scripted apart from the tfvars because a fixture that
+// scripted it would model a plan whose value is one the run never wrote.
+// Everything else about the document is the script's, untouched, and a root
+// with no tfvars, no such key, or a stdout that is not a plan is answered as it
+// stands — which is the switch ON, the root's own default.
+func withPlannedSwitch(dir, stdout string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, "terraform.tfvars.json"))
+	if err != nil {
+		return stdout, nil
+	}
+	var vars map[string]json.RawMessage
+	if err := json.Unmarshal(b, &vars); err != nil {
+		return stdout, nil
+	}
+	raw, ok := vars["people_minter"]
+	if !ok {
+		return stdout, nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		return stdout, nil
+	}
+	doc["variables"] = mergePlannedSwitch(doc["variables"], raw)
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return stdout, nil
+	}
+	return string(out), nil
+}
+
+// mergePlannedSwitch is the document's own `variables` with people_minter set
+// to the tfvars' value: the object it already holds is kept, so a script that
+// named other variables keeps them.
+func mergePlannedSwitch(existing, value json.RawMessage) json.RawMessage {
+	vars := map[string]json.RawMessage{}
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &vars)
+	}
+	entry, err := json.Marshal(map[string]json.RawMessage{"value": value})
+	if err != nil {
+		return existing
+	}
+	vars["people_minter"] = entry
+	out, err := json.Marshal(vars)
+	if err != nil {
+		return existing
+	}
+	return out
 }
 
 // varFileArg is the variables file args[i] names, in either form terraform

@@ -315,6 +315,18 @@ type InstallationSpec struct {
 	// into the project's own bucket, and its assignment travels in
 	// ReportsJobDocEnv.
 	Reports *ReportsJobSpec `json:"reports,omitempty"`
+	// PeopleMinter is the launcher-does-not-mint switch (LM11, LM12, LM14):
+	// the root's var.people_minter, which keeps the installation's
+	// orchestrator_token_minter row while it is on. It is a POINTER because
+	// the key's absence is the answer this run has before the grant moves
+	// (the root's default, on) and only `false` is ever written: a plain bool
+	// with omitempty could not write it at all, and one without would put
+	// `people_minter = true` into every document this build writes, moving
+	// the tfvars of every installation that never turned it off. nil on every
+	// run that is not the one moving the grant (LM14's stage); every later run
+	// carries the key forward into the document (prepare's carry,
+	// CarriedPeopleMinter).
+	PeopleMinter *bool `json:"people_minter,omitempty"`
 }
 
 // CredentialsServiceSpec is the installation root's var.credentials_service

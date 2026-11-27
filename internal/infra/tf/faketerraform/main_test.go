@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,5 +205,78 @@ func TestAStepListedForOneRootWinsAndAnEmptyListIsRefused(t *testing.T) {
 	out, stderr, code := fakeRun(t, `{"plan": []}`)("plan")
 	if code == 0 || out != "" || !strings.Contains(stderr, "empty list") {
 		t.Errorf("an empty step list: exit %d, stdout %q, stderr %q; want a refusal", code, out, stderr)
+	}
+}
+
+// The plan's own document gains people_minter out of the root's tfvars file,
+// and only the plan's: terraform reports the values it planned with, and the
+// guard's allow-list for the rows that switch owns is read off the plan
+// (infra.PeopleMinter). A fake that did not merge it would make a plan the run
+// did not make — the switch the resources were planned with would be one the
+// run never wrote — and the state read, which names no plan file, keeps the
+// script's document exactly.
+func TestThePlansOwnDocumentGainsTheSwitchOutOfTheRootsTfvars(t *testing.T) {
+	f := fakeRun(t, `{"show": {"stdout": "{\"format_version\":\"1.2\",\"variables\":{\"other\":{\"value\":1}},\"resource_changes\":[]}"}}`)
+	dir := t.TempDir()
+	t.Chdir(dir)
+	write := func(t *testing.T, tfvars string) {
+		t.Helper()
+		path := filepath.Join(dir, "terraform.tfvars.json")
+		if tfvars == "" {
+			_ = os.Remove(path)
+			return
+		}
+		if err := os.WriteFile(path, []byte(tfvars), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	variables := func(t *testing.T, out string) map[string]any {
+		t.Helper()
+		var got map[string]any
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("the answer is not a document: %v", err)
+		}
+		vars, _ := got["variables"].(map[string]any)
+		return vars
+	}
+	for _, tc := range []struct {
+		why    string
+		tfvars string
+		off    bool
+		named  bool
+	}{
+		{"no tfvars file", "", false, false},
+		{"no such key", `{"project":"p"}`, false, false},
+		{"the switch off", `{"people_minter":false}`, true, true},
+		{"the switch on", `{"people_minter":true}`, false, true},
+	} {
+		write(t, tc.tfvars)
+		out, _, code := f("show", "tfplan")
+		if code != 0 {
+			t.Fatalf("%s: exit %d", tc.why, code)
+		}
+		vars := variables(t, out)
+		entry, named := vars["people_minter"].(map[string]any)
+		if named != tc.named {
+			t.Fatalf("%s: variables = %v, want people_minter named=%v", tc.why, vars, tc.named)
+		}
+		if named {
+			if got, ok := entry["value"].(bool); !ok || got == tc.off {
+				t.Errorf("%s: people_minter = %v, want the tfvars' own %v", tc.why, entry["value"], !tc.off)
+			}
+		}
+		if _, ok := vars["other"]; !ok {
+			t.Errorf("%s: the merge dropped the script's own variables: %v", tc.why, vars)
+		}
+	}
+
+	// The state read names no plan file and is the script's document exactly.
+	write(t, `{"people_minter":false}`)
+	out, _, code := f("show", "-json")
+	if code != 0 {
+		t.Fatalf("the state read: exit %d", code)
+	}
+	if strings.Contains(out, "people_minter") {
+		t.Errorf("the STATE read gained the switch: %s", out)
 	}
 }

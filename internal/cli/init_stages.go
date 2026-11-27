@@ -582,6 +582,11 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// they are on screen before the run's own confirmation and before any stage
 	// writes. It refuses nothing, asks nothing and cannot fail the update.
 	e.announceBudgetStops(ctx)
+	// And R10's lines about the runs' identity, which this release moves onto
+	// the credentials service: printed here, before the note about the runs in
+	// flight and before any stage writes, so a person reads what changes for
+	// the people who launch before the update makes the change (LM14).
+	e.announceIdentityMove(ctx)
 	// And the word that is not a budget mode any more leaves this machine's own
 	// config here, in place and said out loud (D3022, F22): the loader lets the
 	// file that says it load, so this write is where the word goes, and it is
@@ -2643,6 +2648,14 @@ func newCredentialsStage(e *initEngine) *engineStage {
 				// one gets from this one command.
 				return ""
 			}
+			if e.minterGrantOwed() {
+				// LM14: the runs' identity grant has not moved yet, and this
+				// stage is the one that moves it — the probe runs after the
+				// image move below and the apply that carries the switch after
+				// the probe. A skipped stage would leave the people's rows on
+				// every installation that ever converges again.
+				return ""
+			}
 			return "the recorded image is already this release's" + e.orchestratorLeftOff(doc, image)
 		},
 		run: func(ctx context.Context) error {
@@ -2658,8 +2671,31 @@ func newCredentialsStage(e *initEngine) *engineStage {
 			}
 			e.r.rootPlanEmpty, e.r.rootApplied = false, false
 			e.r.installLabel = orchestratorInstallLabel(wrote)
-			_, _, err = e.r.installRoot(ctx, e.c, e.t, e.wd, e.lc, e.spec)
-			return e.orchestratorApplied(wrote, err)
+			// LM14: the runs' identity grant moves here, after the image move
+			// above and before the apply below. The probe is what licenses it
+			// (R8), and the switch it turns off is what the apply below carries
+			// into the installation root — the resident orchestrator's row —
+			// and removePeopleRows into the Firebase root.
+			moved, why := false, ""
+			if e.minterGrantOwed() {
+				moved, why = e.probeTheIssuer(ctx)
+				switch {
+				case moved:
+					off := false
+					e.spec.PeopleMinter = &off
+				case why != "":
+					fmt.Fprintf(e.r.w, "the runs' identity grant stays where it is: %s\n", why)
+				}
+			}
+			outs, _, err := e.r.installRoot(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+			if err := e.orchestratorApplied(wrote, err); err != nil {
+				return err
+			}
+			if !moved {
+				return nil
+			}
+			fmt.Fprintf(e.r.w, "the runs' identity grant moved to the credentials service: the people's minter rows and the resident orchestrator's are gone\n")
+			return e.removePeopleRows(ctx, outs, e.spec)
 		},
 		left: promptLeft(initflow.CredentialsService, "run the command below: it asks you nothing and moves the credentials service onto this release's image", e.r.o.doorName()),
 	}
