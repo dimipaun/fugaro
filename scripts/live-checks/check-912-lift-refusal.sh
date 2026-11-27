@@ -97,6 +97,12 @@ XTRACE_AT_START=no
 case "${-:-}" in *x*) XTRACE_AT_START=yes ;; esac
 { set +x; } 2>/dev/null
 
+# The shared YAML reader (lib/lift_yaml.py), which this check and Check 910 both
+# read a fugaro.yaml with. Exported, because the python3 program below is a
+# heredoc on stdin and finds the module through it.
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib}
+export LIVE_CHECK_LIB
+
 FACTS=""
 SCRATCH=""
 SCRATCH_REMOVED=no
@@ -155,7 +161,8 @@ line is the verdict and the exit status:
   PASS (exit 0)        the key is refused with its fix, named on the other ref
                        and named by the plan
   FAIL (exit 1)        one of the three did not hold — on a release-A binary
-                       the `refuse` row is the one that fails
+                       the `refuse` row fails, and the `plan` row with it where
+                       that release's own update has not migrated the repository
   INCOMPLETE (exit 2)  the run stopped before it could judge
   INCOMPLETE (exit 3)  at least one row reads UNVERIFIED
 USAGE
@@ -359,8 +366,10 @@ trap finish EXIT
 # row. Every judgement is over whitespace-flattened text, because a refusal the
 # terminal wrapped is the same sentence.
 py() { # py <mode> [args...]
-  python3 - "$@" <<'PY'
-import hashlib, os, re, sys
+  # -B because the shared reader is imported: a bytecode cache written beside it
+  # would be a file this check put in the repository it reads.
+  python3 -B - "$@" <<'PY'
+import hashlib, os, sys
 
 # The fix each sentence names, one per key of config.LiftedKeys (C1): the command
 # that states the key in its new home. A refusal that names no fix for the key it
@@ -377,67 +386,23 @@ def die(code, msg):
     sys.stderr.write("check-912: %s\n" % msg)
     sys.exit(code)
 
-def read_text(path):
-    try:
-        with open(path, errors="replace") as fh:
-            return fh.read()
-    except Exception:
-        return ""
-
-# flat is what every judgement is made on: whitespace flattened, because a
-# refusal the terminal wrapped is the same sentence, and `|` turned away from the
-# row separator the block is built from.
-def flat(text):
-    return re.sub(r"\s+", " ", (text or "").replace("|", "/")).strip()
+# The YAML block reader, `flat`, `read_text` and the path walk are Check 910's
+# too, so both read a file of this shape the same way:
+# scripts/live-checks/lib/lift_yaml.py, put on the path by the
+# LIVE_CHECK_LIB this script exports.
+lib = os.environ.get("LIVE_CHECK_LIB", "")
+if lib not in sys.path:
+    sys.path.insert(0, lib)
+try:
+    from lift_yaml import block_spans, children, cut_comment, flat, read_text
+except ImportError:
+    die(2, "the shared YAML reader lib/lift_yaml.py was not found (LIVE_CHECK_LIB is %r): run this check from scripts/live-checks/" % lib)
 
 def window(text, key, around=360):
     i = text.find(key)
     if i < 0:
         return text[:around]
     return text[max(0, i - 90):i + around].strip()
-
-def cut_comment(line):
-    out, q = [], None
-    for i, c in enumerate(line):
-        if q:
-            out.append(c)
-            if c == q:
-                q = None
-        elif c in "\"'":
-            q = c
-            out.append(c)
-        elif c == "#" and (i == 0 or line[i - 1] in " \t"):
-            break
-        else:
-            out.append(c)
-    return "".join(out).rstrip()
-
-def block_spans(lines):
-    spans, stack = {}, []
-    for i, raw in enumerate(lines):
-        line = cut_comment(raw)
-        text = line.strip()
-        if not text or text in ("---", "..."):
-            continue
-        indent = len(line) - len(line.lstrip(" \t"))
-        if text.startswith("-"):
-            key = "-"
-        else:
-            m = re.match(r"^([^:\s][^:]*):(\s|$)", text)
-            if not m:
-                continue
-            key = m.group(1).strip()
-        while stack and stack[-1][0] >= indent:
-            stack.pop()
-        path = tuple(stack[-1][1]) + (key,) if stack else (key,)
-        if path not in spans:
-            spans[path] = (i, indent)
-        stack.append((indent, path))
-    return spans
-
-def children(spans, path):
-    n = len(path)
-    return sorted({p for p in spans if len(p) == n + 1 and p[:n] == path and p[-1] != "-"})
 
 def lifted_paths(spans):
     paths = list(FIXED)
