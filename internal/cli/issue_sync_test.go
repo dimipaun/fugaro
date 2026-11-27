@@ -435,11 +435,11 @@ func TestSyncRunsOnlyInIssueCommands(t *testing.T) {
 	}
 }
 
-// TestListShowUseLocalInAgentSession: a coding agent's session uploads
-// nothing, so it reads nothing from the project either (F10, D1734). `list`
-// and `show` answer from the files here and say why, and neither the
-// credential nor the store is touched.
-func TestListShowUseLocalInAgentSession(t *testing.T) {
+// TestListShowReadTheProjectInAgentSession: a coding agent's session reads the
+// project's store like a person's (D3425 lifts the read) and uploads nothing:
+// `list` and `show` answer with the project's rows and this machine's own, the
+// session says what it read, and no record is filed (AG5a's write).
+func TestListShowReadTheProjectInAgentSession(t *testing.T) {
 	rig := newMineRig(t)
 	mate := mineRec("1", "sig-mate")
 	mateUp := rig.upload(mate, "user:bo@example.test")
@@ -453,8 +453,8 @@ func TestListShowUseLocalInAgentSession(t *testing.T) {
 	if row := syncRow(out, rec.LocalID); row == nil {
 		t.Errorf("a session's listing drops this machine's own issue:\n%s", out)
 	}
-	if strings.Contains(out, mineRefOf(mateUp.Number)) {
-		t.Errorf("a session's listing shows an issue only the project's store has:\n%s", out)
+	if syncRow(out, mineRefOf(mateUp.Number)) == nil {
+		t.Errorf("a session's listing does not read the project's store:\n%s", out)
 	}
 
 	shown, errOut, err := rig.run("issue", "show", rec.LocalID)
@@ -464,14 +464,15 @@ func TestListShowUseLocalInAgentSession(t *testing.T) {
 	if !strings.Contains(shown, rec.LocalID) || !strings.Contains(errOut, "coding agent's session") {
 		t.Errorf("a session's show printed %q and said %q", shown, errOut)
 	}
-	if _, _, err := rig.run("issue", "show", mineRefOf(mateUp.Number)); err == nil {
-		t.Error("a session's show read the project's store")
+	if _, _, err := rig.run("issue", "show", mineRefOf(mateUp.Number)); err != nil {
+		t.Errorf("a session's show does not read the project's store: %v", err)
 	}
-	if rig.lookups != 0 {
-		t.Errorf("a coding agent's session asked the credential %d time(s)", rig.lookups)
-	}
-	if rig.opens != 0 {
-		t.Errorf("a coding agent's session opened the shared store %d time(s)", rig.opens)
+	// The read lifts and the upload does not: this is `issue sync`'s write, and
+	// a listing that made it on the way would be that write by the back door.
+	if rows, err := issues.ListShared(context.Background(), rig.bucket); err != nil {
+		t.Fatalf("reading the shared store: %v", err)
+	} else if len(rows) != 1 {
+		t.Errorf("a coding agent's session uploaded: the store holds %d issue(s), want 1", len(rows))
 	}
 	if got, err := rig.store.Get(rec.LocalID); err != nil {
 		t.Fatalf("the issue is not where it was: %v", err)
