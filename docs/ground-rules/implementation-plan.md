@@ -9,10 +9,12 @@ The answers that shaped the plan are D3420–D3459, all given or stated on 2026-
   - D3441 (the stamp lives in `task.json`);
   - D3445 (one eager rebuild);
   - D3448 (accept the launch window);
-  - D3454 (the membership commands revoke grants themselves);
+  - D3453 as re-asked (require a new console);
   - D3455 (only `--executable-changes` stays a person's);
-  - D3456 (recreate, then re-grant and rebuild);
-  - D3457 (accept the skipped-release gap).
+  - D3457 (accept the skipped-release gap; a manual cleanup the owner accepts as an exception to the
+    HARD RULE).
+- **Re-asked after the review of the answers, as recommended:** D3454 (the hybrid), D3456 (the workspace
+  service account is irreplaceable) and D3459 (run token and task, bounded by `secrets allow`).
 - **Amended after review and confirmed by the owner:** D3424, D3425 (twice), D3430 and D3448. The open
   items O1–O10 are all answered; O4–O10 became D3453–D3459.
 - **Resolutions**, stated without a question: D3424, D3426, D3428, D3429, D3434, D3435, D3439, D3446,
@@ -80,7 +82,7 @@ The answers that shaped the plan are D3420–D3459, all given or stated on 2026-
 1. **The first pieces** (DG0, VS0, UO1, UO3, CV1): inert. The class table, the stamp field the runner
    accepts, the earlier documents brought in line, and the versioned loader.
 2. **Output** (CO1–CO5, CO2b, then CO2c after the console release).
-3. **Deletes by class** (DG5 first, then DG1a, DG1b, DG1c, DG2, DG3, DG6, DG4).
+3. **Deletes by class** (DG5 first, then DG0, DG1a, DG1b, DG1c, DG2, DG3, DG6, DG4).
 4. **One update for the project** (UO2, UO7, then DOC1, DOC2, DOC3, UO4a, UO4b; UO6 and UO7b a release
    later).
 5. **Agents run update** (AG2a–AG5d).
@@ -99,7 +101,10 @@ was dropped with D3424's amendment.
   - `tf.RemovalClass(rc ResourceChange, people []string) Class` classifies one planned removal by its type
     and, for an IAM member, by its `member`: a grant to a person on the operator or admin list is
     irreplaceable, and a grant to a Fugaro service account is recreatable;
-  - registries and Fugaro-made service accounts are recreatable (D3430 as amended);
+  - registries and Fugaro-made service accounts are recreatable (D3430 as amended), except the workspace
+    service account (`workspace_iam`), which is irreplaceable (D3456);
+  - a removal of a person's grant is admitted only when the roster records that person's removal (DG5,
+    D3454);
   - an unknown type is irreplaceable (fail closed);
   - `tf.DataBearingType` and `RefusesRemovalType` are rewritten over the same table rather than kept beside
     it.
@@ -111,7 +116,7 @@ was dropped with D3424's amendment.
   `TestUnknownTypeRefused`.
 - Command: `go test ./internal/infra/tf/ -run 'TestRemovalClassFollowsD3430|TestPersonGrantIsIrreplaceable|TestServiceAccountGrantIsRecreatable|TestUnknownTypeRefused' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestPersonGrantIsIrreplaceable` fails while `google_project_iam_member` is classed by type alone.
-- Depends on: none.
+- Depends on: DG5 (interface: the roster's record of removed people).
 - Commit: `ground-rules DG0: the delete classes, per change (D3430)`
 - Reviewer tier: opus (a write guard's input).
 ### VS0: the stamp field
@@ -150,18 +155,18 @@ was dropped with D3424's amendment.
     deleted, and secret containers leave state and are not destroyed;
   - retirement still waits on `infra.InFlightJobs` (F38);
   - a repository whose workflows no profile serves runs on the default profile, and `update` prints one line
-    naming the repository and the profile setting to add (D3458);
+    naming the repository and the profile setting to add (D3458, `TestUnservedRepoRunsOnDefault`);
   - an installation that last ran `update` on the release before converges.
 - Files: `internal/projectpolicy/profiles.go` (admission: the project's default profile admits every
   enrolled repository), `internal/infra/spec.go`, `internal/cli/init.go` (`repoEngine`, `enrolSharedRepo`,
   `retireSharedRoot`), `internal/cli/init_retire.go`, `internal/cli/init_repo_stage.go`,
   `internal/cli/update_retire_root_test.go` (new). The file count is six. A repository whose workflows
-  no profile can serve is open item O9.
+  no profile can serve runs on the default profile (D3458).
 - Interfaces: consumes DG0. Produces a repository stage that covers every enrolled repository with no
   checkout.
 - Tests: `TestUpdateRetiresEveryRepoRoot`, `TestRetiredRootKeepsSecretContainers`,
-  `TestRetireWaitsOnInFlight`, `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/cli/ -run 'TestUpdateRetiresEveryRepoRoot|TestRetiredRootKeepsSecretContainers|TestRetireWaitsOnInFlight|TestUpdateLeavesARunInFlightRunning' -count=1`
+  `TestRetireWaitsOnInFlight`, `TestUnservedRepoRunsOnDefault`, `TestUpdateLeavesARunInFlightRunning`.
+- Command: `go test ./internal/cli/ -run 'TestUpdateRetiresEveryRepoRoot|TestRetiredRootKeepsSecretContainers|TestRetireWaitsOnInFlight|TestUnservedRepoRunsOnDefault|TestUpdateLeavesARunInFlightRunning' -count=1`
 - Red step: `TestUpdateRetiresEveryRepoRoot` fails while retirement still needs `--retire`.
 - Depends on: DG0 (the class table).
 - Commit: `ground-rules UO2: every repository runs on shared jobs; update retires the rest (D3421)`
@@ -263,7 +268,8 @@ was dropped with D3424's amendment.
 - Files: `deploy/terraform/gcp/roots/repo/**`, `deploy/terraform/gcp/modules/repo/**`,
   `internal/infra/workdir.go` (the `roots` map), `internal/infra/retire.go` (it reads
   `modules/repo/registry.tf`), `internal/infra/*_test.go`, `deploy/terraform/terraform_test.go`,
-  `deploy/terraform/secret_readers_test.go`.
+  `deploy/terraform/secret_readers_test.go`, `docs/releases/v*.md` (the line naming the release to install
+  first).
 - Tests: `go build ./...`, `TestNoRepoRoot`, `terraform fmt -check -recursive deploy/terraform`.
 - Command: `go build ./... && go test ./deploy/terraform/ ./internal/infra/ -run 'TestNoRepoRoot|TestPreventDestroy' -count=1`
 - Red step: `TestNoRepoRoot` finds the root.
@@ -367,34 +373,42 @@ was dropped with D3424's amendment.
 
 ### DG5: membership commands revoke their own grants
 - Acceptance:
-  - `user rm`, `user offboard`, `workspace user rm` and a role change (`user rm` from one list plus
-    `user add` to the other) remove the person's IAM grants themselves, through the IAM API, before they
-    return, and edit the lists as today;
-  - the next `update` plans no change for that grant, because the configuration and the project agree;
-  - these commands stay refused to agents (D3425) (D3454).
-- Files: `internal/cli/user.go`, `internal/cli/offboard.go`, `internal/cli/workspace_offboard.go`,
-  `internal/cli/user_revoke.go` (new), `internal/cli/user_revoke_test.go` (new).
-- Tests: `TestUserRmRevokesAtOnce`, `TestOffboardRevokesAtOnce`, `TestUpdatePlansNoGrantChangeAfterRm`.
-- Command: `go test ./internal/cli/ -run 'TestUserRmRevokesAtOnce|TestOffboardRevokesAtOnce|TestUpdatePlansNoGrantChangeAfterRm' -count=1`
+  - `user rm`, `user revoke`/`grant` (a role change), `user offboard` and `workspace user rm` revoke every
+    IAM grant they can reach at once, IAM first and the list or roster edit second, and a re-run converges
+    after a partial failure;
+  - each records the person's removal in the roster, which DG0's classifier reads: a grant the command
+    cannot reach, such as a removed workspace admin's grants on member projects (D2818), is then removed by
+    the owning member's own `update`;
+  - an `update` that meets a person's grant removal the roster does not record refuses it in one line
+    naming the command to re-run;
+  - the launcher and budget-admin lists follow the same rule;
+  - these commands stay refused to agents (D3425, D3454 as re-asked).
+- Files: `internal/cli/user.go`, `internal/cli/user_grant.go`, `internal/cli/offboard.go`,
+  `internal/cli/workspace_user.go`, `internal/cli/user_revoke.go` (new), `internal/cli/user_revoke_test.go`
+  (new). The file count is six.
+- Interfaces: produces the roster's record of removed people, which DG0 consumes.
+- Tests: `TestUserRmRevokesAtOnce`, `TestRoleChangeRevokesAtOnce`, `TestOffboardRevokesAtOnce`,
+  `TestPartialRevokeReRunConverges`, `TestMemberUpdateRemovesRecordedGrant`.
+- Command: `go test ./internal/cli/ -run 'TestUserRmRevokesAtOnce|TestRoleChangeRevokesAtOnce|TestOffboardRevokesAtOnce|TestPartialRevokeReRunConverges|TestMemberUpdateRemovesRecordedGrant' -count=1`
 - Red step: `TestUserRmRevokesAtOnce` finds the grant still bound after `user rm`.
-- Depends on: none. DG1a and DG2 wait on it, so `update` never refuses a revocation nobody else makes.
+- Depends on: none. DG0, DG1a and DG2 wait on it.
 - Commit: `ground-rules DG5: membership commands revoke grants themselves (D3454)`
 - Reviewer tier: opus (IAM).
-
-### DG6: a recreation re-grants and rebuilds
+### DG6: a recreated registry is rebuilt eagerly
 - Acceptance:
-  - when an `update` recreates the workspace service account, it re-runs the converging grants
-    (`SAAuthority.AddAdmin` for each workspace admin, `Link` for each member project);
-  - when it recreates a registry, it rebuilds that registry's catalog entries eagerly, in the same update
-    (D3456).
-- Files: `internal/cli/update_workspace.go`, `internal/cli/init_images_catalog.go`,
-  `internal/cli/update_recreate_test.go` (new).
-- Tests: `TestRecreatedWorkspaceAccountRegranted`, `TestRecreatedRegistryRebuiltEagerly`.
-- Command: `go test ./internal/cli/ -run 'TestRecreatedWorkspaceAccountRegranted|TestRecreatedRegistryRebuiltEagerly' -count=1`
-- Red step: `TestRecreatedWorkspaceAccountRegranted` finds the admin's token-creator grant missing.
+  - when an `update` recreates a registry, it rebuilds that registry's catalog entries eagerly, in the same
+    update; this is the one other case, beside a stale epoch, in which VS3b's images step waits;
+  - a registry holding an image that a run in flight uses is not recreated while that run runs: it is
+    deferred with one line, like D3450 (D3456 as re-asked);
+  - an installation from the release before converges.
+- Files: `internal/cli/init_images_catalog.go`, `internal/cli/update_recreate_test.go` (new).
+- Tests: `TestRecreatedRegistryRebuiltEagerly`, `TestRegistryRecreationDeferredInFlight`,
+  `TestPreviousReleaseConverges`, `TestUpdateLeavesARunInFlightRunning`.
+- Command: `go test ./internal/cli/ -run 'TestRecreatedRegistryRebuiltEagerly|TestRegistryRecreationDeferredInFlight|TestPreviousReleaseConverges|TestUpdateLeavesARunInFlightRunning' -count=1`
+- Red step: `TestRecreatedRegistryRebuiltEagerly` finds the update ended with an empty registry.
 - Depends on: DG1a (behaviour: the gate admits the recreation); VS3b (behaviour: the eager-rebuild path).
-- Commit: `ground-rules DG6: a recreated account is re-granted and a recreated registry rebuilt (D3456)`
-- Reviewer tier: opus (IAM).
+- Commit: `ground-rules DG6: a recreated registry is rebuilt eagerly (D3456)`
+- Reviewer tier: opus (deletes, runs in flight).
 ### DG2: the guard judges what is deleted; `--allow-delete` goes
 - Acceptance:
   - `tf.Guard` refuses only irreplaceable deletes or replaces, and `--allow-delete` is gone, with every
@@ -465,7 +479,7 @@ was dropped with D3424's amendment.
   - without a TTY, a step still running after a minute prints one "still …" line a minute (D3436).
 
   The `--events` heartbeat is CO2c's, after the console accepts it (D3453).
-- Files: `internal/report/spinner.go`, `internal/report/report.go`, `internal/report/spinner_test.go`.
+- Files: `internal/report/spinner.go`, `internal/report/report.go`, `internal/report/spinner_test.go` (new).
 - Tests: `TestSpinnerShowsElapsed`, `TestHeartbeatWithoutTTY`.
 - Command: `go test ./internal/report/ -run 'Elapsed|Heartbeat' -count=1`
 - Red step: `TestHeartbeatWithoutTTY` fails, because nothing prints for a minute (a fake clock).
@@ -476,7 +490,8 @@ was dropped with D3424's amendment.
 ### CO2b: the console accepts a heartbeat
 - Acceptance: the console's setup-feed reader (`setupFeedAt`) accepts an event of type `heartbeat` and
   ignores it, where today it refuses an unknown type (D3453).
-- Files: `console/src/shared/new-ops.ts`, `console/test/unit/new-ops.test.ts`.
+- Files: `console/src/shared/new-ops.ts`, `console/test/unit/new-ops.test.ts`,
+  `console/test/support/newOpAnswers.ts`, `console/docs/json-contract.md`.
 - Tests: `heartbeat events are accepted and ignored` in `new-ops.test.ts`.
 - Command: `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2 new-ops`
 - Red step: the test fails on `refuse('unknown-value', …)`.
@@ -485,15 +500,16 @@ was dropped with D3424's amendment.
 - Reviewer tier: standard.
 
 ### CO2c: the events feed carries a heartbeat
-- Acceptance: under `--json --events`, a step still running after a minute emits one `heartbeat` event a
-  minute, and the schema and golden name it (D3436, D3453).
+- Acceptance:
+  - under `--json --events`, a step still running after a minute emits one `heartbeat` event a minute,
+    and the schema and golden name it (D3436);
+  - the release notes say that a console older than CO2b's release must be updated (D3453 as re-asked).
 - Files: `internal/cli/setup_events.go`, `schemas/setup-events.schema.json`,
-  `internal/cli/testdata/setup_events.golden.ndjson`.
+  `internal/cli/testdata/setup_events.golden.ndjson`, `docs/releases/v*.md`.
 - Tests: `TestEventsHeartbeat`.
-- Command: `go test ./internal/cli/ -run TestEventsHeartbeat -count=1`
+- Command: `go test ./internal/cli/ -run 'TestEventsHeartbeat|Docs' -count=1`
 - Red step: the test finds no `heartbeat` event in a minute (a fake clock).
-- Depends on: CO2 (the ticker), CO2b (behaviour: consoles accept the event first). **External:** the
-  console release that carries CO2b has shipped.
+- Depends on: CO2 (the ticker), CO2b (behaviour). **External:** a console release carrying CO2b has shipped.
 - Commit: `ground-rules CO2c: the events feed carries a heartbeat (D3453)`
 - Reviewer tier: standard.
 ### CO3: no raw output on screen
@@ -577,16 +593,18 @@ was dropped with D3424's amendment.
   - an agent may lower rigor (`rigor set`, `rigor floor`, `rigor security rm`) and run
     `accounts switch`, `alias` and `pool`;
   - `--yes` is gone from `accounts alias` and `accounts switch` (D3425 as amended, D3429).
-- Files: `internal/cli/settings_managed.go`, `internal/cli/settings_write.go`, `internal/cli/rigor.go`,
+- Files: `internal/cli/settings_managed.go`, `internal/cli/settings_write.go`, `internal/cli/settings_set.go`,
+  `internal/cli/rigor.go`,
   `internal/cli/rigor_floor.go`,
   `internal/cli/accounts_switch.go`, `internal/cli/accounts_alias.go`, `internal/cli/accounts_pool.go`,
   `website/content/cli-reference.md`.
-- Tests: `TestAgentMaySet`, `TestAgentBudgetRaiseRefused`, `TestAccountsHaveNoYes`.
-- Command: `go test ./internal/cli/ -run 'TestAgentMaySet|TestAgentBudgetRaiseRefused|TestAccountsHaveNoYes' -count=1 && go test ./ee/clidoc/ ./plugin/... -count=1`
+- Tests: `TestAgentMaySet`, `TestAgentBudgetRaiseRefused`, `TestAgentExecutableChangesSettingRefused`,
+  `TestAccountsHaveNoYes`.
+- Command: `go test ./internal/cli/ -run 'TestAgentMaySet|TestAgentBudgetRaiseRefused|TestAgentExecutableChangesSettingRefused|TestAccountsHaveNoYes' -count=1 && go test ./ee/clidoc/ ./plugin/... -count=1`
 - Red step: `TestAgentMaySet` fails on the rigor lowering's refusal.
 - Depends on: none.
 - Commit: `ground-rules AG3: settings, rigor and account picks are an agent's too (D3425)`
-- Reviewer tier: opus (agent reach). The file count is eight; most are a one-line refusal each.
+- Reviewer tier: opus (agent reach). The file count is nine; most are a one-line refusal each.
 
 ### AG4a: project commands lift
 - Acceptance: an agent may run `project repos add`/`rm`/`sync` and `project policy publish`. `--delete`
@@ -605,7 +623,8 @@ was dropped with D3424's amendment.
   `config publish`. `--executable-changes` stays a person's on `config publish` and `workflow`, because it
   decides what code every repository runs (D3425 as amended, D3455).
 - Files: `internal/cli/image_catalog.go`, `internal/cli/image_map_managed.go`, `internal/cli/image_refresh.go`,
-  `internal/cli/config_publish.go`, `internal/cli/workflow.go`.
+  `internal/cli/config_publish.go`, `internal/cli/config_publish_managed.go`, `internal/cli/workflow.go`. The
+  file count is six.
 - Tests: `TestAgentMayEditImages`, `TestAgentExecutableChangesRefused`.
 - Command: `go test ./internal/cli/ -run 'TestAgentMayEditImages|TestAgentExecutableChangesRefused' -count=1`
 - Red step: `TestAgentMayEditImages` fails on `image refresh`.
@@ -858,21 +877,27 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 
 ### UO7: the credentials service reads workflow secrets from `fugaro.yaml`
 - Acceptance:
-  - when a run fetches its workflow secrets, the credentials service resolves the workflow's secret names
-    from the repository's default-branch `fugaro.yaml`, read with its own read mint (U4), so a secret added
-    there needs no `update` (D3459);
-  - while the per-repository record `creds/workflowsecrets/<slug>` still exists, it is read as a fallback,
-    so a run of the release behind and a repository whose read fails keep working.
+  - when a run fetches its workflow or build secrets, the credentials service takes the repository from
+    the signed run token minted at launch (never caller text) and the workflow from the launcher-written
+    `task.json`;
+  - it reads that repository's `fugaro.yaml` at its default branch only, never the run's branch, with
+    credentials it already holds (U4);
+  - the names are still bounded by the project's `secrets allow` list (`projectSecretReadable`);
+  - the old record `creds/workflowsecrets/<slug>` is a fallback only when the code host is unreachable,
+    never on a parse error (D3459 as detailed).
 - Files: `internal/credsvc/workflowsecrets.go`, `internal/credsvc/workflowsecrets_test.go`,
-  `internal/creds/workflowsecrets.go`.
-- Tests: `TestWorkflowSecretsFromDefaultBranch`, `TestWorkflowSecretsRecordFallback`,
-  `TestWorkflowSecretsReadMint`.
-- Command: `go test ./internal/credsvc/ ./internal/creds/ -run 'WorkflowSecrets' -count=1`
+  `internal/credsvc/server.go` (the identity binding), `internal/credsvc/build.go` (build secrets),
+  `internal/creds/workflowsecrets.go`, `internal/runner/workflowsecrets.go`,
+  `internal/cli/credentials_serve.go` (the service's wiring). The file count is seven, in one trust
+  boundary that cannot be split.
+- Tests: `TestWorkflowSecretsFromDefaultBranch`, `TestWorkflowSecretsIgnoreRunBranch`,
+  `TestWorkflowSecretsRepoFromRunToken`, `TestWorkflowSecretsBoundedByAllowList`,
+  `TestRecordFallbackOnlyWhenUnreachable`, `TestBuildSecretsFromDefaultBranch`.
+- Command: `go test ./internal/credsvc/ ./internal/creds/ ./internal/runner/ -run 'WorkflowSecrets|RecordFallback|BuildSecrets' -count=1`
 - Red step: `TestWorkflowSecretsFromDefaultBranch` fails while only the record is read.
-- Depends on: none.
+- Depends on: none. It is reviewed independently (`fugaro review --pr N`) before UO7b.
 - Commit: `ground-rules UO7: workflow secrets come from fugaro.yaml at fetch (D3459)`
 - Reviewer tier: opus (the credentials service; `.claude/rules/credentials-service.md`).
-
 ### UO7b: update stops writing the workflow-secrets record
 - Acceptance: `update` no longer writes `creds/workflowsecrets/<slug>`. That lets the next release delete
   the record and UO7's fallback, which is a follow-up, not in this plan (D3459).
@@ -890,19 +915,17 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | Task | Needs | Reason |
 | --- | --- | --- |
 | VS5 | CF1 | one file: internal/runner/runner.go |
-| CO2c | CO2 | behaviour: the heartbeat ticker |
-| CO2c | CO2b | behaviour: consoles accept the event first; external: that console release shipped |
-| UO2 | CO3 | one file: init.go |
 | CV2 | CV1 | SupportedVersions; a contract would be the table itself |
-| UO2, DG1a, DG2, DG3, AG2a | DG0 | the class table |
-| DG1a | DG5 | behaviour: as above |
-| UO7b | UO7 | behaviour: nothing reads the record; external: one release later |
+| DG0 | DG5 | interface: the roster's record of removed people, which DG0's classifier reads |
 | VS2 | VS0 | the field |
 | VS5 | VS0 | it reads the field |
 | VS5 | VS1 | it calls the upgrader |
 | VS3b | VS3a | the recorded epoch; a contract would be the constant itself |
 | VS4 | VS3a | staleness by epoch |
 | AG5d | VS3a | one file: image_build_catalog.go |
+| UO2 | CO3 | one file: init.go |
+| UO2, DG1a, DG2, DG3, AG2a | DG0 | the class table |
+| DG1a | DG5 | behaviour: membership commands revoke before the gate refuses a person's grant removal |
 | DG2 | CO3, UO2 | one file: init.go |
 | DG6 | DG1a | behaviour: the gate admits the recreation first |
 | DG2 | DG1a | one file: internal/infra/tf/guard.go |
@@ -926,7 +949,7 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | DOC1 | UO2, AG2a | behaviour: the text describes shipped behaviour |
 | DOC2 | UO2, AG2a | behaviour |
 | REL1 | UO2, VS3b, VS4, VS5, DG1b | the operator line describes it |
-| UO4a, CV3 | DG1b, AG3 | one file: website/content/cli-reference.md |
+| UO4a | DG1b, AG3 | one file: website/content/cli-reference.md |
 | DG4 | DG1c, DG2, UO2, AG2a, AG2b | behaviour: the end-to-end test |
 | DG4 | DG3 | behaviour: the registry can be destroyed |
 | UO4a | DOC1 | the plugin tests: no skill may name the flag when it goes |
@@ -939,22 +962,28 @@ one file cannot have four writers there. REL1 lands before the release is cut, w
 | UO4b, CF2c | VS2 | one file: run.go |
 | UO4b, CF2b | VS4 | one file: internal/config/layer.go |
 | CF2a | CF1 | behaviour: the runner decides without the mark |
+| CO2c | CO2 | behaviour: the heartbeat ticker |
+| CO2c | CO2b | behaviour: consoles accept the event first; external: that console release shipped |
+| CO2c | REL1 | one file: docs/releases/v*.md |
 | CF2a | UO2 | one file: internal/infra/spec.go |
-| CF2a, UO6 | UO4b | one file: internal/**/*.go |
+| CO2c, UO7b, CF2a, UO6 | UO4b | one file: internal/**/*.go |
+| UO7b | UO7 | behaviour: nothing reads the record; external: one release later |
 | CF2a | VS3b | behaviour: release A's eager rebuild puts CF1's runner in every image; external: release A shipped |
 | CF2a | VS5 | behaviour: as above |
 | CF2c | AG2b | one file: init_checkout_upgrade.go |
+| CF2c | AG3 | one file: settings_set.go |
 | CF2c | AG4b | one file: image_refresh.go |
 | CF2c | AG5d | one file: imagecheck.go |
 | CF2c | CF2a | behaviour: deploy no longer marks the mode |
 | UO6 | CF2a | one file: internal/infra/spec_test.go |
 | CF2c | CO3, DG2, AG2a, UO4a | one file: init.go |
 | UO6 | DG3 | one file: deploy/terraform/terraform_test.go |
-| UO6 | REL1 | one file: docs/releases/v*.md |
+| UO6 | REL1, CO2c | one file: docs/releases/v*.md |
 | UO6 | UO2 | behaviour: no installation applies a per-repository root after UO2; external: one release later |
 | CV3 | CF2c | behaviour: the clone value is gone |
 | CF2b | CF2c | build: the field leaves once nothing reads it |
 | CF2b | CV1 | one file: internal/config/config.go |
+| CV3 | DG1b | one file: website/content/cli-reference.md |
 | CV3 | VS2 | behaviour: every launch is stamped |
 | CV3 | VS5 | behaviour: runners upgrade themselves |
 | UO4b | every earlier writer under `internal/` | one file each: the sweep runs alone |
@@ -968,7 +997,7 @@ The contract-first pass ran and broke no edge.
   chain, so the break was undone. Instead, VS0 (the field) is its own small first task, and VS1 is
   self-contained.
 - **DG0 is not a contract.** UO2, AG2a, DG1a, DG2 and DG3 all wait on DG0, the class table. It is small
-  and first, and those five then run as their other edges allow. No provider builds beside it, so it is an
+  and early, and those five then run as their other edges allow. No provider builds beside it, so it is an
   ordinary task.
 - **Kept.**
   - CV1→CV2, VS3a→VS3b and VS3a→VS4: a contract would be the shared constant or table itself, which is
@@ -982,19 +1011,22 @@ The contract-first pass ran and broke no edge.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | DG0, VS0, UO1, CO3, UO3, DG5, VS3a, CO1, CF1, CO4, AG4a, AG4b, AG5a, AG5b, UO7, CV1, CO2, CO5, VS1, CO2b |
-| 1 | UO2, DG1a, VS3b, AG5d, DG3, VS2, VS5, VS4, CV2, CO2c, UO7b |
-| 2 | DG2, DOC3, DG6 |
-| 3 | AG2a, AG2b, DG1b |
-| 4 | DOC1, DOC2, AG3, AG5c, DG1c, REL1 |
-| 5 | UO4a, DG4 |
-| 6 | UO4b |
-| 7 | CF2a |
-| 8 | UO6, CF2c |
-| 9 | CV3, CF2b |
+| 0 | DG5, VS0, UO1, CO3, UO3, VS3a, CO1, CF1, CO4, AG4a, AG4b, AG5a, AG5b, CO2b, UO7, CV1, CO2, CO5, VS1 |
+| 1 | DG0, VS3b, AG5d, VS2, VS5, VS4, CV2 |
+| 2 | UO2, DG1a, DG3 |
+| 3 | DG2, DOC3, DG6 |
+| 4 | AG2a, AG2b, DG1b |
+| 5 | DOC1, DOC2, AG3, AG5c, DG1c, REL1 |
+| 6 | UO4a, DG4 |
+| 7 | UO4b |
+| 8 | CO2c, CF2a, UO7b |
+| 9 | UO6, CF2c |
+| 10 | CV3, CF2b |
 
-The critical path is CO3 → UO2 → DG2 → AG2a → DOC1 → UO4a → UO4b → CF2a → CF2c → CF2b, ten tasks with
-CO3 the bottleneck, as the graph read reports. **Release A** is the first release that carries VS0–VS5, VS3b and
+The critical path is DG5 → DG0 → DG1a → DG2 → AG2a → DOC1 → UO4a → UO4b → CF2a → CF2c → CF2b, eleven
+tasks with DG5 the bottleneck. DG0's wait on DG5 needs only the roster's record of removed people; a
+contract would save one level and was declined as smaller than its two extra tasks. CO2c, UO7b and the
+checkout tasks come after the UO4b sweep, so that the sweep does not wait on an external release, as the graph read reports. **Release A** is the first release that carries VS0–VS5, VS3b and
 CF1; its `update` runs the eager rebuild. CF2a and CV3 launch only after release A ships; UO6 waits a
 release after UO2's, UO7b a release after UO7's, and CO2c a console release carrying CO2b. The graph cannot hold an external wait, so each task and this paragraph state it.
 
@@ -1004,34 +1036,36 @@ Every pair of writers of one file is ordered by an edge, not only placed in diff
 
 | File | Writers, in order |
 | --- | --- |
-| `deploy/terraform/terraform_test.go` | DG3 (1), UO6 (8) |
-| `docs/releases/v*.md` | REL1 (4), UO6 (8) |
-| `internal/cli/config_publish.go` | AG4b (0), CV3 (9) |
-| `internal/cli/image.go` | CO3 (0), CF2c (8) |
+| `console/docs/json-contract.md` | CO2b (0), UO4b (7) |
+| `deploy/terraform/terraform_test.go` | DG3 (2), UO6 (9) |
+| `docs/releases/v*.md` | REL1 (5), CO2c (8), UO6 (9) |
+| `internal/cli/config_publish.go` | AG4b (0), CV3 (10) |
+| `internal/cli/image.go` | CO3 (0), CF2c (9) |
 | `internal/cli/image_build_catalog.go` | VS3a (0), AG5d (1) |
-| `internal/cli/image_refresh.go` | AG4b (0), CF2c (8) |
-| `internal/cli/imagecheck.go` | AG5d (1), CF2c (8), CV3 (9) |
-| `internal/cli/init.go` | CO3 (0), UO2 (1), DG2 (2), AG2a (3), UO4a (5), CF2c (8), CV3 (9) |
-| `internal/cli/init_checkout_upgrade.go` | AG2b (3), CF2c (8) |
-| `internal/cli/init_compute.go` | DG2 (2), AG2b (3) |
-| `internal/cli/init_images_catalog.go` | VS3b (1), DG6 (2) |
-| `internal/cli/init_refusal.go` | DG2 (2), UO4a (5) |
-| `internal/cli/init_retire.go` | UO2 (1), DG2 (2), UO4a (5) |
-| `internal/cli/init_stages.go` | VS3b (1), DG2 (2), AG2a (3) |
-| `internal/cli/managed_apply.go` | DG1b (3), AG5c (4) |
-| `internal/cli/root.go` | CO4 (0), DG1b (3) |
-| `internal/cli/run.go` | VS2 (1), CF2c (8), CV3 (9) |
-| `internal/cli/update_managed.go` | DG2 (2), AG2a (3) |
-| `internal/cli/validate.go` | CF2c (8), CV3 (9) |
-| `internal/config/config.go` | CV1 (0), CF2b (9) |
-| `internal/config/layer.go` | VS4 (1), CF2b (9) |
-| `internal/config/retired.go` | UO3 (0), CF2b (9) |
-| `internal/config/validate.go` | CV1 (0), CF2b (9) |
-| `internal/infra/spec.go` | UO2 (1), CF2a (7) |
-| `internal/infra/tf/guard.go` | DG1a (1), DG2 (2) |
-| `internal/initflow/loop.go` | CO1 (0), AG2a (3) |
+| `internal/cli/image_refresh.go` | AG4b (0), CF2c (9) |
+| `internal/cli/imagecheck.go` | AG5d (1), CF2c (9), CV3 (10) |
+| `internal/cli/init.go` | CO3 (0), UO2 (2), DG2 (3), AG2a (4), UO4a (6), CF2c (9), CV3 (10) |
+| `internal/cli/init_checkout_upgrade.go` | AG2b (4), CF2c (9) |
+| `internal/cli/init_compute.go` | DG2 (3), AG2b (4) |
+| `internal/cli/init_images_catalog.go` | VS3b (1), DG6 (3) |
+| `internal/cli/init_refusal.go` | DG2 (3), UO4a (6) |
+| `internal/cli/init_retire.go` | UO2 (2), DG2 (3), UO4a (6) |
+| `internal/cli/init_stages.go` | VS3b (1), DG2 (3), AG2a (4) |
+| `internal/cli/managed_apply.go` | DG1b (4), AG5c (5) |
+| `internal/cli/root.go` | CO4 (0), DG1b (4) |
+| `internal/cli/run.go` | VS2 (1), CF2c (9), CV3 (10) |
+| `internal/cli/settings_set.go` | AG3 (5), CF2c (9) |
+| `internal/cli/update_managed.go` | DG2 (3), AG2a (4) |
+| `internal/cli/validate.go` | CF2c (9), CV3 (10) |
+| `internal/config/config.go` | CV1 (0), CF2b (10) |
+| `internal/config/layer.go` | VS4 (1), CF2b (10) |
+| `internal/config/retired.go` | UO3 (0), CF2b (10) |
+| `internal/config/validate.go` | CV1 (0), CF2b (10) |
+| `internal/infra/spec.go` | UO2 (2), CF2a (8) |
+| `internal/infra/tf/guard.go` | DG1a (2), DG2 (3) |
+| `internal/initflow/loop.go` | CO1 (0), AG2a (4) |
 | `internal/runner/runner.go` | CF1 (0), VS5 (1) |
-| `website/content/cli-reference.md` | DG2 (2), DG1b (3), AG3 (4), UO4a (5), UO4b (6), CV3 (9) |
+| `website/content/cli-reference.md` | DG2 (3), DG1b (4), AG3 (5), UO4a (6), UO4b (7), CV3 (10) |
 | `internal/**/*.go` | UO4b (6), ordered after every earlier writer under `internal/` and before CF2a, CF2c, CF2b and CV3 |
 
 ### Contract changes anticipated
@@ -1042,7 +1076,7 @@ None: the plan has no contract.
 
 The graph read prints one line for the plan:
 
-> ready in 746–3038 min, no history yet for 38 tasks (51 tasks; tiers for 13, seeds for 38; from the cached history of 2026-11-22 07:25 UTC)
+> ready in 786–3218 min, no history yet for 38 tasks (51 tasks; tiers for 13, seeds for 38; from the cached history of 2026-11-22 07:25 UTC)
 
 It is informational: it reserves no budget, and it moves as runs finish and as the graph changes.
 

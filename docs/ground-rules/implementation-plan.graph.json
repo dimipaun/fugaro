@@ -369,8 +369,9 @@
     "prediction": true,
     "paths": [
      "internal/cli/user.go",
+     "internal/cli/user_grant.go",
      "internal/cli/offboard.go",
-     "internal/cli/workspace_offboard.go",
+     "internal/cli/workspace_user.go",
      "internal/cli/user_revoke.go",
      "internal/cli/user_revoke_test.go"
     ]
@@ -378,7 +379,7 @@
   },
   {
    "id": "DG6",
-   "title": "a recreation re-grants and rebuilds",
+   "title": "a recreated registry is rebuilt eagerly",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -386,7 +387,6 @@
    "footprint": {
     "prediction": true,
     "paths": [
-     "internal/cli/update_workspace.go",
      "internal/cli/init_images_catalog.go",
      "internal/cli/update_recreate_test.go"
     ]
@@ -449,7 +449,9 @@
     "prediction": true,
     "paths": [
      "console/src/shared/new-ops.ts",
-     "console/test/unit/new-ops.test.ts"
+     "console/test/unit/new-ops.test.ts",
+     "console/test/support/newOpAnswers.ts",
+     "console/docs/json-contract.md"
     ]
    }
   },
@@ -465,7 +467,8 @@
     "paths": [
      "internal/cli/setup_events.go",
      "schemas/setup-events.schema.json",
-     "internal/cli/testdata/setup_events.golden.ndjson"
+     "internal/cli/testdata/setup_events.golden.ndjson",
+     "docs/releases/v*.md"
     ]
    }
   },
@@ -564,6 +567,7 @@
     "paths": [
      "internal/cli/settings_managed.go",
      "internal/cli/settings_write.go",
+     "internal/cli/settings_set.go",
      "internal/cli/rigor.go",
      "internal/cli/rigor_floor.go",
      "internal/cli/accounts_switch.go",
@@ -605,6 +609,7 @@
      "internal/cli/image_map_managed.go",
      "internal/cli/image_refresh.go",
      "internal/cli/config_publish.go",
+     "internal/cli/config_publish_managed.go",
      "internal/cli/workflow.go"
     ]
    }
@@ -891,7 +896,11 @@
     "paths": [
      "internal/credsvc/workflowsecrets.go",
      "internal/credsvc/workflowsecrets_test.go",
-     "internal/creds/workflowsecrets.go"
+     "internal/credsvc/server.go",
+     "internal/credsvc/build.go",
+     "internal/creds/workflowsecrets.go",
+     "internal/runner/workflowsecrets.go",
+     "internal/cli/credentials_serve.go"
     ]
    }
   },
@@ -1185,7 +1194,7 @@
   {
    "task": "DG1a",
    "needs": "DG5",
-   "reason": "kept: behaviour: as above"
+   "reason": "kept: behaviour: membership commands revoke before the gate refuses a person's grant removal"
   },
   {
    "task": "DG6",
@@ -1196,6 +1205,11 @@
    "task": "DG6",
    "needs": "VS3b",
    "reason": "kept: behaviour: the eager-rebuild path"
+  },
+  {
+   "task": "DG0",
+   "needs": "DG5",
+   "reason": "kept: interface: the roster's record of removed people, which DG0's classifier reads"
   },
   {
    "task": "UO7b",
@@ -1221,6 +1235,11 @@
    "task": "REL1",
    "needs": "DG1b",
    "reason": "kept: the operator line describes it"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CO2b",
+   "reason": "kept: one file: console/docs/json-contract.md"
   },
   {
    "task": "UO4b",
@@ -1395,7 +1414,7 @@
   {
    "task": "UO4b",
    "needs": "DG6",
-   "reason": "kept: one file: update_workspace.go"
+   "reason": "kept: one file: init_images_catalog.go"
   },
   {
    "task": "AG3",
@@ -1438,9 +1457,9 @@
    "reason": "kept: one file: website/content/cli-reference.md"
   },
   {
-   "task": "CV3",
+   "task": "CF2c",
    "needs": "AG3",
-   "reason": "kept: one file: website/content/cli-reference.md"
+   "reason": "kept: one file: settings_set.go"
   },
   {
    "task": "CF2c",
@@ -1458,24 +1477,29 @@
    "reason": "kept: one file: update_ground_rules_test.go"
   },
   {
+   "task": "CO2c",
+   "needs": "REL1",
+   "reason": "kept: one file: docs/releases/v*.md"
+  },
+  {
    "task": "UO6",
    "needs": "REL1",
    "reason": "kept: one file: docs/releases/v*.md"
   },
   {
-   "task": "UO4b",
-   "needs": "CO2c",
-   "reason": "kept: one file: setup_events.go"
-  },
-  {
-   "task": "UO4b",
-   "needs": "UO7b",
-   "reason": "kept: one file: update_workflowsecrets.go"
-  },
-  {
    "task": "CF2c",
    "needs": "UO4a",
    "reason": "kept: one file: init.go"
+  },
+  {
+   "task": "CO2c",
+   "needs": "UO4b",
+   "reason": "kept: one file: internal/**/*.go"
+  },
+  {
+   "task": "UO7b",
+   "needs": "UO4b",
+   "reason": "kept: one file: internal/**/*.go"
   },
   {
    "task": "CF2a",
@@ -1486,6 +1510,11 @@
    "task": "UO6",
    "needs": "UO4b",
    "reason": "kept: one file: internal/**/*.go"
+  },
+  {
+   "task": "UO6",
+   "needs": "CO2c",
+   "reason": "kept: one file: docs/releases/v*.md"
   },
   {
    "task": "UO6",
