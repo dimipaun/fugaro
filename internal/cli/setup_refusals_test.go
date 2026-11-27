@@ -118,6 +118,12 @@ var cliStages = []cliStage{
 	// sentence naming the owner, which is a skip and not a question.
 	{stage: initflow.CredentialsCopy, ctor: "newCredentialsCopyStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newCredentialsCopyStage(e) }},
+	// The legacy repo-to-image member leaving the published node
+	// (repo_images_retire.go, U1c): its own confirmation and never the run's
+	// one (covered: no), because the node it rewrites is one every run of the
+	// project reads — and --yes does reach it, because it prompts for no value.
+	{stage: initflow.ImageMapRetire, ctor: "newImageMapRetireStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newImageMapRetireStage(e) }},
 	// The required-CLI stamp (update_version_stamp.go, D3260/R1): its own
 	// confirmation and never the run's one (covered: no), because what it
 	// writes is a fence over every fugaro that may act on the project — and
