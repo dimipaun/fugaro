@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -119,6 +120,38 @@ func TestManagedCreationAcceptsTheDerivedStateBucket(t *testing.T) {
 	if _, ok := markerAt(t, r.gcs, bucket); !ok {
 		t.Errorf("the creation wrote no %s in gs://%s:\n%s", "fugaro/managed.json", bucket, refusalText(out, errOut, nil))
 	}
+}
+
+// And the same on the run itself: a first run of `fugaro setup` creates its
+// project without --create-project saying so, and it is held to the rule like
+// any other creating run — the gate is the settled creation and not the flag's
+// spelling of it (D2214, T2c). `--managed` used to be what this case passed,
+// and it is the flag this release retired.
+func TestAFlaglessFirstRunIsRefusedAForeignStateBucket(t *testing.T) {
+	r, bucket := newManagedCreateRig(t)
+	// A first run on this machine: no project config to select.
+	if err := os.Remove(r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := r.run(t, true, "yes\n",
+		"--name", "aurora", "--rigor", "startup", "--region", "us-east5",
+		"--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc,
+		"--state-bucket", "aurora-state")
+	if err == nil {
+		t.Fatalf("a flagless first run put its installation state outside gs://%s and was accepted:\n%s",
+			managedStateBucket(), refusalText(out, errOut, nil))
+	}
+	s := refusalText(out, errOut, err)
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
+	}
+	for _, want := range []string{managedStateBucket(), "aurora-state"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, s)
+		}
+	}
+	r.nothingDone(t, "a flagless creation refused for its state bucket")
+	noMarker(t, r.gcs, bucket)
 }
 
 // The gate follows the run's creation of the project, not the flag's spelling
