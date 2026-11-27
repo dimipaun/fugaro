@@ -242,7 +242,7 @@ func runIssueMine(cmd *cobra.Command, asJSON, all bool) error {
 			Installed: installed,
 			Hidden:    hidden,
 			Truncated: truncated,
-			Issues:    mineJSONRows(rows),
+			Issues:    mineJSONRows(rows, allLocal, installation, cmd.Root()),
 		})
 	}
 	for _, n := range notes {
@@ -455,10 +455,17 @@ type mineRowDoc struct {
 	ResolvedIn  string     `json:"resolved_in,omitempty"`
 	Coverage    string     `json:"coverage"`
 	OthersHit   int        `json:"others_hit"`
+	// Retry is the command the row offers to try again, exactly what the text
+	// listing prints after `retry:` and no more: the command alone is the
+	// document's data, and the sentence around it — that commands change
+	// things and that nothing is run for the reader — is the text's (F8). It
+	// is present only for a row `mineRetry` allows one on, and it is always
+	// this machine's own file's command, never a shared record's.
+	Retry string `json:"retry,omitempty"`
 }
 
 // mineJSONRows is the listing as the document's rows, in the order they print.
-func mineJSONRows(rows []issues.MineRow) []mineRowDoc {
+func mineJSONRows(rows []issues.MineRow, all []issues.Issue, installation string, root *cobra.Command) []mineRowDoc {
 	out := make([]mineRowDoc, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, mineRowDoc{
@@ -474,6 +481,7 @@ func mineJSONRows(rows []issues.MineRow) []mineRowDoc {
 			ResolvedIn:  r.ResolvedIn,
 			Coverage:    string(r.Coverage),
 			OthersHit:   r.OthersHit,
+			Retry:       mineRetry(r, all, installation, root),
 		})
 	}
 	return out
