@@ -155,6 +155,38 @@ func TestDocsMobileFrontAgentNamesTheNeverListsRuleFour(t *testing.T) {
 	}
 }
 
+// TestDocsMobileFrontAgentHandoffSharesTheLauncher: P5.4.6 hands the brief to
+// the launcher P5.1d wrote, so `internal/orchestrator/resident_launch.go` has a
+// second writer and belongs in the shared-files table — a shared file no table
+// names is the merge the table exists to prevent. Its level is its other file's
+// (`internal/cli/mailbox.go`) and not P5.1d's: P5.1's block carries its own
+// levels, so P5.1d places nothing on this plan's ladder.
+func TestDocsMobileFrontAgentHandoffSharesTheLauncher(t *testing.T) {
+	const path = "docs/mobile/implementation-plan.md"
+	plan := readDoc(t, path)
+	shared := docSection(t, path, plan, "### The shared files, from the full Files lists")
+
+	row := ""
+	for _, l := range strings.Split(shared, "\n") {
+		if strings.HasPrefix(l, "| `internal/orchestrator/resident_launch.go` |") {
+			row = l
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s's shared-files table has no `internal/orchestrator/resident_launch.go` row: P5.1d writes it and P5.4.6 writes it too when P5.1 is the launcher, and a shared file no table names is the merge the table exists to prevent", path)
+	}
+	for _, want := range []string{
+		"**P5.1d**",        // the writer whose block is P5.1's own
+		"P5.4.6**",         // the handoff, the second writer
+		"P5.1's own block", // why P5.1d places nothing here
+	} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's resident_launch.go row lacks %q", path, want)
+		}
+	}
+}
+
 // TestDocsMobileFrontAgentIsIndexedAndPlanned: the README indexes the design
 // with a row that says what it is, and the plan's Task P5.4.1 entry names the
 // three files the plan gives this change. A design that is landed but unindexed
