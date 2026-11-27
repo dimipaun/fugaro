@@ -333,26 +333,8 @@
    }
   },
   {
-   "id": "U11",
-   "title": "the repository stage over every repository, and the RC39 facts (after L2)",
-   "run": null,
-   "version": null,
-   "tier": "large",
-   "size": 3,
-   "footprint": {
-    "prediction": true,
-    "paths": [
-     "internal/cli/init_repo_stage.go",
-     "internal/cli/init_repo_target.go",
-     "internal/cli/init.go",
-     "internal/cli/update_anywhere_test.go",
-     "internal/cli/init_repo_repos_test.go"
-    ]
-   }
-  },
-  {
    "id": "U12",
-   "title": "update --repo goes (after U11)",
+   "title": "update --repo goes (after U9d and UO2)",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -603,16 +585,6 @@
    "reason": "integration: the end-to-end test needs every side of C1 and the real list"
   },
   {
-   "task": "U11",
-   "needs": "I1",
-   "reason": "kept, behaviour: it reports through the wired engine, and removes I1's exemption"
-  },
-  {
-   "task": "U11",
-   "needs": "U9b",
-   "reason": "kept: both write init.go and init_repo_stage.go"
-  },
-  {
    "task": "K1",
    "needs": "I1",
    "reason": "the release that carries the integration"
@@ -621,11 +593,6 @@
    "task": "R-view-files",
    "needs": "I1",
    "reason": "kept: a change to C1's files comes after every consumer has landed, never beside the contract"
-  },
-  {
-   "task": "U12",
-   "needs": "U11",
-   "reason": "kept, behaviour: the repository stage replaces what --repo did"
   },
   {
    "task": "U12",

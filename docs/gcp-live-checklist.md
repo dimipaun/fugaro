@@ -1200,7 +1200,7 @@ probe account carries predefined grants only).
 | 575 | **A staging reseller's month** — the accrual, the statement's mail and a sale the credit limit refuses ([`docs/portal/`](portal/implementation-plan.md), its **Check 575** and task **P9.4**; the reconciliation's **D2189**, against P6.2 and P6.3 as the deployed portal runs them): the wholesale terms and the credit limit operations set, the customers and the keys the reseller may see, the customer's workspace the sale names (resolved from the Firebase project the newest key is bound to), P1.5's monthly statement job and its OIDC token, the run's own log line and the month it issued, and the sale that is refused over the limit with the licences it already holds unchanged | See "Check 575" below; **the script is how you run it**: `bash scripts/live-checks/check575.sh --project fugaro-staging --token-file <file>`, with the test that drives every step of it against fakes, `scripts/live-checks/check575_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, as a member of a **reseller organisation** signed in with Google or Microsoft, on the **staging** deployment first (**never `belong`**), and **no agent runs any step of it** | The reseller's terms give the limit and the per-row rate the sale is composed against; the customer's newest key is bound to the Firebase project the sale is composed for, and the portal workspace that project is bound to is read from the operations area's own list of the customer's workspaces — `--workspace-id` names it instead, for a token that is a reseller's and not an operations member — because the mint reads a sale's `workspace_id` as a workspace **document** id while a key's own `workspace_id` is the project id (TN2), so posting the project id is a sale answered `404 not_found` before anything is compared against the limit; the job's method, path, token account and audience hold against the API revision's own `FUGARO_SCHEDULER_ACCOUNT`/`FUGARO_SCHEDULER_AUDIENCE` (an audience that is the job's own target URI is the misconfiguration), and the run's log line — `the statement run as <account> issued N statement(s) and mailed M message(s)` — carries the job's own account, so it is this fire's line and not an earlier run's. The newest statement's lines are all positive, sum to its `accrued_micros`, its `state` follows the two amounts, its month is a whole UTC month that is over and every line is a customer of this reseller. The sale is sized so its cost is **strictly greater than the whole limit**, and a sale beyond the limit that was **admitted** is a **FAIL**; the customer's keys, read before and after, are the same. A job still **PAUSED** is a row that could **not be measured** (naming `statements_paused=false`) and the run is fired by hand anyway. **OWNER-RUN, NOT RUN.** |
 | 760 | **How long `runs ls` takes on a real installation — the readings the plan's own 2026-11-19 baselines are, and the one that decides whether the optional RL4 is ever built** ([`docs/runs-ls-speed/`](runs-ls-speed/implementation-plan.md), its task **RL6** and its **Check 760**; the plan's **D2966**): after the release and `fugaro update` (which is what backfills the pull-request index, RL2B), the check re-takes **your own readings** on a real runs bucket with the run cache warm — `runs ls --state running` (20 s, 0 rows), `runs ls --pr N` with and without `--no-cache` (23 s and 32 s, 1 row) and the default `runs ls --since 7d` (15 s, 991 rows) — **three times each**, and prints each **median** beside its baseline; `--state running` and `--pr N` are read against the plan's **under 5 s** target, and the default listing's figure is the one **D2966** gates the optional RL4 on: a listing back **under 8 seconds means never**, so the follow-up is not built at all. It also reads **two pull requests' rows** by count and run ids only — one through the pull-request index, one older than the backfill through the fallback scan — as a sanity reading. **A slow figure is a reading, not a failure**: the check exits 0 having printed the numbers, whatever they are, and its exit 2 is a reading it could **not** take (a guard stopped it, a tool is missing, a call was refused or never answered). **OWNER-RUN, NOT RUN.** | See "Check 760" below; **the script is how you run it**: `bash scripts/live-checks/check-760-runs-ls-speed.sh --installation <installation> --pr <N>`, with the test that drives every step of it against fake tools, `scripts/live-checks/check-760-runs-ls-speed_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on the installation you name (`fugaro` is the default) and **never `belong`** — refused in what you type and in what `doctor` answers, and so is a coding agent's session — and **no agent runs any step of it** | One `fugaro doctor --project <installation> --json` and eighteen `fugaro runs ls` reads at the default three timed runs: the window once untimed, each query warmed once and timed three times — except `--pr N --no-cache`, which reads the bucket by definition and is the one read nothing can warm — and the sanity row's two pull requests read once each. **No cloud write of any kind**: no run is launched, no model is called, no bucket object is written, no credential is read, and the scratch directory is removed on the way out however the run ends. Wall clock only — minutes on an installation whose listing is slow, which is the baselines' own 15 s to 32 s a read |
 | 790 | **The upgrade that gives an installation its budget database, watched across a run that is already in flight** ([`docs/always-a-budget/`](always-a-budget/implementation-plan.md), its task **AB14** and its "Check 790"; the reconciliation's **U1**, **U2** and **U4**, and **D3023** read with **R3**, **R12** and **C1**): on a real installation **at the previous release with no budget database at all** — the installation's own **budget state** refuses first (`fugaro budget show --json --project <installation>`, which only a budget database can answer, so an installation with none names the missing backend) and the repository's job carries no `FUGARO_RTDB_URL`, which is the **premise** that stops the check on one the release has already reached — **ONE** run is launched and left in flight while a **project owner's** `fugaro update --project <installation>` — and then `fugaro update --repo --project <installation>` in the checkout, the pair the plan's after-deploy steps name — runs; the same job is read back **carrying `FUGARO_RTDB_URL`** with the update's own output **naming the database it created**; the run that was in flight is followed to a terminal row and must **not** have been killed by the rules deployed underneath it (**U2**); a **second** run launched after the update lands on an execution whose own environment carries the database address and **mounts no model key** (the agent's environment holds no API key for want of a gateway, **AB1b**, **D3009**); when the job's image still **predates the release**, the re-applied job must name `FUGARO_BUDGET_MODE` **`observe`** (a job that names no mode is a FAIL: a runner from before the release resolves its mode from exactly that variable, and would read the off the release removed) and the post-update run's own **record out of the runs bucket** must read budget mode **`observe`** (**U4**: an unset mode IS observe, **C1**); and a **second installation** at the previous release is updated with an **operator's** own credential, whose command must **change nothing** (no job of the project that installation's own config names may carry a database address, and a config naming no project leaves that half UNVERIFIED) and must **say that a project owner has to run it** (**U1**, **D3023**) | See "Check 790" below; `bash scripts/live-checks/check790.sh --installation <name> --sandbox <a sandbox repository checkout> --job <that repository's Cloud Run job> --gcp-project <project> --region <region> [--operator-config <a second installation's local config file>]` is the whole of it, its sibling test `scripts/live-checks/check790_test.sh` drives it against fake `gcloud`, `fugaro` and `git` only (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation you may upgrade and a sandbox repository you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **TWO billable runs** — the one in flight across the update and the one after it, both on the sandbox repository's own budget — plus the budget database the update creates, at the design's own estimate of about two dollars a month (**F18**). Everything else is a read: the job's own `describe` before and after, the installation's own refusal, `fugaro runs ls`, the run's own record out of the runs bucket, the newest execution and the update's output. The premise row **stops the check (exit 2)** on an installation the release has already reached, **before any run is launched** — and, where the budget database is already there, **at once**, on the first reading and before the job is even described, naming the **three ways forward** (a second installation that predates the release, the owner's waiver of U1/U2/U4 in `docs/always-a-budget`, or a fresh scratch project `fugaro setup` created at the release behind). Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the two runs are left to end on their own, as any run is, and nothing else was created. **OWNER-RUN, NOT RUN.** |
-| 791 | **The two refusals the release adds under a mode that refuses nothing** ([`docs/always-a-budget/`](always-a-budget/implementation-plan.md), its task **AB14** and its "Check 791"; **D3020** and **D3022** read under **D3010**'s `observe`): on a sandbox repository whose **published mode is `observe`** (the mode in force is the premise, and a mode that is not observe makes both rows below rows about another mode), **a model with no price is refused in EVERY mode, and the refusal NAMES the `model_prices` entry that clears it** (**D3020** — the prices come from the embedded table, the provider catalog and the project's own `model_prices`, and a mode of off used to skip the check while observe no longer does); and, when the repository's **COMMITTED** `fugaro.yaml` says **`budget.mode: off`** (read with `git show HEAD:fugaro.yaml`, never the working tree), **a launch from that checkout is rejected AT ONCE and the refusal NAMES the word `off`** (**D3022** — off is accepted nowhere, AB2, rather than read as unset for one release). The refusal's **exit status** is what says it refused: a warning that names the fix and exits 0 is a FAIL and not the reading D3020 writes. A repository whose model IS priced, or whose committed file does not say off, leaves that row **UNVERIFIED** — the check names what to point it at rather than inventing a reading | See "Check 791" below; `bash scripts/live-checks/check791.sh --sandbox <a sandbox repository checkout> [--installation <name>]` is the whole of it, its sibling test `scripts/live-checks/check791_test.sh` drives it against a fake `fugaro` and a **real local git repository** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on a sandbox checkout, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **Nothing, as long as the release holds**: no model is called, no build is made and no write is made anywhere — `fugaro validate` spends nothing, and the one launch spends nothing when the refusal happens, because the refusal is a config load's, made before anything is built or run. A launch the release does NOT refuse is a real, billable run, and the `mode-off` row then names it and the `fugaro cancel --now <run id>` that stops it. Every row is a read of a document the repository or the installation already wrote: its committed `fugaro.yaml`, its HEAD's own tree, the published policy and the refusals themselves. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went. **OWNER-RUN, NOT RUN.** |
+| 791 | **The two refusals the release adds in every mode** ([`docs/always-a-budget/`](always-a-budget/implementation-plan.md), its task **AB14** and its "Check 791"; **D3020** and **D3022**): **a model with no price is refused in EVERY mode, and the refusal NAMES the `model_prices` entry that clears it** (**D3020** — the prices come from the embedded table, the provider catalog and the project's own `model_prices`, and a mode of off used to skip the check while observe no longer does); and **a repository's COMMITTED `fugaro.yaml` that says `budget.mode: off` is rejected AT ONCE and the refusal NAMES the word `off`** (**D3022** — off is accepted nowhere, AB2, rather than read as unset for one release). **Neither is about a mode**: both hold under `observe` and under `enforce` alike, so the mode in force is read as **context, not a demand** — an installation in `enforce` is not a finding, and only a policy that still says `off` (or one that cannot be read) leaves that row UNVERIFIED. The **subjects are the check's own**, written in its scratch directory: a scratch `fugaro.yaml`, project layer and project config naming a model the price table does not carry (validated under **both** modes — one mode's refusal is a refusal about a mode — with the price table read first, so a table that carries the model leaves the row UNVERIFIED), and a scratch checkout holding the sandbox's committed file with `budget.mode: off` written in, launched from there and never from the sandbox. The sandbox is **read, never written**, and **no cloud setting is changed** (no `budget set`, no policy or config publish). The refusal's **exit status** is what says it refused: a warning that names the fix and exits 0 is a FAIL and not the reading D3020 writes | See "Check 791" below; `bash scripts/live-checks/check791.sh --sandbox <a sandbox repository checkout> [--installation <name>]` is the whole of it, its sibling test `scripts/live-checks/check791_test.sh` drives it against a fake `fugaro` and a **real local git repository** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on a sandbox checkout, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **Nothing, as long as the release holds**: no model is called, no build is made and no write is made anywhere — `fugaro validate` and `budget prices` spend nothing, and the one launch spends nothing when the refusal happens, because the refusal is a config load's, made before anything is built or run. A launch the release does NOT refuse is a real, billable run, and the `mode-off` row then names it and the `fugaro cancel --now <run id>` that stops it. Every row is otherwise a read of a document the installation already wrote: the sandbox's committed `fugaro.yaml`, the published policy and the refusals themselves. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went. **OWNER-RUN, NOT RUN.** |
 | 830 | What links a Batch VM to its job, and what a launcher can put on one ([`docs/batch-run-identity/`](batch-run-identity/implementation-plan.md), its task **BR0** and the plan's own **Check 830**; **U1** — which Google-made fact ties a VM to its job, and which permission reads it — is the owner's **O1**, **U2** is what the identity token in full format carries inside the task's container (the carrier of **D3101**), **U3** is where a job's variable reaches (**F3**, **R7**: the wrapped blob of **R5** must not be published anywhere), and **U8** is how soon a deleted job's name can be used again — with **R1** and **D3108** the reason U1's answer decides whether **BR3** can be built on it at all): with a throwaway Batch job in `fugaro-dev` shaped like a real run, a second job that writes the first job's uid and name into every launcher-controlled field it has (the job's own labels, the labels Batch puts on the VMs, and the task's variables), and a plain Compute Engine VM for **O8**'s avenue, the container reads the metadata server itself — so the link is judged on what the VM says about itself rather than on a naming convention, and a field a launcher can write is caught by the second job and by the plain VM rather than assumed safe. Run by **you**, at your own terminal, as **one command**: `CHK830_OWNER_RUN=yes bash scripts/live-checks/check-830.sh` (`--dry-run` prints every command and touches no project), with the test that drives it against a fake `gcloud` on PATH, `scripts/live-checks/check-830_test.sh` (run by `go test ./scripts`). **No agent runs any step of it**, and the plan blocks **BR3** on the result (**R4**). It costs two small `e2-standard-4` jobs and one VM alive for seconds, and deletes every job and instance it made. **OWNER-RUN, RUN 2026-11-25 on `fugaro-dev` (`fugaro version` not recorded), exit 1: `probe-ran` FAILED, so U2 and U3 are unmeasured, and `u1-handmade` FAILED — a hand-made VM can carry every field the probe can, so the link may not rest on them (O8), and with O1 answered the design returns to the owner (R4); BR3, BR5 and BR12 still wait. RUNS 2026-11-26 on `fugaro-dev`, exit 1 twice: the probe job stayed SCHEDULED for the whole wait with its VM up and not one line of the container's own, so `probe-ran` and `probe-exit` FAILED and U2 and U3 are unmeasured again — the block could not say whether the container had run at all, which is the pull the fix below now reads out of the VM's boot log (a line matching the check's own container-start pattern, the pull's own lines, the VM's interfaces and its subnetwork's Private Google Access) and bounds in the wait: the probe's image is the Alpine gcloud one (python3 and a POSIX shell, no curl) and the wait for the first line is never shorter than `CHK830_PULL_BOUND`.** |
 | 831 | **A Batch run's identity end to end, and four attacks on the claim** ([`docs/batch-run-identity/`](batch-run-identity/implementation-plan.md), its task **BR13** and the plan's own **Check 831**; the proof **R11** asks for, with **D3108** and **F30** for the re-created name and **D3115**, **U3** as re-cut for where a job's ticket is printed): one real sandbox run launched on Batch, the job the launch answered held to the run by the run's own `FUGARO_RUN` variable (a name is a launcher's word, the slug the ledger and the record are keyed by is derived, and the check reads it out of the job rather than building it), the Realtime Database ledger that says the run opened its session and was metered, the ticket the launcher put on the job and the three readings that say where Batch printed it (the job's own document, the task logs, and the `CreateJob` audit record — **D3115**'s rule measured rather than assumed) — and then, as a **second launcher**, four attacks on the claim, every one of them running as the run's **own job account** so that a refusal is about the VM and not about the account: the ticket the second launcher's **own read of the run's job** found, replayed into a job of its own (the attestation refuses it because their VM is another job's), the same job with **no ticket** at all (the control), a **second launch's job deleted while it is still QUEUED** and re-created under the same name carrying that run's unspent ticket (the record's id refuses it, **D3108**, **F30**; the row `FAIL`s when the job was not queued when it was deleted), and the **issuance record read straight out of the database** with the second launcher's own token. Run by **you**, at your own terminal, as **one command**: `CHK831_OWNER_RUN=yes bash scripts/live-checks/check-831.sh --second-launcher <account>` (`--dry-run` prints every command and touches no project), with the test that drives every step of it against a fake `gcloud`, `curl` and `fugaro` on PATH, `scripts/live-checks/check-831_test.sh` (run by `go test ./scripts`). **No agent runs any step of it**, and it is run **after** the release that ships the ticket and the claim, on an updated `fugaro-dev` (the plan's row **831**): the readings it takes are of that release's launcher and service. It costs **two sandbox runs** — the run under test, model calls included, and the second launch, whose job is deleted while it is queued so it never comes up and spends nothing — and three short-lived `e2-standard-4` attack jobs, and it deletes every job it made. **OWNER-RUN, NOT RUN.** |
 | 840 | **What a Cloud Run execution can prove** ([`docs/launcher-does-not-mint/`](launcher-does-not-mint/implementation-plan.md), its task **LM0**, which is the register's side of its **U1**, **U2** and **U3**; **F9**, **F11** and **R15** of its [reconciliation.md](launcher-does-not-mint/reconciliation.md)): what a Cloud Run job **execution's** metadata identity token carries, and whether anything in it is that execution's (**U1** — the platform's answer decides whether a contract change binds a run's claim to it, which is that work's **R-C1-execution**, and whether the residual **R5** leaves closes for Cloud Run); whether **`run.executions.get` returns an execution's environment overrides** to a caller the launcher role admits (**U2**, **F9**: a second launcher reads a peer's sealed token out of the execution's own override through exactly this call); and whether **Firebase accepts a second exchange of one custom token** inside its hour (**U3**, which **F9** assumes it does — if it does not, the copy F9 describes is a race today as well) | See "Check 840" below; **one command**, run by **you**, on your own **development installation** (**never `belong`**): `bash scripts/live-checks/check-840.sh --project <project> --region <region> --job <a job the installation already runs>`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-840_test.sh` (run by `go test ./scripts`). It creates **one throwaway Cloud Run job of its own** (`fugaro-chk840-probe`, an image with a shell in it, no Fugaro code and no secret), launches **one execution of it with an environment override through the API's `jobs.run`** (which `gcloud run jobs execute` has no flag for), reads the execution back, **deletes the job again, read back by a describe**, and **deletes the Firebase Auth user U3's exchange creates, read back gone**. **No agent runs any step of it.** | Each of the three is a **reading**, and the block says which of them came back the other way: nothing in the identity token names the execution — the claims carry the account and the audience and **no claim carries the execution** by name, resource name or the uid of its own document, which is **F11**'s reading of the platform, and a claim that **does** is the finding **R15** and **R-C1-execution** exist for; `run.executions.get` answers with the execution's own document **carrying the override's environment variable**, and the row beside it reads whether the launcher role carries `run.executions.get` at all (a role without it is that finding); and Firebase **accepts the same custom token a second time**, under the same uid — a second exchange Firebase refuses is a **FAIL** and is what **U3** and **F9** must be read against. An unreachable read, a job name already taken, or a credential that mints nothing is **not measured** (exit 2) rather than a FAIL. **OWNER-RUN, NOT RUN.** |
@@ -25120,15 +25120,20 @@ names the directory to remove by hand). The **two runs are left to end on their 
 their pull requests and branches are the runs' own: the check closes, edits and deletes none of them. Nothing
 else was created. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
 
-## Check 791: the two refusals the release adds under `observe`, read on a sandbox repository (never `belong`; run by you; NOT RUN)
+## Check 791: the two refusals the release adds in every mode, read on subjects the check builds itself (never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **AB14** of
 [always-a-budget/implementation-plan.md](always-a-budget/implementation-plan.md), its "### AB14: the live
 checks, as scripts" and its "Checks 790 and 791"; the two statements it reads back are **D3020** (a model with
 no price is refused **in every mode**, with the `model_prices` entry named as the fix) and **D3022** (a
 repository's committed `fugaro.yaml` that says `budget.mode: off` is rejected **at once**, with the removal
-named as the fix), both read under **D3010**'s `observe` — the mode every installation lands on and the one
-that refuses nothing. It is **run by the owner** at their own terminal. The script is
+named as the fix). **Neither is about a mode**: both hold under **D3010**'s `observe` and under `enforce`
+alike, so the mode in force is read as context and never as a demand — an installation in `enforce` is not a
+finding. The **subjects are the check's own**, written in its scratch directory: a scratch `fugaro.yaml`, a
+project layer and a project config naming a model the price table does not carry, and a scratch checkout
+holding the sandbox's committed file with `budget.mode: off` written in. The sandbox is **read, never
+written**, and **no cloud setting is changed** — no `budget set`, no policy or config publish. It is **run by
+the owner** at their own terminal. The script is
 `scripts/live-checks/check791.sh`, with the test that drives it against a fake `fugaro` and a real local git
 repository in a temp directory (`scripts/live-checks/check791_test.sh`, run by `go test ./scripts`). **No agent
 runs any step of it** — the script refuses a coding agent's session by name (`CLAUDECODE` and the four other
@@ -25143,60 +25148,76 @@ bash scripts/live-checks/check791.sh --sandbox <a sandbox repository checkout> [
 **What the check settles.** Both statements are about refusals a **person** meets, and both name a fix only a
 person can perform: an entry to add to `model_prices`, and a key to remove from a repository's own file.
 Nothing offline can settle that the refusal a **real** installation prints is the one the plan wrote, that the
-fix it names is the fix that clears it, or that the refusal really happens under a mode that refuses nothing:
+fix it names is the fix that clears it, or that the refusal really happens in every mode. Both rows are
+measured on **subjects the check writes** in its scratch directory — a model a **repository's own file may no
+longer name** (D3237 lifted every agent model key out of it), and a `budget.mode: off` no sandbox should be
+made to commit:
 
-- **`unpriced` — D3020.** `fugaro validate fugaro.yaml`, run in the checkout, must **refuse**, and its refusal
-  must name `model_prices`. The model it is about is the one the repository's own committed file carries (the first
-  `model:` under `agent:`, or the top-level one a file may carry). The **exit status** is what says the
+- **`unpriced` — D3020.** The check writes its own `fugaro.yaml`, its own **project layer** naming
+  `claude-check791-unpriced` (a Claude-shaped ID the price table does not carry) and the project config of a
+  project of its own, then runs `fugaro validate --offline --project-layer <layer> <file>` in that
+  environment — once with the mode unset (`observe`) and once with `budget: { mode: enforce }`. **Both** must
+  **refuse**, and each refusal must name `model_prices` and the model. The **exit status** is what says the
   validation refused: a message that names the fix and exits **0** is a warning, and the row reads **FAIL** —
-  a run that goes on to spend a model nobody priced. A checkout whose model **is** priced has no subject for
-  this row and reads UNVERIFIED, naming the model it read.
-- **`mode-off` — D3022.** The repository's **COMMITTED** `fugaro.yaml` is read with `git show HEAD:fugaro.yaml`
+  a run that goes on to spend a model nobody priced. One mode's refusal is a refusal about a mode, which is
+  why both are read, and each leg's own exit status is read on its own — a status carried from one leg to the
+  next would read the second leg's exit 0 as the first leg's refusal. The price table is read first
+  (`fugaro budget prices --json`, offline): a table that **carries** the subject ID leaves the row UNVERIFIED
+  — the name is taken, not the reading, and the entry to change is `SUBJECT_MODEL` in the script — and so
+  does a read that **failed** or answered with no models at all, because whether the subject is priced is the
+  premise the row reads the table for.
+- **`mode-off` — D3022.** The sandbox's **COMMITTED** `fugaro.yaml` is read with `git show HEAD:fugaro.yaml`
   — never the working tree, because the file a **run** reads is the one on the branch, and the two differ
-  exactly when a task is half-written. When that file says `budget.mode: off`, a launch from that checkout
-  (`fugaro run --task-file <a task the check writes> --json`) must be **refused** and its refusal must name
+  exactly when a task is half-written. The check copies it into a **scratch checkout of its own** (its
+  origin is the sandbox's own), writes `budget.mode: off` in, commits, and launches **there**
+  (`fugaro run --task-file <a task the check writes> --json`) — never in the sandbox, whose working tree,
+  branches and HEAD are left exactly as they were. The launch must be **refused** and its refusal must name
   the word **`off`**. Off is accepted nowhere (**AB2**), and the refusal is a config load's, so it happens
   **at once**: nothing is spent. A launch the release does **not** refuse is the finding — it is a real,
   billable run then, and the row names it and the command that stops it (`fugaro cancel --now <run id>`) —
-  and a refusal that never names `off` leaves the person guessing which key to remove. A committed file that
-  does not say off leaves this row UNVERIFIED — the check names what to commit rather than inventing a
-  reading.
+  and a refusal that never names `off` leaves the person guessing which key to remove. A sandbox whose
+  committed file cannot be read, or that has no `origin` remote, has no subject for this row and reads
+  UNVERIFIED.
 
-**The premise it reads first.** Both rows are statements about what happens under **`observe`**, so the mode
-in force is read first, from the published policy (`fugaro project policy show --project <installation>
---json`). A mode of `observe` is the premise and the two
-rows follow. A mode that is **not** observe is a FAIL: a refusal read under another mode measures a different
-thing. A policy read that did not answer with a mode is **UNVERIFIED, never a PASS** — a refusal read under an
-unknown mode is a refusal about nothing. The same step reads the committed file and refuses to go on when the
-working tree **differs from its HEAD**: the committed file and the file `fugaro validate` reads would then not
-be the same document, and the rows below would read one file and name the other.
+**The premise it reads first.** The mode in force is **context, not a demand**: D3020 and D3022 hold in every
+mode, so `observe` and `enforce` are both a PASS. It is read from the published policy (`fugaro project
+policy show --project <installation> --json`) and the row is UNVERIFIED, never a FAIL, when it cannot be
+read: a policy that still says **`off`** (every run is refused for the policy's own reason then, so a launch
+refused below would not be the repository file's refusal — republish with `fugaro update` and run it again),
+a policy read that answered with no mode, or a mode this release does not have.
 
-**Prerequisites.** `--sandbox` is a **git checkout** of a sandbox repository whose model has **no price** and,
-for the second row, whose **committed** file says `budget.mode: off` — the state the release rejects, so commit
-it on a sandbox branch. The repository must be one the installation's published policy puts in **`observe`**,
-which is what `--installation` names. `fugaro` and `git` on PATH, with `python3` for the readers. The check
-reads a checkout and a published policy and touches nothing else; run it on a sandbox you are happy to see
-named.
+**Prerequisites.** `--sandbox` is a **git checkout** of a sandbox repository whose HEAD carries a
+**committed** `fugaro.yaml`, with an `origin` remote — nothing else about it matters: the check builds both
+subjects itself. The remote is the one premise of the second subject, since a scratch checkout of the sandbox
+cannot be placed without one, and it reads UNVERIFIED rather than a pass where it does not hold. The launch
+is cut from **`main`** (`fugaro run --ref main`), the branch the check's own checkout holds, so the base
+branch the installation would otherwise resolve — the local config's or the project's, neither of which the
+check reads — is never a reading: a launch cut from a branch the checkout does not hold is refused naming
+that branch, which would be read as a refusal that never names `off`. `fugaro`, `git`, `python3` and `mktemp` on PATH. The check reads that checkout and the published
+policy and touches nothing else; run it on a sandbox you are happy to see named.
 
 **What a failure means, row by row.**
 
-- `premise` — the mode in force is not `observe` (a refusal read under another mode measures a different
-  thing), the policy read answered with no mode at all (UNVERIFIED), the committed file could not be read, or
-  the working tree differs from its HEAD (UNVERIFIED: commit or stash the change and run it again).
-- `unpriced` — the validation named `model_prices` **and exited 0** (a warning is not the refusal **D3020**
-  writes), or it refused **without naming** `model_prices` (the person meeting it is told which entry clears
-  it, and a refusal that does not name it leaves them with nothing to do). A clean validation is UNVERIFIED:
-  this repository's model is priced here, and the row has no subject.
-- `mode-off` — a launch from a checkout whose committed file says off was **not** refused (a real run the
-  release should never have started: the row names it and the `fugaro cancel --now <run id>` that stops it),
-  or it was refused **without the refusal naming `off`**. A committed file that does not say off is
-  UNVERIFIED.
+- `premise` — the policy read answered with no mode at all (UNVERIFIED), or with `off` or a mode this release
+  does not have (UNVERIFIED: a refusal read under it would not be the repository file's).
+- `unpriced` — the validation named `model_prices` **and exited 0** under either mode (a warning is not the
+  refusal **D3020** writes), it refused **without naming** `model_prices` (the person meeting it is told
+  which entry clears it, and a refusal that does not name it leaves them with nothing to do), or it refused
+  about **another** pin without naming the model. A price table that carries the subject ID, a table read that
+  failed and a table with no models at all are UNVERIFIED: none of the three says whether the model the row
+  wrote is unpriced.
+- `mode-off` — a launch from a scratch checkout whose committed file says off was **not** refused (a real run
+  the release should never have started: the row names it and the `fugaro cancel --now <run id>` that stops
+  it), or it was refused **without the refusal naming `off`**. A committed file that could not be read, or a
+  sandbox with no `origin`, is UNVERIFIED.
 - `aborted` — an extra row, present only when the script ended on an error rather than on an answer.
 
 **The knobs.** Every one of them is read from the environment and none of them is asked for:
 `CHECK791_SANDBOX`, `CHECK791_INSTALLATION` and `CHECK791_DRY_RUN`. The command line itself takes `--sandbox`,
 `--installation`, `--dry-run` and `--help`; `--dry-run` prints the plan, makes **no call at all** — no `git`,
-no `fugaro`, nothing spent — and touches nothing.
+no `fugaro`, nothing spent — and touches nothing. It lists every premise of the run and marks each of those it
+**cannot** settle without a real run (`NOT settled`, and that only a real run settles them), so a dry-run pass
+never implies a run pass.
 
 **Reading the `CHECK 791 RESULT` block.** One block of `FACT`-shaped lines, in this order, and the same block
 is what you paste back: `premise`, `unpriced`, `mode-off`, then `aborted` when the script ended on an error
@@ -25215,11 +25236,12 @@ that coin is honest to state: a launch the release does **not** refuse is a **re
 of a document the repository or the installation already wrote — its committed `fugaro.yaml`, its HEAD's own
 tree, the published policy, and the refusals themselves. **No secret is read**, so none can be printed.
 
-**Restore.** The scratch directory — the committed `fugaro.yaml`, the published policy, the validation's
-output, the launch's own answer and the task file the check wrote — is removed on the way out, from the exit trap
+**Restore.** The scratch directory — the subjects the check wrote (its `fugaro.yaml`, its project layer, its
+project config and everything else under its scratch config and cache directories), the scratch checkout, the
+price table, the refusals and the launch's own answer — is removed on the way out, from the exit trap
 on a Ctrl-C as well, and the `restore` row is that reading (a FAILed row names the directory to remove by
-hand). Nothing else was created and nothing was changed: the checkout, its branches and the installation are
-exactly as they were. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
+hand). Nothing else was created and nothing was changed: the sandbox's working tree, branches and HEAD and the
+installation are exactly as they were. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
 
 ## Check 830: what links a Batch VM to its job, and what a launcher can put on one (the sandbox project `fugaro-dev` only, never `belong`; run by you; **RUN 2026-11-25: FAIL**, `probe-ran` and `u1-handmade`; **RUNS 2026-11-26: FAIL** twice, `probe-ran` and `probe-exit`, the probe's container never starting — see the runs at the end of this section)
 
@@ -28294,3 +28316,69 @@ config. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
 4. **Restore.** Uninstall the development build or sign it out, and confirm the sandbox project's Crashlytics shows nothing from this check.
 
 **Paste back:** every `FACT` line above — the startup reading and how it was read, the empty Crashlytics after the crash and the relaunch, and the deletion of the unsent. Until this check runs, T3.1's fail-closed switch is built and **unverified live**: the hermetic tests pin the reader's four answers, and this check is the reading that a real build before pairing sends nothing **once a task wires the entry** (the prerequisite above). **No agent runs any step of it** — every step is yours.
+
+
+## Check 940: the repository-to-image map keyed by provider, on a live installation (an installation you name, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K1** of
+[docs/image-map-by-provider/implementation-plan.md](image-map-by-provider/implementation-plan.md), whose
+**Check 940** is that plan's owner-run half. Nothing offline settles it: whether the published node really
+carries `repo_images` and no `image_map`, whether `fugaro image survey --json` really prints version 2, and
+whether the job of a repository at each provider really runs the image its own `provider/owner/name` key
+names, are answers of an installation. Run it **after the release that carries U1b and its `fugaro update`**
+— the release that publishes `repo_images` on the node and, after the credentials service's own step,
+removes the legacy `image_map` (D3370, D3371; the spec's acceptance 2, 6 and 7).
+
+**What it measures.** Three steps, one row each, and it only reads:
+
+- **The node (D3371).** The project's published policy node, read through `fugaro project policy show
+  --json`, must carry the repository-to-image map `repo_images` (one or more keys) and **no** legacy
+  `image_map`. `repo_images` present with `image_map` absent is PASS. Both present is FAIL — the release's
+  own member is on the node but the old one is still there, which is an `update` that stopped between the
+  two, and the fix is `fugaro update`. Neither, or a legacy `image_map` alone, is FAIL — the map is not yet
+  keyed by provider, so two providers of one name still share one entry.
+- **The survey (R4).** `fugaro image survey --json` must print **version 2**, carrying `setup.repo_images`
+  keyed by `provider/owner/name`, and `setup.legacy_image_map` only while the project's effective map is
+  still the bare-name one. A version-1 document carries the bare-name `image_map` instead.
+- **One job image per provider (RC51, D3370).** For each provider the map names a repository at — `github`
+  and `bitbucket` — the map's **first** key of that provider (sorted, so the same repository is read on
+  every run of the same project) is the repository, and the Cloud Run job of that repository must run the
+  catalog image of the **entry its own `provider/owner/name` key names** (`catalog-<entry>`), so two
+  providers of one name are two repositories with their own images. The job is the repository's own: its
+  containers name the repository's clone URL as `FUGARO_REMOTE`, or the installation wrote the repository's
+  slug on it as the `fugaro_repo` label, and the daily check jobs (`fugarochk-…`) are skipped. A provider
+  the map names no repository at is **skipped with a line** and never failed (V3); the known Bitbucket
+  sandbox is the workspace `dimi_bmb`.
+
+**The installation's project and region come from `fugaro doctor --json`, never `gcloud config`**, so a
+stray config cannot point the check at another project. The installation is the one `--project` names
+(`fugaro` by default, **never `belong`**); a project or region naming `belong` stops the run.
+
+**The command.**
+
+```sh
+bash scripts/live-checks/check940.sh --project fugaro --dry-run   # prints the plan and calls NOTHING at all
+bash scripts/live-checks/check940.sh --project fugaro             # the reading
+```
+
+`--dry-run` calls neither `gcloud` nor `fugaro`, so it is safe on a machine with no credentials. The check
+needs `bash`, `mktemp`, `python3`, `gcloud` and `fugaro`, and refuses a shell that arrived tracing (`bash
+-x`). Its knobs, each read with a default: `CHECK940_PROJECT`, `CHECK940_DRY_RUN` and
+`CHECK940_KEEP_SCRATCH` (which keeps the scratch directory).
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 940 RESULT` and ending
+`CHECK 940 RESULT END (exit N)`, is what you copy back. Its keys are fixed in one order whatever happened —
+`xtrace`, `project`, `node`, `survey`, `job-github`, `job-bitbucket`, `restore`, `scratch-removed` — and a
+key the run never reached reads `FAIL — not reached`. Exit **0** is PASS (every measured criterion held);
+**1** is FAIL (a measured criterion that did not hold, or a guard that stopped the check before it
+measured); **2** is a row that could not be measured for a reason of the check's own setup rather than the
+installation, which the block names by key.
+
+**Costs.** It only reads — the project's node, the survey document and Cloud Run's job list — and writes
+nothing anywhere but its own scratch directory: no build is submitted, no run is launched and no credential
+value is read, so it costs wall clock and not money (a minute at the terminal). Its Restore removes the
+scratch directory, which its exit trap does too, so a Ctrl-C leaves nothing of the check's behind.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check940_test.sh`, which drives it against a fake `gcloud` and `fugaro` (no cloud, no
+run) and is run by `go test ./scripts`.

@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runindex"
@@ -35,9 +33,8 @@ import (
 // cover the job -- gets one line saying so and the reset stands (O7). What the
 // command guarantees is the reset; what it tries is the execution.
 //
-// The fence is update's own for the steps that start the job (U3): the reset
-// and the start both write the installation's cloud, so a coding agent's
-// session is refused rather than obeyed.
+// The reset and the start both write the installation's cloud, and a coding
+// agent's session runs them like a person's (D3425).
 
 // reindexJobArgs is how the history job is asked for a walk: the container's
 // command line, overridden at the start (RI5). It is the same invocation the
@@ -74,15 +71,9 @@ func newRunsReindexCmd() *cobra.Command {
 	return cmd
 }
 
-// runRunsReindex is the command's own body: the guard, the reset, and the one
-// execution the reset may be followed by.
+// runRunsReindex is the command's own body: the reset, and the one execution
+// the reset may be followed by.
 func runRunsReindex(cmd *cobra.Command, o *cloudOptions) error {
-	// The fence (U3): what this writes is the installation's index and what it
-	// starts is a job execution, so it is run by a person at their own
-	// terminal, exactly as the update's own job-starting step is.
-	if m := agentMarker(os.Getenv, processTerminal()); m != "" {
-		return userErr("nothing was reindexed: fugaro runs reindex marks the installation's run index for a rebuild and starts the history job's reindex execution, so it is run by a person at their own terminal: %s", initflow.AgentRefusal(m))
-	}
 	ctx := cmd.Context()
 	// The budget database and the config alone: the reset writes the database's
 	// lease and the summary document, and the execution is started through the

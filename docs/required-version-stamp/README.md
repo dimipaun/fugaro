@@ -1,6 +1,6 @@
 # Required-version stamp
 
-**Status: plan only; nothing is implemented; no task approved.** Every decision is answered, and the owner confirmed D3267 as amended after review.
+**Status as of 2026-11-27: done — the plan's twelve tasks are merged; see [docs/status.md](../status.md) for the current table.** Every decision is answered, and the owner confirmed D3267 as amended after review.
 
 **Spec owner:** Dimi Paun. The spec was approved on 2026-11-23. It was reconciled and planned on
 2026-11-23, against `origin/main` at `0dec0bb36`.

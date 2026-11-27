@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagebake"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -525,6 +526,10 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// changes how catalog images are built reaches the entry the next
 			// time the check reads it (F33, D1402).
 			TemplateSalt: gcp.TemplateSalt(Version),
+			// The base-image epoch this binary builds under, which the record
+			// carries: a change to the base image's own files moves the epoch,
+			// and every entry built before it is rebuilt eagerly (D3446).
+			Epoch: imagecheck.BaseEpoch,
 		}
 		if e.Source.Kind == config.SourceImage {
 			spec.Prebuilt, spec.Selftest = e.Source.Image, prebuiltSelftest

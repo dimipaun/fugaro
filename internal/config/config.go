@@ -1677,7 +1677,13 @@ func Parse(data []byte) (*Config, []Problem) {
 // a run (R21). It is the same drop, on the same list — a file that has been
 // migrated reads byte for byte as before.
 func AgentOf(data []byte) (Agent, bool) {
-	c, ps := decodeRepo(data)
+	// The tree below is built from the bytes the version upgrade left, not
+	// from the file's own (D3422).
+	up, ps := upgradeVersion(data)
+	if len(ps) > 0 {
+		return Agent{}, false
+	}
+	c, ps := decodeBytes(up)
 	if c == nil || len(ps) > 0 {
 		return Agent{}, false
 	}
@@ -1687,7 +1693,7 @@ func AgentOf(data []byte) (Agent, bool) {
 	// longer choose, so a launcher judging a file at a ref it never checks out
 	// cannot honour a key that file's own resolution drops.
 	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	if err := yaml.Unmarshal(up, &doc); err != nil {
 		return Agent{}, false
 	}
 	tree, ps := docTree(&doc)
@@ -1729,10 +1735,21 @@ func RepoOf(data []byte) (*Config, bool) {
 	return c, true
 }
 
-// decodeRepo decodes a fugaro.yaml strictly, without defaults or
-// validation: the repository layer alone, with today's line-numbered
-// errors.
+// decodeRepo decodes a fugaro.yaml, without defaults or validation: the
+// repository layer alone, with today's line-numbered errors. The file's
+// version is read first, so an older file is lifted to CurrentVersion in
+// memory before the strict decode and a newer one is refused (D3422); a caller
+// that has already upgraded the bytes calls decodeBytes instead.
 func decodeRepo(data []byte) (*Config, []Problem) {
+	up, ps := upgradeVersion(data)
+	if len(ps) > 0 {
+		return nil, ps
+	}
+	return decodeBytes(up)
+}
+
+// decodeBytes is the strict decode of a fugaro.yaml already at CurrentVersion.
+func decodeBytes(data []byte) (*Config, []Problem) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)

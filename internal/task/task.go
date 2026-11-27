@@ -28,6 +28,15 @@ var (
 	repoRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$`)
 )
 
+// releaseVersionRE is the shape of the launcher's release (Spec.CLIVersion):
+// a strict X.Y.Z with an optional "v", no pre-release or build suffix, each
+// component bounded so a hostile value cannot overflow an int. It is the
+// shape updatecheck.Valid and pluginwire's semverRE carry; this package
+// cannot import updatecheck (it depends on this one), so the rule is
+// repeated rather than shared, and VS5 compares the stamp with
+// updatecheck.Newer, which reads the same shape.
+var releaseVersionRE = regexp.MustCompile(`^v?(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
+
 // BatchRE is the form of a task's batch label.
 var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
@@ -714,6 +723,28 @@ type Spec struct {
 	// a launch that did not mark the findings has no person's text to keep
 	// apart from them.
 	OwnText string `json:"own_text,omitempty"`
+	// CLIVersion is the release the launching CLI ran as, stamped into every
+	// task it writes (D3441): the runner compares it with its own before it
+	// does anything else and, when the stamp is newer, upgrades in place to
+	// exactly that release before it runs the task (spec §6, VS5). It is the
+	// artifact the stamp lives in — the task file, not the Cloud Run job's
+	// environment (D3441) — and it is written by the launcher, never by a
+	// person.
+	//
+	// It is a release version (releaseVersionRE: a strict X.Y.Z, an optional
+	// "v") or empty, and never a development build: a `dev` binary has no
+	// release tag to fetch, so it stamps nothing (D3449), exactly as every
+	// spec written before this field carries none. Empty therefore means
+	// "no stamp", and the runner upgrades nothing for it — the release the
+	// image already holds is what runs.
+	//
+	// A runner before the release that reads this field refuses the whole
+	// spec (Parse decodes with DisallowUnknownFields), which is D3445's
+	// launch window (D3448): a stamped task meets an old image only until
+	// the project's own update rebuilds it, and the window is accepted
+	// rather than gated at launch. The field is additive and never retypes
+	// an existing one ("a field never changes meaning").
+	CLIVersion string `json:"cli_version,omitempty"`
 }
 
 // FollowUpOf is the parent a triage follow-up came from: the run whose
@@ -1743,6 +1774,13 @@ func (s *Spec) Validate() error {
 	}
 	if strings.TrimSpace(s.Ref) == "" {
 		bad("task spec: ref is required")
+	}
+	// The launcher's stamp (Spec.CLIVersion): a release version or empty. A
+	// value that is not one names no release the runner could upgrade to, so
+	// it is refused where it is written rather than at bootstrap, where the
+	// only repair left would be ending the run.
+	if s.CLIVersion != "" && !releaseVersionRE.MatchString(s.CLIVersion) {
+		bad("task spec: cli_version %q must be a release version (X.Y.Z) or empty", s.CLIVersion)
 	}
 	anyFollowUp := s.Branch != "" || s.PR != 0 || s.PreviousRun != ""
 	allFollowUp := s.Branch != "" && s.PR > 0 && s.PreviousRun != ""

@@ -1,7 +1,7 @@
 # Required-version stamp: implementation plan
 
-**Status: plan only. Nothing is implemented and no task is approved; each task needs the owner's
-explicit go by name.** It builds [spec.md](spec.md) as amended by
+**Status as of 2026-11-27: done — the plan's twelve tasks are merged; see
+[docs/status.md](../status.md) for the current table.** It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md), which wins where the two disagree.
 
 The answers that shaped it, all 2026-11-23:

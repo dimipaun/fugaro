@@ -11,6 +11,11 @@
     "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$" },
     "ref": { "type": "string", "minLength": 1 },
+    "cli_version": {
+      "type": "string",
+      "pattern": "^v?(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$",
+      "description": "The release the launching CLI ran as (task.Spec.CLIVersion, D3441): the runner compares it with its own and, when the stamp is newer, upgrades in place to exactly that release before it runs the task. Absent for every spec written before this field and for every launch from a development build, which has no release tag to fetch and stamps nothing (D3449): absent means no stamp, and the release the image already holds runs. The pattern is task.releaseVersionRE, the shape updatecheck.Valid carries: a strict X.Y.Z with an optional 'v', no pre-release or build suffix. A task that carries one needs a runner that reads the field, since task.Parse decodes with DisallowUnknownFields; that is D3445's launch window, accepted rather than gated at launch (D3448)."
+    },
     "base_branch": {
       "type": "string",
       "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$",

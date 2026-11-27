@@ -14,6 +14,17 @@ import (
 // each workflow's own secrets, the environment variable each becomes in the
 // job, and the Secret Manager container its value is read from.
 //
+// # It is the fallback now, and it goes
+//
+// Since UO7 (D3459) the service resolves a call out of the repository's OWN
+// fugaro.yaml at its default branch, read through the code host, and this
+// record is read for ONE state only: a code host that could not be reached. A
+// host that answered is a refusal and never this node, because a record read
+// beside a file that changed would serve a name the repository's own file no
+// longer writes. The record is retired by UO7b, which stops `fugaro update`
+// writing it; until then it is what keeps a repository whose host is briefly
+// unreachable working.
+//
 // # Why a record exists at all
 //
 // A workflow secret is stored once and mounted by the job (fugaro.yaml's
@@ -26,7 +37,8 @@ import (
 // service cannot read an operator's local config, so the answer has to be told
 // to it (D2073). This node is that telling: `fugaro update` writes it from the
 // mounts the repository's own run just resolved, and the service reads it on a
-// workflow-secrets call (B3.2) and on a build call (B4.3).
+// workflow-secrets call (B3.2) and on a build call (B4.3) when the code host
+// cannot be reached.
 //
 // # No value, ever
 //

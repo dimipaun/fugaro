@@ -1464,54 +1464,84 @@ func TestReposAddTakesTheLengthEnrollableArgBoundsAt(t *testing.T) {
 	}
 }
 
-// TestProjectAllowListDoorsAreRefusedInAnAgentSession: SD8's allow-list half.
-// The three commands that write `allow_repos` — and, through it, which
-// repository a run of the project may be — are the operator's, the same way
-// `project policy publish` is: refused before the read, so nothing is written
-// and no node is even looked at, and, for `sync`, without the App's private key
-// ever being read. The `--github-app-key` arm is the one that has to hold with
-// the flag as well as without it: the flag is what allows that read, and it is
-// not a way past this refusal (TestProjectSyncRefusesTheKeyReadInACodingAgentSession
-// is the flag's own test, which pins the sentence the flag carries).
-func TestProjectAllowListDoorsAreRefusedInAnAgentSession(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-		sync bool
-	}{
-		{"repos add", []string{"project", "repos", "add", "github/acme/new", "--allow-list-only"}, false},
-		{"repos rm", []string{"project", "repos", "rm", "github/acme/app"}, false},
-		{"sync", []string{"project", "sync", "--github-app-id", "12345"}, true},
-		{"sync --github-app-key", []string{"project", "sync", "--github-app-id", "12345", "--github-app-key"}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newProjectFixture(t, "")
-			f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
-			var g *syncRig
-			if tc.sync {
-				g = newSyncRig(t, "acme/new")
-			}
-			t.Setenv("CLAUDECODE", "1")
-			before := nodeOf(t, f.db)
+// TestAgentMayEnrol is D3425's allow-list half: the three commands that write
+// the project's published `allow_repos` — and, through it, which repository a
+// run of the project may be — are a coding agent's too, so the refusal SD8
+// carried is gone. What is left in front of each is its own step: the project's
+// admin gate, the deployed-rules marker, and, for a removal, the typed
+// confirmation no session without a terminal can answer.
+func TestAgentMayEnrol(t *testing.T) {
+	t.Run("repos add", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+		t.Setenv("CLAUDECODE", "1")
 
-			out, errOut, err := executeStdin(t, "", tc.args...)
-			if err == nil {
-				t.Fatalf("a coding agent's session edited the allow-list:\n%s%s", out, errOut)
-			}
-			if got := ExitCode(err); got != ExitUserError {
-				t.Errorf("exit %d, want %d", got, ExitUserError)
-			}
-			for _, want := range []string{"nothing was written", "coding agent", "allow-list"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal does not say %q: %v", want, err)
-				}
-			}
-			if after := nodeOf(t, f.db); after != before {
-				t.Errorf("the database changed in a coding agent's session:\nbefore %s\nafter  %s", before, after)
-			}
-			if g != nil && len(g.reads) != 0 {
-				t.Errorf("the App's private key was read in a coding agent's session: %v", g.reads)
-			}
-		})
-	}
+		out, errOut, err := executeStdin(t, "", "project", "repos", "add", "github/acme/new", "--allow-list-only")
+		if err != nil {
+			t.Fatalf("a coding agent's session was refused the allow-list: %v\n%s%s", err, out, errOut)
+		}
+		if got := allowReposOf(t, f.db); !slices.Contains(got, "github/acme/new") {
+			t.Errorf("allow_repos = %v, want the entry the session added", got)
+		}
+	})
+
+	t.Run("policy publish", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+		t.Setenv("CLAUDECODE", "1")
+
+		out, errOut, err := executeStdin(t, "", "project", "policy", "publish")
+		if err != nil {
+			t.Fatalf("a coding agent's session was refused the publish: %v\n%s%s", err, out, errOut)
+		}
+		if got := publishedPolicy(t, f).Budget.PerRunUSD; got != 5 {
+			t.Errorf("the published per-run ceiling is %v, want the config's", got)
+		}
+	})
+
+	t.Run("repos rm", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+		before := nodeOf(t, f.db)
+		t.Setenv("CLAUDECODE", "1")
+
+		_, _, err := executeStdin(t, "", "project", "repos", "rm", "github/acme/app")
+		if err == nil {
+			t.Fatal("a removal with no terminal was not stopped at its confirmation")
+		}
+		if strings.Contains(err.Error(), "nothing was written or removed") {
+			t.Fatalf("the SD8 refusal is still in front of the removal: %v", err)
+		}
+		if !strings.Contains(err.Error(), "needs a real terminal") {
+			t.Errorf("the refusal is not the confirmation's own: %v", err)
+		}
+		if after := nodeOf(t, f.db); after != before {
+			t.Errorf("the refused removal wrote the database:\nbefore %s\nafter  %s", before, after)
+		}
+	})
+
+	t.Run("sync", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+		before := nodeOf(t, f.db)
+		g := newSyncRig(t, "acme/new")
+		t.Setenv("CLAUDECODE", "1")
+
+		// The App's private key is a secret value and stays a person's
+		// (D3425), so what refuses this arm is the key's own refusal and not
+		// the marker's — and the key is never read.
+		_, _, err := executeStdin(t, "", "project", "sync", "--github-app-id", "12345")
+		if err == nil {
+			t.Fatal("a sync with no App key flag was not stopped at the key's own refusal")
+		}
+		if strings.Contains(err.Error(), "coding agent") {
+			t.Fatalf("the SD8 refusal is still in front of the sync: %v", err)
+		}
+		if len(g.reads) != 0 {
+			t.Errorf("the App's private key was read in a coding agent's session: %v", g.reads)
+		}
+		if after := nodeOf(t, f.db); after != before {
+			t.Errorf("the refused sync wrote the database:\nbefore %s\nafter  %s", before, after)
+		}
+	})
 }

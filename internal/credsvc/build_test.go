@@ -109,6 +109,11 @@ func newBuildCredsSvc(t *testing.T, extra ...func(*svc, *Config)) *buildCredsFix
 		// document, the workflow secrets' values beside it.
 		cfg.Bundles = &BundleLoader{Source: reads.dyn, Now: func() time.Time { return s.now }}
 		cfg.WorkflowSecrets = reads.records
+		// The code host the repository's own fugaro.yaml is read through (UO7,
+		// D3459). It answers "the host could not be reached" until a test says
+		// otherwise, so every test here that is not about the file read is served
+		// from the record, exactly as it was before this route read a file.
+		cfg.RepoFiles = reads.files
 		// The project record too: a build's own mounts can name a `fugaro_p_`
 		// container, and F13 holds that route to the same fence the by-name
 		// route is held to (IS1).
@@ -1165,4 +1170,50 @@ func TestBuildCredentialsV2(t *testing.T) {
 			t.Errorf("a marker was read (%v) for a container outside the grammar", f.reads.dyn.markerReads)
 		}
 	})
+}
+
+// TestBuildSecretsFromDefaultBranch is UO7's build half (D3459, D2076 (b)): a
+// build's secrets are read out of the CALLER's repository's own fugaro.yaml at
+// its default branch — the same seam the workflow-secrets route reads one
+// through — and the record is the fallback for a code host that cannot be
+// reached, exactly as it is there.
+//
+// The fixture's record and the file name different containers for the same
+// variable, so the answer says which of the two it came from: the record names
+// the repository's own copy and the file names the project's shared one.
+func TestBuildSecretsFromDefaultBranch(t *testing.T) {
+	f := newBuildCredsSvc(t)
+	f.reads.files.unreachable = false
+	f.reads.files.yaml = map[string][]byte{testRepo: repoYAML(testWorkflow, testWorkflowEnv, testSharedName)}
+
+	resp, raw := f.call(t, f.rows[testRepoPath], buildCredsBody(testWorkflow, []string{testWorkflowEnv}, testAppID))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the build was refused: %d %s", resp.StatusCode, raw)
+	}
+	if ans := readBuildCredsAnswer(t, raw); len(ans.Secrets) != 1 || ans.Secrets[0].Value != f.reads.sharedValue {
+		t.Errorf("the answer's secrets = %+v, want the value the repository's own file names", ans.Secrets)
+	}
+	if len(f.reads.records.reads) != 0 {
+		t.Errorf("the record was read (%v); the repository's own file is the authority (D3459)", f.reads.records.reads)
+	}
+	if len(f.reads.files.reads) != 1 {
+		t.Fatalf("the code host was read %d times, want one", len(f.reads.files.reads))
+	}
+	if q := f.reads.files.reads[0]; q.Repo != testRepo || q.Ref != "" {
+		t.Errorf("the read named %+v, want the caller's own repository at its default branch", q)
+	}
+
+	// The other direction: a host that cannot be reached is what the record is
+	// the fallback for, and nothing else is.
+	f2 := newBuildCredsSvc(t)
+	resp2, raw2 := f2.call(t, f2.rows[testRepoPath], buildCredsBody(testWorkflow, []string{testWorkflowEnv}, testAppID))
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("a build whose code host cannot be reached was refused: %d %s", resp2.StatusCode, raw2)
+	}
+	if ans := readBuildCredsAnswer(t, raw2); len(ans.Secrets) != 1 || ans.Secrets[0].Value != f2.reads.value {
+		t.Errorf("the answer's secrets = %+v, want the record's own value: the record is the fallback", ans.Secrets)
+	}
+	if got := f2.reads.records.reads; len(got) != 1 || got[0] != f2.rows[testRepoPath].Slug {
+		t.Errorf("the record was read for %v, want the caller's own slug", got)
+	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -62,8 +63,8 @@ const enrolStarterTokenNotice = "reads the project's " + config.BitbucketSecret 
 // credentials, is never printed, logged or written anywhere, and the caller
 // holds it for the one push it makes.
 //
-// No coding agent's session can reach it: the command refuses one before any
-// read (runProjectReposEnroll), so this is a person's own step.
+// No coding agent's session can reach it: enrolOpenStarter refuses one before
+// this read (and before any host is opened), so it is a person's own step.
 //
 // A var so a test drives the Bitbucket path without a project.
 var enrolStarterToken = func(ctx context.Context, lc *localcfg.Config, ownerName string) (string, error) {
@@ -116,6 +117,16 @@ func enrolOpenStarter(ctx context.Context, out io.Writer, lc *localcfg.Config, o
 	}
 	if provider == "" {
 		return "", nil
+	}
+	// The starter is a person's step and not a coding agent's: it opens a pull
+	// request in the operator's own repository, under their own credentials —
+	// and, on Bitbucket, with the project's own token — and the one
+	// confirmation every other write of `project repos add` takes is never
+	// reached on this path, because the enrolment stops until that pull request
+	// is merged. Refused here, before the token is read and before a host is
+	// opened, so no session reaches either.
+	if m := agentMarker(os.Getenv, processTerminal()); m != "" {
+		return "", userErr("nothing was written: the starter fugaro.yaml for %s is a pull request in your own repository with your own credentials, which is a person's: %s", pluginwire.Printable(ownerName), initflow.AgentRefusal(m))
 	}
 	// A Bitbucket host pushes with the installation's own token and has no CLI
 	// to lean on, so the read comes before the host is opened; every other

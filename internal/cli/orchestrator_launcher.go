@@ -385,7 +385,8 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 // the base branch the repository's configuration names, the workflow that
 // decides the job, the project layer the launch embeds, the mode the resolved
 // recipe carries, the account a named token mounts, the author the launch
-// records, and an override of the run's wall clock. An honest task carries them
+// records, the release the launch stamps (cli_version), and an override of the
+// run's wall clock. An honest task carries them
 // and no item does, so they are neither compared nor refused — refusing them
 // would refuse every honest re-issue — and what a rewritten one could do with
 // them (a run on another ref, on the job of another workflow, under a layer or a

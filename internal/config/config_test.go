@@ -150,7 +150,9 @@ func TestParseProblems(t *testing.T) {
 		// like any other field the Config struct does not have.
 		{"claude_accounts is not a fugaro.yaml key", minimalYAML + "claude_accounts:\n  x: {}\n", "", "field claude_accounts not found", 0},
 		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 11},
-		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "must be 1", 0},
+		// A version above the reader's is the loader's own refusal, not the
+		// version rule's (D3422): it names the newer release to install.
+		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "run `brew upgrade`", 0},
 		{"provider", strings.Replace(minimalYAML, "github", "gitlab", 1), "git.provider", "must be one of github, bitbucket", 0},
 		{"missing test", strings.Replace(minimalYAML, "      test: ./gradlew test\n", "", 1), "workflows.server.commands.test", "is required", 0},
 		{"no workflows", "version: 1\ngit: { provider: github }\n", "workflows", "at least one workflow", 0},
