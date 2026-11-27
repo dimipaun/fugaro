@@ -632,6 +632,16 @@ func followUpsTaskSpec(ctx context.Context, env *cloudEnv, repo, parent string, 
 	if mode != "" {
 		spec.Rigor = mode
 	}
+	// A first run's account walk, not the parent's account: the parent may have
+	// run before the project's default changed, and a task filed with none goes
+	// to the job that mounts no token for the stages that run on an account.
+	account, err := claudeAccountFor(ctx, env, repo, "", "", parentSpec.Ref, checkoutOf(ctx, repo)(), nameWritten)
+	if err != nil {
+		return nil, err
+	}
+	if account != config.DefaultClaudeAccount {
+		spec.OAuthToken = account
+	}
 	if err := spec.Validate(); err != nil {
 		return nil, userErr("%v", err)
 	}
