@@ -8,7 +8,7 @@
   "service_account_display_name": "Fugaro M4 job acme-sandbox-100024cb41873d4e web",
   "image": "us-east5-docker.pkg.dev/proj-1234/fugaro/acme-sandbox-web-7815dfafb6f5bcbb",
   "cpu": 1,
-  "memory": "2Gi",
+  "memory": "8Gi",
   "task_timeout_s": 1320,
   "env": {
     "FUGARO_BACKEND": "cloud-run",

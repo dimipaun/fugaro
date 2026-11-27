@@ -225,7 +225,7 @@ func TestSpecMatchesM4JobSpec(t *testing.T) {
 		// The build account is the repository's own now; the M4 view
 		// passes the deprecated setting through unchanged.
 		{"build_service_account", in.LC.Build.ServiceAccount, str("build_service_account")},
-		{"cpu", ws.CPU, "1"},
+		{"cpu", ws.CPU, "4"},
 		{"task_timeout_s", strings.TrimSpace(string(mustJSON(t, ws.TaskTimeoutS))), string(mustJSON(t, golden["task_timeout_s"]))},
 		// Byte for byte: a condition that differs in one byte is another binding.
 		{"bucket-condition", ws.BucketCondition.Expression, rows["bucket-condition"]},
