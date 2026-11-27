@@ -147,9 +147,10 @@ func (r *userRig) terraformReadsOnly(t *testing.T) {
 }
 
 // noCloudWrites fails the test when any of the fakes was sent a call that
-// would change something. The lists are the local config's; an IAM grant is
-// what a later fugaro update writes, in its own apply, and never this
-// command.
+// would change something. The lists are the local config's, and an IAM grant is
+// what a later fugaro update writes in its apply — a `user rm` revokes the
+// grants it reaches itself (DG5, D3454), and this rig's policy holds nobody, so
+// what it makes here is the Resource Manager read and never a write.
 func (r *userRig) noCloudWrites(t *testing.T) {
 	t.Helper()
 	for name, s := range map[string]*gcpfake.Server{
@@ -160,6 +161,14 @@ func (r *userRig) noCloudWrites(t *testing.T) {
 		for _, req := range s.Requests() {
 			switch req.Method {
 			case "GET", "HEAD":
+			// Resource Manager reads its IAM through POST (getIamPolicy,
+			// testIamPermissions): a read the command is allowed, and not a
+			// write.
+			case "POST":
+				if strings.HasSuffix(req.Path, ":getIamPolicy") || strings.HasSuffix(req.Path, ":testIamPermissions") {
+					continue
+				}
+				t.Errorf("the command sent %s %s to %s", req.Method, req.Path, name)
 			default:
 				t.Errorf("the command sent %s %s to %s", req.Method, req.Path, name)
 			}

@@ -229,6 +229,17 @@ func userOffboard(cmd *cobra.Command, o cloudOptions, email string) error {
 	}
 
 	w := cmd.OutOrStdout()
+	// The IAM half first, and before the roster is written (DG5, D3454): the
+	// member loses the cloud access this installation can reach now rather than
+	// at its next update, and the removal is recorded for the grants on other
+	// projects it cannot. The sweep below is unaffected either way.
+	revoked, err := memberRevokeAtOnce(ctx, lc, db, member)
+	if err != nil {
+		return err
+	}
+	if revoked > 0 {
+		fmt.Fprintf(w, "%s's IAM grants on %s were revoked\n", safetext.Field(address), safetext.Field(lc.Name))
+	}
 	dropped, err := offboardWriteRoster(ctx, db, lc, node, member)
 	if err != nil {
 		return err

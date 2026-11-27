@@ -415,6 +415,21 @@ func userPairWrite(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config,
 		if err != nil {
 			return err
 		}
+		if !grant && len(userGrantsOf(next, member)) == 0 {
+			// The change takes the member's last grant of the roster away, so
+			// their membership is gone and not merely reduced: the IAM goes at
+			// once, before the node is written, and the removal is recorded for
+			// the grants on other projects this command cannot reach (DG5,
+			// D3454). A demotion that still leaves a grant is the update's own
+			// business, which applies both directions together.
+			revoked, err := memberRevokeAtOnce(ctx, lc, db, member)
+			if err != nil {
+				return err
+			}
+			if revoked > 0 {
+				fmt.Fprintf(out, "%s's IAM grants on %s were revoked with this change\n", safetext.Field(member), safetext.Field(lc.Name))
+			}
+		}
 		err = accesslib.WriteIfMatch(ctx, db, next, node.ETag)
 		switch {
 		case err == nil:
