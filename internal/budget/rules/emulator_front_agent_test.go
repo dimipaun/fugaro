@@ -15,11 +15,11 @@ package rules
 // positive control per shape the rules accept, and an explicit refusal for each
 // way a writer could try to slip a brief past it.
 //
-// The generation the brief rides is 11 (mobile identity-pairing task J5r),
-// which is in no release: so the field is admitted under the document the
-// database already runs when the pairing work deploys, and P5.4.3 ships the
-// denials rather than a new generation. projectpolicy/version.go's generation-11
-// block states it.
+// The generation the brief rides is 12 (mobile plan tasks P5.4.2 and P5.4.3):
+// v0.29.0 ships generation 11 with no `brief`, so the field is a write a client
+// holds and it takes the first free generation at the merge — the number
+// projectpolicy/version.go's generation-12 block states. What P5.4.3 ships is
+// that number and the denials below.
 
 import (
 	"strconv"

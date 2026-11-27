@@ -3202,20 +3202,21 @@ func isNewCredsPath(p string) bool {
 //     (RC1). `fugaro update`'s rules stage publishes it either way, as it does
 //     every generation, and `fugaro doctor` reports policy-rules-skew until it
 //     has. P5.4.2 (the mobile plan's front agent, the owner's ruling of
-//     2026-11-27 that the brief is optional) adds the `brief` to that same
-//     generation instead of taking one of its own: it is a **field a client
-//     writes**, which is J5r's own reason, but generation 11 is in no release —
-//     no shipped binary deploys a generation-11 document without the field — so
-//     nothing on an installation is refused by the addition, and **P5.4.3 — the
-//     task that ships the field's denials — states the number it took: 11**,
-//     because the document does not change with it. What P5.4.3 adds is the
-//     directed case set that proves the fence holds
-//     (`emulator_front_agent_test.go`), not a second generation: a generation
-//     that records no document difference is what this constant's own comment
-//     refuses. An installation that already carries a generation-11 document
-//     converges the way any document difference does: `fugaro update`'s rules
-//     stage redeploys when the marker is this generation and the document is not
-//     this binary's.
+//     2026-11-27 that the brief is optional) adds the `brief`, and P5.4.3 — the
+//     task that ships the field's denials — moves it to 12: it is a **field a
+//     client writes** (J5r's own reason), and v0.29.0 (2026-11-25) ships
+//     generation 11 with a template that has no `brief`, so under a marker both
+//     binaries read as 11 an older `fugaro update` sees a plain document
+//     difference and redeploys its own generation-11 document over this one,
+//     dropping the brief admission — the guard that refuses to write under a
+//     marker *above* it is never reached. 12 is the first free generation at
+//     this merge, and the number the plan's own staleness note asks for. What
+//     P5.4.3 adds besides the number is the directed case set that proves the
+//     fence holds (`emulator_front_agent_test.go`). An installation at
+//     generation 11 converges the way any document difference does: `fugaro
+//     update`'s rules stage redeploys when the marker is this generation and
+//     the document is not this binary's — TestUpdateConvergesTheBriefFromThe
+//     PreviousGeneration pins it.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -3234,8 +3235,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 11 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 11: the optional `brief` a launch may carry joins generation 11's own content rather than taking a generation, and P5.4.3 (its denials) states that 11 is the number it took (mobile plan tasks P5.4.2 and P5.4.3; version.go's generation-11 block says why)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 12 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 12: P5.4.3 moves the generation for the `brief` a launch may carry, because v0.29.0 ships generation 11 with no `brief` and an older binary would redeploy its own document over one that has it (mobile plan tasks P5.4.2 and P5.4.3; version.go's generation-12 block says why)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

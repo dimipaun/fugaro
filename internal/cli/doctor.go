@@ -3544,11 +3544,15 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// route a run reads is new to it (workspace-service task WS22), and a
 		// route-generation marker already has that route and only the phone's
 		// stop request and the launch envelope are new to it (mobile plan task
-		// P5.1g), and a launch-generation marker already has those two and only
-		// the tag a signing device carries and the typed launch it sends are new
-		// to it (mobile identity-pairing task J5r).
+		// P5.1g), a launch-generation marker already has those two and only the
+		// tag a signing device carries and the typed launch it sends are new to
+		// it (mobile identity-pairing task J5r), and a signature-generation
+		// marker already has those shapes and only the shaped task a launch may
+		// carry is new to it (mobile plan task P5.4.3).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesSignatureGeneration:
+			adds = "the shaped task a launch may carry"
 		case gen >= rulesLaunchGeneration:
 			adds = "the device's signature and the typed launch"
 		case gen >= rulesRouteGeneration:

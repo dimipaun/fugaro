@@ -674,7 +674,7 @@ The mailbox's fragments use four more, which name an identity rather than a path
 /pairing/$uid/delivery      .read: PAIRING   .write: false   (the sealed token and MAC key, written over IAM)
 /mailbox/$mb/inbox/$msg    .write: MAILBOX && newData.exists() && !data.exists()    (written once)
   .validate: the required fields {id, sender, text, at, mac} and the per-kind clauses below
-  brief      .validate: the action kind's, on a `launch` alone, bounded by BRIEF_MAX and carrying the `agent` it is for — the shaped task a "go" carries (mobile plan P5.4.2/P5.4.3; shared/mailbox-schema's own field, which the rules are held to field for field)
+  brief      .validate: the action kind's, on a `launch` alone, bounded by BRIEF_MAX and carrying the `agent` it is for — the shaped task a "go" carries, generation 12 (mobile plan P5.4.2/P5.4.3; shared/mailbox-schema's own field, which the rules are held to field for field)
 /mailbox/$mb/outbox/$msg   .write: CONSUMER && newData.exists() && !data.exists()   (written once)
 /mailbox/$mb/outbox/$msg/acked   .write: MAILBOX && newData.exists() && !data.exists()
   .validate: newData.val() == true && data.parent().exists()   (once, only true, on an existing message)

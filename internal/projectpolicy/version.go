@@ -621,12 +621,10 @@ const PolicyRulesVersion = 1
 // records, its ledger and its counters, and every write it makes still lands
 // (docs/design/update-in-flight.md).
 //
-// Generation 11 is the mailbox's signature, the typed launch and the shaped
-// task a launch may carry (mobile identity-pairing plan tasks J5r, O6 and O10 —
-// the owner's answer of 2026-11-21 that a device signs with Ed25519 rather than
-// an HMAC tag, amending D171 — and mobile plan task P5.4.2, the owner's ruling
-// of 2026-11-27). It carries three shapes, and each is a *write* a client
-// holds.
+// Generation 11 is the mailbox's signature and the typed launch (mobile
+// identity-pairing plan tasks J5r and O6 — the owner's answer of 2026-11-21
+// that a device signs with Ed25519 rather than an HMAC tag, amending D171 —
+// and task O10). It carries two shapes, and each is a *write* a client holds.
 //
 // The first is the tag: a message and the heartbeat carry exactly one of `mac`
 // and `sig`, where `sig` is the unpadded base64url encoding of a 64-byte
@@ -650,43 +648,47 @@ const PolicyRulesVersion = 1
 // gate's (J5a, D2786) and not this document's: the rules see a bounded string
 // and the action's shape, and a plain start needs no confirmation at all.
 //
-// The third is the shaped task a `launch` may carry (mobile plan task P5.4.2):
-// `brief`, the text a "go" starts a run from, a bounded string beside the action
-// record and never inside it, accepted on `launch` alone. It is OPTIONAL,
-// because the app's existing typed start carries its task in the message's own
-// `text` and a launch with no brief must keep validating; a brief on any other
-// verb, or on a kind that cannot carry one, is refused as the shared schema
-// refuses it (shared/mailbox-schema, which the rules are held to field for field
-// by TestMailboxRulesAgreeWithTheSharedSchema). It takes no generation of its
-// own, and **mobile plan task P5.4.3 — the task that ships the field's denials —
-// states the number it took: 11, this generation**, because the document does
-// not change with it. Generation 11 is in no release, so no shipped binary
-// deploys a generation-11 document without the field, and the front agent's turn
-// needs no second generation: the document the owner deploys is the one this
-// template already renders, and a generation that records no document difference
-// is what this file's own note on the fourth generation refuses. What P5.4.3
-// adds is the directed case set that proves the fence holds —
+// Generation 12 is the shaped task a `launch` may carry (mobile plan task
+// P5.4.2, the owner's ruling of 2026-11-27; shipped by P5.4.3): `brief`, the
+// text a "go" starts a run from, a bounded string beside the action record and
+// never inside it, accepted on `launch` alone. It is OPTIONAL, because the
+// app's existing typed start carries its task in the message's own `text` and a
+// launch with no brief must keep validating; a brief on any other verb, or on a
+// kind that cannot carry one, is refused as the shared schema refuses it
+// (shared/mailbox-schema, which the rules are held to field for field by
+// TestMailboxRulesAgreeWithTheSharedSchema).
+//
+// It bumps because the document changes and the premise the older note here got
+// wrong is worth stating: v0.29.0 (2026-11-25) ships generation 11 with a
+// template that has no `brief`. Under a marker both binaries read as 11, an
+// older `fugaro update` sees a plain document difference and redeploys its own
+// generation-11 document over this one, dropping the brief admission — the
+// guard that refuses to write under a marker *above* it is never reached,
+// because the marker is not above it. So the field is a *write* a client
+// holds: a phone that sends a "go" under the document behind has its brief
+// refused at the database with no error, and the front agent's start is
+// silently dropped. Generation 12 is the first free generation at this merge,
+// and the number the plan's own staleness note asks for. What P5.4.3 adds
+// besides the number is the directed case set that proves the fence holds —
 // `emulator_front_agent_test.go`, a brief outside its bound, a brief with no
 // agent, a brief beside a verb that is not the launch, a brief on a kind that
 // cannot carry one and an untagged go — the same shape P5.2.3 shipped for
-// generation 6. An installation that already carries a generation-11 document
-// converges the same way any document difference does — `fugaro update`'s rules
-// stage redeploys when the marker is this generation and the document is not
-// this binary's (rulesSkewDocument).
+// generation 6.
 //
 // What the bump does to an existing installation is what every bump does, and
 // it is met the same way: `fugaro doctor` reports policy-rules-skew until the
 // owner runs `fugaro update`, whose rules stage deploys this document and
-// records generation 11 in the marker, so an installation at generation 10
-// converges in one run and no second command. The deploy still refuses to write
-// this binary's document under a marker *above* it, so an older CLI cannot take
-// the signature away behind a newer one's back. And the update is safe while
-// runs are in flight, which the marker's own write path carries: the tag is a
-// field beside a field a device already writes and the launch is one more verb
-// in a mailbox no run writes, so a run that bootstrapped under the release
-// behind keeps its records, its ledger and its counters, and every write it
-// makes still lands (docs/design/update-in-flight.md).
-const RulesVersion = 11
+// records generation 12 in the marker, so an installation at generation 11
+// converges in one run and no second command
+// (TestUpdateConvergesTheBriefFromThePreviousGeneration pins it). The deploy
+// still refuses to write this binary's document under a marker *above* it, so
+// an older CLI cannot take the brief away behind a newer one's back. And the
+// update is safe while runs are in flight, which the marker's own write path
+// carries: the brief is a field beside a field a phone already writes in a
+// mailbox no run writes, so a run that bootstrapped under the release behind
+// keeps its records, its ledger and its counters, and every write it makes
+// still lands (docs/design/update-in-flight.md).
+const RulesVersion = 12
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
