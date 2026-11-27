@@ -792,7 +792,7 @@ Quebec language clause, the late-payment rate, resellers and the merchant of rec
 3. **Provisions counsel's document marks** (highlighted in the source): section 5.1(i) (no seat for
    a viewer), section 5.3 (Roles) and section 5.5 (Seat estimate), which counsel's text wrote as
    features to come. Applied: present tense, owner 2026-10-29; the roles and the seat estimate must
-   be released before the Terms go public.
+   be released before the Terms went public.
 4. **The owner's rulings counsel's text did not carry** (subscriptions plan task S0.4): applied
    (counsel approved 2026-10-29). Read-only use after the grace period can still cancel a Job and
    use the kill switch (section 9.1, ruling T12); one License Key per Customer for its
