@@ -103,6 +103,12 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		"escalation.ready_drafts": func() string {
 			return strconv.FormatBool((&localcfg.Config{}).EscalationReadyDrafts())
 		},
+		// The shared images' retention (C8c): the minimal local file states no
+		// images: block, so the reader reads the loader's own answer back out
+		// — the 30 days a prune uses.
+		"images.retention_days": func() string {
+			return strconv.Itoa((&localcfg.Config{}).ImageRetentionDays())
+		},
 		// The two schedules (R13): a layer that states nothing reads as
 		// paused, which is the default the rows claim and the direction that
 		// never starts a job by omission.
