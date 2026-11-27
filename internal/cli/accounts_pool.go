@@ -47,10 +47,12 @@ func newAccountsPoolCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown accounts pool subcommand; want ls, add or rm (see fugaro accounts pool --help)")
+			return userErr("unknown accounts pool subcommand; want ls, add, rm, designate, contribute, withdraw or rm-member (see fugaro accounts pool --help)")
 		},
 	}
-	cmd.AddCommand(newAccountsPoolLsCmd(), newAccountsPoolAddCmd(), newAccountsPoolRmCmd())
+	cmd.AddCommand(newAccountsPoolLsCmd(), newAccountsPoolAddCmd(), newAccountsPoolRmCmd(),
+		newAccountsPoolDesignateCmd(), newAccountsPoolContributeCmd(),
+		newAccountsPoolWithdrawCmd(), newAccountsPoolRmMemberCmd())
 	return cmd
 }
 

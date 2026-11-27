@@ -649,15 +649,7 @@ func TestReposAddMergesThePublishedImageMap(t *testing.T) {
 	// The node holds the project's other repository's mapping, in the escaped
 	// shape the block is stored in on the node.
 	node := addPolicyNode()
-	raw, err := json.Marshal(projectpolicy.ImageMap{"owner/repo-a": "base"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var block map[string]any
-	if err := json.Unmarshal(raw, &block); err != nil {
-		t.Fatal(err)
-	}
-	node["image_map"] = block
+	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"owner/repo-a": "base"})
 	r.db.Set(projectpolicy.PathShared(), node)
 
 	if _, _, err := r.enrol(t, enrolRepo); err != nil {
@@ -671,9 +663,10 @@ func TestReposAddMergesThePublishedImageMap(t *testing.T) {
 		t.Errorf("repo_images = %v, want this repository's entry beside it", m)
 	}
 	// The node's own mapping is the project's, and the converge publishes what
-	// this machine's file now states.
-	if got := r.policy(t).ImageMap["owner/repo-a"]; got != "base" {
-		t.Errorf("the published image_map lost the other repository's mapping: %v", r.policy(t).ImageMap)
+	// this machine's file now states — in the new member, the old one staying on
+	// the node until the step after the credentials service takes it away (R14).
+	if got := r.policy(t).RepoImages["github/owner/repo-a"]; got != "base" {
+		t.Errorf("the published repo_images lost the other repository's mapping: %v", r.policy(t).RepoImages)
 	}
 }
 

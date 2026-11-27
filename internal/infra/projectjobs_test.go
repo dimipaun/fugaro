@@ -829,23 +829,26 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 `, "", 1)
 	for _, c := range []struct{ name, lc, want string }{
 		{"no container at all", m4LocalConfig + projectJobRepoLC + m5Additions + bare, "not stored project-wide"},
+		// The second state IS6 created: a `workflow_secrets` entry derives no
+		// project-wide container any more (D3324, projectSecretContainers), so
+		// a profile that lists one is refused by the same check the first row
+		// is — the name is not stored project-wide, whatever the entry says.
+		{"a workflow secret's name", m4LocalConfig + projectJobRepoLC + m5Additions + projectWorkflowSecretProfileLC, "not stored project-wide"},
 	} {
 		_, err := ProjectJobs(parseLC(t, c.lc), "fugaro-runs-proj-1234", false)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one naming %q", c.name, err, c.want)
 		}
 	}
-	// A name that is neither reserved nor a key is refused by the mount
-	// resolver itself, and a local config now DOES reach it with a workflow
-	// secret's name: projectSecretContainers derives a container for the
-	// entry (W2), so the check above passes and this one is what refuses the
-	// name. It still refuses — the resolver maps a reserved name and a
-	// configured provider's key and nothing else — which is the fence D1266
-	// rests on; TestProfileRefusesAProjectWorkflowSecret pins the same path
-	// end to end, through ProjectJobs.
+	// And the resolver keeps its own answer for the name (D1266's fence): a
+	// workflow's own secret is neither a reserved name nor a configured
+	// provider's key, so a profile mounting one is refused even where a
+	// container for it is in the plan — which is what an installation whose
+	// live union still holds the copy IS5 has not retired yet reaches (N3).
+	// TestProfileRefusesAProjectWorkflowSecret pins the whole path.
 	workflowSecret := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectWorkflowSecretBlockLC)
-	if _, ok := projectSecretContainers(workflowSecret)["sandbox-probe"]; !ok {
-		t.Errorf("projectSecretContainers derives no container for a workflow_secrets entry: W2 derives one, and it is why the resolver below is the check that sees the name at all")
+	if _, ok := projectSecretContainers(workflowSecret)["sandbox-probe"]; ok {
+		t.Errorf("projectSecretContainers derives a container for a workflow_secrets entry: the value of such a name lives in the installation's own fugaro_p_<name> copy from the update that copied it, and a second container under the project-secret spelling is one no job mounts (IS6, D3324)")
 	}
 	if env, ok := projectSecretEnv(workflowSecret, "sandbox-probe"); ok {
 		t.Errorf("a workflow's own secret resolves to the variable %s", env)
@@ -869,8 +872,10 @@ func TestProjectJobSecretsMustBeProjectWide(t *testing.T) {
 }
 
 // projectWorkflowSecretBlockLC is W5's fixture: one project workflow secret
-// whose entry lists this installation's one GitHub repository, so
-// projectSecretContainers derives its container.
+// whose entry lists this installation's one GitHub repository. Its container
+// was projectSecretContainers' own until IS6 (D3324) took the class out of
+// what that function derives, and both halves of the fence below outlive the
+// container.
 //
 // sandbox-probe is the name the tree's own fixture repository declares
 // (deploy/sandbox/fugaro.yaml), so this speaks about a workflow secret a
@@ -891,17 +896,19 @@ const projectWorkflowSecretProfileLC = projectWorkflowSecretBlockLC + `profiles:
 // per-repository list — may not be mounted on a shared job. The refusal is
 // the deployer's own and already in the tree: this task writes no line of it.
 //
-// The test pins the exact path the name takes today, and both halves of it:
-// projectSecretContainers derives a container from the entry (W2), so
-// projectJobSecrets' "not stored project-wide" check passes, and
-// projectSecretEnv — which maps a key of config.ReservedSecrets and a
-// configured provider's own secret, and nothing else — is the check that
-// refuses it. Asserting the sentence rather than the bare fact of an error is
-// what makes this fail if either half is widened: teach projectSecretEnv a
-// workflow secret's variable and ProjectJobs deploys the job (D1266's
-// rejected alternative, the one that would mount one value on every
-// repository the profile admits); stop deriving the container and a different
-// refusal fires.
+// IS6 moved where the name meets that fence, and this test follows it there
+// without weakening the rule. A `workflow_secrets` entry derives no
+// project-wide container any more (D3324, projectSecretContainers), so a
+// profile listing the name is refused by projectJobSecrets' "not stored
+// project-wide" check before the resolver is asked — the state the row above
+// pins. The resolver's own answer is unchanged and is what the fence rests on:
+// projectSecretEnv maps a key of config.ReservedSecrets and a configured
+// provider's own secret, and nothing else, so a name that DOES reach it is
+// refused. That second half is the one that matters where a container is in
+// the plan anyway — an installation whose live union still holds a copy IS5
+// has not retired (N3) — so a widening there would mount one value on every
+// repository the profile admits (D1266's rejected alternative) with no check
+// left to see it.
 //
 // The rule cannot live in projectpolicy instead: CheckProfiles takes the
 // policy's profiles and accounts and never the local config, so where the
@@ -910,16 +917,16 @@ const projectWorkflowSecretProfileLC = projectWorkflowSecretBlockLC + `profiles:
 // which is a refusal that fails open and reads as enforced (F9).
 func TestProfileRefusesAProjectWorkflowSecret(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectWorkflowSecretProfileLC)
-	if _, ok := projectSecretContainers(lc)["sandbox-probe"]; !ok {
-		t.Fatalf("projectSecretContainers has no container for sandbox-probe: the entry's non-empty allow_data_to derives one (D1263), and without it the refusal below is the container check's rather than the fence's")
+	if _, ok := projectSecretContainers(lc)["sandbox-probe"]; ok {
+		t.Fatalf("projectSecretContainers has a container for sandbox-probe: IS6 took the class out of what the installation derives (D3324), and with one derived the refusal below would be the container check's again")
 	}
 	_, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
 	if err == nil {
 		t.Fatalf("ProjectJobs deployed a job for a profile mounting the project workflow secret sandbox-probe: a profile is shared by every repository admitted to it, and the entry's allow-list is not one a shared job can honour")
 	}
-	want := `profiles.standard.secrets[0]: "sandbox-probe" is neither a secret Fugaro reserves nor the key of a configured model provider`
+	want := `profiles.standard.secrets[0]: "sandbox-probe" is not stored project-wide`
 	if !strings.Contains(err.Error(), want) {
-		t.Errorf("err = %v, want the entry's own refusal %q", err, want)
+		t.Errorf("err = %v, want the container check's own refusal %q: the name has no project-wide container since IS6, so that is the check a profile listing it meets", err, want)
 	}
 	if env, ok := projectSecretEnv(lc, "sandbox-probe"); ok {
 		t.Errorf("projectSecretEnv(sandbox-probe) = %q, true; want refused: this function is what the fence reads, and a workflow secret is neither a reserved name nor a configured provider's key", env)
@@ -2388,14 +2395,14 @@ return string(got.Payload.Data), nil
 	}
 }
 
-// Retiring a project job is deferred (plan task 3.2's fix round, review item
-// 4): the module protects the job from deletion and has no allow_job_delete,
-// unlike the workflow module. A profile removed, or one whose secrets change
-// its account and so its job's name, plans the old module instance's delete;
-// the guard refuses it without --allow-delete, and with it the apply would
-// destroy the launchers' grants on the job and then fail on the deletion
-// protection. So the delete of a project job is refused before the apply
-// whatever --allow-delete names, with the way back and the reason.
+// The delete of a project job is refused before the apply whatever
+// --allow-delete names, with the run that settles it named (plan task 3.2's
+// fix round, review item 4; issue #3686 made `fugaro update` retire such a job
+// before the plan, so what reaches this refusal is a job THIS run did not
+// retire — an init, a --plan-only, a state removal that failed). The module
+// protects the job from deletion and has no allow_job_delete, unlike the
+// workflow module: an apply let through would destroy the launchers' grants on
+// the job and then fail on the deletion protection.
 //
 // The review-only variant of a project job is refused with it (the owner's
 // ruling of 2026-11-04): it is the same module instance over the same axis
@@ -2407,7 +2414,7 @@ return string(got.Payload.Data), nil
 // the "module.project_review[" prefix from installation.go's hints — the
 // variant's branches below fail (the refusal does not fire, or the delete
 // comes back with no hint at all).
-func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
+func TestProjectJobDeletesThisRunDidNotRetireAreRefused(t *testing.T) {
 	coding := `module.project["` + gcp.ProjectJobName("standard", "github", "") + `"].google_cloud_run_v2_job.this`
 	variant := `module.project_review["` + credsvc.ReviewJobName("standard", "github", config.DefaultClaudeAccount) + `"].google_cloud_run_v2_job.this`
 	for _, job := range []string{coding, variant} {
@@ -2417,7 +2424,7 @@ func TestProjectJobDeletesAreRefusedUntilRetirementExists(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%v of %s is not refused", acts, job)
 			}
-			for _, want := range []string{job, "retiring a project job is not supported yet", "deletion protection", "restore the profile"} {
+			for _, want := range []string{job, "this run did not retire", "fugaro update", "no profile, provider and account names"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%v: err = %v, want it to name %q", acts, err, want)
 				}

@@ -512,7 +512,14 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro secrets shared rm":  {args: []string{"NAME"}},
 	"fugaro secrets shared set": {args: []string{"NAME"}},
 	"fugaro secrets user rm":    {args: []string{"NAME"}},
-	"fugaro secrets user set":   {args: []string{"NAME"}},
+	// The pool family's four service calls reach their bodies the same way: the
+	// pool is the whole of what stands between a bare run and the project
+	// selection's refusal, which comes before any token is read.
+	"fugaro accounts pool contribute": {args: []string{"--to", "team"}},
+	"fugaro accounts pool designate":  {args: []string{"team"}},
+	"fugaro accounts pool rm-member":  {args: []string{"team", "--member", "alice"}},
+	"fugaro accounts pool withdraw":   {args: []string{"team", "--member", "alice"}},
+	"fugaro secrets user set":         {args: []string{"NAME"}},
 	// The rigor write reaches its own edit through the layer file the seed writes:
 	// the mode it sets ranks above what the file resolves to, so the fixture is the
 	// ordinary write and not the sensitive one, and the sentence naming the key is
@@ -615,7 +622,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro accounts grade":    "is a name for set: a bare run prints its own usage and returns",
 	"fugaro accounts repo":     "is a name for add: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
-	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
+	"fugaro accounts pool":     "is a name for ls, add, rm, designate, contribute, withdraw and rm-member: a bare run prints its own usage and returns",
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
 	"fugaro backends":          "is a name for ls and use: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",

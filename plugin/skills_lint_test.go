@@ -580,13 +580,13 @@ var (
 // Secret Manager secret, and the only way to write one entry is to read the
 // document that holds them all. A skill that told an agent to run either would
 // be telling it to read every model credential the service issues.
-var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls"}
+var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro secrets allow", "fugaro secrets deny", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls"}
 
 // userRunsAllowed is every command a user-runs block may hold.
 // `fugaro upgrade` left this list with the command (U4 of
 // docs/plugin-user-scope/implementation-plan.md): the converge's door is
 // `fugaro update` now, which was already here.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills"}
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro secrets allow", "fugaro secrets deny", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.

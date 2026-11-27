@@ -596,7 +596,7 @@ func TestPoolFamilyUnknownSubcommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unknown pool subcommand was accepted")
 	}
-	if !strings.Contains(err.Error(), "want ls, add or rm") {
+	if !strings.Contains(err.Error(), "want ls, add, rm, designate, contribute, withdraw or rm-member") {
 		t.Errorf("the refusal does not name the subcommands there are: %v", err)
 	}
 }

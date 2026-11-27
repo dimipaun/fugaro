@@ -559,8 +559,16 @@ func TestComputeStageGuardsDeletes(t *testing.T) {
 			r.setPlanAt(t, "compute", change("module.compute.google_compute_router_nat.this", "delete", "create"))
 			fakeTerminal(t)
 			out, _, err := executeStdin(t, initProjectName+"\n", tc.args...)
-			if err == nil || !strings.Contains(err.Error(), "--allow-delete") {
-				t.Fatalf("err = %v, want the compute stage's guard refusal:\n%s", err, out)
+			// The rig's installation is a managed project's (newInitRig's
+			// marks), so the refusal is the owner's own sentence and not the
+			// flag-and-hints text a project nothing flags gets: the address is
+			// what says this refusal is that stage's guard, and the unmanaged
+			// text is pinned by TestManagedInitRefusalNamesNoFlag.
+			if err == nil || !strings.Contains(err.Error(), "module.compute.google_compute_router_nat.this") {
+				t.Fatalf("err = %v, want the compute stage's guard refusal naming the address:\n%s", err, out)
+			}
+			if !strings.Contains(err.Error(), initManagedDeleteAdvice) {
+				t.Errorf("the refusal is not the guard's managed text:\n%s", err)
 			}
 			if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
 				t.Fatalf("a plan that deletes was applied: %q", calls)

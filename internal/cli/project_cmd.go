@@ -1340,11 +1340,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// what it was before the key existed.
 	var publishedImageMap map[string]string
 	var publishedBake *bool
+	var publishedRepoImages projectpolicy.RepoImages
 	if old != nil {
 		publishedImageMap = old.ImageMap
 		publishedBake = old.BakeRepos
+		publishedRepoImages = old.RepoImages
 	}
 	imageMap := lc.ImageMapEffective(publishedImageMap)
+	// The map's new member is kept by the same rule one member over (R14,
+	// D3371): the config that states repo_images is its carrier — `fugaro image
+	// map set` writes it there, and the policy stage rewrites the file into it
+	// when it migrates an old map — so a machine whose config predates the field
+	// keeps the node's own map rather than publishing nothing. The old member
+	// beside it is left exactly as the node holds it (D3376 as amended): the
+	// step after the credentials service is the one that removes it, so a node
+	// published here carries both and repo_images wins (R2).
+	repoImages := repoImagesForPublish(lc, publishedRepoImages)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
 	// The triage switch is kept by that same rule (D1854), and the cost of the
 	// other reading is the floor's, one direction over: the stage is what judges
@@ -1490,6 +1501,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ImageCatalog:            imageCatalog,
 		ImageServices:           imageServices,
 		ImageMap:                imageMap,
+		RepoImages:              repoImages,
 		BakeRepos:               bakeRepos,
 		Triage:                  triage,
 		ReviewAgainstTask:       reviewAgainstTask,
@@ -4066,14 +4078,22 @@ type projectShowDoc struct {
 // showPolicy is the published policy as this document renders it: the node
 // spells two blocks' member names the way RTDB requires them escaped
 // (projectpolicy.Prices for model IDs with a "." or a "/", projectpolicy.ImageMap
-// for repository names, which always carry a "/"), and a consumer of this
-// document is reading model IDs and repository names. So both blocks are
-// shadowed here by the same maps in the reader's own spelling — the shadows sit
-// at a shallower depth and are therefore the ones encoding/json writes.
+// and projectpolicy.RepoImages for repository names, which always carry a "/"),
+// and a consumer of this document is reading model IDs and repository names. So
+// both blocks are shadowed here by the same maps in the reader's own spelling —
+// the shadows sit at a shallower depth and are therefore the ones encoding/json
+// writes.
+//
+// The map's two members are both shadowed (R5): repo_images is the member from
+// L11 on and is what a consumer reads, and image_map is printed while the node
+// still carries it, which is the state `update` leaves between the policy stage
+// and the step after the credentials service (D3376 as amended). A node that
+// carries neither prints neither.
 type showPolicy struct {
 	*projectpolicy.Policy
-	Prices   map[string]projectpolicy.Price `json:"model_prices,omitempty"`
-	ImageMap map[string]string              `json:"image_map,omitempty"`
+	Prices     map[string]projectpolicy.Price `json:"model_prices,omitempty"`
+	RepoImages map[string]string              `json:"repo_images,omitempty"`
+	ImageMap   map[string]string              `json:"image_map,omitempty"`
 }
 
 // showPolicyOf is the document's policy, or nil when none is published.
@@ -4081,7 +4101,7 @@ func showPolicyOf(p *projectpolicy.Policy) *showPolicy {
 	if p == nil {
 		return nil
 	}
-	return &showPolicy{Policy: p, Prices: p.Prices, ImageMap: p.ImageMap}
+	return &showPolicy{Policy: p, Prices: p.Prices, RepoImages: p.RepoImages, ImageMap: p.ImageMap}
 }
 
 // showCaps is the ceiling the installation's own nodes carry — the side of the

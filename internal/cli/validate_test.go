@@ -668,19 +668,21 @@ func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
 	// Nothing of the ceiling is known, so nothing is simulated: a clamp, a
-	// missing pin or an allow-list is not judged. One line fires, unrelated to
-	// the ceiling: cliMinimalYAML's workflow has no mise config. The file's
+	// missing pin or an allow-list is not judged. One warning fires, unrelated
+	// to the ceiling: cliMinimalYAML's workflow has no mise config. The file's
 	// agent.model is dropped before the merge (S1, D3237) and this world has no
 	// project layer to supply one, so no model resolves at all and the
 	// review-level resolver — which warns when the senior review names the
-	// coder's own model — has nothing to compare: the second line this test
-	// used to expect is the pins rule's own subject, and
-	// TestValidateLevelsSameModel covers it where a layer prices the run.
+	// coder's own model — has nothing to compare: the warning this test used to
+	// expect is the pins rule's own subject, and TestValidateLevelsSameModel
+	// covers it where a layer prices the run. The drop itself is named in the
+	// note above it, layer or none (S2).
 	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
 	// Written as it is, never qualified: a file whose keys became a project
 	// layer's is a world with a layer, and this test's is the one without.
 	out, errOut, err := execute(t, "validate", writeRawConfig(t, body))
-	want := "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n"
+	want := "note: agent.model is the project's choice (D3237): remove it from fugaro.yaml; the project sets it with `fugaro models use --layer project`.\n" +
+		"warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n"
 	if err != nil || errOut != want {
 		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
 	}
@@ -2657,7 +2659,13 @@ func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
 	if err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("no local config: err %v, out %q, stderr %q", err, out, errOut)
 	}
-	for _, want := range []string{"agent.models.reviewer", "no provider serves it", "allow_data_to", "providers"} {
+	// The refusal's own words, and not the keys it would name: the lifted ones
+	// are named here too, because that note is about the file and not about a
+	// provider (S2).
+	if !strings.Contains(errOut, "agent.models.reviewer is the project's choice") {
+		t.Errorf("the lifted keys are named with no local config too:\nstderr: %s", errOut)
+	}
+	for _, want := range []string{"no provider serves it", "allow_data_to", "providers"} {
 		if strings.Contains(out+errOut, want) {
 			t.Errorf("validate said %q with no local config:\nout: %s\nstderr: %s", want, out, errOut)
 		}
@@ -2966,7 +2974,10 @@ func TestValidateResolvesTheBackgroundAndTheKeyOverTheClaimedMap(t *testing.T) {
 		if err != nil || !strings.Contains(out, "is valid") {
 			t.Fatalf("the claimed coder's own background was not resolved over the claim: exit %d\n%s%s", ExitCode(err), out, errOut)
 		}
-		if strings.Contains(errOut, "note:") {
+		// The notes about the file are there (S2), so this reads the one the
+		// key rule prints: every pin is served by the claimed route, and no
+		// pin of this file asks for an Anthropic key.
+		if strings.Contains(errOut, "note: agent.auth") {
 			t.Errorf("every pin is served by the claimed route, so the run needs no Anthropic key:\n%s", errOut)
 		}
 	})

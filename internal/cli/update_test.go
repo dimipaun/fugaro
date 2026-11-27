@@ -22,15 +22,23 @@ import (
 // the four call sites D12 moves are asserted here, at the functions that take
 // the steps.
 
-// updateRig is a rig with an installation already there (the state bucket, and
-// a plan that reads back empty, so a converge of it changes nothing), run
-// outside any checkout: `update`'s own stages are what is under test here, and
-// a checkout adds the plugin and repository stages, which have their own
-// files.
+// updateRig is a rig with an installation already there (the state bucket, the
+// managed marks newInitRig gives every rig, and a plan that reads back empty,
+// so a converge of it changes nothing), run outside any checkout: `update`'s
+// own stages are what is under test here, and a checkout adds the plugin and
+// repository stages, which have their own files.
+//
+// A test that means an installation the read does not answer managed for takes
+// the verdict back out and says so (unmanagedUpdateRig, removeManagedInstallation
+// and the tests of the stop itself).
 func updateRig(t *testing.T) *initRig {
 	t.Helper()
 	releaseBuild(t, "0.2.0")
 	r := newInitRig(t)
+	// The installation is a managed one (newInitRig's marks), so the steps that
+	// apply are the gate's and every one of them leaves a record naming who ran
+	// it (D1014) — a hermetic world has no credentials to answer with.
+	isolateGateCredentials(t)
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)

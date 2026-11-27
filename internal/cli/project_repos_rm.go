@@ -88,14 +88,22 @@ type reposRemoval struct {
 	entry      localcfg.Repo
 	entryKnown bool
 	entryWhy   string
-	// imageNow is the effective repo-to-image map (the keep rule, D1906: the
-	// file's where it names one, the published node's otherwise), imageNext
-	// the map the file will hold — nil when the mapping is not this file's to
-	// take away — and imageOwn whether the file names the map itself.
+	// imageNow is the effective repository-to-image map (R2: this file's
+	// repo_images first, then the published node's, then the legacy image_map),
+	// imageNext the map the file will hold — nil when the mapping is not this
+	// file's to take away — and imageOwn whether the file names the map itself.
 	imageNow  map[string]string
 	imageNext map[string]string
 	imageOwn  bool
-	imageWhy  string
+	// imageKey is the key the served map is READ by, which is the one a sentence
+	// names: the canonical provider/owner/name a provider-keyed map is keyed by,
+	// the bare owner/name the legacy map is. The key the write takes out is
+	// always plan.canonical, because what the write leaves is repo_images.
+	// imageDropped holds the lines a migration dropped on the way, ready to
+	// print.
+	imageKey     string
+	imageDropped []string
+	imageWhy     string
 	// inflight is every run the registry holds, runs the runs of this
 	// repository. D2407: a run in flight is never disturbed, so the removal
 	// asks the strict confirmation and names the run.
@@ -294,7 +302,7 @@ func reposRemovalRead(ctx context.Context, o *projectReposOptions, lc *localcfg.
 		return plan, userErr("%s is not on the allow-list of %s: nothing to remove", plan.canonical, projectpolicy.PathShared())
 	}
 	plan.entryWhy = reposRemovalEntryWhy(plan)
-	reposRemovalImage(&plan, p)
+	reposRemovalImage(ctx, &plan, p)
 	plan.stateBucket = lc.Terraform.StateBucket
 	if plan.inflight, plan.runs, err = reposRemovalRuns(ctx, db, lc, plan.slug, ownerName); err != nil {
 		return plan, err
@@ -375,37 +383,62 @@ func reposRemovalEntryWhy(plan reposRemoval) string {
 	return "removes repos." + plan.localKey
 }
 
-// reposRemovalImage is the image-map step, under the keep rule D1906 reads the
-// map by: the effective map is this file's own only when the file names one, so
-// a machine that names none publishes the node's map rather than its own and
-// has nothing here to take away. A published mapping is the published node's,
-// and this command does not edit that node's image_map any more than `add`
-// writes one there.
+// reposRemovalImage is the repository-to-image map step, and it is R8 and R13
+// together: the key it takes out is the repository's own under ITS provider
+// (repo_images), and a file whose map is still the legacy image_map has that map
+// migrated first, by the same write — so the other repositories keep the entries
+// they run, under the providers they run them at, and the file stops holding the
+// member R2 ignores.
+//
+// Which map is this file's to edit is R2's answer, not D1906's alone: any
+// repo_images wins over any image_map, per member and never per key. So a file
+// that names a legacy map while the node publishes repo_images has nothing here
+// to take away — the map the readers serve is the node's, and a write of the
+// file's would be a map no reader reads — and the sentence says so. A published
+// mapping is the published node's, and this command does not edit that node any
+// more than `add` writes one there.
 //
 // The sentence for that case names the door that does exist: `fugaro image map`
 // has only `set` (image_map.go), so there is no verb that unsets an entry, and
-// the map is published from the file that names one — the entry goes out of
-// that file, and `fugaro update` publishes the map. Naming a command that is not
-// there would send the operator to an unknown-command error at the one moment
-// they are cleaning up.
-func reposRemovalImage(plan *reposRemoval, p *projectpolicy.Policy) {
-	plan.imageNow = plan.local.ImageMapEffective(p.ImageMap)
-	plan.imageOwn = plan.local.ImageMap != nil
+// the map is published from the file that names one — the entry goes out of that
+// file, and `fugaro update` publishes the map. Naming a command that is not there
+// would send the operator to an unknown-command error at the one moment they are
+// cleaning up.
+func reposRemovalImage(ctx context.Context, plan *reposRemoval, p *projectpolicy.Policy) {
+	var fromRepoImages bool
+	plan.imageNow, fromRepoImages = plan.local.RepoImagesEffective(p)
+	// imageOwn is whether the file names the member the readers serve, and
+	// imageKey is the key that member is READ by — the one the sentences name:
+	// the bare owner/name a legacy map is keyed by, the provider-qualified name
+	// repo_images is. The key the WRITE takes out is plan.canonical either way,
+	// because what the write leaves is repo_images, whose keys a migration
+	// writes canonical too (R13).
+	if fromRepoImages {
+		plan.imageOwn = plan.local.RepoImages != nil
+		plan.imageKey = plan.canonical
+	} else {
+		plan.imageOwn = plan.local.ImageMap != nil
+		plan.imageKey = plan.ownerName
+	}
 	switch {
 	case !plan.imageOwn:
-		if _, mapped := plan.imageNow[plan.ownerName]; mapped {
-			plan.imageWhy = "left alone: image_map[" + plan.ownerName + "] is the published node's mapping, and this machine's project config names no map of its own to edit — a file that names no map keeps the published one (D1906), so the entry is removed in the project config that published it, and `fugaro update` publishes the map"
+		if plan.imageNow[plan.imageKey] != "" {
+			plan.imageWhy = "left alone: the published node's repository-to-image map (`repo_images`) gives " + plan.imageKey + " that entry, and this machine's project config names no map of its own to edit — a file that names no map keeps the published one, so the entry is removed in the project config that published it, and `fugaro update` publishes the map"
 			return
 		}
-		plan.imageWhy = "left alone: this machine's project config names no repo-to-image map and the published node maps no entry for " + plan.ownerName
-	case plan.imageNow[plan.ownerName] == "":
-		plan.imageWhy = "left alone: this machine's repo-to-image map holds no entry for " + plan.ownerName
+		plan.imageWhy = "left alone: this machine's project config names no repository-to-image map (`repo_images`) and the published node maps no entry for " + plan.imageKey
+	case plan.imageNow[plan.imageKey] == "":
+		plan.imageWhy = "left alone: this machine's repository-to-image map (`repo_images`) holds no entry for " + plan.imageKey
 	default:
-		m := make(map[string]string, len(plan.imageNow))
-		maps.Copy(m, plan.imageNow)
-		delete(m, plan.ownerName)
+		m := maps.Clone(plan.imageNow)
+		if !fromRepoImages {
+			// The map the readers serve is the legacy one: migrating it is what
+			// keeps every other repository's entry, and it is the same write.
+			m, plan.imageDropped = migrateImageMap(ctx, plan.local, p)
+		}
+		delete(m, plan.canonical)
 		plan.imageNext = m
-		plan.imageWhy = "removes image_map[" + plan.ownerName + "], which this machine's project config names"
+		plan.imageWhy = "removes repo_images[" + plan.canonical + "], which this machine's project config names"
 	}
 }
 
@@ -585,7 +618,11 @@ func reposRemovalWriteLocal(out io.Writer, plan reposRemoval) error {
 	}
 	if plan.imageNext != nil {
 		next := *cur
-		next.ImageMap = plan.imageNext
+		next.RepoImages = plan.imageNext
+		// The legacy member goes with the write: R2 reads repo_images first, so
+		// a file left holding both would carry a map nothing reads (R14's file
+		// half, done here because this write already has the file open).
+		next.ImageMap = nil
 		// The bytes the first write left, re-read rather than re-marshalled:
 		// userSave's old is the file the write replaces, and a marshal of the
 		// parsed value is not the same bytes as the document it was parsed from.
@@ -596,7 +633,10 @@ func reposRemovalWriteLocal(out io.Writer, plan reposRemoval) error {
 		if err := userSave(out, plan.path, data, &next); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "image_map[%s]: removed\n", plan.ownerName)
+		fmt.Fprintf(out, "repo_images[%s]: removed\n", plan.canonical)
+		for _, line := range plan.imageDropped {
+			fmt.Fprintf(out, "%s\n", line)
+		}
 	} else {
 		fmt.Fprintf(out, "%s\n", plan.imageWhy)
 	}

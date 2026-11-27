@@ -253,6 +253,21 @@ argv = sys.argv[1:]
 with open(os.path.join(state, "gcloud.calls"), "a") as fh:
     fh.write(" ".join(argv) + "\n")
 
+if argv[:3] == ["compute", "networks", "subnets"]:
+    op = argv[3] if len(argv) > 3 else ""
+    if op == "describe":
+        # A VM with no external address reaches a registry only through what its
+        # subnetwork gives it, so this is the read that says whether the pull had
+        # a path at all. A case can make it False, or refuse it, to pin both
+        # readings.
+        if cfg("subnet_pga") == "refused":
+            die("ERROR: PERMISSION_DENIED: the caller does not have compute.subnetworks.get")
+        if "privateIpGoogleAccess" in flag("--format"):
+            print(cfg("subnet_pga", "True"))
+            sys.exit(0)
+        die("fake gcloud: unhandled subnets describe format: %s" % flag("--format"))
+    die("fake gcloud: unhandled networks call: %s" % " ".join(argv))
+
 if argv[:2] == ["compute", "instances"]:
     op = argv[2] if len(argv) > 2 else ""
     name = argv[3] if len(argv) > 3 else ""
@@ -752,6 +767,10 @@ run_check() { # run_check [K=V ...] [-- ARGS...]
     TMPDIR="${RUN_TMPDIR:-$dir/tmp}"
     FAKE830_DIR="$dir/state"
     CHK830_WAIT_LINES=0
+    # The pull bound raises the wait for the probe's first line, so a case that
+    # models a probe whose lines never arrive would sit out the real one rather
+    # than the wait it set: it is zero here, and the case about the pull sets it.
+    CHK830_PULL_BOUND=0
     # probe-exit waits for the task to end before its exit status exists, and a
     # case models a platform whose job has ended by handing the check the job's
     # own object (state and task status), so the bound is zero: the case that
@@ -847,6 +866,20 @@ for f in sorted(os.listdir(d)):
     if var is not None:
         print(var)
         break
+PY
+}
+# submitted_image: the image that job's container runs. The probe's pull is what
+# a job that never starts is waiting for, so which image it names is a fact of
+# this check and not an implementation detail.
+submitted_image() { # submitted_image JOB
+  python3 - "$dir/state/submits" "$1" <<'PY' 2>/dev/null || true
+import json, os, sys
+d, job = sys.argv[1:3]
+for f in sorted(os.listdir(d)):
+    if not f.endswith("-" + job + ".json"):
+        continue
+    print(json.load(open(os.path.join(d, f)))["taskGroups"][0]["taskSpec"]["runnables"][0]["container"]["imageUri"])
+    break
 PY
 }
 # submitted_max_run: the same job's task maxRunDuration, which is computed from
@@ -1065,6 +1098,36 @@ write_default_case() { # write_default_case DIR [bend...]
       printf '[]\n' >"$d/state/log-$uid_a.json"
       write_diag "$d" "$job_a" FAILED FAILED 50000
       ;;
+    probe-stuck-pull)
+      # The state the owner's two runs of 2026-11-26 were left in: the job
+      # SCHEDULED for the whole wait with its VM running and not one line of the
+      # container's own, which is what a pull that has not finished looks like
+      # from outside. Its boot log carries the pull and the agent and NOT the
+      # container-start line, and its VM has no external address, so a pull that
+      # can never finish is told from one that is merely slow — and its
+      # subnetwork has no Private Google Access, so the pull had no path at all.
+      # The pull's line carries a token-shaped value on purpose: the boot log's
+      # own lines go through the same redaction the tail does.
+      printf '[]\n' >"$d/state/log-$uid_a.json"
+      printf 'subnet_pga=False\n' >>"$d/state/cfg"
+      write_diag "$d" "$job_a" SCHEDULED SCHEDULED ""
+      printf '%s\t%s\n' "$job_a" SCHEDULED >"$d/state/state.map"
+      mkdir -p "$d/state/serial"
+      printf 'Nov 26 09:14:02 batch-vm kernel: eth0: link up\nNov 26 09:14:06 batch-vm systemd[1]: Started Batch agent.\nNov 26 09:14:09 batch-vm batch-agent: pulling image, credential ya29.fake-not-a-credential-000001\n' \
+        >"$d/state/serial/$vm_a.txt"
+      python3 - "$d/state/vm-a.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+vm = json.load(open(p))
+vm["networkInterfaces"] = [{
+    "name": "nic0",
+    "network": "https://www.googleapis.com/compute/v1/projects/fugaro-dev/global/networks/fugaro",
+    "subnetwork": "https://www.googleapis.com/compute/v1/projects/fugaro-dev/regions/us-east5/subnetworks/fugaro",
+    "accessConfigs": [],
+}]
+json.dump(vm, open(p, "w"), indent=1)
+PY
+      ;;
     probe-never-ends)
       # The job that never gets to run: nothing of the container's own came back
       # and, when the wait ends, the job's own state is still not a terminal one,
@@ -1216,6 +1279,15 @@ test_happy_path() {
   eps=$(submitted_entrypoints)
   [ "$eps" = "/bin/sh" ] \
     || fail "happy: the submitted containers launch $(printf '%s' "$eps" | tr '\n' ' ')— the body is POSIX and the shebang is /bin/sh"
+  # The image is a fact of this check: the probe's container needs python3 and a
+  # POSIX shell and nothing else, and the pull is what a probe that never starts
+  # is waiting for, so the default is the Alpine variant of the Google-hosted
+  # gcloud image and not that image's `slim` SDK one. CHK830_IMAGE is how an
+  # owner moves it; a change to the default is a change to this test.
+  local img
+  img=$(submitted_image "$job_a")
+  [ "$img" = "gcr.io/google.com/cloudsdktool/google-cloud-cli:alpine" ] \
+    || fail "happy: the probe's container runs '${img:-<nothing>}'; the default image is the Alpine gcloud one, which carries python3 and a POSIX shell and pulls far less than the SDK image"
 }
 
 # The red step of BR0, as the plan states it: "the self-test fails when the
@@ -1745,6 +1817,14 @@ test_no_line_arrives_and_the_exit_status_answers() {
   expect_row probe-diag "exit=131" "no lines: the task's own status events, and the code on them"
   expect_row probe-diag "serial console" "no lines: the serial console is a reading, not a skip"
   expect_row probe-diag "Started Batch task container" "no lines: and its tail is printed"
+  # The container-start line is read out of the whole boot log, not out of its
+  # tail: here it IS there, so the row says the container ran and the question is
+  # why its lines did not land, which is a different reading from the probe that
+  # never started at all.
+  expect_row probe-diag "is in it 1 time(s), so the container did start on this VM" "no lines: the container-start reading"
+  expect_row probe-diag "and its boot log matched that pattern, so the pull for the image" "no lines: the pull is not blamed once the boot log shows the container ran"
+  expect_absent "$out" "not finishing inside that bound" "no lines: a container that started is never read as a pull that did not finish"
+  expect_row probe-diag "The VM's own interfaces:" "no lines: the VM's own object is read for its interfaces too"
   expect_row probe-diag 'resource.type="batch.googleapis.com/Job"' "no lines: the broader read"
   expect_row probe-diag "found 0 line(s) by the runner's label" "no lines: by the runner's label"
   expect_row probe-diag "0 line(s) by the uid alone" "no lines: and by the uid alone"
@@ -1813,6 +1893,43 @@ test_a_job_that_never_ended_says_so() {
   expect_last_line "CHECK 830 RESULT: FAIL" "never ends"
 }
 
+test_a_probe_that_never_started_is_read_as_a_pull() {
+  setup_case stuck-pull
+  write_default_case "$dir" probe-stuck-pull
+  run_check CHK830_PULL_BOUND=10
+  expect_status "$status" 1 "stuck pull"
+  expect_no_unreached "stuck pull"
+  # The row names the state that tells a container that never started from one
+  # whose lines did not land, and the image whose pull is then the reading.
+  expect_verdict probe-ran FAIL "stuck pull: the row"
+  expect_row probe-ran "The job's own state at the end of that wait was SCHEDULED" "stuck pull: the state the platform reported"
+  expect_row probe-ran "the VM's own boot log is then what this block reads for the pull of the image gcr.io/google.com/cloudsdktool/google-cloud-cli:alpine" "stuck pull: and the image the pull is for"
+  # A container cannot report before its image is there, so the wait for its
+  # first line is the pull bound when that is the longer of the two.
+  expect_contains "$err" "waiting for the probe's first line (10s of 10s)" "stuck pull: the wait covers the pull"
+  # The boot log is the reading that settles it: no container-start line, the
+  # pull's own lines beside it, and the VM's interfaces beside those.
+  expect_verdict probe-diag INFO "stuck pull: the diagnostics"
+  expect_row probe-diag "the job's own state is SCHEDULED" "stuck pull: the job's own state"
+  # The row says what was searched for and not found, not what the platform did:
+  # the pattern is this check's own, and no boot log has been read back yet.
+  expect_row probe-diag "no line matching the check's own container-start pattern" "stuck pull: what was searched for and not found"
+  expect_row probe-diag "a boot log this pattern does not know" "stuck pull: and that a wording it does not know reads the same way"
+  expect_row probe-diag "speak of the pull or the agent are: " "stuck pull: what the log says of the pull"
+  expect_row probe-diag "pulling image" "stuck pull: the pull's own line is kept as the evidence"
+  expect_row probe-diag "NO external address" "stuck pull: and whether the VM could have pulled at all"
+  expect_row probe-diag "privateIpGoogleAccess is False" "stuck pull: the read that says the pull had no path"
+  expect_row probe-diag "the configured 0s raised to the 10s pull bound" "stuck pull: the bound the wait was read against"
+  expect_row probe-diag "not finishing inside that bound" "stuck pull: and what that is consistent with"
+  # The boot log's own lines are the platform's, so a credential-shaped value in
+  # them is redacted exactly as the tail's is.
+  expect_row probe-diag "<redacted-token>" "stuck pull: a credential-shaped value in the pull's line"
+  expect_absent "$out" "ya29.fake-not-a-credential-000001" "stuck pull: the pull's line's credential"
+  expect_verdict probe-exit FAIL "stuck pull: the second channel did not answer"
+  expect_row probe-exit "had not ended within 0s" "stuck pull: the wait expired and the row says that"
+  expect_last_line "CHECK 830 RESULT: FAIL" "stuck pull"
+}
+
 test_lines_that_arrive_late_are_waited_for() {
   setup_case late-lines
   write_default_case "$dir" log-late
@@ -1879,6 +1996,7 @@ t test_a_marker_that_never_reached_the_container_is_void
 t test_no_line_arrives_and_the_exit_status_answers
 t test_no_line_arrives_and_the_task_reported_nothing_either
 t test_a_job_that_never_ended_says_so
+t test_a_probe_that_never_started_is_read_as_a_pull
 t test_lines_that_arrive_late_are_waited_for
 t test_a_name_that_comes_back_slowly_is_measured
 t test_a_name_that_never_comes_back_is_a_failure

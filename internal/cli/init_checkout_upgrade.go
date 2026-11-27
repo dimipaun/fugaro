@@ -68,6 +68,11 @@ type checkoutStage struct {
 	// repository, built as the plan and the apply answer for them (C1). The
 	// loop reads them off the stage through RepoLines (U13).
 	lines []initflow.RepoLine
+	// planned is the last plan this stage answered for, which is the one the
+	// loop's own line about the stage is built from (Note). A step this run
+	// does not run is a fact about the plan, and the loop asks for the line
+	// after the stage has answered.
+	planned []repoPlace
 }
 
 func newCheckoutStage(e *initEngine) *checkoutStage { return &checkoutStage{e: e} }
@@ -112,6 +117,16 @@ func (s *checkoutStage) Left() initflow.Left {
 // them into the stage's result and its event (C1, U13).
 func (s *checkoutStage) RepoLines() []initflow.RepoLine { return s.lines }
 
+// Note is this run's one line about the cloud step it did not run, which the
+// loop puts in the stage's own line (StageNote): the lines this stage reports
+// say how each repository was left and never that the job images were not
+// moved for it, and a run whose every repository's step is skipped has no step
+// line of its own to say it in — the account would read "checkout: skipped: 1
+// repository: 1 unread" and never a word about the images. It is one line for
+// the whole run, and the reasons are clauses, so a project of four skipped
+// repositories still says it in one line.
+func (s *checkoutStage) Note() string { return skippedHere(s.planned) }
+
 // repoPlace is one repository's cloud step in this run: the step, the view the
 // run read the repository through, and the line saying why it is skipped here
 // when it is. The stage has one place per repository of the project.
@@ -119,6 +134,11 @@ type repoPlace struct {
 	step checkStep
 	view repoView
 	skip string
+	// clause is the same reason in a clause, for the one line the run prints
+	// about the step it did not run (skippedHere): skip is the whole of it —
+	// what the repository's own line and the step's carry, with the fix — and a
+	// line naming the step for the whole run cannot hold four of those.
+	clause string
 	// state is how the stage leaves this repository where it does not run the
 	// step for it: unread is the reader's own word for one it could not read
 	// (R13), skipped for one the stage does not apply to, needs you for one
@@ -145,11 +165,12 @@ func (s *checkoutStage) plan(ctx context.Context) ([]repoPlace, string) {
 	if len(views) == 0 {
 		return nil, "no repository of this project was read, so there is no job image to refresh"
 	}
-	s.lines = nil
+	s.lines, s.planned = nil, nil
 	places := make([]repoPlace, 0, len(views))
 	for _, v := range views {
 		places = append(places, s.placeFor(v))
 	}
+	s.planned = places
 	return places, ""
 }
 
@@ -169,17 +190,17 @@ func (s *checkoutStage) placeFor(v repoView) repoPlace {
 	u := s.placeCtx(initflow.Env{}, p)
 	switch {
 	case !v.Read():
-		p.skip, p.state = v.Unread, initflow.RepoUnread
+		p.skip, p.clause, p.state = v.Unread, "the repository could not be read", initflow.RepoUnread
 	case v.Cfg == nil:
-		p.skip, p.state = "its fugaro.yaml could not be parsed from its default branch", initflow.RepoUnread
+		p.skip, p.clause, p.state = "its fugaro.yaml could not be parsed from its default branch", "its fugaro.yaml could not be parsed", initflow.RepoUnread
 	case !s.thisProject(v):
-		p.skip, p.state = "its fugaro.yaml names another project (or none), not "+pluginwire.Printable(s.e.lc.Name)+": its job images are not refreshed here", initflow.RepoSkipped
+		p.skip, p.clause, p.state = "its fugaro.yaml names another project (or none), not "+pluginwire.Printable(s.e.lc.Name)+": its job images are not refreshed here", "its fugaro.yaml names another project", initflow.RepoSkipped
 	case s.repositoryStopped() != "":
-		p.skip, p.state = s.repositoryStopped(), initflow.RepoSkipped
+		p.skip, p.clause, p.state = s.repositoryStopped(), "the repository stage stopped for the user in this run", initflow.RepoSkipped
 	case !buildableHere(s.e.lc, v):
-		p.skip, p.state = "this machine has no local config entry saying which provider serves it, so its job images cannot be built from here: onboard it here first ("+selfCommand()+" update --repo <its checkout>)", initflow.RepoNeedsYou
+		p.skip, p.clause, p.state = "this machine has no local config entry saying which provider serves it, so its job images cannot be built from here: onboard it here first ("+selfCommand()+" update --repo <its checkout>)", "this machine has no local config entry for it", initflow.RepoNeedsYou
 	case u.agent != "":
-		p.skip, p.parked, p.state = cloudAgentRefusal(u), true, initflow.RepoNeedsYou
+		p.skip, p.clause, p.parked, p.state = cloudAgentRefusal(u), "a coding agent's session never applies cloud changes", true, initflow.RepoNeedsYou
 	default:
 		return p
 	}
@@ -254,6 +275,55 @@ func (s *checkoutStage) detail(places []repoPlace) string {
 		line += "; skipped here: " + strings.Join(skipped, "; ")
 	}
 	return line
+}
+
+// skippedHere is the one line this run prints about the cloud step it did not
+// run, in the words the run has always said it in ("skipped here: acme/app:
+// cloud (…)"), or "" when it ran it for every repository. The step is named
+// because the repository's own line names the repository and its state and
+// never the step — a reader who saw "acme/app: unread: …" learned nothing about
+// the job images that were not built — and it is one line for the run rather
+// than one per repository.
+//
+// The repositories a step was skipped for with one reason share a clause, so a
+// run that skipped it for every repository of the project still says it in one
+// line: four repositories of a coding agent's session read "acme/a, acme/b,
+// acme/c, acme/d: cloud (a coding agent's session never applies cloud
+// changes)". The reason is a clause here and whole in skip: the repository's
+// own line carries the whole of it with the command that fixes it, and a line
+// naming the step for the whole run cannot hold four of those.
+func skippedHere(places []repoPlace) string {
+	type skipGroup struct {
+		step   string
+		clause string
+		repos  []string
+	}
+	var groups []skipGroup
+	for _, p := range places {
+		if p.clause == "" {
+			continue
+		}
+		i := -1
+		for j := range groups {
+			if groups[j].step == p.step.name && groups[j].clause == p.clause {
+				i = j
+				break
+			}
+		}
+		if i < 0 {
+			groups = append(groups, skipGroup{step: p.step.name, clause: p.clause})
+			i = len(groups) - 1
+		}
+		groups[i].repos = append(groups[i].repos, pluginwire.Printable(p.repo()))
+	}
+	if len(groups) == 0 {
+		return ""
+	}
+	skipped := make([]string, 0, len(groups))
+	for _, g := range groups {
+		skipped = append(skipped, strings.Join(g.repos, ", ")+": "+g.step+" ("+g.clause+")")
+	}
+	return "skipped here: " + strings.Join(skipped, "; ")
 }
 
 // Check answers whether this project has anything to do, by running each

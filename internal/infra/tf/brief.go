@@ -192,6 +192,14 @@ func describe(rc ResourceChange, what string) string {
 // that carries the member it is for in its address (an indexed iam_member),
 // the member as well: "the admin grant to user:old@example.com".
 //
+// A module-local name that is the module convention's placeholder names nothing
+// and is not printed: the module's one resource of its type is `this`
+// (modules/project/job.tf, modules/workflow/job.tf and the rest), which read
+// against the noun as "the this job" — a doubled article for a reader with
+// nothing to act on in it, the owner's finding of 2026-11-26. A grant's local
+// name is the role's short name, which the modules always write out ("admin",
+// "state_read"), so the placeholder table is asked of the noun branch alone.
+//
 // The type has no noun it does not know: those are the types our own modules
 // declare (allowedTypes), and a type outside the table falls back to its own
 // last name segments in words, which is worse reading but never an address.
@@ -205,13 +213,18 @@ func thing(rc ResourceChange) string {
 		return "the " + name + " grant"
 	}
 	if noun, ok := nouns[rc.Type]; ok {
-		if local == "" {
+		if local == "" || placeholders[local] {
 			return "the " + noun
 		}
 		return "the " + strings.ReplaceAll(local, "_", " ") + " " + noun
 	}
 	return "the " + wordsOf(rc.Type)
 }
+
+// placeholders are the module-local names that carry no name of their own: the
+// modules' convention for the one resource of its type a module holds. Printing
+// one beside the noun reads as "the this job", so the noun stands alone.
+var placeholders = map[string]bool{"this": true}
 
 // isGrant reports whether a resource type is a role binding, whose module
 // name is the role's short name and whose address may carry the member.

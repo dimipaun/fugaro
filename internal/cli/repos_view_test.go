@@ -194,6 +194,53 @@ func TestReposViewImageReadsRepoImagesByProvider(t *testing.T) {
 	}
 }
 
+// A row's image is resolved under the repository's provider, so one name at two
+// providers is two rows with two images (RC51, D3370): the map is repo_images,
+// keyed by provider/owner/name, and a lookup that dropped the provider would
+// answer both rows with one entry — the collision L11 exists for.
+//
+// The project holds a GitHub and a Bitbucket acme/app: the GitHub one in this
+// machine's config, the Bitbucket one admitted by the node's allow-list alone
+// (the config's `repos:` is keyed by owner/name and cannot hold both, F2). The
+// node's repo_images maps them to two entries.
+//
+// Mutation (verified, run and restored): read the map by the bare name —
+// reposViewRowOf handing the resolver the legacy ImageMap instead of the
+// mapping's request — and the Bitbucket row resolves the GitHub row's key, or
+// the default entry, and this fails naming the entry it got.
+func TestReposViewImageByProvider(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app", "bitbucket/acme/app", "bitbucket/acme/other"},
+		"image_catalog": map[string]any{"entries": []any{
+			map[string]any{"name": "go", "tags": []string{"node"}, "default": true,
+				"source": map[string]any{"kind": "inline", "inline": "FROM scratch\n"}},
+			map[string]any{"name": "tools", "tags": []string{"node"},
+				"source": map[string]any{"kind": "inline", "inline": "FROM scratch\n"}},
+		}},
+		"repo_images": projectpolicy.RepoImages{
+			"github/acme/app":    "go",
+			"bitbucket/acme/app": "tools",
+		},
+	})
+
+	v := viewOf(t, f.path, f.db, "")
+	if v.Allow.State != "" {
+		t.Fatalf("the published node did not read: %s", v.Allow.State)
+	}
+	for canonical, want := range map[string]string{
+		"github/acme/app":    "go",
+		"bitbucket/acme/app": "tools",
+	} {
+		r := viewRow(t, v, canonical)
+		if r.ImageEntry != want || r.ImageSource != reposViewImageMap {
+			t.Errorf("%s runs %q from %q, want %q from %q", canonical, r.ImageEntry, r.ImageSource, want, reposViewImageMap)
+		}
+	}
+}
+
 // A row's base branch is the branch a run of that repository starts from, which
 // is what config.EffectiveBaseBranch resolves — the one function every layer
 // resolves through, handed the same four arguments as launchBaseBranch — and not

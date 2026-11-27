@@ -321,7 +321,7 @@ rm_cmd() { # rm_cmd ARGS...
       exit 0
     fi
     printf 'repos.%s: removed\n' "$r"
-    printf 'image_map[%s]: removed\n' "$r"
+    printf 'repo_images[github/%s]: removed\n' "$r"
     printf 'allow_repos: [github/%s] → []\n' "$r"
     printf 'deleted the Cloud Run job fugaro-%s\n' "${r//\//-}"
     printf '\n'

@@ -45,7 +45,6 @@ module.repo.module.workflow["web"].google_cloud_run_v2_service_iam_member.creden
 module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["github-app-key"]
 module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]
 module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.service["github-app-key"]
-module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.service["npm-token"]
 module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.service["openrouter-api-key"]
 module.repo.module.workflow["web"].google_service_account.job
 module.repo.module.workflow["web"].google_service_account_iam_member.operator["user:operator@example.com"]
@@ -60,7 +59,6 @@ module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.j
 module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]
 module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.service["claude-oauth-token-bmb"]
 module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.service["github-app-key"]
-module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.service["npm-token"]
 module.repo.module.workflow["web_bmb"].google_secret_manager_secret_iam_member.service["openrouter-api-key"]
 module.repo.module.workflow["web_bmb"].google_service_account.job
 module.repo.module.workflow["web_bmb"].google_service_account_iam_member.operator["user:operator@example.com"]

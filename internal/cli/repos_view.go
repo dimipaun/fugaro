@@ -631,11 +631,11 @@ func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalo
 	// could not answer the question anyway (the same choice catalogPointedAt
 	// makes). Without a checkout the names are all there is, and a name alone
 	// resolves through the map or the catalog's default.
-	// The resolver is asked with the owner/name and never with the
-	// provider-qualified name: catalog.ImageRequest.Canonical is the form the
-	// image map is keyed by and the form the resolver canonicalizes again, and
-	// a "github/acme/app" handed to it would read as an owner called
-	// "github/acme" and find no mapping.
+	// The resolver is asked with the owner/name and the row's provider apart:
+	// catalog.ImageRequest.Canonical is the bare name the legacy map is keyed by
+	// and the form the resolver canonicalizes again, while the provider is what
+	// turns it into the repo_images key — a "github/acme/app" handed in as
+	// Canonical would read as an owner called "github/acme" and find no mapping.
 	localName := reposViewLocalNameOf(canonical, localKey)
 	names, defs := reposViewWorkflowDefs(ctx, lc, localKey)
 	for _, name := range names {

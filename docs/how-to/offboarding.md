@@ -30,7 +30,7 @@ The repository's registry has `prevent_destroy`, so this needs the module edited
 
 ## The two lists the repository is still on
 
-**Per installation.** The repository stays in the published shared config until you edit `fugaro/config.yaml` in the runs bucket by hand — a later `fugaro update --publish-config` merges, so it does not remove it. If the project publishes a policy, `fugaro project repos rm <provider>/owner/name` un-enrols it there too: it takes away the allow-list entry, this machine's `repos:` and `image_map:` entries, the published per-repository admission and the repository's Cloud Run and Cloud Scheduler jobs. It keeps the repository's Terraform state and the repository root's own IAM members — what steps 1 to 3 above plan from, and the grants only their apply deletes — and says so.
+**Per installation.** The repository stays in the published shared config until you edit `fugaro/config.yaml` in the runs bucket by hand — a later `fugaro update --publish-config` merges, so it does not remove it. If the project publishes a policy, `fugaro project repos rm <provider>/owner/name` un-enrols it there too: it takes away the allow-list entry, this machine's `repos:` and `repo_images:` entries, the published per-repository admission and the repository's Cloud Run and Cloud Scheduler jobs. It keeps the repository's Terraform state and the repository root's own IAM members — what steps 1 to 3 above plan from, and the grants only their apply deletes — and says so.
 
 ## A managed project
 
