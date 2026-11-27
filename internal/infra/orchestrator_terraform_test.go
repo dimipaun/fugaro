@@ -428,6 +428,116 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 	}
 }
 
+// TestOrchestratorUpdateGrantsTheDatabaseReadFromThePreviousRelease is the HARD
+// RULE's for P5.1c's finding A: `fugaro update` is the whole upgrade, so an
+// installation that already runs the resident orchestrator at the release
+// before this one — the service and its tick deployed, and no database grant,
+// which is every tick answering 503 and no pull request ever labelled — must
+// reach a working orchestrator in one update, with no second command and no
+// operator step.
+//
+// The previous release is in the tree as a plan of it: the embedded root with
+// state_read.tf removed (the role and its two bindings, the whole of this
+// task's plan change) and with orchestrator.tf's binding of that role dropped
+// with it, because the binding names the file's local and a tree that kept it
+// while the file went would not plan at all (rootPlanAgainst's own note). The
+// installation runs the orchestrator and no front door, so at the previous
+// release the role does not exist for it either.
+//
+// Three claims, each a comparison of the two plans rather than a restatement:
+// the delta is exactly the role and its one binding, both creates, so one apply
+// leaves a converged installation; the update rewrites nothing the installation
+// already holds; and the run's one confirmation covers both, so the update asks
+// the owner for no item of its own over the grant.
+func TestOrchestratorUpdateGrantsTheDatabaseReadFromThePreviousRelease(t *testing.T) {
+	spec := goldenInstallationSpec(t)
+	if spec.History == nil || spec.History.FirebaseProject == "" {
+		t.Fatalf("the golden fixture has changed shape: history %+v — this test reads the Firebase project out of it", spec.History)
+	}
+	fp := spec.History.FirebaseProject
+	member := "serviceAccount:" + OrchestratorAccountID + "@" + spec.Project + ".iam.gserviceaccount.com"
+	const (
+		roleAddr  = "module.installation.google_project_iam_custom_role.state_read[0]"
+		grantAddr = "module.installation.google_project_iam_member.orchestrator_state_read[0]"
+	)
+
+	extra := map[string]any{"orchestrator": orchestratorBlock(t, spec, fp)}
+	plan, after := installationPlanWith(t, spec, extra)
+	_, before := installationPlanWith(t, spec, extra, "state_read.tf", "orchestrator.tf:google_project_iam_member.orchestrator_state_read")
+
+	var added []string
+	for addr, rc := range after {
+		prev, ok := before[addr]
+		if !ok {
+			added = append(added, addr)
+			continue
+		}
+		if rc.json() != prev.json() {
+			t.Errorf("%s: the update plans %s where the previous release held %s: an installation that already runs the orchestrator converges by additions alone, and a row that changes hands is the rewrite the HARD RULE forbids", addr, rc.json(), prev.json())
+		}
+	}
+	slices.Sort(added)
+	if !slices.Equal(added, []string{roleAddr, grantAddr}) {
+		t.Errorf("the update adds %v, want exactly [%s %s]: the database read is the whole of this fix, and a third address is either a wider release than this task or a grant nobody reviewed", added, roleAddr, grantAddr)
+	}
+	for addr := range before {
+		if _, ok := after[addr]; !ok {
+			t.Errorf("%s leaves the plan: the update retires nothing from an installation that already runs the orchestrator", addr)
+		}
+	}
+
+	for _, addr := range []string{roleAddr, grantAddr} {
+		rc, ok := after[addr]
+		if !ok {
+			t.Fatalf("the plan of an installation that runs the orchestrator carries no %s: its tick reads orchestrator/<id>/{state,lease} over IAM, and without the grant every tick answers 503 (P5.1c's finding A)", addr)
+		}
+		if !slices.Equal(rc.Actions, []string{"create"}) {
+			t.Errorf("%s: the plan's actions are %v, want [create]: the read is made by this update with the owner's own rights", addr, rc.Actions)
+		}
+		if rc.Importing != nil {
+			t.Errorf("%s: the plan imports the resource (%v): the role and its binding are created by this installation and never adopted from somebody else's", addr, rc.Importing)
+		}
+	}
+
+	// The permission list is the whole of the role, read back through the plan's
+	// own JSON so a second permission — a write above all — is a failure here and
+	// not a wider role nobody noticed.
+	perms, err := json.Marshal(after[roleAddr].After["permissions"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(perms) != `["firebasedatabase.instances.get"]` {
+		t.Errorf("%s: permissions is %s, want [\"firebasedatabase.instances.get\"]: the tick reads its node and writes nothing, and firebasedatabase.instances.update would be that write", roleAddr, perms)
+	}
+
+	grant := after[grantAddr]
+	for _, want := range []struct {
+		what     string
+		got, exp any
+	}{
+		{"project", grant.After["project"], fp},
+		{"role", grant.After["role"], "projects/" + fp + "/roles/fugaroStateRead"},
+		{"member", grant.After["member"], member},
+	} {
+		if want.got != want.exp {
+			t.Errorf("%s: %s is %v, want %v", grantAddr, want.what, want.got, want.exp)
+		}
+	}
+	if conds, ok := grant.After["condition"].([]any); ok && len(conds) != 0 {
+		t.Errorf("%s: the grant carries %d conditions, want none: Realtime Database IAM has no path-level scope, so a condition on this binding fences nothing", grantAddr, len(conds))
+	}
+
+	// And the run's one confirmation covers both rows, which is what makes the
+	// update apply without an operator step of its own.
+	cover := theRunsConfirmation(t, spec)
+	cover.Owner = orchestratorImageOwner
+	for _, item := range cover.NotCovered(plan, nil) {
+		if strings.Contains(item, "fugaroStateRead") || strings.Contains(item, grantAddr) {
+			t.Errorf("the run's one confirmation refuses the database read: %s\n`fugaro update` adds the resident orchestrator's database role and its one binding, so that step must not ask the owner for a confirmation of its own over them", item)
+		}
+	}
+}
+
 // The daemon's own way into the credentials service, at the plan level (F19
 // and O2 of docs/forge-labels; E16, D2049). Two facts, and both are about a
 // plan rather than about the module's text: the installation grants the
