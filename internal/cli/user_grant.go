@@ -415,13 +415,14 @@ func userPairWrite(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config,
 		if err != nil {
 			return err
 		}
-		if !grant && len(userGrantsOf(next, member)) == 0 {
-			// The change takes the member's last grant of the roster away, so
-			// their membership is gone and not merely reduced: the IAM goes at
-			// once, before the node is written, and the removal is recorded for
-			// the grants on other projects this command cannot reach (DG5,
-			// D3454). A demotion that still leaves a grant is the update's own
-			// business, which applies both directions together.
+		if userPairTakesIAM(node.Grants, next, member, role, scope, grant) {
+			// The change takes a role of the roster away — the member's last
+			// grant, or a demotion that leaves them a weaker one — so the IAM
+			// goes at once, before the node is written, and the removal is
+			// recorded for the grants on other projects this command cannot
+			// reach (DG5, D3454). The next update re-grants what the node still
+			// names, so a demotion holds nothing the roster takes away rather
+			// than keeping the dropped role's bindings until that update.
 			revoked, err := memberRevokeAtOnce(ctx, lc, db, member)
 			if err != nil {
 				return err
@@ -456,6 +457,19 @@ func userPairWrite(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config,
 		}
 	}
 	return userErr("nothing was %s: the grants node changed under every one of %d attempts, so another admin is writing it right now and the change cannot be judged against a picture that stays still. Read it with 'fugaro user ls' and run this again", pairPast(grant), userPairAttempts)
+}
+
+// userPairTakesIAM reports whether this change takes a role away from the
+// member, which is the change whose reachable IAM the command revokes itself
+// (DG5, D3454): a revoke that leaves the member holding no grant of the roster
+// at all, or a grant that LOWERS the role they hold at that scope. A grant that
+// raises a role, or fills a scope they held nothing at, takes nothing away.
+func userPairTakesIAM(held, next []accesslib.Grant, member string, role accesslib.Role, scope accesslib.Scope, grant bool) bool {
+	if !grant {
+		return len(userGrantsOf(next, member)) == 0
+	}
+	old, replacing := userGrantAt(held, member, scope)
+	return replacing && !role.AtLeast(old.Role)
 }
 
 // userPairDrift refuses to create the grants node while this machine's own

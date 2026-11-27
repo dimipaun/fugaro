@@ -203,6 +203,20 @@ func (o *WorkspaceMemberOps) WriteGrants(ctx context.Context, m workspace.Member
 	return nil
 }
 
+// RecordRemoval writes the person's removal into the member's own record of
+// removed people, at PathRemoved (DG5, D3454): it is the member's own
+// `fugaro update` that drops the binding the workspace took off its derived
+// admin list, and that update admits an IAM removal only when the record names
+// the person. It writes the member's roster node's sibling and never an IAM
+// policy (D2801, A6).
+func (o *WorkspaceMemberOps) RecordRemoval(ctx context.Context, m workspace.MemberTarget, member string) error {
+	db, err := o.memberDatabase(ctx, m)
+	if err != nil {
+		return err
+	}
+	return recordMemberRemoval(ctx, nil, db, member)
+}
+
 // ReadMirror reads the member's mirror at PathMemberMirror. An absent node is a
 // member the workspace has not mirrored into, which `Found` tells from a member
 // whose mirror was removed; a node this file's reader refuses is an error, and

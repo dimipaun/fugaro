@@ -227,8 +227,14 @@ func revokeMemberGrantsOn(ctx context.Context, lc *localcfg.Config, member strin
 	if revoked == 0 {
 		return 0, nil
 	}
+	// The policy READ is what is written back, with the bindings replaced and
+	// nothing else touched: SetIamPolicy replaces the whole policy, so a policy
+	// built from the bindings alone would drop the policy's auditConfigs — the
+	// services whose data-access logs the project logs (asserted by
+	// TestUserRmKeepsTheProjectsAuditConfigs).
+	pol.Bindings = next
 	if _, err := svc.Projects.SetIamPolicy(lc.GCPProject, &crm.SetIamPolicyRequest{
-		Policy: &crm.Policy{Bindings: next, Version: pol.Version, Etag: pol.Etag},
+		Policy: pol,
 	}).Context(ctx).Do(); err != nil {
 		return 0, remote(fmt.Errorf("revoking %s's IAM grants on %s: %w", safetext.Field(member), safetext.Field(lc.GCPProject), err))
 	}

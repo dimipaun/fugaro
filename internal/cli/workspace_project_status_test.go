@@ -167,6 +167,11 @@ func (o *wu11FakeOps) Offboard(context.Context, workspace.MemberTarget, string) 
 	return nil
 }
 
+func (o *wu11FakeOps) RecordRemoval(context.Context, workspace.MemberTarget, string) error {
+	o.writes.note("MemberOps.RecordRemoval")
+	return nil
+}
+
 func (o *wu11FakeOps) Audit(context.Context, workspace.MemberTarget, string, []byte) error {
 	o.writes.note("MemberOps.Audit")
 	return nil

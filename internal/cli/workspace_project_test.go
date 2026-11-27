@@ -254,6 +254,8 @@ func (m *wu5Member) PendingApply(context.Context, workspace.MemberTarget, worksp
 
 func (m *wu5Member) Offboard(context.Context, workspace.MemberTarget, string) error { return nil }
 
+func (m *wu5Member) RecordRemoval(context.Context, workspace.MemberTarget, string) error { return nil }
+
 func (m *wu5Member) Audit(context.Context, workspace.MemberTarget, string, []byte) error {
 	return nil
 }

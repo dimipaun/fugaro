@@ -8,6 +8,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 const (
@@ -175,6 +177,86 @@ func TestPartialRevokeReRunConverges(t *testing.T) {
 	}
 	if operators, _ := r.lists(t); len(operators) != 0 {
 		t.Errorf("the re-run did not write the list: %v", operators)
+	}
+}
+
+// TestUserRmKeepsTheProjectsAuditConfigs: the policy write is the policy READ
+// with the member taken out of it. SetIamPolicy replaces the whole policy, so a
+// policy rebuilt from its bindings alone takes the project's data-access
+// logging off it.
+func TestUserRmKeepsTheProjectsAuditConfigs(t *testing.T) {
+	r := userRigFor(t, []string{revokeMember}, nil)
+	db := gcpfake.NewRTDB(t)
+	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
+	r.save(t)
+	r.crm.SetPolicy(initProject, gcpfake.Binding{Role: "roles/editor", Members: []string{revokeMember}})
+	r.crm.SetAuditConfigs(initProject, gcpfake.AuditConfig{Service: "allServices",
+		AuditLogConfigs: []gcpfake.AuditLogConfig{{LogType: "DATA_READ"}, {LogType: "DATA_WRITE"}}})
+
+	if out, _, err := userCommand(t, "rm", revokeMember, "--role", "operator"); err != nil {
+		t.Fatalf("user rm: %v\n%s", err, out)
+	}
+	want := []gcpfake.AuditConfig{{Service: "allServices",
+		AuditLogConfigs: []gcpfake.AuditLogConfig{{LogType: "DATA_READ"}, {LogType: "DATA_WRITE"}}}}
+	if got := r.crm.AuditConfigs(initProject); !reflect.DeepEqual(got, want) {
+		t.Errorf("the audit configuration after the removal = %+v, want %+v", got, want)
+	}
+}
+
+// TestDemotionRevokesAtOnce: lowering a member's role takes the dropped role's
+// bindings away at once and records the removal, as a revoke of their last
+// grant does: the next update re-grants what the node still names, and it
+// admits the removal only against the record.
+func TestDemotionRevokesAtOnce(t *testing.T) {
+	r, db := userPairRig(t, userPairLists{}, userStored(t, revokeMember, accesslib.RoleAdmin, "project"))
+	userPairAs(t, revokeAdmin)
+	r.crm.SetPolicy(initProject, gcpfake.Binding{
+		Role:    "roles/owner",
+		Members: []string{revokeMember},
+	})
+
+	out, err := userPairRun(t, "grant", revokeMember, "operator", "project")
+	if err != nil {
+		t.Fatalf("user grant (a demotion): %v\n%s", err, out)
+	}
+	if members := crmPolicyMembers(t, r.crm.URL, initProject); len(members) != 0 {
+		t.Errorf("the demoted role's binding is still there: %v", members)
+	}
+	if removed := removedRecord(t, db); len(removed) != 1 || removed[0] != revokeMember {
+		t.Errorf("the demotion did not record the removal: %v", removed)
+	}
+}
+
+// TestWorkspaceUserRmRecordsTheRemoval: removing a person from a workspace
+// records their removal in EVERY member the workspace holds, which is what that
+// member's own update reads to drop the grant the workspace cannot reach — the
+// admin grant a removed workspace admin holds on it (D2818, D3454): no binding
+// on a member is written from the workspace's side (D2801), so the record is the
+// whole of what the workspace's removal does about it.
+func TestWorkspaceUserRmRecordsTheRemoval(t *testing.T) {
+	w := wu7Admin(t, workspace.Roster{
+		People: []workspace.Person{
+			{Address: "ada@example.com", Kind: workspace.KindHuman},
+			{Address: "build@ci.example.com", Kind: workspace.KindSA},
+			{Address: "founder@example.com", Kind: workspace.KindHuman},
+		},
+		Admins:  []string{"founder@example.com"},
+		Domains: []string{"example.com"},
+	})
+	w.linked = []workspace.MemberTarget{{Project: "aurora"}, {Project: "borealis"}}
+
+	w.must("workspace", "user", "rm", "ada@example.com", "--workspace", "workspace-alpha")
+	want := []string{"aurora user:ada@example.com", "borealis user:ada@example.com"}
+	if strings.Join(w.members.recorded, "|") != strings.Join(want, "|") {
+		t.Errorf("the removals recorded in the members are %v, want %v", w.members.recorded, want)
+	}
+
+	// A machine holds nothing in a member's own roster (D2806), so no member has
+	// a removal to record for it.
+	w.members.recorded = nil
+	w.must("workspace", "user", "rm", "build@ci.example.com", "--workspace", "workspace-alpha")
+	if len(w.members.recorded) != 0 {
+		t.Errorf("removing a machine recorded a removal in the members: %v", w.members.recorded)
 	}
 }
 
