@@ -2913,12 +2913,7 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 		// this repository (a shared dependency layer, F35, or an entry whose
 		// bake leaves it out), so the run clones its own (D3440).
 		if repo, err = gitops.Open(dir, nil); err != nil {
-			// A local invocation's work directory is its caller's: one that
-			// holds no checkout is filled by the whole clone it always got,
-			// not by the blobless clone of a job that found no bake.
-			if !r.d.Local {
-				r.cloned = true
-			}
+			r.cloned = true
 			return nil
 		}
 		// The run's state stays outside the checkout it works on, and from
