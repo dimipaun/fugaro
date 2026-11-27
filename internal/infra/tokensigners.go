@@ -85,6 +85,13 @@ const (
 type Managed struct {
 	Project   string
 	Operators []string
+	// Issuer is the credentials service's own account: the ONE designed
+	// signer of the runs' identity once the grant has moved (D3121, LM13), and
+	// the account the Firebase root's issuer row grants the minter role on the
+	// signer. Empty recognises no designed signer, so every minter row on the
+	// signer is then a finding — the state of an installation whose update has
+	// not moved the grant.
+	Issuer string
 }
 
 // SignerCondition is a conditional binding's condition.
@@ -112,6 +119,13 @@ type SignerFinding struct {
 	// the inherent or designed cases (set only for findings that sign or
 	// grant).
 	Class SignerClass
+	// OldMinter is set when the binding is the minter role on the runs' signer
+	// held by a principal that is not the issuer: the row the design takes off
+	// launchers, operators and the resident orchestrator, and which `fugaro
+	// update` moves to the credentials service (D3121, D3127). Its fix is that
+	// update — removing the row by hand before the service answers would stop
+	// every launch — and doctor says so.
+	OldMinter bool
 	// Perms are the permissions of the role, as the IAM API resolves them,
 	// that make it sign or grant (empty for SignerUnread).
 	Perms []string
@@ -305,11 +319,19 @@ func (e *signerEval) role(name string) *roleInfo {
 	return r
 }
 
-// minterMember: the designed path grants the minter role to people and
-// service accounts (and groups), never to allUsers, allAuthenticatedUsers or
-// a whole domain.
+// minterMember: the row the design moves is one the roster's own member types
+// hold — people, service accounts and groups — never allUsers,
+// allAuthenticatedUsers or a whole domain.
 func minterMember(m string) bool {
 	return strings.HasPrefix(m, "user:") || strings.HasPrefix(m, "serviceAccount:") || strings.HasPrefix(m, "group:")
+}
+
+// issuerMember is whether member is the credentials service's own account,
+// which alone keeps the minter role on the signer (D3121, LM13). With no issuer
+// configured nothing is the issuer, so every minter row on the signer is a
+// finding.
+func (e *signerEval) issuerMember(m string) bool {
+	return e.managed.Issuer != "" && strings.EqualFold(m, "serviceAccount:"+e.managed.Issuer)
 }
 
 // eval is the findings of one policy's bindings; account is "" for the
@@ -334,7 +356,15 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 				f.Expected, f.Why = true, "the Firebase Admin SDK account"
 			case f.Kind == SignerSigns && minterMember(m) && account != "" && strings.EqualFold(account, e.signer) &&
 				b.role == "projects/"+e.fp+"/roles/"+MinterRoleID && slices.Equal(r.perms, []string{"iam.serviceAccounts.signJwt"}):
-				f.Expected, f.Why = true, "the designed path: launchers and operators mint run tokens as the signer"
+				// The row the design moved: the credentials service alone holds
+				// it (D3121, LM13). Everyone else holding it is the old path,
+				// which a launch no longer needs and whose fix is the update
+				// that takes it away (D3127).
+				if e.issuerMember(m) {
+					f.Expected, f.Why = true, "the designed signer: the credentials service mints every run's identity as this account"
+				} else {
+					f.OldMinter = true
+				}
 			}
 			if !f.Expected {
 				if why := e.impersonationGrant(f); why != "" {

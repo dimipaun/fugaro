@@ -25,8 +25,9 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // signed by ANY service account of the project, so that, and not the signer
 // account's minter role, is the real boundary of the budget database's
 // identity. Three kinds of principal are information: the ones the design
-// expects (the Firebase Admin SDK account, the minter role on the signer
-// account alone, and the operators' token-creator grant on the resident
+// expects (the Firebase Admin SDK account, the credentials service's own
+// account holding the minter role on the signer — the one designed signer of
+// the runs' identity — and the operators' token-creator grant on the resident
 // orchestrator's account and on the verifier's, impersonationGrant), Google's
 // own service agents of this project (matched by exact email AND this
 // project's number) and the project owners (the trust root); none is ever
@@ -36,7 +37,11 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // layout this check can see them in — the Firebase project is the deployer's
 // own project — the deployer is a signer, through the unconditioned create its
 // other role holds and the account role's condition naming the accounts it
-// creates. Every other one is a warning that fails doctor under --strict.
+// creates. Every other one is a warning that fails doctor under --strict,
+// the minter row held by anyone but the credentials service included: a
+// launcher, an operator or the resident orchestrator still holding it is the
+// old path, and its fix is the update that moves the grant, never a removal
+// that would stop every launch before the service signs (D3127).
 // Nothing is checked without a budget backend. Read-only.
 func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service, i *iam.Service) []doctorCheck {
 	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
@@ -59,6 +64,15 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	// names. Both empty recognises nothing, so a grant nobody's apply made
 	// still warns.
 	managed := infra.Managed{Project: lc.GCPProject, Operators: lc.Terraform.Admins}
+	// The credentials service's own account is the one designed signer of the
+	// runs' identity (LM13's issuer row is the minter role on the signer, and
+	// LM14's move takes it off every launcher): it is the account the
+	// installation root creates, `fugaro-credentials` of the installation's
+	// project. With no project in the local config no account is recognised, so
+	// every minter row on the signer is then a finding.
+	if lc.GCPProject != "" {
+		managed.Issuer = infra.CredentialsAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
+	}
 	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number, managed)
 	if err != nil {
 		// A warning: with nothing read, --strict must not go green.
@@ -142,7 +156,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		msg += "; the project number could not be read (" + oneLineCLI(nerr.Error()) + "), so no Google service agent is recognised and each is listed as a warning"
 	}
 	if len(expected) > 0 {
-		msg += fmt.Sprintf("; %d principal(s) can sign as designed (the Firebase Admin SDK account; launchers and operators through the minter role on the signer account; the installation's operators, who mint an ID token as the resident orchestrator's and the verifier's accounts): %s",
+		msg += fmt.Sprintf("; %d principal(s) can sign as designed (the Firebase Admin SDK account; the credentials service, the one designed signer of the runs' identity, through the minter role on the signer account; the installation's operators, who mint an ID token as the resident orchestrator's and the verifier's accounts): %s",
 			len(expected), strings.Join(dedupe(expected), ", "))
 	}
 	// The project number unread is an unread state like any other: the line
@@ -181,8 +195,9 @@ func dedupe(s []string) []string {
 }
 
 // signerCheck is the warning for one unexpected finding, with the one-line
-// command that removes the binding. Text from the policy (members, roles) is
-// made printable, so a hostile name cannot dress the line up.
+// command that removes the binding — or, for the minter row the design moved,
+// the update that moves it. Text from the policy (members, roles) is made
+// printable, so a hostile name cannot dress the line up.
 func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
 	member, role, account := pluginwire.Printable(f.Member), pluginwire.Printable(f.Role), pluginwire.Printable(f.Account)
 	pfp := pluginwire.Printable(fp)
@@ -195,22 +210,6 @@ func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
 		cond = " (only while " + pluginwire.Printable(f.Condition.Title) + ")"
 	}
 	perms := pluginwire.Printable(strings.Join(f.Perms, ", "))
-	c := doctorCheck{ID: id, Severity: "warning"}
-	switch f.Kind {
-	case infra.SignerSigns:
-		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and %s", member, role, where, cond, perms, signConsequence)
-	case infra.SignerGrants:
-		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and can grant itself the right to sign sign-in tokens with any claims, i.e. act as any run against the budget database", member, role, where, cond, perms)
-	default:
-		if f.Member == "" {
-			c.Problem = fmt.Sprintf("cannot tell who holds the right to sign on %s: its IAM policy was not read (%s)", where, pluginwire.Printable(f.Err))
-			c.Fix = "ask an owner to grant you iam.serviceAccounts.getIamPolicy on " + account + ", or review it yourself: gcloud iam service-accounts get-iam-policy " + shellword.Quote(account) + " --project " + shellword.Quote(pfp)
-			return c
-		}
-		c.Problem = fmt.Sprintf("cannot tell what %s can do with %s on %s: the role was not read (%s); it may be able to sign sign-in tokens", member, role, where, pluginwire.Printable(f.Err))
-		c.Fix = "ask an owner to grant you iam.roles.get on the role, or read it yourself: gcloud iam roles describe " + shellword.Quote(role)
-		return c
-	}
 	cmd := "gcloud projects remove-iam-policy-binding " + shellword.Quote(pfp)
 	if f.Account != "" {
 		cmd = "gcloud iam service-accounts remove-iam-policy-binding " + shellword.Quote(account) + " --project " + shellword.Quote(pfp)
@@ -221,6 +220,34 @@ func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
 	if f.Condition != nil {
 		cmd += " --condition=" + shellword.Quote("expression="+pluginwire.Printable(f.Condition.Expression)+",title="+pluginwire.Printable(f.Condition.Title))
 	}
-	c.Fix = "review before running: " + cmd
+	c := doctorCheck{ID: id, Severity: "warning"}
+	switch {
+	case f.OldMinter:
+		// The row the design moved: a launcher, an operator or the resident
+		// orchestrator still holds the minter role on the signer. Removing it
+		// by hand before the credentials service answers would stop every
+		// launch, so the fix is the update that moves the grant, and the
+		// removal is the fallback for a row that outlives it.
+		c.Problem = fmt.Sprintf("%s holds %s on %s%s: the row the design moves to the credentials service, which alone mints a run's identity now; %s", member, role, where, cond, signConsequence)
+		c.Fix = "run " + selfCommand() + " update, which moves the grant once the credentials service answers; if the row outlives it, remove it: " + cmd
+		if strings.HasPrefix(f.Member, "group:") {
+			c.Fix = "run " + selfCommand() + " update, which names this entry and its people before it removes the row; a group holds no token the service verifies now, so name each person it holds as a user: entry"
+		}
+	case f.Kind == infra.SignerSigns:
+		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and %s", member, role, where, cond, perms, signConsequence)
+		c.Fix = "review before running: " + cmd
+	case f.Kind == infra.SignerGrants:
+		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and can grant itself the right to sign sign-in tokens with any claims, i.e. act as any run against the budget database", member, role, where, cond, perms)
+		c.Fix = "review before running: " + cmd
+	default:
+		if f.Member == "" {
+			c.Problem = fmt.Sprintf("cannot tell who holds the right to sign on %s: its IAM policy was not read (%s)", where, pluginwire.Printable(f.Err))
+			c.Fix = "ask an owner to grant you iam.serviceAccounts.getIamPolicy on " + account + ", or review it yourself: gcloud iam service-accounts get-iam-policy " + shellword.Quote(account) + " --project " + shellword.Quote(pfp)
+			return c
+		}
+		c.Problem = fmt.Sprintf("cannot tell what %s can do with %s on %s: the role was not read (%s); it may be able to sign sign-in tokens", member, role, where, pluginwire.Printable(f.Err))
+		c.Fix = "ask an owner to grant you iam.roles.get on the role, or read it yourself: gcloud iam roles describe " + shellword.Quote(role)
+		return c
+	}
 	return c
 }
