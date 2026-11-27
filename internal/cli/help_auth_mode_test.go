@@ -16,7 +16,7 @@ package cli
 // column -- say the same in their own words.
 //
 // The rest of the tree's help still carries the vocabulary of the auth mode
-// where a later task owns it: `fugaro init`'s --ask, `fugaro setup` and
+// where a later task owns it: `fugaro setup`'s --ask, `fugaro update` and
 // `fugaro secrets ls` speak of the credentials a repository's agent.auth names
 // until X6 removes the plumbing those texts describe. This guard is the four
 // commands of MG6 and no more.

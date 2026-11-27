@@ -57,7 +57,7 @@ A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed
 
 Check `fugaro version` and `fugaro backends ls`: it marks the project's own — `cloud-run`, the default, and `cloud-batch`, gated by `--provision-batch` and `fugaro doctor`, selected with `fugaro backends use cloud-batch`. Never write it yourself. On Windows, run everything in WSL2, in the repository's Linux checkout.
 
-`FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when none was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user; a wrong name makes every run refuse.
+`FUGARO_PROJECT=<name> fugaro config example` (`fugaro config example` when none was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user; a wrong name makes every run refuse.
 
 ### Does the project publish a project layer?
 
