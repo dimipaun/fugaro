@@ -217,15 +217,22 @@ test('claimsOf reads the payload of a JWT-shaped token and refuses anything else
   assert.equal(claimsOf(`a.${Buffer.from('[]').toString('base64url')}.c`), null);
 });
 
-test('a payload is read with no browser global: the phone\'s engine need not have `atob`', () => {
-  // `src/pairing/base64url.js` documents `atob` as a global Hermes does not
-  // guarantee. A decode that reached for it would refuse every sign-in on such
-  // an engine, so the reading is held to the alphabet this module carries.
-  const saved = globalThis.atob;
+test('a payload is read with no browser global: the phone\'s engine need not have `atob` or `TextDecoder`', () => {
+  // `src/pairing/base64url.js` documents `atob`, and the licence verifier
+  // documents `TextDecoder`, as globals Hermes does not guarantee. A decode
+  // that reached for either would refuse every sign-in on such an engine (and
+  // a decoder built at module scope would fail to load this file at all), so
+  // the reading is held to the arithmetic this module carries. The non-ASCII
+  // claim holds the UTF-8 step to a multi-byte sequence, which a decode that
+  // took one byte per character would mangle.
+  const savedAtob = globalThis.atob;
+  const savedDecoder = globalThis.TextDecoder;
   try {
     delete globalThis.atob;
-    assert.deepEqual(claimsOf(fakeToken({ auth_time: 1764000000 })), { auth_time: 1764000000 });
+    delete globalThis.TextDecoder;
+    assert.deepEqual(claimsOf(fakeToken({ auth_time: 1764000000, name: 'sóméone' })), { auth_time: 1764000000, name: 'sóméone' });
   } finally {
-    globalThis.atob = saved;
+    globalThis.atob = savedAtob;
+    globalThis.TextDecoder = savedDecoder;
   }
 });
