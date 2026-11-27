@@ -1126,13 +1126,17 @@ func AskUnmanaged() string {
 }
 
 // AskValues is the line --ask prints on `fugaro update` where its value entry
-// turns on and the marks did not answer "managed": there is no gate
-// confirmation to put back, and what the flag does here is ask for this
-// project's repositories' secret values at the owner's own terminal (D3347,
-// R18). It is not AskUnmanaged's words: that line promises a run that behaves
-// exactly as it always has, and here the flag does something new.
+// turns on and a value is really asked for at the owner's own terminal (D3347,
+// R18). The secrets stage prints it, at the point where it asks, and never the
+// gate: whether there is a value to ask for — one the stage finds missing, for
+// a checkout it can ask about — is known there and nowhere earlier, and a line
+// the gate printed ahead of that would claim an ask that does not happen (a
+// project whose every name is stored, a list of many repositories the stage
+// leaves to `fugaro secrets set`). It is not AskUnmanaged's words: that line
+// promises a run that behaves exactly as it always has, and here the flag does
+// something new.
 func AskValues() string {
-	return "--ask: project not managed; missing secret values are asked for here"
+	return "--ask: a missing secret value is asked for at this terminal"
 }
 
 // AskNoGate is the line --ask prints in a run the managed gate never covers:
@@ -1183,17 +1187,18 @@ func askNobody(c Conditions) string {
 // refusal. managed is what the read answered (both marks there and readable,
 // the same value every caller decides a step under). values is whether this
 // run's --ask also turns on value entry — the update door alone (D3347, R18) —
-// so that a project the marks did not answer "managed" for is not the no-op it
-// is everywhere else at a terminal.
+// so that a project the marks did not answer "managed" for is not answered with
+// the no-op line every other door's --ask prints there.
 //
 // An empty line and an empty refusal is "the flag prints and refuses nothing
-// here" — the flag was not passed, or the door's value entry has no terminal to
-// ask at (the stage then leaves its own `fugaro secrets set` lines, D1540).
+// here" — the flag was not passed, or the door's value entry answers nothing of
+// its own: the gate knows no value is missing there and no list can be asked
+// about, so AskValues is the secrets stage's line, printed where it asks (the
+// stage leaves its own `fugaro secrets set` lines where it cannot, D1540).
 // Otherwise exactly one of the two is answered, and the order is the rule's: a
 // project the marks answered "managed" for restores the gate's confirmations
-// and refuses where no prompt can be answered; one the marks did not answer
-// "managed" for is the no-op line, unless --ask turns value entry on there —
-// where the values are asked at the owner's own terminal (AskValues).
+// and refuses where no prompt can be answered, and one the marks did not answer
+// "managed" for is the no-op line unless --ask turns value entry on there.
 func AskDecision(c Conditions, managed, values bool) (line, refusal string) {
 	canPrompt := c.Agent == "" && !c.NonInteractive && !c.JSON && c.Terminal
 	switch {
@@ -1203,8 +1208,6 @@ func AskDecision(c Conditions, managed, values bool) (line, refusal string) {
 		return "", AskRefusal(c)
 	case !values:
 		return AskUnmanaged(), ""
-	case canPrompt:
-		return AskValues(), ""
 	default:
 		return "", ""
 	}
