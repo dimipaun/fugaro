@@ -256,7 +256,27 @@ accounts_add() { # accounts_add NAME TYPE
   if [ "$mode" != add-no-prompt ]; then
     printf 'Paste the value for credential-%s-key (input hidden), then press Enter: ' "$name" >&2
   fi
-  IFS= read -r value || true
+  # The value this read answers is typed at this declaration's own announcement.
+  # At a terminal, end-of-file reads nothing at all — the terminal's other end is
+  # gone — and the declaration it would otherwise report is one about a value
+  # nothing read: that is a failure, not an empty declaration. A run with no
+  # terminal on its input (the refusal act's) has nothing to read by design and
+  # is measured by the gate above instead.
+  if [ -t 0 ]; then
+    if ! IFS= read -r value; then
+      printf 'fugaro: nothing was read at the prompt for credential-%s-key: the terminal gave end-of-file\n' "$name" >&2
+      exit 1
+    fi
+  else
+    IFS= read -r value || true
+  fi
+  if [ "$mode" = add-reads-ahead ]; then
+    # The read this case is about: the command takes its own line and then reads
+    # again, for whatever else the terminal holds. A value written into the
+    # terminal ahead of the declaration it belongs to is what that second read
+    # takes, and the declaration it belongs to is then left with nothing.
+    IFS= read -r -t 1 _ahead || true
+  fi
   if [ "$mode" = add-echoes-shape ]; then
     # The key-shaped string this case is about is built here, from parts: no
     # literal in this repository is shaped like a credential.
@@ -456,18 +476,33 @@ import sys
 import time
 
 # A terminal for the two declarations, for this test only. The slave's path is
-# printed first (the check is handed it through CHECK631_TTY), and the values are
-# written into it at once: a terminal holds them in its input queue, so the first
-# command's own hidden prompt reads the first and the second reads the second, in
-# the order the check runs them. The master is held open until the test kills
-# this process, because a terminal whose master is gone gives its reader
-# end-of-file.
+# printed first (the check is handed it through CHECK631_TTY), and each value is
+# written into it only once the declaration it answers has announced itself on
+# the check's stderr. A value is therefore typed at its own declaration's
+# announcement and never earlier: a command that reads past its own line finds
+# nothing else to take, and the declaration that follows still finds its value.
+# The master is held open until the test kills this process, because a terminal
+# whose master is gone gives its reader end-of-file.
+err_path = sys.argv[1]
+answers = list(zip(sys.argv[2::2], sys.argv[3::2]))
+
 master, slave = pty.openpty()
 sys.stdout.write(os.ttyname(slave) + "\n")
 sys.stdout.flush()
-for value in sys.argv[1:]:
+
+deadline = time.time() + float(os.environ.get("PTY_HOLD", "120"))
+for needle, value in answers:
+    while time.time() < deadline:
+        try:
+            with open(err_path, errors="replace") as handle:
+                seen = handle.read()
+        except OSError:
+            seen = ""
+        if needle in seen:
+            break
+        time.sleep(0.02)
     os.write(master, (value + "\n").encode())
-time.sleep(float(os.environ.get("PTY_HOLD", "120")))
+time.sleep(max(0.0, deadline - time.time()))
 PY
 }
 
@@ -570,13 +605,13 @@ need_pty() {
 
 FEEDER_PID=""
 FEEDER_TTY=""
-start_feeder() { # start_feeder DIR VALUE...
+start_feeder() { # start_feeder DIR [NEEDLE VALUE]... — each value is typed once its NEEDLE is on the check's stderr
   local dir=$1
   shift
   FEEDER_PID=""
   FEEDER_TTY=""
   : >"$dir/feeder.tty"
-  PTY_HOLD=120 python3 "$dir/feeder.py" "$@" >"$dir/feeder.tty" 2>"$dir/feeder.err" &
+  PTY_HOLD=120 python3 "$dir/feeder.py" "$dir/err" "$@" >"$dir/feeder.tty" 2>"$dir/feeder.err" &
   FEEDER_PID=$!
   local i=0
   while [ "$i" -lt 100 ]; do
@@ -641,7 +676,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
     CHECK631_POLL_SECONDS=1 CHECK631_RUN_TIMEOUT_SECONDS="${CHECK631_TEST_RUN_TIMEOUT:-20}" \
     CHECK631_CLI_TIMEOUT_SECONDS=20 CHECK631_DOCTOR_TIMEOUT_SECONDS=20 \
     CHECK631_LAUNCH_TIMEOUT_SECONDS=20 CHECK631_PUBLISH_TIMEOUT_SECONDS=20 \
-    CHECK631_DECLARE_TIMEOUT_SECONDS=120 \
+    CHECK631_DECLARE_TIMEOUT_SECONDS=20 \
     ${args[@]+"${args[@]}"} \
     bash ${bashargs[@]+"${bashargs[@]}"} "$script" ${cli[@]+"${cli[@]}"} \
     </dev/null >"$dir/out" 2>"$dir/err" || status=$?
@@ -654,12 +689,16 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
 
 # A run at a terminal: each declaration reads its own value at its own hidden
 # prompt, so every case that gets past the check's terminal gate makes the pty
-# below and writes the two values into it. CHECK631_TEST_VALUE_ONE and
+# below and types each value at the announcement of the declaration it answers —
+# at no other time, so a command that reads past its own line cannot take the
+# value the other declaration reads. CHECK631_TEST_VALUE_ONE and
 # CHECK631_TEST_VALUE_TWO name the two, where a case needs its own.
 run_check_with_terminal() { # run_check_with_terminal DIR ENV... [-- ARGS...]
   local dir=$1
   shift
-  start_feeder "$dir" "${CHECK631_TEST_VALUE_ONE:-$value_one}" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
+  start_feeder "$dir" \
+    "declaring the Anthropic-key credential" "${CHECK631_TEST_VALUE_ONE:-$value_one}" \
+    "declaring the OpenRouter credential" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
   run_check "$dir" "$@"
   stop_feeder
 }
@@ -850,6 +889,24 @@ test_a_declaration_is_measured_against_its_own_bound() {
   expect_absent "$out" "FACT add-anthropic: PASS" "a declaration nothing answers: no value was read"
 }
 
+# A value is typed at the declaration it belongs to, and at no other time. The
+# command that reads one declaration's value is not the only reader of the
+# terminal this check holds: a command that reads again after its own line — a
+# reader that takes whatever the terminal holds — must not be able to take the
+# value the OTHER declaration reads. The fake below reads its own line and then
+# reads again; with both values written into the terminal ahead of the check, it
+# takes the second one and the second declaration is left with nothing to read,
+# so its row can only end on its own bound.
+test_a_declaration_that_reads_past_its_line_does_not_take_the_other_value() {
+  local dir=$work/reads-ahead
+  prepare "$dir"
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=add-reads-ahead CHECK631_DECLARE_TIMEOUT_SECONDS=5
+  expect_status "$status" 0 "a declaration that reads past its line"
+  expect_contains "$out" "FACT add-anthropic: PASS" "a declaration that reads past its line: the first declaration read its value"
+  expect_contains "$out" "FACT add-openrouter: PASS" "a declaration that reads past its line: the second declaration still read its own"
+}
+
 # The ending a bound asks for is the command's own. bound_loop signals the
 # runner this check starts, and the command runs in a session of its own, so a
 # runner that died on that signal alone would leave the command running with the
@@ -861,7 +918,9 @@ test_a_command_a_bound_ended_is_not_still_running() {
   local dir=$work/declare-ended
   prepare "$dir"
   need_pty || return 0
-  start_feeder "$dir" "${CHECK631_TEST_VALUE_ONE:-$value_one}" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
+  start_feeder "$dir" \
+    "declaring the Anthropic-key credential" "${CHECK631_TEST_VALUE_ONE:-$value_one}" \
+    "declaring the OpenRouter credential" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
   run_check "$dir" CHECK631_DECLARE_TIMEOUT_SECONDS=1 FAKE_MODE=add-outlives
   sleep 6
   [ ! -e "$dir/logs/outlived" ] || fail "a command a bound ended is still running: $(cat "$dir/logs/outlived") outlived the bound that ended it, with the terminal still held open"
@@ -1269,6 +1328,7 @@ t test_a_command_that_prints_no_prompt_is_a_finding
 t test_both_commands_read_at_their_own_prompts
 t test_with_no_terminal_the_check_stops
 t test_a_declaration_is_measured_against_its_own_bound
+t test_a_declaration_that_reads_past_its_line_does_not_take_the_other_value
 t test_a_command_a_bound_ended_is_not_still_running
 t test_a_session_that_is_refused
 t test_a_session_that_is_not_refused_is_a_finding
