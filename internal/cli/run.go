@@ -2263,8 +2263,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 			return config.Inputs{}, err
 		}
 		// The model_grades: block, the same shape and the same reason
-		// again: see checkModelGradesImage. The repository's half is
-		// judged even though the merge drops and records what it writes.
+		// again: see checkModelGradesImage.
 		if err := checkCloneModelGradesImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}

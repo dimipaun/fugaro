@@ -8,10 +8,10 @@ package config
 //
 // A grade is where the project says which model "one stronger single pass"
 // means. It is a model choice the project owns (G3): the project layer sets it
-// for every repository of it, and a repository's own file may name one, which
-// the merge drops and records (internal/policy's tightenGrades) rather than
-// refusing it, because a grade is a value and not authority — the thresholds
-// that read the ladder are the keys a file may not hold at all (D2032).
+// for every repository of it, and a repository's own file may still write one,
+// which the lift drops and names rather than refusing it (LiftedKeys; release B
+// refuses it) — a grade is a value and not authority: the thresholds that read
+// the ladder are the keys a file may not hold at all (D2032).
 //
 // The plan ships no model default for either grade (D2039): a grade nobody set
 // is not a grade, and the rung that needs one refuses and asks.
