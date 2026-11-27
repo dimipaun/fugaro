@@ -234,7 +234,34 @@ func runAccountsPoolAddPersonal(cmd *cobra.Command, name string, members []strin
 	if err != nil {
 		return err
 	}
-	rec, err := accountsPoolPersonalDo(cmd.Context(), serviceURL, credsvc.PersonalPoolRequest{Pool: name, Rule: o.rule, Members: members})
+	// A flag left out is the pool's own field, which is the idiom the config
+	// sibling has: a re-declare that names a rule alone keeps the members the
+	// pool walks, and one that names a list alone keeps its rule. The pool's own
+	// record is what answers both, so it is read — and only where a field was
+	// actually left out, because a call that states everything has nothing to
+	// keep. A pool the caller has not declared has nothing to keep either, and a
+	// NEW one has to state its members: a pool with none serves nothing, which
+	// is the rule accounts_pool.go already applies to a new pool.
+	rule := o.rule
+	if rule == "" || len(members) == 0 {
+		rec, found, err := accountsPoolPersonalReadDo(cmd.Context(), serviceURL, name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			if len(members) == 0 {
+				return userErr("a new pool of your own states the members it walks: list at least one container, or name one you have declared; nothing was recorded")
+			}
+		} else {
+			if rule == "" {
+				rule = string(rec.Rule)
+			}
+			if len(members) == 0 {
+				members = rec.Members
+			}
+		}
+	}
+	rec, err := accountsPoolPersonalDo(cmd.Context(), serviceURL, credsvc.PersonalPoolRequest{Pool: name, Rule: rule, Members: members})
 	if err != nil {
 		return err
 	}

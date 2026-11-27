@@ -126,6 +126,41 @@ func TestAPersonCreatesTheirOwnPool(t *testing.T) {
 		t.Errorf("the second declare sent %#v, want the whole list with `one` gone", got)
 	}
 
+	// A flag left out is the pool's own field, which is the idiom the config
+	// sibling has: naming a rule alone keeps the members the pool walks, and
+	// naming a list alone keeps its rule. A pool the caller has not declared has
+	// nothing to keep, and a new one has to state its members.
+	fakePersonalPoolRead(t, "mine", []string{"one", "two"})
+	*seen = (*seen)[:0]
+	if _, _, err := execute(t, "accounts", "pool", "add", "mine", "--personal", "--rule", "ordered"); err != nil {
+		t.Fatalf("setting the rule alone: %v", err)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("setting the rule alone made %d calls, want one", len(*seen))
+	}
+	if got := (*seen)[0].Req; got.Rule != "ordered" || strings.Join(got.Members, ",") != "one,two" {
+		t.Errorf("setting the rule alone sent %#v, want the members the pool already walks", got)
+	}
+	*seen = (*seen)[:0]
+	if _, _, err := execute(t, "accounts", "pool", "add", "mine", "--personal", "three"); err != nil {
+		t.Fatalf("setting the members alone: %v", err)
+	}
+	if len(*seen) != 1 {
+		t.Fatalf("setting the members alone made %d calls, want one", len(*seen))
+	}
+	if got := (*seen)[0].Req; got.Rule != string(routing.RuleFailover) || strings.Join(got.Members, ",") != "three" {
+		t.Errorf("setting the members alone sent %#v, want the rule the pool already has", got)
+	}
+	*seen = (*seen)[:0]
+	if _, _, err := execute(t, "accounts", "pool", "add", "fresh", "--personal"); err == nil {
+		t.Error("a pool with no members and no record behind it was declared")
+	} else if !strings.Contains(err.Error(), "at least one container") {
+		t.Errorf("the refusal does not say what a new pool has to state: %v", err)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("a refused call reached the service: %#v", *seen)
+	}
+
 	// The flags a personal pool has no field for are refused rather than ignored,
 	// and each refusal comes before anything is sent.
 	*seen = (*seen)[:0]

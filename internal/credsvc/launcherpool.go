@@ -52,9 +52,10 @@ type launcherPools struct{ s *Server }
 // carry), a project whose published policy carries no table (an installation
 // `fugaro update` has not migrated, whose pools have no principal to resolve),
 // no designation, a designation written for another project, a pool the node
-// does not hold, a pool this launcher does not own, and a pool with no members
-// (D3180). None of them is an error: the walk moves on to the chain's next
-// source with the step flagged a fallback.
+// does not hold and this principal has not declared as one of its own (PL9), a
+// pool this launcher does not own, and a pool with no members (D3180). None of
+// them is an error: the walk moves on to the chain's next source with the step
+// flagged a fallback.
 //
 // An error is one thing only, and it is the opposite answer: a document that
 // could not be read. A caller that read one as an absent designation would
@@ -90,19 +91,79 @@ func (l launcherPools) LauncherPool(ctx context.Context, principal routing.Princ
 		}
 	}
 	pool, ok := poolForLauncher(poolName, shared, principal)
+	if ok {
+		if !poolServesPrincipal(pool, principal) {
+			return none, false, nil
+		}
+		if len(pool.Members) == 0 {
+			// An empty pool is "none" and never an error (D3180): it is a pool
+			// its owner has named and not filled, and a run whose chain reaches
+			// one falls back rather than halting.
+			return none, false, nil
+		}
+		return poolRef(pool, project), true, nil
+	}
+	// PL9: a person's own pool is not a pool this project PUBLISHES, so a name
+	// the node holds none of may still be one this launcher owns. The store is
+	// keyed on the subject this service verified, so the read below can reach a
+	// pool of the caller's own alone (R9, R26), and it is made only where the
+	// node holds no pool of that name — a published pool is never shadowed.
+	return personalPoolRef(ctx, l.s, poolName, principal, project)
+}
+
+// personalPoolRef resolves one PERSON's own pool out of the service's store
+// (PL9, R26): the record the service kept for the subject it verified, as the
+// reference the walk is answered with.
+//
+// The reference names the pool and carries no member list — that is what a
+// PoolRef is — so the chain that serves the run reads the pool's members out of
+// the same record (chain.go's planSource). It is what makes "the runs you launch
+// may be served from it" true on the serving side: the pool is designated like
+// any other, and the source that answers it is read where the published pools
+// are not (a block this pool was never in).
+func personalPoolRef(ctx context.Context, s *Server, name string, principal routing.Principal, project string) (routing.PoolRef, bool, error) {
+	rec, found, err := personalPoolFor(ctx, s, principal, name, project)
+	if err != nil || !found {
+		return routing.PoolRef{}, false, err
+	}
+	if len(rec.Members) == 0 {
+		// A pool its owner has declared and not filled is "none" and never an
+		// error, exactly as a published pool with no members is (D3180).
+		return routing.PoolRef{}, false, nil
+	}
+	return routing.PoolRef{
+		Project:   project,
+		Pool:      rec.Pool,
+		Rule:      rec.Rule.RuleOrDefault(""),
+		Principal: principal,
+	}, true, nil
+}
+
+// personalPoolFor reads one person's own pool out of the service's store, and is
+// the one read both halves of PL9 make — the lookup above and the route that
+// designates a pool (designation_route.go).
+//
+// found is false for every state that is not this principal's own pool in this
+// project: a name that is empty, a principal that is not a person (a service
+// account's runs draw on the project's pools, D2976, D3181), a pool this
+// principal has not declared, and a record that answers for another project (a
+// personal pool's members are one project's per-user containers).
+func personalPoolFor(ctx context.Context, s *Server, principal routing.Principal, name, project string) (PersonalPoolRecord, bool, error) {
+	if s == nil || name == "" || project == "" || principal.Kind != routing.PrincipalPerson {
+		return PersonalPoolRecord{}, false, nil
+	}
+	db, ok := s.cfg.DB.(creds.DB)
 	if !ok {
-		return none, false, nil
+		return PersonalPoolRecord{}, false, errNoDesignationStore
 	}
-	if !poolServesPrincipal(pool, principal) {
-		return none, false, nil
+	rec, found, err := readPersonalPool(ctx, db, principal, name)
+	if err != nil || !found {
+		return PersonalPoolRecord{}, false, err
 	}
-	if len(pool.Members) == 0 {
-		// An empty pool is "none" and never an error (D3180): it is a pool its
-		// owner has named and not filled, and a run whose chain reaches one
-		// falls back rather than halting.
-		return none, false, nil
+	if rec.Project != project {
+		return PersonalPoolRecord{}, false, nil
 	}
-	return poolRef(pool, project), true, nil
+	return rec, true, nil
 }
 
 // sharedPolicy is the published policy of the deployment serving this call, as

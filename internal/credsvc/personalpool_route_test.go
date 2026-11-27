@@ -21,7 +21,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/routing"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // personalPost posts one call of either personal-pool route as the launcher,
@@ -72,6 +74,75 @@ func wantLine(t *testing.T, s *lpFixture, before int, status, caller string) {
 		if got := line[field]; got != "" {
 			t.Errorf("the line carries %s = %v, want none: a personal pool touches no credential and no run", field, got)
 		}
+	}
+}
+
+// TestAPersonalPoolServesItsOwnersRun is PL9's interface: the record a person
+// writes is a pool the serving lookup and the designation route RESOLVE, so the
+// runs that person launches may be served from it. The pool is designated like
+// any other; the lookup answers it with the rule the record carries and its
+// members as the containers they name; and another person and a service account
+// are answered none, because the store is keyed on the subject the service
+// verified (R9, R26, D2976).
+func TestAPersonalPoolServesItsOwnersRun(t *testing.T) {
+	s := newLauncherPools(t, true, lpPools()...)
+	const mine = "mine-pool-of-my-own"
+	before := len(lpAudit(t, s))
+	resp, body := personalPost(t, s, PersonalPoolPath,
+		mustBody(t, PersonalPoolRequest{Pool: mine, Rule: "ordered", Members: []string{testPoolCredential}}))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the honest declare is %d, want it written: %s", resp.StatusCode, body)
+	}
+	wantDesignationLine(t, s, before, StatusOK)
+
+	// The person's own designation names it: the pool is not the project's
+	// published block, so the route reads the caller's own store for it.
+	before = len(lpAudit(t, s))
+	resp, body = s.lpDesignate(t, mustBody(t, PoolDesignateRequest{Pool: mine}))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("designating a pool of one's own is %d, want it written: %s", resp.StatusCode, body)
+	}
+	wantDesignationLine(t, s, before, StatusOK)
+
+	container, err := secretname.User(lpLauncher().ID, testPoolCredential)
+	if err != nil {
+		t.Fatalf("the fixture's own container name: %v", err)
+	}
+	lookup := launcherPools{s: s.server}
+	ref, found, err := lookup.LauncherPool(context.Background(), lpLauncher(), "")
+	if err != nil || !found {
+		t.Fatalf("the lookup answered (%+v, %v, %v), want the person's own pool", ref, found, err)
+	}
+	if ref.Pool != mine || ref.Rule != routing.RuleOrdered || ref.Project != testProject || ref.Principal != lpLauncher() {
+		t.Errorf("the reference is %+v, want the recorded pool, its resolved rule and the project", ref)
+	}
+
+	// And it is SERVED: the chain's launcher-pool source is the person's own
+	// pool, its rule is the one the record carries, and the member it serves with
+	// is the container the name in the record builds for that subject.
+	w := s.walk(t, callBody("pool-mine"), lpBinding(lpLauncher(), lpCoverage(), ""))
+	step, kept := lpStep(w)
+	if !kept {
+		t.Fatalf("the chain dropped the person's own pool, want the call served from %q", mine)
+	}
+	if step.name.Name != mine || step.pool.Rule != routing.RuleOrdered {
+		t.Errorf("the source resolved to %+v, want %q and the rule the record carries", step.pool, mine)
+	}
+	if got := w.picked(t); got.Name != container || got.Tier != creds.TierA {
+		t.Errorf("the call was served by %+v, want the caller's own container %q at tier a", got, container)
+	}
+
+	// Another person naming the same pool is answered none: the read is keyed on
+	// the subject the service verified, so one person's pool is not another's.
+	other, otherFound, err := lookup.LauncherPool(context.Background(), lpOtherLauncher(), mine)
+	if err != nil || otherFound {
+		t.Errorf("another person's lookup answered (%+v, %v, %v), want none: a personal pool is its owner's alone", other, otherFound, err)
+	}
+	// And a service account's runs draw on the project's pools, never on one of
+	// these (D2976, D3181).
+	sa, saFound, err := lookup.LauncherPool(context.Background(), saPrincipal(), mine)
+	if err != nil || saFound {
+		t.Errorf("a service account's lookup answered (%+v, %v, %v), want none", sa, saFound, err)
 	}
 }
 
@@ -217,6 +288,44 @@ func TestAPersonalPoolIsKeyedOnTheVerifiedSubject(t *testing.T) {
 			t.Errorf("the refusal %q does not say %q", e.Message, personalPoolNoRunIdentity)
 		}
 		wantDesignationLine(t, s, before, ErrorRequestRefused)
+	})
+
+	// A service account's call is refused on BOTH routes: a personal pool is one
+	// PERSON's own, and a service account's runs are served from a project pool
+	// an admin fills (D3181). The account's token is one the launcher class
+	// verifies — it is the same bearer the grant route answers — so the refusal
+	// is this route's own and not the class's.
+	t.Run("a service account's call", func(t *testing.T) {
+		// The launcher class must ADMIT the account's own token for this
+		// refusal to be the route's, which is what this fixture wires
+		// (LauncherServiceAccounts) and the one above does not.
+		sa := newServiceAccountPools(t, true, lpPools()...)
+		bearer := func(r *http.Request) {
+			r.Header.Set("Authorization", "Bearer "+sa.jobToken(func(c map[string]any) {
+				c["email"], c["sub"] = testRosterServiceAccount, testRosterServiceAccountSub
+			}))
+		}
+		for _, tc := range []struct{ name, path, body string }{
+			{"the declare route", PersonalPoolPath, mustBody(t, PersonalPoolRequest{Pool: mine, Members: []string{testPoolCredential}})},
+			{"the read route", PersonalPoolGetPath, mustBody(t, PersonalPoolGetRequest{Pool: mine})},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				before := len(lpAudit(t, sa))
+				resp, body := personalPost(t, sa, tc.path, tc.body, bearer)
+				if resp.StatusCode == http.StatusOK {
+					t.Fatalf("a service account's call was served: %d %s", resp.StatusCode, body)
+				}
+				if e := refusal(t, resp.StatusCode, body); e.Error != ErrorRequestRefused {
+					t.Errorf("the refusal's type is %q, want %q", e.Error, ErrorRequestRefused)
+				} else if !strings.Contains(e.Message, personalPoolNotAPerson) {
+					t.Errorf("the refusal %q does not say %q", e.Message, personalPoolNotAPerson)
+				}
+				wantLine(t, sa, before, ErrorRequestRefused, testRosterServiceAccount)
+				if _, found := personalRecord(t, sa, lpLauncher(), mine); found {
+					t.Errorf("a service account's call wrote the store")
+				}
+			})
+		}
 	})
 
 	// The operator's switches, which these routes read themselves because they

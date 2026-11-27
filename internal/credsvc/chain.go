@@ -96,6 +96,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -103,6 +104,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/routing"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // PublishedTable answers the routing table a project's published policy carries,
@@ -189,6 +191,33 @@ type chainSource struct {
 	// send the call to whichever member happened to be first with no rule
 	// behind it.
 	pooled bool
+	// personal is whether this pooled source's members are a PERSON's own
+	// containers (PL9) rather than a credential of the project's bundle. The
+	// two pool blocks' narrowings — the scope's offering and a repository's
+	// admission — are the project's answers about the project's credentials, and
+	// neither has anything to say about a token of the launcher's own: the
+	// personal name is served to its owner or refused (R7, D2974), which is the
+	// rule the slip's own candidate is read by (cascade.go's personalCandidate).
+	personal bool
+}
+
+// personalPoolOffering is a personal pool's members as a chain source's: one
+// entry per container the pool walks, at the tier the person's own token is
+// served at (creds.TierA, the subscription token's). The container a member
+// names is built from the subject the service VERIFIED — the same rule the write
+// held every name to (personalPoolRecord, R9) — so nothing here is a name a
+// caller could have chosen, and a node carrying one this cannot build is an
+// error rather than a silent drop.
+func personalPoolOffering(rec PersonalPoolRecord, principal routing.Principal) ([]creds.Credential, error) {
+	out := make([]creds.Credential, 0, len(rec.Members))
+	for _, m := range rec.Members {
+		name, err := secretname.User(principal.ID, m)
+		if err != nil {
+			return nil, fmt.Errorf("credsvc: a personal pool's member is not a container of its owner's: %w", err)
+		}
+		out = append(out, creds.Credential{Name: name, Tier: creds.TierA})
+	}
+	return out, nil
 }
 
 // chainPlan is a call's chain: the sources the walk offers, in the chain's own
@@ -652,7 +681,24 @@ func (s *Server) planSource(ctx context.Context, src routing.Source, model strin
 		out.name.Name = ref.Pool
 		pool, ok := namedPool(ref.Pool, shared)
 		if !ok {
-			return out, nil, nil
+			// PL9: a pool the published block does not hold is one the lookup
+			// read out of the service's own store — a person's own — and its
+			// members are read out of the same record here, because the reference
+			// names a pool and carries no list.
+			rec, own, err := personalPoolFor(ctx, s, binding.slip.Launcher, ref.Pool, ref.Project)
+			if err != nil {
+				return out, nil, err
+			}
+			if !own {
+				return out, nil, nil
+			}
+			members, err := personalPoolOffering(rec, binding.slip.Launcher)
+			if err != nil {
+				return out, nil, err
+			}
+			out.personal = true
+			out.members = members
+			break
 		}
 		out.members = poolOfferingOf(pool, shared, held)
 
@@ -709,6 +755,17 @@ func (s *Server) planSource(ctx context.Context, src routing.Source, model strin
 
 	if out.pooled {
 		if len(out.members) == 0 {
+			return out, nil, nil
+		}
+		if out.personal {
+			// A person's own pool (PL9) is judged by neither narrowing below,
+			// and each is the project's answer about the project's credentials:
+			// the offering is the bundle's list, which a container of the
+			// person's own was never in, and the admission is the repository's,
+			// which a token of the person's own is no candidate for (R7, D2974).
+			// What judges these members is the walk's own mark and the picker's
+			// rule, exactly as it judges the single personal candidate the slip
+			// hands over (cascade.go).
 			return out, nil, nil
 		}
 		// C1's Offering is the pool this call may be served from at all, and a
