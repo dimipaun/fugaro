@@ -683,10 +683,10 @@ read_json() { # read_json DEST QUERY ARGS...
   python3 "$SCRATCH/read.py" "$query" "$@" >"$dest" 2>"$dest.err" || true
 }
 
-# body.py writes one identity ask's body: a JSON object of the key=value pairs it
-# is given, with the two typed fields the contract has. The file is written 0600
-# in a subshell's umask, because a ticket travels in one and is a handle no other
-# process on the machine has any business reading.
+# body.py writes one identity ask's body: a JSON object of the key=value lines it
+# reads on stdin, with the two typed fields the contract has. The file is written
+# 0600 in a subshell's umask, because a ticket travels in one and is a handle no
+# other process on the machine has any business reading.
 write_body_py() {
   cat >"$SCRATCH/body.py" <<'PY'
 import json
@@ -694,8 +694,10 @@ import sys
 
 out = sys.argv[1]
 body = {}
-for arg in sys.argv[2:]:
-    key, _, value = arg.partition("=")
+for line in sys.stdin:
+    key, _, value = line.rstrip("\n").partition("=")
+    if not key:
+        continue
     if key == "max_runtime_seconds":
         body[key] = int(value)
     elif key == "pull_requests":
@@ -711,7 +713,11 @@ PY
 write_body() { # write_body OUTFILE key=value ...
   local out=$1
   shift
-  (umask 077; python3 "$SCRATCH/body.py" "$out" "$@")
+  # The pairs go to python3 on a pipe and never as its arguments: a ticket this
+  # check claims travels in one of them, and `ps` shows a process's argv to every
+  # user of the machine. printf is a builtin, so the pairs reach no process's
+  # command line on their way in.
+  (umask 077; printf '%s\n' "$@" | python3 "$SCRATCH/body.py" "$out")
 }
 
 # key_of escapes one path segment the way the tree does (internal/budget/model.go's
