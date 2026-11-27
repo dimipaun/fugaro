@@ -1984,8 +1984,9 @@ func stoppedStage(out string) string {
 			return strings.TrimSpace(rest)
 		}
 		// The closing line is the run's own: "Failed in 2.2s. Rerun fugaro
-		// update to resume at policy." The stage is what follows "to resume
-		// at", and it is the name the loop's own stages carry.
+		// update to resume at Publishing the policy." The stage is what
+		// follows "to resume at", named there in plain words (D3435), and is
+		// read back as the ID the loop's own stages carry.
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Failed in ")
 		if !ok {
 			continue
@@ -1995,7 +1996,11 @@ func stoppedStage(out string) string {
 			continue
 		}
 		if _, stage, ok := strings.Cut(resume, " to resume at "); ok {
-			return strings.TrimSuffix(stage, ".")
+			stage = strings.TrimSuffix(stage, ".")
+			if name, ok := stageNameOf(stage); ok {
+				return name
+			}
+			return stage
 		}
 	}
 	return "(the summary names no failed stage)"
@@ -2167,7 +2172,7 @@ func TestUpdateConvergesACachePriceWrittenTheOldWay(t *testing.T) {
 	// (the assertion stops where the screen cuts a long step line — the whole
 	// of it is in the run's log, and what is asserted past that point is the
 	// file itself).
-	if want := "✔ model-prices renamed model_prices.deepseek/deepseek-v4.1-flash.cache_read ->"; !strings.Contains(out, want) {
+	if want := markDone + " " + initflow.DisplayName(initflow.ModelPrices) + " renamed model_prices.deepseek/deepseek-v4.1-flash.cache_read ->"; !strings.Contains(out, want) {
 		t.Errorf("the run did not print %q:\n%s", want, out)
 	}
 	// And the warning names both prices: the rename is not silent, and the

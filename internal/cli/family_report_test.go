@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/report"
 )
 
@@ -411,7 +412,7 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 	// The two stages that did something are ticks carrying what they did; the
 	// third is skipped in this rig and says so rather than ticking.
 	for _, stage := range []string{"policy", "installation"} {
-		if l := stepLineOf(lines, stage); !strings.HasPrefix(l, markDone+" "+stage) {
+		if l := stepLineOf(lines, stage); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(stage)) {
 			t.Errorf("the %s stage did not earn a tick: %q\nstderr:\n%s", stage, l, errOut)
 		}
 	}

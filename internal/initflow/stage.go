@@ -491,6 +491,48 @@ var runCovered = map[string]bool{
 // ordinary steps. A stage --yes does not cover (noYes) is never covered.
 func RunCovers(name string) bool { return runCovered[name] && YesCovers(name) }
 
+// displayNames is what each stage is called on the line a person reads: the
+// stage's own name above is an internal ID, and the step line says the work in
+// plain words instead while the ID stays in the log and in --json (D3435, spec
+// §4). Every stage of order has a row here, and a stage a later task adds
+// without one prints its ID rather than a blank line.
+var displayNames = map[string]string{
+	Preflight:          "Checking the environment",
+	Project:            "Creating the Google Cloud project",
+	Services:           "Enabling the Google APIs",
+	Installation:       "Applying infrastructure changes",
+	Firebase:           "Setting up the Firebase project",
+	Images:             "Pinning the release images",
+	Installation2:      "Deploying the scheduled jobs",
+	Secrets:            "Collecting the secrets",
+	Plugin:             "Installing the plugin",
+	Repository:         "Onboarding the repositories",
+	Rules:              "Deploying the security rules",
+	ModelPrices:        "Renaming the config keys",
+	Policy:             "Publishing the policy",
+	CredentialsService: "Updating the credentials service",
+	CredentialsCopy:    "Copying the model keys",
+	ImageMapRetire:     "Retiring the old image map",
+	VersionStamp:       "Raising the required CLI version",
+	Workspace:          "Publishing the workspace record",
+	CredentialsRoute:   "Publishing the credential routes",
+	WorkspaceProject:   "Creating the workspace project",
+	Lift:               "Migrating the repository settings",
+	Layer:              "Publishing the project layer",
+	Checkout:           "Updating the checkout",
+	Unit:               "Installing the login unit",
+	Compute:            "Provisioning the compute backend",
+}
+
+// DisplayName is the plain-words name a stage prints on its step line. The ID
+// itself is the answer for a name this table does not carry.
+func DisplayName(name string) string {
+	if d, ok := displayNames[name]; ok {
+		return d
+	}
+	return name
+}
+
 // Names is the canonical order of every stage name.
 func Names() []string {
 	out := make([]string, len(order))

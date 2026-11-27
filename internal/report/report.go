@@ -119,10 +119,13 @@ type Reporter struct {
 	steps      int
 	state      State
 	summarised bool
-	// rerunProgram and rerunStep are what a stopped run's closing line resumes
-	// with (RerunFrom): empty for a run that is not a converge.
+	// rerunProgram, rerunStep and rerunShown are what a stopped run's closing
+	// line resumes with (RerunFrom): the program, the step's own name, which
+	// the log keeps, and the plain words the screen names that step in
+	// (RerunFromShown). Empty for a run that is not a converge.
 	rerunProgram string
 	rerunStep    string
+	rerunShown   string
 	// spin is whether the step in flight is drawn on the terminal's own line.
 	// Where it is not, the step says it is still running once a minute
 	// instead. The rest is the state of that line, guarded by mu.
@@ -191,15 +194,38 @@ func (r *Reporter) IsBrief() bool {
 
 // Step starts a step named name and returns it, to be ended by exactly one of
 // Done, Skipped, Failed, Left and Abandon. Ending it twice does nothing, so a
-// caller that reports twice cannot print two lines for one step.
+// caller that reports twice cannot print two lines for one step. StepShown is
+// the same step with a name that is not the one a person reads.
 func (r *Reporter) Step(name string) *Step {
+	return r.step(name, "")
+}
+
+// StepShown starts a step the log names name and a person reads as shown: a
+// step whose own name is an internal ID says the work in plain words on the
+// line in flight and on its result, and keeps the ID in the log the run is
+// read from afterwards. An empty shown is Step.
+func (r *Reporter) StepShown(name, shown string) *Step {
+	return r.step(name, shown)
+}
+
+func (r *Reporter) step(name, shown string) *Step {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stopSpinner()
 	r.spinPaused = false
-	r.spinName, r.spinSince = name, r.o.Now()
+	r.spinName, r.spinSince = shownName(name, shown), r.o.Now()
 	r.startSpinner()
-	return &Step{r: r, name: name}
+	return &Step{r: r, name: name, shown: shown}
+}
+
+// shownName is what a step's line carries: the shown name where the caller
+// gave one, and the name itself otherwise. It is a function rather than a
+// method because the line in flight is drawn before the Step exists.
+func shownName(name, shown string) string {
+	if shown != "" {
+		return shown
+	}
+	return name
 }
 
 // Summary ends the run: it clears the line in flight, prints the closing line
@@ -213,9 +239,9 @@ func (r *Reporter) Summary() Outcome {
 	r.spinName, r.spinPaused = "", false
 	o := Outcome{State: r.state, Steps: r.steps, Elapsed: r.o.Now().Sub(r.start)}
 	if !r.summarised && o.Steps > 0 {
-		line := r.closingLine(o)
-		r.logLine(line + "\n")
-		fmt.Fprintln(r.human, line)
+		logged, shown := r.closingLine(o)
+		r.logLine(logged + "\n")
+		fmt.Fprintln(r.human, shown)
 	}
 	r.summarised = true
 	return o
@@ -286,10 +312,17 @@ func (s *stream) Write(p []byte) (int, error) {
 // Step is one unit of work a person watches: a short phrase, and the one
 // result it ends in.
 type Step struct {
-	r     *Reporter
-	name  string
+	r    *Reporter
+	name string
+	// shown is the plain-words name the screen draws where the step's name is
+	// an internal ID (StepShown): the log keeps the name, and every line a
+	// person reads carries this.
+	shown string
 	ended bool // guarded by r.mu
 }
+
+// label is the name the step's own line carries on the screen.
+func (s *Step) label() string { return shownName(s.name, s.shown) }
 
 // Done ends the step with a tick. detail says what changed, when there is
 // anything to say: a stage that did nothing and one that changed something
@@ -361,7 +394,7 @@ func (s *Step) Failed(err error, context []string) {
 	r.appendLogLine(&body)
 	r.appendDiagnoseLine(&body)
 	r.logLine(glyphFailed.text(r.o.ASCII) + " " + s.name + "\n")
-	fmt.Fprintln(r.human, r.painted(glyphFailed.text(r.o.ASCII), colourFailed)+" "+s.name)
+	fmt.Fprintln(r.human, r.painted(glyphFailed.text(r.o.ASCII), colourFailed)+" "+s.label())
 	if len(body) == 0 {
 		return
 	}
@@ -455,7 +488,7 @@ func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string
 	// because the sink's redaction is by line and a line split across two could
 	// carry half a value.
 	r.logLine(g.text(r.o.ASCII) + " " + s.name + tail + "\n")
-	line := r.painted(g.text(r.o.ASCII), c) + " " + s.name + human
+	line := r.painted(g.text(r.o.ASCII), c) + " " + s.label() + human
 	fmt.Fprintln(r.human, line)
 	r.under(under)
 }
@@ -541,7 +574,18 @@ func Short(reason string) string {
 // names are the steps, in the run's canonical order and only read for their
 // number; target is what they wait for, in the words the loop's own detail
 // used.
-func (r *Reporter) Waits(names []string, target string) {
+func (r *Reporter) Waits(names []string, target string) { r.waits(names, target, "") }
+
+// WaitsShown is Waits with the target named as a person reads it: a waiting
+// line is read beside the step lines above it, so a stage a person sees as
+// "Deploying the security rules" is not left waiting for "rules" (D3435). The
+// log keeps target, the stage's own name, which is what the run record's detail
+// carries too. An empty shown is Waits.
+func (r *Reporter) WaitsShown(names []string, target, shown string) {
+	r.waits(names, target, shown)
+}
+
+func (r *Reporter) waits(names []string, target, shown string) {
 	if len(names) == 0 {
 		return
 	}
@@ -550,8 +594,8 @@ func (r *Reporter) Waits(names []string, target string) {
 	r.stopSpinner()
 	r.spinName, r.spinPaused = "", false
 	r.steps += len(names)
-	text := waitText(len(names), target)
-	r.logLine(glyphSkipped.text(r.o.ASCII) + " " + text + "\n")
+	r.logLine(glyphSkipped.text(r.o.ASCII) + " " + waitText(len(names), target) + "\n")
+	text := waitText(len(names), shownName(target, shown))
 	fmt.Fprintln(r.human, r.painted(glyphSkipped.text(r.o.ASCII), colourSkipped)+" "+text)
 }
 
@@ -658,23 +702,38 @@ func elapsedOf(o Outcome) string { return fmt.Sprintf("%.1fs", o.Elapsed.Seconds
 // program to type again, and the step the run stopped at, which is where it
 // picks up (G6). The converge sets it before Summary, and a run that is not
 // stopped never reads it.
-func (r *Reporter) RerunFrom(program, step string) {
+func (r *Reporter) RerunFrom(program, step string) { r.rerunFrom(program, step, "") }
+
+// RerunFromShown is RerunFrom with the step named as a person reads it: the
+// closing line is read under the step lines, which name the stage in plain
+// words ("Applying infrastructure changes") and not by its ID (D3435). The log
+// keeps step, and so does the run record. An empty shown is RerunFrom.
+func (r *Reporter) RerunFromShown(program, step, shown string) {
+	r.rerunFrom(program, step, shown)
+}
+
+func (r *Reporter) rerunFrom(program, step, shown string) {
 	if r == nil {
 		return
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.rerunProgram, r.rerunStep = program, step
+	r.rerunProgram, r.rerunStep, r.rerunShown = program, step, shown
 }
 
-// closingLine is what a run says last: summaryLine, and for a run that stopped
-// the one thing the closing line is there for — the command that resumes it
-// where it stopped. The step count is left out of that line because the steps
-// of a stopped run are mostly the ones it never reached, and "Failed in 2.2s,
-// 19 steps" reads as if it had done nineteen of them.
-func (r *Reporter) closingLine(o Outcome) string {
+// closingLine is what a run says last, as the log and the screen have it:
+// summaryLine, and for a run that stopped the one thing the closing line is
+// there for — the command that resumes it where it stopped. The step count is
+// left out of that line because the steps of a stopped run are mostly the ones
+// it never reached, and "Failed in 2.2s, 19 steps" reads as if it had done
+// nineteen of them. The two differ in one word: the stage the run stopped at,
+// which the log names by its ID and the screen in plain words (RerunFromShown,
+// D3435).
+func (r *Reporter) closingLine(o Outcome) (logged, shown string) {
 	if o.State == Failed && r.rerunProgram != "" && r.rerunStep != "" {
-		return fmt.Sprintf("Failed in %s. Rerun %s to resume at %s.", elapsedOf(o), r.rerunProgram, r.rerunStep)
+		return fmt.Sprintf("Failed in %s. Rerun %s to resume at %s.", elapsedOf(o), r.rerunProgram, r.rerunStep),
+			fmt.Sprintf("Failed in %s. Rerun %s to resume at %s.", elapsedOf(o), r.rerunProgram, shownName(r.rerunStep, r.rerunShown))
 	}
-	return summaryLine(o)
+	line := summaryLine(o)
+	return line, line
 }

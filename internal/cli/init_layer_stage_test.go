@@ -577,7 +577,7 @@ func TestUpdateLayerStageAppliesNothingInAnAgentSession(t *testing.T) {
 	if got, ok := layerObject(t, r); !ok || got != testProjectLayer {
 		t.Errorf("the object was written in an agent's session: %q", got)
 	}
-	if all := out + errOut; !strings.Contains(all, markLeft+" layer") || !strings.Contains(all, "left for you (layer") {
+	if all := out + errOut; !strings.Contains(all, markLeft+" "+initflow.DisplayName(initflow.Layer)) || !strings.Contains(all, "left for you (layer") {
 		t.Errorf("the run does not say the layer stage is left for a person:\n%s", all)
 	}
 }
