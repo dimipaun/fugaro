@@ -96,6 +96,74 @@ func RetiredKeyNotes(data []byte, doc Scope) []RetiredKeyNote {
 	return notes
 }
 
+// IgnoredKeyNote is a key a repository's file may still write that the
+// resolution drops: the path as the file writes it and the sentence a person
+// reads. It is RetiredKeyNote's sibling for the other half of the keys a file
+// may no longer decide — the ones with no home in the project's own document —
+// and the two are never the same key: an ignored key's value comes from a
+// profile, which a repository picks and never writes (D3421).
+type IgnoredKeyNote struct {
+	// Path is the key's path as the file writes it, without the leaf: the block
+	// the person deletes.
+	Path string
+	// Why is the sentence a person reads.
+	Why string
+}
+
+// dropIgnoredKeys is tree with every key a repository's file may no longer
+// decide removed, and the note of each, in workflow order: today the
+// workflows.*.resources block, whose sizing the profile the workflow starts
+// from decides (D3421).
+//
+// It is dropLiftedKeys' sibling and runs on the tree the lift left: the answer
+// is a copy and tree itself stays as it was written, so Resolve judges a file's
+// problems on the file as written and merges the copy. The two lists differ in
+// where the value goes — a lifted key's home is the project's own document, an
+// ignored key's is the profile the workflow starts from — which is why the note
+// names that profile rather than a defaults: path.
+func dropIgnoredKeys(tree map[string]any) (map[string]any, []IgnoredKeyNote) {
+	out := copyTree(tree)
+	wm, _ := out["workflows"].(map[string]any)
+	var notes []IgnoredKeyNote
+	for _, name := range sortedKeys(wm) {
+		w, ok := wm[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := w["resources"]; !ok {
+			continue
+		}
+		delete(w, "resources")
+		notes = append(notes, IgnoredKeyNote{
+			Path: "workflows." + name + ".resources",
+			Why:  resourcesIgnored(name, profileNamed(w)),
+		})
+	}
+	return out, notes
+}
+
+// profileNamed is the profile a workflow of a repository's file starts from as
+// the file wrote it, "" for a workflow that names none.
+func profileNamed(w map[string]any) string {
+	n, ok := w["profile"].(*yaml.Node)
+	if !ok || n.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return n.Value
+}
+
+// resourcesIgnored is the one sentence a repository's workflows.*.resources
+// earns: the block is read and decides nothing, and the profile the workflow
+// starts from sizes it (D3421). A workflow that names no profile is sized by
+// Fugaro's defaults, and the note names no profile rather than one that decides
+// nothing of that workflow's.
+func resourcesIgnored(workflow, profile string) string {
+	if profile == "" {
+		return "workflows." + workflow + ".resources is ignored: Fugaro's defaults size this workflow"
+	}
+	return "workflows." + workflow + ".resources is ignored: profile " + profile + " sizes this workflow"
+}
+
 // keyPaths visits the path of every key of m, the block at prefix, in key
 // order: a block's own path and then each key under it.
 func keyPaths(m map[string]any, prefix string, visit func(path string)) {
