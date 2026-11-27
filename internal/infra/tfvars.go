@@ -132,23 +132,26 @@ type InstallOptions struct {
 	// block (R13): whether each of the installation's two scheduled jobs is
 	// stopped. nil means the layer wrote nothing — no jobs: block, no block
 	// for that job, no paused: key, or no layer to read at all — and the
-	// default is paused, true. They are pointers for that reason and no
-	// other: the zero value of a bool says the opposite, so a caller that
-	// built the options itself would turn both schedules on by saying
-	// nothing, and the one direction this setting must never take by
-	// omission is the one that starts a job. ReportsPaused is rendered by
-	// R7, the reports job's own plan; CatalogCheckPaused is rendered by
-	// CatalogCheck.
+	// default is then the job's own: paused for the reports job, running for
+	// the catalog check, whose nightly rebuild needs no operator edit (D3444).
+	// They are pointers for that reason and no other: the zero value of a bool
+	// says the opposite of one of the two, so a caller that built the options
+	// itself would state the wrong answer for that job by saying nothing.
+	// ReportsPaused is rendered by R7, the reports job's own plan;
+	// CatalogCheckPaused is rendered by CatalogCheck.
 	ReportsPaused, CatalogCheckPaused *bool
 }
 
-// jobPaused is one paused option's value, with its default: a layer that
-// wrote nothing leaves the schedule stopped, which is also what the modules
-// default the value to. The default lives here, once, because "the layer said
-// nothing" and "the layer said false" are one bool apart and only one of them
-// starts a job.
-func jobPaused(p *bool) bool {
-	return p == nil || *p
+// jobPaused is one paused option's value, with the job's own default where the
+// option names none. The default lives here, once, because "the layer said
+// nothing" and "the layer said false" are one bool apart and which of them a
+// job takes is a decision about that job: the reports job deploys stopped, the
+// catalog check runs (D3444).
+func jobPaused(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -2961,12 +2964,12 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectReviewJobs = review
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
-	cc, err := CatalogCheck(lc, bucket, jobPaused(o.CatalogCheckPaused), s.ProjectSecrets)
+	cc, err := CatalogCheck(lc, bucket, jobPaused(o.CatalogCheckPaused, false), s.ProjectSecrets)
 	if err != nil {
 		return InstallationSpec{}, err
 	}
 	s.CatalogCheck = cc
-	rj, err := ReportsJob(lc, bucket, jobPaused(o.ReportsPaused))
+	rj, err := ReportsJob(lc, bucket, jobPaused(o.ReportsPaused, true))
 	if err != nil {
 		return InstallationSpec{}, err
 	}

@@ -221,10 +221,10 @@ func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 
 // TestCatalogCheckSpecCarriesNoBuildBound: the spec records no count of builds
 // (D1543), because no installation has one to record — the marker's
-// max_image_builds is gone and the count that bounded a night's builds is the
-// job's own (catalogRunBuildCap). What bounds a build's cost is the lease it
-// takes (D1554), and this pins that the removal really reached the bytes on the
-// wire rather than leaving a key the reader would silently ignore.
+// max_image_builds is gone and the run has no count of its own either (D3444:
+// it rebuilds every stale entry, four at a time). What bounds a build's cost is
+// the lease it takes (D1554), and this pins that the removal really reached the
+// bytes on the wire rather than leaving a key the reader would silently ignore.
 //
 // The other direction — the mixture `fugaro update` leaves behind, since the
 // spec and the job image swap without an order between them — is pinned beside

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,9 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,9 +85,9 @@ func catalogCheckCatalog(names ...string) *config.Catalog {
 // the repository its source names, and an entry with no repository of its own
 // (an inline definition, a prebuilt image) to the project's first repository.
 //
-// The spec carries no count of builds (D1543): which builds one run submits is
-// the job's own (catalogRunBuildCap), and no installation has a figure to
-// render here any more.
+// The spec carries no count of builds: the run's own figure is gone (D1543) and
+// what bounds a night is the lease each build takes (D1550), so no installation
+// has one to render here any more.
 func catalogCheckSpecFor(t *testing.T, cat *config.Catalog) catalogCheckSpec {
 	t.Helper()
 	spec := catalogCheckSpec{
@@ -726,49 +731,116 @@ func TestCatalogCheckJobLeavesAnEntryWithNoRecordToItsOwnBuild(t *testing.T) {
 	}
 }
 
-// TestCatalogCheckJobStopsAtTheRunBuildCap: one run submits at most the job's
-// own count of builds (catalogRunBuildCap), whatever the catalog says changed,
-// and an entry the cap stopped is recorded as a rebuild left for the next run
-// rather than dropped or failed. The count is the job's and no longer a
-// project's (D1543): every installation's marker recorded one build by default,
-// and the figure stayed here, where the run that submits the builds reads it.
+// TestNightlyRebuildsAllStale: one night rebuilds every stale entry the spec
+// assigns, four at a time (D3444). The run's own count of builds is gone
+// (D1543) — the entries are as many as the catalog has gone stale — and what
+// bounds the night is the lease each build takes (D1550), so a run that stopped
+// at a figure of its own would leave the rest of the catalog stale for another
+// night. The bound here is on how many go at once, not on how many go.
 //
-// Mutation (run, restore): render catalogRunBuildCap as 2 and the third entry's
-// rebuild is submitted here instead of being left for the next run.
-func TestCatalogCheckJobStopsAtTheRunBuildCap(t *testing.T) {
-	if catalogRunBuildCap != 1 {
-		t.Fatalf("the job's own count is %d, and this test is written for the one build a run submits: the count is the job's, so it is a change here and not in an installation", catalogRunBuildCap)
+// Mutations caught: submitting only the first entry (five of the six entries
+// stay stale with no build of their own), and submitting them one at a time
+// (the peak in flight drops to 1).
+func TestNightlyRebuildsAllStale(t *testing.T) {
+	if catalogBuildsAtOnce != 4 {
+		t.Fatalf("the job submits %d rebuilds at a time, and this test is written for the four D3444 names", catalogBuildsAtOnce)
 	}
-	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools", "extra", "runtime")))
+	// Six entries, so more than one round of four: every one of them has gone
+	// stale, and every one of them is this run's to rebuild.
+	entries := []string{"tools", "extra", "images", "checks", "web"}
+	repos := map[string]string{"runtime": "acme/other"}
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog(append(entries, "runtime")...)))
+	proxy := newCountingBuildProxy(t, f.fb.URL)
+	checkEndpoints = gcp.Endpoints{CloudBuild: proxy.URL + "/", NoAuth: true}
 	old := "sha256:" + strings.Repeat("9", 64)
-	f.seed(t, "tools", "acme/app", catalogCheckAppDef, old)
-	f.seed(t, "extra", "acme/app", catalogCheckAppDef, old)
+	for _, e := range entries {
+		f.seed(t, e, "acme/app", catalogCheckAppDef, old)
+	}
+	// runtime is acme/other's one entry, and its definition is that
+	// repository's own.
 	f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, old)
+	all := append(entries, "runtime")
 
 	lines, err := runCatalogCheck(t)
 	if err != nil {
+		t.Fatalf("the nightly run failed with every entry stale: %v", err)
+	}
+	if got := buildPosts(f.fb); got != len(all) {
+		t.Fatalf("builds submitted = %d, want %d: a night rebuilds the whole catalog however many entries are stale", got, len(all))
+	}
+	ids := map[string]bool{}
+	for _, e := range all {
+		repo := cmp.Or(repos[e], "acme/app")
+		l := lineFor(t, lines, e)
+		if l.Decision != imagecheck.Rebuild || l.Severity != "INFO" || !slices.Equal(l.Reasons, []string{imagecheck.ReasonBase}) {
+			t.Fatalf("%s line = %+v, want a rebuild this run submitted, for the base that moved", e, l)
+		}
+		if *l.BuildID == "" || ids[*l.BuildID] {
+			t.Fatalf("%s line = %+v, want a build of its own (ids so far %v)", e, l, ids)
+		}
+		ids[*l.BuildID] = true
+		// The entry's own check.json records the build it was rebuilt as, so the
+		// next run backs off from a build that is really going.
+		if st := f.state(t, e, repo); st == nil || st.Decision != imagecheck.Rebuild || st.BuildID != *l.BuildID || st.BuildInputs == nil {
+			t.Fatalf("%s check.json = %+v, want the build %s recorded", e, st, *l.BuildID)
+		}
+	}
+	if peak := proxy.peakInFlight(); peak <= 1 || peak > catalogBuildsAtOnce {
+		t.Errorf("%d rebuilds were in flight at once, want more than one and at most %d (D3444)", peak, catalogBuildsAtOnce)
+	}
+}
+
+// countingBuildProxy is the Cloud Build endpoint the fake is reached through,
+// counting the submissions in flight at once: the job's own bound is a fact
+// about how many go together, and a test that read the constant instead would
+// pass over a run that submitted them one at a time.
+type countingBuildProxy struct {
+	*httptest.Server
+	mu   sync.Mutex
+	open int
+	peak int
+}
+
+// hold is how long a submission is held before it reaches the fake: long
+// enough that the four a run submits together are in flight together even on a
+// slow machine, short enough to cost the test nothing.
+const countingBuildProxyHold = 50 * time.Millisecond
+
+func newCountingBuildProxy(t *testing.T, target string) *countingBuildProxy {
+	t.Helper()
+	u, err := url.Parse(target)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := buildPosts(f.fb); got != catalogRunBuildCap {
-		t.Fatalf("builds submitted = %d, want %d (the run's own cap)", got, catalogRunBuildCap)
-	}
-	if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild || *l.BuildID != "b0001" {
-		t.Fatalf("tools line = %+v", l)
-	}
-	for _, e := range []struct{ entry, repo string }{{"extra", "acme/app"}, {"runtime", "acme/other"}} {
-		l := lineFor(t, lines, e.entry)
-		if l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonBase, imagecheck.ReasonBuildCap}) ||
-			l.Severity != "ERROR" || *l.BuildID != "" {
-			t.Fatalf("%s line = %+v", e.entry, l)
+	p := &countingBuildProxy{}
+	rp := httputil.NewSingleHostReverseProxy(u)
+	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			rp.ServeHTTP(w, r)
+			return
 		}
-		// The capped entry stays due, with no build of its own recorded: the
-		// next run reads it as a rebuild that never happened.
-		st := f.state(t, e.entry, e.repo)
-		if st == nil || st.Decision != imagecheck.Rebuild || st.BuildID != "" || st.BuildInputs != nil ||
-			!slices.Equal(st.Reasons, []string{imagecheck.ReasonBase, imagecheck.ReasonBuildCap}) {
-			t.Fatalf("%s check.json = %+v", e.entry, st)
+		p.mu.Lock()
+		p.open++
+		if p.open > p.peak {
+			p.peak = p.open
 		}
-	}
+		p.mu.Unlock()
+		defer func() {
+			p.mu.Lock()
+			p.open--
+			p.mu.Unlock()
+		}()
+		time.Sleep(countingBuildProxyHold)
+		rp.ServeHTTP(w, r)
+	}))
+	t.Cleanup(p.Close)
+	return p
+}
+
+func (p *countingBuildProxy) peakInFlight() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.peak
 }
 
 // TestCatalogCheckJobLeasesEachBuild: a build the nightly job submits is money
