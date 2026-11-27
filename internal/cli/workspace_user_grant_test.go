@@ -145,6 +145,10 @@ func (f *wu8FakeMemberOps) Offboard(context.Context, workspace.MemberTarget, str
 	return f.wu8Unexpected("Offboard")
 }
 
+func (f *wu8FakeMemberOps) RecordRemoval(context.Context, workspace.MemberTarget, string) error {
+	return f.wu8Unexpected("RecordRemoval")
+}
+
 func (f *wu8FakeMemberOps) wu8Unexpected(what string) error {
 	if f.t != nil {
 		f.t.Errorf("the command called MemberOps.%s, and fugaro workspace user grant|revoke reaches a member through ReadMirror, ReadGrants, WriteGrants and Audit alone", what)

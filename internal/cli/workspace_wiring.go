@@ -804,6 +804,14 @@ func (s workspaceSides) Offboard(ctx context.Context, m workspace.MemberTarget, 
 	return ops.Offboard(ctx, m, address)
 }
 
+func (s workspaceSides) RecordRemoval(ctx context.Context, m workspace.MemberTarget, member string) error {
+	ops, err := s.memberOps(ctx)
+	if err != nil {
+		return err
+	}
+	return ops.RecordRemoval(ctx, m, member)
+}
+
 // Sweep is the WORKSPACE's own intake (F21): the containers a person stored at
 // the workspace's project, deleted by that project's intake's own account. It is
 // memberSweeper's pattern at the other installation an offboarding reaches, and

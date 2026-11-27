@@ -904,6 +904,11 @@ func (m *wu6Members) Offboard(context.Context, workspace.MemberTarget, string) e
 	return errors.New("wu6: project rm called MemberOps.Offboard")
 }
 
+func (m *wu6Members) RecordRemoval(context.Context, workspace.MemberTarget, string) error {
+	m.rig.log("members.record-removal")
+	return errors.New("wu6: project rm called MemberOps.RecordRemoval")
+}
+
 func (m *wu6Members) Audit(context.Context, workspace.MemberTarget, string, []byte) error {
 	m.rig.log("members.audit")
 	return errors.New("wu6: project rm called MemberOps.Audit: a project's removal is filed in the workspace's own trail")
