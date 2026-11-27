@@ -124,8 +124,8 @@ func seedIntake(t *testing.T, r *imagesRig, image string) {
 //
 // A later run keeps it untouched: the block is the installation's record, and a
 // run that dropped it would plan the account's removal (a google_service_account
-// is data-bearing under D1551, so that plan is refused and the installation
-// stops converging).
+// is recreatable under D3430, so that plan is applied and the account, its
+// bindings and the grants the block renders are destroyed).
 //
 // An installation that cannot carry one — no Firebase backend recorded — is not
 // an error: the update succeeds, writes no block, and says in one line why.
@@ -301,11 +301,11 @@ func orchestratorConvergeRig(t *testing.T, withBlock bool) *convergeRig {
 // document from never carries the key (Orchestrator is the one writer that
 // echoes the installation's own opt-in). A run whose carry dropped it would
 // hand Terraform a document without var.orchestrator, which is the plan of the
-// account's removal — a google_service_account is data-bearing under D1551 and
-// the removal rule REFUSES that plan rather than applying it (tf/cover.go's
-// RefusesRemovalType), so the installation would not merely lose its daemon,
-// it would stop converging: every later update repeats the refusal. What the
-// run must leave is therefore the block it found, with one member moved.
+// account's removal — a google_service_account is recreatable under D3430, so
+// the removal rule APPLIES that plan (tf/cover.go's RemovalClass), and the
+// installation loses the account, its five bindings and the grants the block
+// renders, its daemon left with no identity to mint as. What the run must leave
+// is therefore the block it found, with one member moved.
 //
 // The moved member is the image, onto the pin this release resolved for the
 // credentials service — `fugaro orchestrator serve` is a subcommand of that
@@ -336,7 +336,7 @@ func TestUpdateConvergesAnInstallationAtThePreviousVersionWithAndWithoutTheBlock
 
 		after := orchestratorBlockIn(t, r.imagesRig)
 		if after == nil {
-			t.Fatalf("after fugaro update, the installation's %s carries no orchestrator block. The account and its bindings are state, and the document this run handed Terraform is the plan of their destruction — which the removal rule refuses (a google_service_account is data-bearing under D1551), so the installation stops converging rather than losing only its daemon", infra.VarsFile)
+			t.Fatalf("after fugaro update, the installation's %s carries no orchestrator block. The account and its bindings are state, and the document this run handed Terraform is the plan of their destruction — which the removal rule applies (a google_service_account is recreatable under D3430), so the apply destroys the account and the grants the block renders rather than the run stopping", infra.VarsFile)
 		}
 		if got := after["image"]; got != r.credentialsRefAt(convergeRelease) {
 			t.Errorf("the orchestrator's image after the update = %v, want this release's pin %s: `fugaro orchestrator serve` is a subcommand of the binary the credentials service runs, so a daemon left on the release behind's process reads this run's state with the reader behind it", got, r.credentialsRefAt(convergeRelease))

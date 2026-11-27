@@ -18,11 +18,11 @@ import (
 // key, taken from the documents the workdir holds, so a document rebuilt from a
 // spec — which never carries the key, Orchestrator composing the one write the
 // installation's own opt-in asks for —
-// does not plan the account's destruction. That plan is refused (the removal of
-// a google_service_account is data-bearing under D1551, RefusesRemovalType), and
-// the refusal repeats on every later update, which is what makes the carry the
-// difference between an installation that opted in converging and one that
-// stopped.
+// does not plan the account's destruction. That plan is APPLIED — a
+// google_service_account is recreatable under D3430, so the removal rule warns
+// rather than refuses (RemovalClass) — and it takes the account and its five
+// bindings with it, which is what makes the carry the difference between an
+// installation that opted in converging and one whose daemon lost its identity.
 //
 // Mutation (run, restore): drop the `doc[OrchestratorKey] = block` write and the
 // first half of this test reports a document with no orchestrator in it.
@@ -43,7 +43,7 @@ func TestCarriedOrchestratorCarriesTheBlockAHandOptedInstallationHolds(t *testin
 	}
 	block, _ := doc[OrchestratorKey].(map[string]any)
 	if block == nil {
-		t.Fatalf("the block the installation holds is not in the document this run hands Terraform:\n%s. The account and its bindings are STATE, and a document without the key is the plan of their removal — a google_service_account is data-bearing under D1551 and the removal rule refuses it, so every later update of this installation is refused too", got)
+		t.Fatalf("the block the installation holds is not in the document this run hands Terraform:\n%s. The account and its bindings are STATE, and a document without the key is the plan of their removal — a google_service_account is recreatable under D3430 and the removal rule applies it, so the account and its bindings are destroyed rather than the update stopping", got)
 	}
 	if !reflect.DeepEqual(block, previous[OrchestratorKey]) {
 		t.Errorf("the carried block is %v, want it whole as the installation held it (%v): the block is the installation's own record of what it opted into, and a run that recomposed it would be re-deciding the account's grants", block, previous[OrchestratorKey])

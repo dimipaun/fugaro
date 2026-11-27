@@ -2544,11 +2544,12 @@ const OrchestratorKey = "orchestrator"
 // tfvars rebuilds the document from a spec that does not carry the key, so
 // without this carry the next `fugaro update` hands Terraform a document with no
 // orchestrator block at all, and the plan is the account's and its bindings'
-// removal — a google_service_account, which D1551 classifies as data-bearing
-// ("an identity whose keys and grants are lost with it") and the removal rule
-// therefore REFUSES (internal/infra/tf's RefusesRemovalType). An installation
-// that opted in stops converging at its next update, and every update after it
-// repeats the same refusal.
+// removal — admitted, not refused: a google_service_account is recreatable under
+// D3430, so the removal rule warns and applies it (internal/infra/tf's
+// RemovalClass), and the account, its five bindings and the caller class and
+// invoker grant this same block renders go with it. An installation that opted in
+// converges into one whose daemon has no identity to mint as, and only a block
+// put back by hand restores it.
 //
 // The block is taken WHOLE and not recomposed: it is the installation's own
 // record of what it opted into, and a run that rebuilt it from a spec would be a

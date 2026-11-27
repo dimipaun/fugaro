@@ -58,6 +58,6 @@ func TestDocsUpdateInFlightInstallationRowCarriesTheOrchestrator(t *testing.T) {
 		t.Errorf("internal/infra/tfvars.go carries an orchestrator key in its spec: %s's installation row says the block is written once by ensureOrchestratorBlock and carried, and a spec field would recompose it on every run", path)
 	}
 	if !strings.Contains(string(tfvars), "func CarriedOrchestrator(") {
-		t.Errorf("internal/infra/tfvars.go has no CarriedOrchestrator: %s's installation row says a block the installation holds is carried across an update, and a prepare that drops it hands Terraform the document of the account's and its five bindings' removal — which D1551 refuses for the identity", path)
+		t.Errorf("internal/infra/tfvars.go has no CarriedOrchestrator: %s's installation row says a block the installation holds is carried across an update, and a prepare that drops it hands Terraform the document of the account's and its five bindings' removal — which D3430 has the rule apply, since a google_service_account is recreatable", path)
 	}
 }
