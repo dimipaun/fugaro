@@ -1062,13 +1062,14 @@ bucket, no database and no host.
 (docs/model-credentials-routing/contract-pools.md): the project, its pools and
 each pool's members, with the state, the next reset, the usage and the headroom
 of each member. The figures are the credentials service's own — the calls and
-tokens each member has served in the window it counts, the instant a held member
-becomes usable again, and what is left of its limit — so this half reads the
-project's database as the person running it, and a project with no database, or
-one whose read fails, prints the pools with the figures absent and says why.
-Headroom is there only where a provider reported a utilisation figure: it is
-never guessed. No token, no key and no secret appears in the document, for
-anyone: it carries names and figures and never a value (F19).
+tokens each member has served in the window it counts, the instant a mark frees
+a member, and what is left of its limit — so this half reads the project's
+database as the person running it, and a project with no database, or one whose
+read fails, prints the pools with the figures absent and says why. The read
+writes nothing: it never reads the leases, whose own read prunes them. Headroom
+is there only where a provider reported a utilisation figure: it is never
+guessed. No token, no key and no secret appears in the document, for anyone: it
+carries names and figures and never a value (F19).
 
 Usage: `fugaro accounts pool ls`
 

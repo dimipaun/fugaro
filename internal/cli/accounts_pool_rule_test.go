@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -441,12 +442,14 @@ func TestPoolLsJSONHasNoValue(t *testing.T) {
 }
 
 // TestPoolLsPrintsUsageAndNoValue is PL10's read: the document carries what the
-// service counted — the usage of the window, the instant a held member becomes
-// usable again, and what a provider's own figure leaves of its limit — and it
-// still carries no value (F19). Headroom is there only where a figure was
-// reported and is never guessed, a member held by a mark and a member held by a
-// run's lease are told apart by what holds them, and a member nothing was
-// counted for keeps the absent figures the other test pins.
+// service counted — the usage of the window, the instant a mark frees a member,
+// and what a provider's own figure leaves of its limit — and it still carries no
+// value (F19). Headroom is there only where a figure was reported and is never
+// guessed, a member nothing was counted for keeps the absent figures the other
+// test pins, and the read WRITES nothing: the leases are not read at all, so a
+// member held by a run's own lease prints no reset and the lease node is still
+// there afterwards (creds.RTDBStore.Leases sweeps, and the service is the only
+// writer of this database).
 func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, accountsPoolCredentials+accountsPoolLsPools)
@@ -463,10 +466,14 @@ func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
 	// oauth-two served one call, and no provider reported a figure for it.
 	f.db.Set(credsUsagePath("oauth-two"), map[string]any{
 		"calls": 1, "tokens": 40, "window": now.Add(-time.Minute).Format(time.RFC3339Nano)})
-	// router-one is held by a run's own lease, and nothing was counted for it:
-	// the reset is the lease's lapse and the usage stays absent.
+	// router-one is held by a run's own lease, and nothing was counted for it: the
+	// listing reads no lease, so the reset is absent and the usage stays absent.
 	f.db.Set("creds/leases/gh-acme-app/r1", map[string]any{
 		"credential": "router-one", "until": until.Format(time.RFC3339Nano)})
+	lease := f.db.Value("creds/leases/gh-acme-app/r1")
+	if lease == nil {
+		t.Fatal("the lease node was not seeded: the assertion below that the listing left it alone would pass vacuously")
+	}
 
 	out, errOut, err := execute(t, "accounts", "pool", "ls", "--json")
 	if err != nil {
@@ -517,14 +524,24 @@ func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
 	}
 
 	held := routes.Members[0]
-	if held.State != string(creds.StateAvailable) || held.NextReset == nil || !held.NextReset.Equal(until) {
-		t.Errorf("a member held by a run's lease reads %q until %v; want the available state and the instant its lease lapses", held.State, held.NextReset)
+	if held.State != string(creds.StateAvailable) {
+		t.Errorf("a member held by a run's lease reads %q; want the available state, which is what a member no mark holds has", held.State)
+	}
+	if held.NextReset != nil {
+		t.Errorf("a member held by a run's lease carries the reset %v; want none: the listing reads no lease, so it cannot know one", held.NextReset)
 	}
 	if held.Usage != nil || held.Headroom != nil {
 		t.Errorf("a member nothing was counted for carries usage %+v and headroom %v; want both absent", held.Usage, held.Headroom)
 	}
 	if free := routes.Members[1]; free.NextReset != nil || free.Usage != nil || free.Headroom != nil {
 		t.Errorf("a member nothing holds and nothing counted carries a figure: %+v", free)
+	}
+	// The listing wrote nothing: the lease is where it was, and the service stays
+	// the only writer of the nodes this command reads.
+	if after := f.db.Value("creds/leases/gh-acme-app/r1"); after == nil {
+		t.Error("the listing deleted the lease node it read past: a read that sweeps is a write, and the service is this database's only writer")
+	} else if !reflect.DeepEqual(after, lease) {
+		t.Errorf("the listing changed the lease node: %v became %v", lease, after)
 	}
 
 	// No value, for anyone: a member is the five names of the contract and a
