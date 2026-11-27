@@ -842,7 +842,18 @@ func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg
 		// map again, and a mapping someone cleared would come back.
 		migrated = map[string]string{}
 	}
-	plan.imageMap = migrated
+	// The map the file is left with when this step writes no new key: the one the
+	// file already holds. A file that names no map must stay silent — handing it
+	// the node's map would state the project's map as this machine's own, and a
+	// stated map is the whole one (D1906), so the next publish of this machine
+	// would serve that copy over a teammate's later mapping. A migration that
+	// really moved mappings is the one case a no-new-key write fires: the file's
+	// map comes out under the keys the readers of this release look up (R13).
+	left := plan.imageNow
+	if plan.imageMigrated {
+		left = migrated
+	}
+	plan.imageMap = left
 	plan.imageSeeded = plan.imageNow == nil && len(migrated) > 0
 	// The provider this command already resolved for the repository
 	// (reposEnrolmentProvider): the key's kind is the allow-list entry's kind,
@@ -856,7 +867,7 @@ func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg
 	}
 	plan.imageKey = key
 	if e, ok := migrated[key]; ok {
-		plan.imageEntry, plan.imageMap = e, migrated
+		plan.imageEntry, plan.imageMap = e, left
 		plan.imageWhy = "already repo_images[" + key + "] = " + pluginwire.Printable(e)
 		return nil
 	}
@@ -866,7 +877,7 @@ func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg
 		// builds for the repository itself (reposViewImageSource). There is
 		// nothing to map, and the step says which of them it is rather than
 		// leaving the line empty.
-		plan.imageMap = migrated
+		plan.imageMap = left
 		plan.imageWhy = "left out: this job's image is not a catalog entry's (" + string(row.ImageSource) + "), so there is no mapping to write"
 		return nil
 	}
@@ -1098,6 +1109,12 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) error {
 		// The legacy member goes with the write, which is what "never writes
 		// image_map" means in a file that held one: the map is stated once, under
 		// the member every reader of this release reads first (R2, S3).
+		//
+		// The node keeps its own legacy member until U1b publishes repo_images
+		// (D3376 as amended, R14), so the map this write states reaches a job
+		// through this machine's file and the readers that take repo_images first
+		// (configImageMap) — another machine, and the credentials service, still
+		// read the node's map until that step lands.
 		next.ImageMap = nil
 		// The bytes the first write left, re-read rather than re-marshalled:
 		// userSave's old is the file the write replaces, and a marshal of the

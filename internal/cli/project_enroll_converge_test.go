@@ -729,6 +729,41 @@ func TestReposAddNeverWritesImageMap(t *testing.T) {
 	}
 }
 
+// TestReposAddLeavesAFileThatNamesNoMapAlone is the other side of the merge: a
+// project already serving repo_images, in a file that names neither member, has
+// nothing for this step to write — and the node's map must not be copied into
+// this machine's file. A stated map is the whole one (D1906), so that copy would
+// become this machine's own answer for every repository and, at its next publish,
+// replace a teammate's later mapping with it.
+func TestReposAddLeavesAFileThatNamesNoMapAlone(t *testing.T) {
+	r := enrolRig(t)
+	node := addPolicyNode()
+	raw, err := json.Marshal(projectpolicy.RepoImages{"github/owner/repo-a": "base", enrolImageKey: "base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block map[string]any
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatal(err)
+	}
+	node["repo_images"] = block
+	r.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileString(t, r.cfg); strings.Contains(got, "repo_images") {
+		t.Errorf("the run wrote the published node's map into a config that named none:\n%s", got)
+	}
+	if after := r.addLocal(t); after.RepoImages != nil || after.ImageMap != nil {
+		t.Errorf("this machine's project config names a map after a run with nothing to write: repo_images=%v image_map=%v", after.RepoImages, after.ImageMap)
+	}
+	if want := "already repo_images[" + enrolImageKey + "] = base"; !strings.Contains(out, want) {
+		t.Errorf("the plan does not report the mapping the project already serves (%q):\n%s", want, out)
+	}
+}
+
 // TestReposAddMigratesTheFileImageMap is the other half of the clearing write:
 // the map this machine's config holds ITSELF is the legacy one (R2 reads the
 // file's own member before the node's), and the step must migrate it into
