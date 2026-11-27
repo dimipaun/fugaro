@@ -85,6 +85,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/credsvc/github.go":               "the credentials service's admission of a GitHub provider",
 	"internal/credsvc/githubread.go":           "the credentials service's GitHub read mint",
 	"internal/credsvc/scope_workspace.go":      "the workspace's shared pool read for the Bitbucket tokens it declares: the node's own list is the store the scope serves a member's git credential from, while the model and GitHub entries are the cascade's and the mint's",
+	"internal/credsvc/workflowsecrets.go":      "the code host a repository's own fugaro.yaml is read through for a workflow's secrets (UO7, D3459): the GitHub App mint, or the bundle's own Bitbucket token",
 	"internal/gitprov/gitprov.go":              "KindForHost and KindForURL's host table",
 	"internal/gitprov/kinds.go":                "the declaration itself",
 	"internal/gitprov/providers/providers.go":  "FromEnv and Proxied's admission of a kind, and the refusal's text",
