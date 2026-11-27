@@ -47,6 +47,11 @@ test_fugaro_accepts_the_real_surface() {
   expect_status "$?" 0 "the root's --version"
   run_fugaro doctor --all
   expect_status "$?" 0 "doctor --all"
+  # A value-taking flag's value is not a flag of its own, even spelled like one:
+  # the arity is the only thing that says so, and a verifier that read it wrong
+  # would refuse a command line the real CLI takes.
+  run_fugaro accounts ls --repo --nope
+  expect_status "$?" 0 "a value that is spelled like an unknown flag"
 }
 
 test_fugaro_refuses_an_unknown_flag() {

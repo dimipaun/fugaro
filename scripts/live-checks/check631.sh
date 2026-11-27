@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Check 631 — the key credential, on a real installation: `fugaro accounts add
 # <name> --type anthropic` (and `--type openrouter`) at YOUR terminal — the
-# hidden prompt and nothing echoed, the value in no file under
-# ~/.config/fugaro/ and in no shell history, the refusal in a coding agent's
+# command's own hidden prompt and nothing echoed, no key shape in a file under
+# ~/.config/fugaro/ and none in a shell history, the refusal in a coding agent's
 # session, `fugaro accounts ls --json` naming each credential's serving path,
 # `fugaro accounts rm` against the pool that listed it, and one sandbox run
 # served by the credential the check declared.
@@ -26,19 +26,21 @@
 #     may write the declaration and never the key — and stores nothing. This
 #     check reads the config back to say which of the two the session's refusal
 #     left behind;
-#   * **the hidden prompt, and nothing echoed**: the value of the anthropic
-#     credential is read by this check at its OWN hidden prompt, on your
-#     terminal, and handed to `fugaro accounts add` on stdin — no flag, no
-#     argument, no environment carries it, and this check proves the command's
-#     own output holds no line of it. The openrouter credential is declared with
-#     the value pasted at the COMMAND's own hidden prompt (stdin a terminal),
-#     which is the prompt the acceptance names, and the check reads that prompt
-#     sentence out of the command's output;
-#   * **the value in no file, and in no history**: every file under the fugaro
-#     config directory (`~/.config/fugaro/`, the `.bak-<UTC>` backups included)
-#     and every shell history file on this machine is scanned for the value the
-#     check read — by a child that takes the value in its environment and prints
-#     file names only, never the value;
+#   * **the command's own hidden prompt, and nothing echoed**: BOTH credentials
+#     are declared with the value pasted at the COMMAND's own hidden prompt —
+#     `fugaro accounts add <name> --type <type>` runs AT your terminal: the
+#     terminal on its input and a terminal on its output, which is the whole of
+#     the door a managed project's credential is created through
+#     (accountsAddOwnTerminal, internal/cli/accounts_managed.go) — so this check
+#     never holds the value at all: no flag, no argument, no environment and no
+#     pipe carries it. The check reads each command's own prompt sentence out of
+#     that command's output, and proves no stream of either carries a line
+#     shaped like a provider key;
+#   * **no key shape in a file, and none in a history**: every file under the
+#     fugaro config directory (`~/.config/fugaro/`, the `.bak-<UTC>` backups
+#     included) and every shell history file on this machine is scanned for a
+#     line shaped like a provider key (`sk-ant-…`, `sk-or-v1-…`) — by a child
+#     that prints file names only and is given no value to look for;
 #   * **`fugaro accounts ls --json` naming the serving path**: each credential's
 #     type and the half that serves it (the credentials service for an
 #     Anthropic-key credential, a run's own gateway for an OpenRouter one);
@@ -56,9 +58,11 @@
 #     is this build's two steps rather than one.
 #
 # Nothing here reads a credential value out of the installation: names, types,
-# paths, prompts, statuses and reason words only. The one value this check ever
-# holds is the one YOU paste, it is held in this process's own memory, it is
-# written in no file, and it reaches the command under test on stdin.
+# paths, prompts, statuses and reason words only. This check holds no value of
+# yours at any point — each one is read by the command under test at its own
+# hidden prompt — so the two sweeps below look for the SHAPE of a provider key
+# rather than for the value, which is the one reading a check that never sees the
+# value can take.
 #
 # Usage:      bash scripts/live-checks/check631.sh --sandbox <a sandbox repository checkout> [--project <name>]
 #             bash scripts/live-checks/check631.sh --sandbox <path> --preflight
@@ -107,17 +111,19 @@
 # address gcloud is authenticated as, and a pool published to the node needs
 # one), TASK and RECIPE (what the run is launched with), REGION (us-east5),
 # LOG_VIEW, RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS
-# (180), DOCTOR_TIMEOUT_SECONDS (300), LAUNCH_TIMEOUT_SECONDS (600),
-# PUBLISH_TIMEOUT_SECONDS (600), TTY (/dev/tty: the terminal the two pastes are
-# read from, which only the check's own test points elsewhere) and VALUE_FILE (a
-# file the value is read from instead of the hidden prompt: the check's own test
-# sets it, and a person never does — a value read from a file is a value that
-# was in a file).
+# (180), DECLARE_TIMEOUT_SECONDS (CLI_TIMEOUT_SECONDS: the bound the two
+# declarations are measured against, so how fast the machine that reads at the
+# terminal is is never what calls one hung), DOCTOR_TIMEOUT_SECONDS (300),
+# LAUNCH_TIMEOUT_SECONDS (600),
+# PUBLISH_TIMEOUT_SECONDS (600) and TTY (/dev/tty: the terminal both commands
+# run at and read their value from, which only the check's own test points
+# elsewhere).
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: this check reads a live
 # project, and a trace would copy its output a second time — and a trace of the
-# step that hands the value to the command under test would print it.
+# step that runs a declaration at the terminal would print, a second time, every
+# frame the command drew on the screen you are typing at.
 XTRACE_AT_START=no
 case "${-:-}" in *x*) XTRACE_AT_START=yes ;; esac
 case "${SHELLOPTS:-}" in *xtrace*) XTRACE_AT_START=yes ;; esac
@@ -184,12 +190,14 @@ RESTORE_NOTE=""
 PROJECT=""
 INSTALLATION=""
 GCP_PROJECT=""
-# The value is the one thing this check holds and never prints. It is read at
-# the hidden prompt (or, for the check's own test, from VALUE_FILE), kept in
-# this shell's memory, and handed to the command under test on stdin.
-VALUE=""
+# The value is the one thing this check never holds: each credential's is read
+# by the command under test at its own hidden prompt, with this check's terminal
+# as that command's stdin.
 HAVE_TTY=no
-VALUE_FILE=""
+# The settings the owner's terminal had before any command touched it (stty -g on
+# fd 5): a command that reads a value takes the echo off, and this check puts the
+# terminal back to these on its way out whatever happened to the command.
+TERMIOS_AT_START=""
 ANTHROPIC=""
 OPENROUTER=""
 POOL=""
@@ -365,17 +373,24 @@ PY
   chmod 700 "$SCRATCH/read.py"
 }
 
-# write_sweeper is the one child that ever holds the value besides this shell:
-# it takes it in its ENVIRONMENT (never in its argument list, where the process
-# table would show it to every other process of your machine), and it prints the
-# NAMES of the files that hold it and never the value itself.
+# The shape of a provider key: what the sweeper reads a file for, and what the
+# terminal runner redacts before it relays a command's own output to your screen.
+# This check holds no value, so the shape is all it can read for — and a line
+# carrying one may reach neither your terminal nor a transcript of it. The two
+# children are handed this one pattern rather than carrying a copy each.
+KEY_SHAPE='(sk-ant-|sk-or-v1-)[A-Za-z0-9_-]{12,}'
+
+# write_sweeper is the child that reads a config directory and a set of history
+# files looking for a line shaped like a provider key. It is handed NO value —
+# this check never holds one — so all it can do is name the files a shape appears
+# in, and it prints names and counts only, never a line it read.
 write_sweeper() {
   cat >"$SCRATCH/sweep.py" <<'PY'
 import os
 import re
 import sys
 
-KEY_SHAPE = re.compile(r"(sk-ant-|sk-or-v1-)[A-Za-z0-9_-]{12,}")
+KEY_SHAPE = re.compile(sys.argv[1])
 
 
 def walk(paths):
@@ -389,9 +404,8 @@ def walk(paths):
             yield path
 
 
-what = sys.argv[1]
-paths = sys.argv[2:]
-needle = os.environ.get("CHK631_VALUE", "").encode("utf-8", "replace")
+what = sys.argv[2]
+paths = sys.argv[3:]
 scanned = 0
 hits = 0
 for path in walk(paths):
@@ -401,20 +415,17 @@ for path in walk(paths):
     except OSError:
         continue
     scanned += 1
-    found = False
-    if what == "value":
-        found = bool(needle) and needle in data
-    elif what == "shape":
+    found = 0
+    if what == "shape":
         for line in data.split(b"\n"):
             if KEY_SHAPE.search(line.decode("utf-8", "replace")):
-                found = True
-                break
+                found += 1
     else:
         sys.stderr.write("sweep.py: unknown query %s\n" % what)
         sys.exit(2)
     if found:
         hits += 1
-        print("hit\t%s" % path)
+        print("hit\t%s\t%d" % (path, found))
 print("scanned=%d" % scanned)
 print("hits=%d" % hits)
 PY
@@ -431,7 +442,43 @@ sweep() { # sweep QUERY DEST PATH...
   local query=$1 dest=$2
   shift 2
   [ $# -gt 0 ] || return 0
-  CHK631_VALUE="${VALUE:-}" python3 "$SCRATCH/sweep.py" "$query" "$@" >"$dest" 2>"$dest.err"
+  python3 "$SCRATCH/sweep.py" "$KEY_SHAPE" "$query" "$@" >"$dest" 2>"$dest.err"
+}
+
+# history_files lists the shell history files this machine has, one per line.
+history_files() {
+  local f
+  for f in "${HISTFILE:-}" "${HOME:-}/.bash_history" "${HOME:-}/.zsh_history" "${HOME:-}/.sh_history" "${HOME:-}/.history" "${HOME:-}/.histfile" "${HOME:-}/.local/share/fish/fish_history"; do
+    [ -n "$f" ] || continue
+    [ -f "$f" ] || continue
+    printf '%s\n' "$f"
+  done
+}
+
+# baseline_sweeps reads the config directory and the histories BEFORE this check
+# declares anything: a key-shaped line already there (an old export in a history,
+# a backup) is not what a hidden prompt wrote, and only a file that gained a line
+# since is a finding.
+baseline_sweeps() {
+  if [ -n "$FUGARO_CONFIG_DIR" ] && [ -d "$FUGARO_CONFIG_DIR" ]; then
+    sweep shape "$SCRATCH/base-config.txt" "$FUGARO_CONFIG_DIR"
+  fi
+  local files=() f
+  while IFS= read -r f; do files+=("$f"); done < <(history_files)
+  if [ "${#files[@]}" -gt 0 ]; then
+    sweep shape "$SCRATCH/base-history.txt" "${files[@]}"
+  fi
+}
+
+# new_hits BASE NOW: the files of NOW (a sweep's output) that hold more
+# key-shaped lines than BASE (an earlier sweep's, which may not exist) did.
+new_hits() {
+  local base=$1
+  [ -f "$base" ] || base=/dev/null
+  awk -F'\t' '
+    FILENAME == ARGV[1] { if ($1 == "hit") before[$2] = $3; next }
+    $1 == "hit" && !(($2 in before) && before[$2] + 0 >= $3 + 0) { printf "%s ", $2 }
+  ' "$base" "$2"
 }
 
 field() { # field FILE KEY
@@ -450,12 +497,18 @@ row_field() { # row_field COLUMN — one column of the run this check launched
   awk -F'\t' -v id="$RUN_ID" -v col="$1" '$1 == "row" && $2 == id { print $col; exit }' "$SCRATCH/rows.txt" 2>/dev/null
 }
 
+# The bound is counted in tenths of a second, and the poll is the same tenth:
+# every command this check runs answers in milliseconds, and a poll of a whole
+# second made each of them cost a second of wall clock -- forty-odd of them per
+# run, which is what put this check's test past its runner's deadline on a
+# loaded machine. A tick that overruns under load only makes the bound later,
+# never earlier.
 bound_loop() { # bound_loop SECONDS PID
-  local secs=$1 pid=$2 waited=0
+  local secs=$1 pid=$2 ticks=$(( $1 * 10 )) waited=0
   BOUNDED_TIMED_OUT=no
   while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
+    [ "$waited" -lt "$ticks" ] || break
+    sleep 0.1
     waited=$((waited + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
@@ -475,21 +528,226 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   bound_loop "$secs" "$!"
 }
 
-# run_bounded_stdin is run_bounded with the value piped into the command's
-# stdin: the value is a shell variable expanded into a BUILTIN's argument list,
-# so it is never an argv of any process of this machine, and the pipe is what
-# the command reads when its stdin is not a terminal (readSecret reads to EOF).
-run_bounded_stdin() { # run_bounded_stdin SECONDS KEY DIR VALUE CMD...
-  local secs=$1 key=$2 dir=$3 value=$4
-  shift 4
-  ( trap - ERR; cd "$dir" || exit 1; printf '%s\n' "$value" | "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  bound_loop "$secs" "$!"
+# run_at_terminal runs a command at the owner's OWN terminal: the terminal
+# itself on the command's input, and a terminal on each of its two output
+# streams. That is the whole of the door a managed project's credential is
+# created through — no coding agent's marker, no --yes, a terminal on the run's
+# input and a terminal on its output (accountsAddOwnTerminal,
+# internal/cli/accounts_managed.go) — and a command given anything less is
+# refused before it reads a value. The value travels from the terminal to the
+# command on the command's own fd 0, so this check never holds it; what the
+# command prints is captured, its two streams apart, and relayed to this
+# check's own stderr, which is the screen the person at the terminal is reading
+# the prompt on — with a key shape redacted, since that screen and the transcript
+# of it are exactly what the acceptance's "nothing echoed" clause is about.
+run_at_terminal() { # run_at_terminal SECONDS KEY DIR CMD...
+  local secs=$1 key=$2 dir=$3
+  shift 3
+  ( trap - ERR; cd "$dir" || exit 1
+    exec python3 "$SCRATCH/at_terminal.py" "$secs" "$KEY_SHAPE" "$SCRATCH/$key.out" "$SCRATCH/$key.err" "$@" ) &
+  ACTIVE_RUNNER=$!
+  bound_loop "$secs" "$ACTIVE_RUNNER"
+  ACTIVE_RUNNER=""
+  # The runner ends a command that outstayed its deadline itself, with 124, the
+  # child killed by its own process group rather than by this shell.
+  [ "$BOUNDED_STATUS" != 124 ] || BOUNDED_TIMED_OUT=yes
+}
+
+# ACTIVE_RUNNER is the runner of the declaration going on right now, and
+# end_active_runner is how this check ends one it is leaving behind: the command
+# reads the owner's terminal, it is in a session of its own so no signal from this
+# shell reaches it, and the runner is the process that can end it and the one that
+# holds the terminal's settings to put back. An interrupt, a signal or any other
+# way out of this check runs this before the check goes.
+ACTIVE_RUNNER=""
+end_active_runner() {
+  [ -n "$ACTIVE_RUNNER" ] || return 0
+  local pid=$ACTIVE_RUNNER i=0
+  ACTIVE_RUNNER=""
+  kill -TERM "$pid" 2>/dev/null || true
+  # Long enough for a runner that is ending the command itself to do it (the
+  # command's grace, then the terminals drained) and put the terminal back.
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  return 0
+}
+
+# write_terminal_runner is the child that runs one declaration at the owner's
+# terminal. fd 5 is that terminal (open_terminal); fd 4 is this check's stderr,
+# the screen the command's own output is relayed to. Each of the command's
+# output streams gets a terminal of its own, and everything written to it is
+# appended to that stream's capture file as well, so the command sees the
+# terminal the door asks for while this check can still read what it printed.
+# The screen gets a redacted copy of what is relayed: a command that echoed the
+# value it stores puts it in the capture this check reads — which is the finding
+# the nothing-echoed row is — and never on the screen the person is typing at.
+# NO_COLOR is set for the command: a terminal writer draws its steps with colour
+# and an in-flight line, and the escape sequences are not what any row of this
+# check reads.
+write_terminal_runner() {
+  cat >"$SCRATCH/at_terminal.py" <<'PY'
+import os
+import pty
+import re
+import select
+import signal
+import subprocess
+import sys
+import termios
+import time
+
+
+def output_terminal():
+    master, slave = pty.openpty()
+    attrs = termios.tcgetattr(slave)
+    attrs[1] = 0  # no output post-processing, so the capture keeps the bytes
+    termios.tcsetattr(slave, termios.TCSANOW, attrs)
+    return master, slave
+
+
+secs = float(sys.argv[1])
+key_shape = re.compile(sys.argv[2].encode())
+out_path, err_path = sys.argv[3], sys.argv[4]
+argv = sys.argv[5:]
+
+# The command takes the echo off fd 5, the owner's terminal, while it reads a
+# value (x/term's ReadPassword) and puts it back when that read returns. A command
+# this check ends at its bound cannot do that, and a terminal left without echo is
+# a person typing at a screen that shows nothing: the settings are taken here,
+# before the command starts, and put back on every way out of this runner.
+try:
+    TERMINAL_AT_START = termios.tcgetattr(5)
+except termios.error:
+    TERMINAL_AT_START = None
+
+
+def restore_terminal():
+    if TERMINAL_AT_START is None:
+        return
+    try:
+        # TCSANOW and not TCSAFLUSH: the owner's own input is not this runner's to
+        # throw away.
+        termios.tcsetattr(5, termios.TCSANOW, TERMINAL_AT_START)
+    except termios.error:
+        pass
+
+
+# The grace a signalled command is given before it is killed outright: it is the
+# time a command needs to put the terminal back and stop what it started, and it
+# is shorter than the two seconds the check's own bound waits on this runner.
+COMMAND_GRACE = 0.5
+
+out_master, out_slave = output_terminal()
+err_master, err_slave = output_terminal()
+# This check's own bound signals THIS runner, not the command: the command runs
+# in a session of its own (start_new_session), so a runner that died on the
+# signal alone would leave the command running with the owner's terminal still
+# on its input. The signal only brings the one ending below forward — the
+# command's own process group, killed — which is what makes the row's "was
+# ended" true.
+bound_signalled = False
+
+
+def end_at_the_bound(signum, frame):
+    global bound_signalled
+    bound_signalled = True
+
+
+signal.signal(signal.SIGTERM, end_at_the_bound)
+env = dict(os.environ, NO_COLOR="1")
+child = subprocess.Popen(argv, stdin=5, stdout=out_slave, stderr=err_slave,
+                         env=env, start_new_session=True, close_fds=True)
+os.close(out_slave)
+os.close(err_slave)
+screen = os.fdopen(os.dup(4), "wb", 0)
+captures = {out_master: open(out_path, "wb"), err_master: open(err_path, "wb")}
+# A key shape can be split across two reads, and half of one on the screen is
+# still half a value: a tail that could still grow into one waits for the read
+# that completes it, and is dropped if the command never writes it.
+PARTIAL_SHAPE = re.compile(rb"(sk-ant-|sk-or-v1-)[A-Za-z0-9_-]*\Z")
+REDACTED = b"[redacted]"
+held = dict.fromkeys(captures, b"")
+
+
+def relay(master):
+    try:
+        chunk = os.read(master, 65536)
+    except OSError:
+        chunk = b""
+    if not chunk:
+        return False
+    captures[master].write(chunk)
+    captures[master].flush()
+    text = held[master] + chunk
+    partial = PARTIAL_SHAPE.search(text)
+    if partial is not None:
+        held[master] = text[partial.start():]
+        text = text[:partial.start()]
+    else:
+        held[master] = b""
+    screen.write(key_shape.sub(REDACTED, text))
+    screen.flush()
+    return True
+
+
+live = set(captures)
+deadline = time.time() + secs
+timed_out = False
+try:
+    while True:
+        if live:
+            ready, _, _ = select.select(list(live), [], [], 0.2)
+        else:
+            ready = []
+            time.sleep(0.2)
+        for master in ready:
+            if not relay(master):
+                live.discard(master)
+        if child.poll() is not None:
+            break
+        if bound_signalled or time.time() > deadline:
+            timed_out = True
+            # The command is signalled first, in the group it leads, and killed
+            # only if it outstays the grace: a command that takes its own signal
+            # puts the terminal back and stops its children, and killing it
+            # outright would leave both to this runner alone.
+            try:
+                os.killpg(os.getpgid(child.pid), signal.SIGTERM)
+                child.wait(timeout=COMMAND_GRACE)
+            except OSError:
+                pass
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(child.pid), signal.SIGKILL)
+                except OSError:
+                    pass
+            child.wait()
+            break
+    # The child is gone; drain what its terminals still hold, briefly.
+    edge = time.time() + 1.0
+    while live and time.time() < edge:
+        ready, _, _ = select.select(list(live), [], [], 0.1)
+        for master in ready:
+            if not relay(master):
+                live.discard(master)
+finally:
+    restore_terminal()
+for fh in captures.values():
+    fh.close()
+screen.close()
+sys.exit(124 if timed_out else child.returncode)
+PY
+  chmod 700 "$SCRATCH/at_terminal.py"
 }
 
 # ---------------------------------------------------------------- the guards
 guard_xtrace() {
   if [ "$XTRACE_AT_START" = yes ]; then
-    stop "this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check631.sh --sandbox <a sandbox repository checkout> — the check prints its own RESULT block, so a trace is not needed to report a failure, and a trace of the step that hands your key to the command would print the key"
+    stop "this shell is tracing (bash -x). Run it without -x: bash scripts/live-checks/check631.sh --sandbox <a sandbox repository checkout> — the check prints its own RESULT block, so a trace is not needed to report a failure, and a trace of a declaration's own run would copy every frame it drew on your terminal a second time"
   fi
   fact xtrace PASS "this shell is not tracing, so no trace of this run can copy a credential's value to the terminal a second time"
 }
@@ -527,12 +785,6 @@ version_row() {
 # collision, and never written. The two values are not read: a preflight is safe
 # with no terminal.
 step_preflight() {
-  if [ ! -d "$SANDBOX" ]; then
-    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
-  fi
-  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
-    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the credentials, the pool and the run are all read in it"
-  fi
   local pflag=()
   [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
 
@@ -655,12 +907,6 @@ step_preflight() {
 
 # ---------------------------------------------------------------- the steps
 step_installation() {
-  if [ ! -d "$SANDBOX" ]; then
-    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
-  fi
-  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
-    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the credentials, the pool and the run are all read in it"
-  fi
   local args=(doctor --all)
   [ -z "$PROJECT_ARG" ] || args=(doctor --project "$PROJECT_ARG" --all)
   say "reading the installation: fugaro ${args[*]}, in ${SANDBOX}"
@@ -781,10 +1027,17 @@ step_agent_refusal() {
     fact agent-refusal FAIL "fugaro accounts add ${ANTHROPIC} --type anthropic exited 0 with CLAUDECODE set: a coding agent's session was not refused a key, and the acceptance's clause is that it is ('no agent runs any step of it'). What it printed is in $SCRATCH/add-refused.out"
     return 0
   fi
+  # The words a session is refused a credential entry in. The release answers
+  # this act with the credential's own refusal — what --type would create, and
+  # the narrower step the session can take instead — rather than with the token
+  # step's "not in an agent session", which is the sentence for an account the
+  # session may not read the value of (accountsAddRefusal, accountsAddTokenStep,
+  # internal/cli/accounts_managed.go). Both are the refusal this row measures: a
+  # session may write the declaration and never the key.
   case "$out" in
-  *"not in an agent session"* | *"agent session"* | *"session is set"* | *"coding agent's session"*) ;;
+  *"not in an agent session"* | *"agent session"* | *"session is set"* | *"coding agent's session"* | *"managed project's owner is the one who creates credentials"* | *"Declare the account without --type"*) ;;
   *)
-    fact agent-refusal FAIL "the add run with CLAUDECODE set exited ${BOUNDED_STATUS} and its own words do not name the session it refused (it said: $(printf '%s' "$out" | head -n 2 | tr '\n' ' ')): the acceptance's clause is a refusal a session can act on, and one that does not name the session is not it. What it printed is in $SCRATCH/add-refused.err"
+    fact agent-refusal FAIL "the add run with CLAUDECODE set exited ${BOUNDED_STATUS} and its own words are neither the credential's refusal nor the token step's (it said: $(printf '%s' "$out" | head -n 2 | tr '\n' ' ')): the acceptance's clause is a refusal a session can act on, and one that does not name the step it may not take is not it. What it printed is in $SCRATCH/add-refused.err"
     return 0
     ;;
   esac
@@ -800,53 +1053,36 @@ step_agent_refusal() {
   fact agent-refusal PASS "fugaro accounts add ${ANTHROPIC} --type anthropic with CLAUDECODE set exited ${BOUNDED_STATUS} and told the session '$(printf '%s' "$out" | grep -m1 -v '^$' | tr -s ' ' || true)' — and fugaro accounts ls --json after it names ${ANTHROPIC} ${declared}. A session may write the declaration and never the key: no value was read and none was stored, which is what that sentence promises"
 }
 
-# step_value_read: the value this check hands to the command, read at its own
-# hidden prompt. It is never printed, never written to a file by this check, and
-# never an argument of any process.
-step_value_read() {
-  if [ -z "$INSTALLATION" ]; then
-    unmeasured value-read "there is no installation to declare the credential on (the installation row above says why), so this check does not ask you for a value: a value pasted for a check that cannot store it is a value in a transcript for nothing"
-    return 0
+# ADD_STREAMS is the pair of files one declaration's output was captured in.
+ADD_STREAMS=()
+add_streams() { # add_streams NAME — sets ADD_STREAMS
+  if [ "$1" = "$OPENROUTER" ]; then
+    ADD_STREAMS=("$SCRATCH/add-openrouter.out" "$SCRATCH/add-openrouter.err")
+  else
+    ADD_STREAMS=("$SCRATCH/add-anthropic.out" "$SCRATCH/add-anthropic.err")
   fi
-  if [ -n "$VALUE_FILE" ]; then
-    if [ ! -f "$VALUE_FILE" ]; then
-      unmeasured value-read "CHECK631_VALUE_FILE is set to $VALUE_FILE and no such file exists: that knob is the check's own test's, and it names the file the value is read from when there is no terminal to read it hidden from"
-      return 0
-    fi
-    VALUE=$(cat "$VALUE_FILE" 2>/dev/null || true)
-    if [ -z "$VALUE" ]; then
-      unmeasured value-read "the file CHECK631_VALUE_FILE names is empty: nothing could be declared"
-      return 0
-    fi
-    fact value-read PASS "the value was read from the file CHECK631_VALUE_FILE names (${#VALUE} bytes): that knob is the check's own test's — a person pastes at the hidden prompt below the row names, and a value read from a file is a value that was in a file"
-    return 0
-  fi
-  owner ""
-  owner "Paste the value for the credential ${ANTHROPIC} (--type anthropic) now, then press Enter."
-  owner "It is read with no echo by THIS check, it is used to prove it lands in no file and in no history, and it is never printed and never written by the check."
-  owner ""
-  VALUE=""
-  IFS= read -r -s -u 5 VALUE || true
-  owner ""
-  if [ -z "$VALUE" ]; then
-    stop "no value was read at the hidden prompt: press Ctrl-C and run the check again, or pass CHECK631_VALUE_FILE with the file to read it from (which the check's own test does)"
-  fi
-  fact value-read PASS "the value was read at this check's own hidden prompt on your terminal (${#VALUE} bytes, no echo, held in this process's memory only): the check hands it to the command under test on stdin — no flag, no argument and no environment carries it"
 }
 
-# step_add_anthropic: the acceptance's first verb, with the value on stdin, so
-# that the check knows the value and can prove it is echoed nowhere and written
-# nowhere. A terminal would read it at the command's own hidden prompt, which the
-# openrouter credential below measures.
+# step_add_anthropic: the acceptance's first verb, at the COMMAND's own hidden
+# prompt. It runs at your terminal — the terminal on its input, a terminal on
+# its output — so the value is read by the command and by nothing else here: the
+# gate a managed project's credential is created through admits the owner's own
+# terminal and refuses a pipe, a run and a --yes (accountsAddOwnTerminal,
+# internal/cli/accounts_managed.go), which is why this check never holds the
+# value and proves what it can prove — the shape.
 step_add_anthropic() {
-  if [ -z "$VALUE" ]; then
-    unmeasured add-anthropic "no value was read (the row above says why), so nothing could be declared"
+  if [ -z "$INSTALLATION" ]; then
+    unmeasured add-anthropic "there is no installation to declare the credential on (the installation row above says why), so no value was asked for: a value pasted for a check that cannot store it is a value in a transcript for nothing"
     return 0
   fi
-  say "declaring the Anthropic-key credential: fugaro accounts add ${ANTHROPIC} --type anthropic (the value on stdin, never an argument)"
-  run_bounded_stdin "$CLI_TIMEOUT" add-anthropic "$SANDBOX" "$VALUE" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
+  owner ""
+  owner "Paste the value for the credential ${ANTHROPIC} (--type anthropic) now, at the COMMAND's own hidden prompt."
+  owner "That prompt is the one the acceptance names: it is hidden by the command itself, what you type is read by the command and by nothing else here, and this check never holds it."
+  owner ""
+  say "declaring the Anthropic-key credential: fugaro accounts add ${ANTHROPIC} --type anthropic (at your terminal: its own hidden prompt, and what it prints comes back here)"
+  run_at_terminal "$DECLARE_TIMEOUT" add-anthropic "$SANDBOX" "$FUGARO_BIN" accounts add "$ANTHROPIC" --type anthropic
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-    unmeasured add-anthropic "fugaro accounts add ${ANTHROPIC} --type anthropic did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-anthropic.out and $SCRATCH/add-anthropic.err"
+    unmeasured add-anthropic "fugaro accounts add ${ANTHROPIC} --type anthropic did not finish inside ${DECLARE_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-anthropic.out and $SCRATCH/add-anthropic.err"
     return 0
   fi
   if [ "$BOUNDED_STATUS" != 0 ]; then
@@ -856,36 +1092,41 @@ step_add_anthropic() {
   ANTHROPIC_DECLARED=yes
   local said
   said=$(grep -m1 'no job is deployed' "$SCRATCH/add-anthropic.out" 2>/dev/null || true)
-  fact add-anthropic PASS "fugaro accounts add ${ANTHROPIC} --type anthropic declared the credential of ${INSTALLATION} from the value on stdin, and the CLI stored it under its own derived secret (credential-${ANTHROPIC}-key, never an account's token container)${said:+ — it said: ${said}}"
+  fact add-anthropic PASS "fugaro accounts add ${ANTHROPIC} --type anthropic declared the credential of ${INSTALLATION} from the value you pasted at the command's own hidden prompt, and the CLI stored it under its own derived secret (credential-${ANTHROPIC}-key, never an account's token container)${said:+ — it said: ${said}}"
 }
 
-# step_nothing_echoed: the acceptance's "nothing echoed", measured exactly,
-# because this check knows the value it handed over.
+# step_nothing_echoed: the acceptance's "nothing echoed". This check never holds
+# the value, so what it reads is the SHAPE of a provider key: a command that
+# echoed the value it read would print one, in either stream.
 step_nothing_echoed() {
-  if [ -z "$VALUE" ]; then
-    unmeasured nothing-echoed "no value was read (the row above says why), so there is nothing to look for"
+  local names=() name scanned=0 hits=0 named=""
+  if [ "$ANTHROPIC_DECLARED" = yes ]; then names+=("$ANTHROPIC"); fi
+  if [ "$OPENROUTER_DECLARED" = yes ]; then names+=("$OPENROUTER"); fi
+  if [ "${#names[@]}" = 0 ]; then
+    unmeasured nothing-echoed "neither credential was declared (their rows above say why), so no command printed an output this check could read"
     return 0
   fi
-  if [ ! -f "$SCRATCH/add-anthropic.out" ] && [ ! -f "$SCRATCH/add-anthropic.err" ]; then
-    unmeasured nothing-echoed "the add printed nothing this check captured (its own row above says why): what a command echoes is read from its output, and there is none"
+  for name in "${names[@]}"; do
+    add_streams "$name"
+    sweep shape "$SCRATCH/echoed-${name}.txt" "${ADD_STREAMS[@]}"
+    local s h
+    s=$(field "$SCRATCH/echoed-${name}.txt" scanned)
+    h=$(field "$SCRATCH/echoed-${name}.txt" hits)
+    scanned=$((scanned + ${s:-0}))
+    hits=$((hits + ${h:-1}))
+    if [ "${h:-1}" != 0 ]; then
+      named="${named:+$named, }${name}($(awk -F'\t' '$1 == "hit" { printf "%s ", $2 }' "$SCRATCH/echoed-${name}.txt"))"
+    fi
+  done
+  if [ "$hits" != 0 ]; then
+    fact nothing-echoed FAIL "the output of fugaro accounts add --type for ${named} carries a line shaped like a provider key: a command that echoes the value it stores writes it into every transcript of this check, and the acceptance's clause is that nothing is echoed. This check prints no line shaped like one (it redacts the shape before it relays a command's output to your screen); what each command printed is in $SCRATCH/add-anthropic.err and $SCRATCH/add-openrouter.err"
     return 0
   fi
-  sweep value "$SCRATCH/echoed.txt" "$SCRATCH/add-anthropic.out" "$SCRATCH/add-anthropic.err"
-  local scanned hits
-  scanned=$(field "$SCRATCH/echoed.txt" scanned)
-  hits=$(field "$SCRATCH/echoed.txt" hits)
-  if [ "${hits:-1}" != 0 ]; then
-    fact nothing-echoed FAIL "the output of fugaro accounts add ${ANTHROPIC} --type anthropic holds the value this check handed it (${hits} line(s) in $(awk -F'\t' '$1 == "hit" { printf "%s ", $2 }' "$SCRATCH/echoed.txt")): a command that echoes the value it stores writes it into every transcript of this check, and the acceptance's clause is that nothing is echoed. The check did not print those lines; what the command printed is in $SCRATCH/add-anthropic.err"
-    return 0
-  fi
-  local notes
-  notes=$(grep -h -m1 '^note: ' "$SCRATCH/add-anthropic.out" "$SCRATCH/add-anthropic.err" 2>/dev/null | head -n 1 || true)
-  fact nothing-echoed PASS "neither the stdout nor the stderr of fugaro accounts add ${ANTHROPIC} --type anthropic holds the value (${scanned} stream(s) scanned, 0 of them carrying it)${notes:+ — the only note it printed about the value is '${notes}', which names no part of it}: read with no echo at the terminal and printed nowhere"
+  fact nothing-echoed PASS "neither the stdout nor the stderr of fugaro accounts add --type for ${names[*]} carries a line shaped like a provider key (${scanned} stream(s) scanned, 0 of them carrying one): the value was read with no echo at the command's own hidden prompt and printed nowhere"
 }
 
 # step_add_openrouter: the acceptance's second type, at the COMMAND's own hidden
-# prompt — its stdin is your terminal, so the prompt below is the command's and
-# not this check's.
+# prompt — it runs at your terminal, so the prompt below is the command's.
 step_add_openrouter() {
   if [ "$ANTHROPIC_DECLARED" != yes ]; then
     unmeasured add-openrouter "the Anthropic-key credential this check's own sandbox run is served by was not declared (its row above says why), so the second type was not declared either: fix that row and run the check again"
@@ -895,14 +1136,10 @@ step_add_openrouter() {
   owner "Now paste the value for the credential ${OPENROUTER} (--type openrouter) at the COMMAND's own prompt."
   owner "That prompt is the one the acceptance names: it is hidden by the command itself, and what you type is read by the command and by nothing else here."
   owner ""
-  say "declaring the OpenRouter credential: fugaro accounts add ${OPENROUTER} --type openrouter (its own hidden prompt, on your terminal)"
-  if [ "$HAVE_TTY" = yes ]; then
-    run_bounded "$CLI_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter <&5
-  else
-    run_bounded "$CLI_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter </dev/null
-  fi
+  say "declaring the OpenRouter credential: fugaro accounts add ${OPENROUTER} --type openrouter (at your terminal: its own hidden prompt, and what it prints comes back here)"
+  run_at_terminal "$DECLARE_TIMEOUT" add-openrouter "$SANDBOX" "$FUGARO_BIN" accounts add "$OPENROUTER" --type openrouter
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-    unmeasured add-openrouter "fugaro accounts add ${OPENROUTER} --type openrouter did not finish inside ${CLI_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-openrouter.out and $SCRATCH/add-openrouter.err"
+    unmeasured add-openrouter "fugaro accounts add ${OPENROUTER} --type openrouter did not finish inside ${DECLARE_TIMEOUT}s and was ended: what it printed is in $SCRATCH/add-openrouter.out and $SCRATCH/add-openrouter.err"
     return 0
   fi
   if [ "$BOUNDED_STATUS" != 0 ]; then
@@ -913,38 +1150,38 @@ step_add_openrouter() {
   fact add-openrouter PASS "fugaro accounts add ${OPENROUTER} --type openrouter declared the second credential of ${INSTALLATION} at the command's own hidden prompt, and the CLI stored it under credential-${OPENROUTER}-key"
 }
 
-# step_prompt_hidden: the command's own prompt, out of the command's own output.
+# step_prompt_hidden: each command's own prompt, out of that command's own
+# output — the sentence the acceptance names, and the only door the value was
+# read through.
 step_prompt_hidden() {
-  if [ "$HAVE_TTY" != yes ]; then
-    fact prompt-hidden INFO "this check ran without a terminal (CHECK631_VALUE_FILE is set, which is the check's own test's mode): the command's own hidden prompt needs the terminal its value is pasted at, so the acceptance's prompt clause was measured by check631_test.sh against a fake and not here"
+  local names=() name want out missing="" prompts=""
+  if [ "$ANTHROPIC_DECLARED" = yes ]; then names+=("$ANTHROPIC"); fi
+  if [ "$OPENROUTER_DECLARED" = yes ]; then names+=("$OPENROUTER"); fi
+  if [ "${#names[@]}" = 0 ]; then
+    unmeasured prompt-hidden "neither credential was declared (their rows above say why), so no command printed the hidden prompt this row reads"
     return 0
   fi
-  local want="Paste the value for credential-${OPENROUTER}-key (input hidden), then press Enter:"
-  local out
-  out=$(cat "$SCRATCH/add-openrouter.out" "$SCRATCH/add-openrouter.err" 2>/dev/null || true)
-  case "$out" in
-  *"$want"*) ;;
-  *)
-    fact prompt-hidden FAIL "the output of fugaro accounts add ${OPENROUTER} --type openrouter does not carry its own hidden prompt ('${want}'): the acceptance's clause is that the value is read at THAT prompt with nothing echoed, and a run whose prompt never appeared read the value some other way — a flag, an argument or a pipe. What it printed is in $SCRATCH/add-openrouter.err"
-    return 0
-    ;;
-  esac
-  sweep shape "$SCRATCH/shape.txt" "$SCRATCH/add-openrouter.out" "$SCRATCH/add-openrouter.err"
-  local scanned hits
-  scanned=$(field "$SCRATCH/shape.txt" scanned)
-  hits=$(field "$SCRATCH/shape.txt" hits)
-  if [ "${hits:-1}" != 0 ]; then
-    fact prompt-hidden FAIL "the output of fugaro accounts add ${OPENROUTER} --type openrouter carries a line shaped like a provider key ($(awk -F'\t' '$1 == "hit" { printf "%s ", $2 }' "$SCRATCH/shape.txt")): the value you pasted at the hidden prompt was echoed into the command's own output, and the acceptance's clause is that nothing is echoed. What it printed is in $SCRATCH/add-openrouter.err"
+  for name in "${names[@]}"; do
+    add_streams "$name"
+    out=$(cat "${ADD_STREAMS[@]}" 2>/dev/null || true)
+    want="Paste the value for credential-${name}-key (input hidden), then press Enter:"
+    case "$out" in
+    *"$want"*) prompts="${prompts:+$prompts, }credential-${name}-key" ;;
+    *) missing="${missing:+$missing, }${name}" ;;
+    esac
+  done
+  if [ -n "$missing" ]; then
+    fact prompt-hidden FAIL "the output of fugaro accounts add --type for ${missing} does not carry the command's own hidden prompt ('Paste the value for credential-<name>-key (input hidden), then press Enter:'): the acceptance's clause is that the value is read at THAT prompt with nothing echoed, and a command whose prompt never appeared read the value some other way — a flag, an argument or a pipe. What each command printed is in $SCRATCH/add-anthropic.err and $SCRATCH/add-openrouter.err"
     return 0
   fi
-  fact prompt-hidden PASS "the output of fugaro accounts add ${OPENROUTER} --type openrouter carries the command's own hidden prompt line ('${want}') and no line of either stream is shaped like a provider key (${scanned} scanned): the value you pasted was read at that prompt and echoed back nowhere"
+  fact prompt-hidden PASS "each declaration carries the command's own hidden prompt on the command's own output (${prompts}) and no other door was opened: the values you pasted were read at that prompt, by the commands, on your terminal — never handed over by this check on a pipe, a flag or an argument"
 }
 
 # step_no_file: the acceptance's "the value in no file under ~/.config/fugaro/",
-# measured on the value this check holds.
+# read as the shape of a provider key because this check never holds the value.
 step_no_file() {
-  if [ -z "$VALUE" ]; then
-    unmeasured no-file "no value was read (the row above says why), so there is nothing to look for"
+  if [ "$ANTHROPIC_DECLARED" != yes ] && [ "$OPENROUTER_DECLARED" != yes ]; then
+    unmeasured no-file "neither credential was declared (their rows above say why), so no value was pasted and there is nothing to look for"
     return 0
   fi
   if [ -z "$FUGARO_CONFIG_DIR" ]; then
@@ -955,44 +1192,48 @@ step_no_file() {
     unmeasured no-file "$FUGARO_CONFIG_DIR does not exist, and the acceptance's clause is about the files under it: declare the credential on the installation whose config lives there, or set HOME, and run the check again"
     return 0
   fi
-  sweep value "$SCRATCH/config-sweep.txt" "$FUGARO_CONFIG_DIR"
-  local scanned hits names
+  sweep shape "$SCRATCH/config-sweep.txt" "$FUGARO_CONFIG_DIR"
+  local scanned hits names before note
   scanned=$(field "$SCRATCH/config-sweep.txt" scanned)
   hits=$(field "$SCRATCH/config-sweep.txt" hits)
-  names=$(awk -F'\t' '$1 == "hit" { printf "%s ", $2 }' "$SCRATCH/config-sweep.txt")
-  if [ "${hits:-1}" != 0 ]; then
-    fact no-file FAIL "the value of the credential ${ANTHROPIC} is in ${hits} file(s) under ${FUGARO_CONFIG_DIR}: ${names} — the acceptance's clause is that the declaration holds the credential's type and its name and never its value. The files are named and never printed; the value's own bytes are in no line of this block"
+  names=$(new_hits "$SCRATCH/base-config.txt" "$SCRATCH/config-sweep.txt")
+  before=$(field "$SCRATCH/base-config.txt" hits)
+  note=""
+  if [ "${before:-0}" != 0 ]; then note=" — INFO: ${before} file(s) already held such a line before this check ran, and none gained one"; fi
+  if [ -n "$names" ]; then
+    hits=$(printf '%s\n' "$names" | wc -w | tr -d ' ')
+    fact no-file FAIL "a line shaped like a provider key appeared in ${hits} file(s) under ${FUGARO_CONFIG_DIR} while this check ran: ${names} — the acceptance's clause is that the declaration holds the credential's type and its name and never its value, and this check holds no value to look for, so the shape is what it reads. The files are named and never printed, and no line of them is in this block"
     return 0
   fi
-  fact no-file PASS "the value of the credential ${ANTHROPIC} is in none of the ${scanned} file(s) under ${FUGARO_CONFIG_DIR} (the declaration, the project layer and every .bak-<UTC> backup among them): the config carries the credential's type and its name, and its value went to Secret Manager"
+  fact no-file PASS "no line of the ${scanned} file(s) under ${FUGARO_CONFIG_DIR} (the declaration, the project layer and every .bak-<UTC> backup among them) was added shaped like a provider key: the config carries the credential's type and its name, and the values went to Secret Manager${note}"
 }
 
 # step_no_history: and in no shell history.
 step_no_history() {
-  if [ -z "$VALUE" ]; then
-    unmeasured no-history "no value was read (the row above says why), so there is nothing to look for"
+  if [ "$ANTHROPIC_DECLARED" != yes ] && [ "$OPENROUTER_DECLARED" != yes ]; then
+    unmeasured no-history "neither credential was declared (their rows above say why), so no value was pasted and there is nothing to look for"
     return 0
   fi
   local files=() f
-  for f in "${HISTFILE:-}" "${HOME:-}/.bash_history" "${HOME:-}/.zsh_history" "${HOME:-}/.sh_history" "${HOME:-}/.history" "${HOME:-}/.histfile" "${HOME:-}/.local/share/fish/fish_history"; do
-    [ -n "$f" ] || continue
-    [ -f "$f" ] || continue
-    files+=("$f")
-  done
+  while IFS= read -r f; do files+=("$f"); done < <(history_files)
   if [ "${#files[@]}" = 0 ]; then
-    fact no-history INFO "this machine has no shell history file this check can read (it looked at HISTFILE, ~/.bash_history, ~/.zsh_history, ~/.sh_history, ~/.history, ~/.histfile and fish's): the acceptance's clause is read against the histories that exist, and a value that never reached the shell's command line cannot be in one"
+    fact no-history INFO "this machine has no shell history file this check can read (it looked at HISTFILE, ~/.bash_history, ~/.zsh_history, ~/.sh_history, ~/.history, ~/.histfile and fish's): the acceptance's clause is read against the histories that exist, and a value read at a hidden prompt never reached the shell's command line"
     return 0
   fi
-  sweep value "$SCRATCH/history-sweep.txt" "${files[@]}"
-  local scanned hits names
+  sweep shape "$SCRATCH/history-sweep.txt" "${files[@]}"
+  local scanned hits names before note
   scanned=$(field "$SCRATCH/history-sweep.txt" scanned)
   hits=$(field "$SCRATCH/history-sweep.txt" hits)
-  names=$(awk -F'\t' '$1 == "hit" { printf "%s ", $2 }' "$SCRATCH/history-sweep.txt")
-  if [ "${hits:-1}" != 0 ]; then
-    fact no-history FAIL "the value of the credential ${ANTHROPIC} is in ${hits} shell history file(s): ${names} — a value pasted at the hidden prompt never reaches the shell's command line, so a history holding it means it was typed at a prompt that echoes and records. The files are named and never printed"
+  names=$(new_hits "$SCRATCH/base-history.txt" "$SCRATCH/history-sweep.txt")
+  before=$(field "$SCRATCH/base-history.txt" hits)
+  note=""
+  if [ "${before:-0}" != 0 ]; then note=" — INFO: ${before} file(s) already held such a line before this check ran, and none gained one"; fi
+  if [ -n "$names" ]; then
+    hits=$(printf '%s\n' "$names" | wc -w | tr -d ' ')
+    fact no-history FAIL "a line shaped like a provider key was added to ${hits} shell history file(s) while this check ran: ${names} — a value read at a hidden prompt never reaches the shell's command line, so a history holding the shape means it was typed at a prompt that echoes and records. The files are named and never printed"
     return 0
   fi
-  fact no-history PASS "the value of the credential ${ANTHROPIC} is in none of the ${scanned} shell history file(s) this machine has (${files[*]}): the hidden prompt reads the terminal directly, so the shell that started this check never saw a keystroke of it"
+  fact no-history PASS "no line of the ${scanned} shell history file(s) this machine has (${files[*]}) was added shaped like a provider key: the hidden prompt reads the terminal directly, so the shell that started this check never saw a keystroke of it${note}"
 }
 
 # step_serving_path: the acceptance's "fugaro accounts ls naming the serving path".
@@ -1401,6 +1642,11 @@ restore() {
 
 cleanup() {
   trap - ERR
+  # The terminal is the person's, and a declaration takes the echo off it while a
+  # value is read: whatever became of that command, the settings the terminal had
+  # are back before this check prints anything else on it (the runner puts them
+  # back too; this is the one that runs when the runner did not survive).
+  [ -z "$TERMIOS_AT_START" ] || stty "$TERMIOS_AT_START" <&5 2>/dev/null || true
   restore
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   remove_scratch
@@ -1410,6 +1656,7 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  end_active_runner
   if [ "$PREFLIGHT_MODE" = yes ]; then
     # A preflight wrote nothing and launched nothing: it prints its own lines
     # and no RESULT block.
@@ -1451,24 +1698,23 @@ plan() {
   say "  [read] fugaro doctor --project <name> --all in ${SANDBOX} — the project line: which installation this is"
   say "  [read] fugaro craft ls --json, fugaro project policy show --json, fugaro accounts pool ls and fugaro accounts ls --json in ${SANDBOX} — the craft, its chain, the access the node declares and the pools and credentials as they are"
   say "  [read] CLAUDECODE=1 fugaro accounts add ${ANTHROPIC} --type anthropic — what a coding agent's session is told"
-  say "  [YOU] paste the value for ${ANTHROPIC} at this check's hidden prompt — read with no echo, never printed, never written"
-  say "  [write] fugaro accounts add ${ANTHROPIC} --type anthropic (the value on stdin) — the credential, stored under credential-${ANTHROPIC}-key"
-  say "  [YOU] paste the value for ${OPENROUTER} at the COMMAND's own hidden prompt: fugaro accounts add ${OPENROUTER} --type openrouter"
-  say "  [read] the value against ${FUGARO_CONFIG_DIR:-~/.config/fugaro} and every shell history file — names only, never the value"
+  say "  [YOU, write] fugaro accounts add ${ANTHROPIC} --type anthropic at your own terminal: the COMMAND reads the value at its own hidden prompt — the credential, stored under credential-${ANTHROPIC}-key"
+  say "  [YOU, write] fugaro accounts add ${OPENROUTER} --type openrouter at your own terminal, the value again at the command's own hidden prompt"
+  say "  [read] the SHAPE of a provider key in the command's own output, in ${FUGARO_CONFIG_DIR:-~/.config/fugaro} and in every shell history file — this check never holds a value, so names and shapes only"
   say "  [write] fugaro accounts pool add ${POOL} ${ANTHROPIC} --owner ${OWNER}, then fugaro accounts craft set ${CRAFT} --access ${POOL}"
   say "  [write] fugaro project policy publish — the node the run's access half is read from"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX}${RECIPE:+ --recipe ${RECIPE}} --json \"${TASK}\" — one sandbox run, followed to its end"
   say "  [read] gcloud storage cat gs://fugaro-runs-<gcp-project>/runs/<slug>/<run>/result.json and gcloud logging read (credsvc: audit for the run)"
   say "  [write] fugaro accounts craft set ${CRAFT} --access ${PREV_ACCESS:-<the access it had>}, fugaro project policy publish, fugaro accounts pool rm ${POOL}, fugaro accounts rm ${ANTHROPIC} and fugaro accounts rm ${OPENROUTER} — the unwinding"
-  for key in installation declaration agent-refusal value-read add-anthropic nothing-echoed add-openrouter prompt-hidden no-file no-history serving-path wiring publish run-launched terminal record served-by unwiring rm-refusal rm-clears; do
-    fact "$key" INFO "planned: only a real run with your own two pastes measures this row; --dry-run did not"
+  for key in installation declaration agent-refusal add-anthropic add-openrouter prompt-hidden nothing-echoed no-file no-history serving-path wiring publish run-launched terminal record served-by unwiring rm-refusal rm-clears; do
+    fact "$key" INFO "planned: only a real run with your own two declarations at your terminal measures this row; --dry-run did not"
   done
   fact dry-run PASS "the plan was printed and nothing was run: no credential, no pool, no publish, no run and no read"
 }
 
 BLOCK_KEYS=(fugaro-version xtrace agent-session belong installation declaration
-  agent-refusal value-read add-anthropic nothing-echoed add-openrouter
-  prompt-hidden no-file no-history serving-path wiring publish run-launched
+  agent-refusal add-anthropic add-openrouter prompt-hidden nothing-echoed
+  no-file no-history serving-path wiring publish run-launched
   terminal record served-by unwiring rm-refusal rm-clears restore
   scratch-removed)
 
@@ -1501,6 +1747,7 @@ on_signal() {
     owner "cleanup is running, do not press Ctrl-C again"
     return 0
   fi
+  end_active_runner
   owner "interrupted"
   exit 130
 }
@@ -1601,11 +1848,11 @@ PREFLIGHT=${CHECK631_PREFLIGHT:-$PREFLIGHT_CLI}
 PREFLIGHT_MODE=no
 [ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK631_KEEP_SCRATCH:-}
-VALUE_FILE=${CHECK631_VALUE_FILE:-}
 REGION=${CHECK631_REGION:-us-east5}
 RUN_TIMEOUT=${CHECK631_RUN_TIMEOUT_SECONDS:-3600}
 POLL_SECONDS=${CHECK631_POLL_SECONDS:-15}
 CLI_TIMEOUT=${CHECK631_CLI_TIMEOUT_SECONDS:-180}
+DECLARE_TIMEOUT=${CHECK631_DECLARE_TIMEOUT_SECONDS:-$CLI_TIMEOUT}
 DOCTOR_TIMEOUT=${CHECK631_DOCTOR_TIMEOUT_SECONDS:-300}
 LAUNCH_TIMEOUT=${CHECK631_LAUNCH_TIMEOUT_SECONDS:-600}
 PUBLISH_TIMEOUT=${CHECK631_PUBLISH_TIMEOUT_SECONDS:-600}
@@ -1635,6 +1882,7 @@ open_terminal() {
   if { exec 5<"$TTY_DEV"; } 2>/dev/null; then
     if [ -t 5 ]; then
       HAVE_TTY=yes
+      TERMIOS_AT_START=$(stty -g <&5 2>/dev/null || true)
     else
       exec 5<&-
     fi
@@ -1645,10 +1893,16 @@ open_terminal() {
 main() {
   need_tools
   [ -n "$FUGARO_BIN" ] || die "Check 631 needs 'fugaro' on PATH: the check declares two credentials with the fugaro you have, and it is not there"
+  # The checkout is a precondition of every step below and of the terminal gate
+  # itself: it is read here rather than inside the steps, so a --sandbox that is
+  # not one is refused before the check asks anyone to stand at a terminal.
+  [ -d "$SANDBOX" ] || die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  [ -f "$SANDBOX/fugaro.yaml" ] || die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the credentials, the pool and the run are all read in it"
   scratch_up
   trap on_error ERR
   write_reader
   write_sweeper
+  write_terminal_runner
   guard_xtrace
   guard_agent_session
   guard_belong
@@ -1662,17 +1916,17 @@ main() {
     preflight_report
   fi
   open_terminal
-  if [ -z "$VALUE_FILE" ] && [ "$HAVE_TTY" != yes ]; then
-    stop "this check needs your own terminal: the value of the credential ${ANTHROPIC} is read at a hidden prompt on it, and there is no terminal here (stdin is not one). Run it at your terminal — 'bash scripts/live-checks/check631.sh --sandbox <a sandbox repository checkout>' — and not through a pipe, a redirect or a coding agent's session"
+  if [ "$HAVE_TTY" != yes ]; then
+    stop "this check needs your own terminal: each credential's value is read at the hidden prompt of the command that declares it, and there is no terminal here (stdin is not one). Run it at your terminal — 'bash scripts/live-checks/check631.sh --sandbox <a sandbox repository checkout>' — and not through a pipe, a redirect or a coding agent's session"
   fi
   step_installation
   step_declaration
   step_agent_refusal
-  step_value_read
+  baseline_sweeps
   step_add_anthropic
-  step_nothing_echoed
   step_add_openrouter
   step_prompt_hidden
+  step_nothing_echoed
   step_no_file
   step_no_history
   step_serving_path
