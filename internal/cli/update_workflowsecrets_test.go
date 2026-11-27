@@ -241,8 +241,11 @@ func TestUpdateWorkflowSecretsAreWrittenByAnyDoorThatAppliedTheRoot(t *testing.T
 // command it is told to run.
 
 // copyWho is the address the operator's credentials belong to in these tests,
-// and therefore the `fugaro_created_by` annotation the copy records (R10).
-const copyWho = "operator@example.com"
+// and therefore the `fugaro_created_by` annotation the copy records (R10). It
+// is the managed gate's own fixture identity as well, and deliberately so: the
+// run's steps leave a record naming the same person the copy names as its maker
+// (isolateGateCredentials, which the rig's converge installs).
+const copyWho = managedGateUser
 
 // operatorIdentity stubs who the operator is. The rigs run with
 // endpoints.no_auth, and a credential that cannot say who its holder is cannot

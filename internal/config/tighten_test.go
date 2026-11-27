@@ -39,7 +39,11 @@ func TestTightenOnly(t *testing.T) {
 		projText  string // the project's value, as the record renders it
 		looseText string // the repository's looser value, as the record renders it
 		tightText string // the repository's tighter value, and the one that stands
-		get       func(*Config) string
+		// silentText is what a silent project resolves to, where the default
+		// the key supplies is not the text the file wrote — `max_budget_usd`
+		// written 0 is the built-in 25 (empty: the repository's own text).
+		silentText string
+		get        func(*Config) string
 	}{
 		{
 			name:      "review_rounds",
@@ -62,6 +66,22 @@ func TestTightenOnly(t *testing.T) {
 			looseText: "25",
 			tightText: "5",
 			get:       func(c *Config) string { return ftoa(c.Agent.MaxBudgetUSD) },
+		},
+		{
+			// 0 is not a cap: it is the key's "unset" spelling, which the
+			// defaults turn into the built-in 25, so a repository writing it
+			// against a project's cap asks for a larger one rather than a
+			// smaller, and it is dropped like any other looser value.
+			name:       "max_budget_usd_zero",
+			project:    "{ git: { provider: github }, agent: { max_budget_usd: 5 } }",
+			loose:      "agent:\n  max_budget_usd: 0\n",
+			tight:      "agent:\n  max_budget_usd: 1\n",
+			path:       "agent.max_budget_usd",
+			projText:   "5",
+			looseText:  "0",
+			tightText:  "1",
+			silentText: "25",
+			get:        func(c *Config) string { return ftoa(c.Agent.MaxBudgetUSD) },
 		},
 		{
 			name:      "first_line_review",
@@ -161,8 +181,12 @@ func TestTightenOnly(t *testing.T) {
 			if len(ps) > 0 {
 				t.Fatalf("a silent project: %s", problemsText(ps))
 			}
-			if got := tc.get(c); got != tc.looseText {
-				t.Errorf("a silent project: %s = %q, want the repository's %q", tc.path, got, tc.looseText)
+			silentText := tc.silentText
+			if silentText == "" {
+				silentText = tc.looseText
+			}
+			if got := tc.get(c); got != silentText {
+				t.Errorf("a silent project: %s = %q, want the repository's %q", tc.path, got, silentText)
 			}
 			if !slices.Contains(res.Unchecked, tc.path) {
 				t.Errorf("a silent project: unchecked = %v, want it to name %s", res.Unchecked, tc.path)

@@ -710,6 +710,7 @@ reads:
 | `follow_up` | bool | no | |
 | `follow_up_of` | `*task.FollowUpOf` | **yes** | the parent a triage follow-up was filed from (docs/post-review-triage D1843, T-TR11), from the run's own `task.json` (`task.Spec.FollowUpOf`): the parent's `run` and the deferred findings' `keys` it settles. **CLI 0.22.0.** It is its own fact beside `follow_up` and not a second spelling of it: that one says the run continues a pull request's branch, this one says it was filed out of a review's deferral, and a run can be either without the other. **Absent for every run that is not one of those** — every run somebody asked for, and every task written before the field existed — so absence reads as "not filed from a deferral" and never as "filed for no finding". **Task-derived and not sanitized**, like `title`, `batch` and `requested_by` beside it: the display layer sanitizes it (design §5.1 rule 7) |
 | `draft_fallback` | bool | **yes** | the host has no draft PRs, so the PR is an ordinary one with `[DRAFT]` in its title |
+| `needs_guidance` | bool | **yes** | the run's agent asked a question it may not settle by itself (docs/rigor-modes LV5.2, LD8): the pull request is a draft whose status section opens with OPEN QUESTIONS until a follow-up answers it. A flag beside `outcome` and not a second ending — `outcome` stays `draft` — and **absent for a run that asked nothing**, which is every record written before the field existed |
 | `pr_status_at` | `*time.Time` | **yes** | when the runner last wrote the PR's status section — **null = never** |
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
 | `artifact_count` | int | **yes** | what an artifact run's record says it delivered; absent for every run that has none, and the count `runs ls`'s `ARTIFACTS` column shows — its total is `artifact_bytes` |
@@ -1094,9 +1095,17 @@ this one, **the only one outside the console's set** (§9.2).
 `checks` `[]doctorCheck`, `project`° (`doctorProject`), `fugaro_yaml`°
 (`doctorFugaroYAML`), `secrets`° (**`[]secretEntry` — names and metadata only,
 never a value**), `plugin` (`pluginwire.Report`), `release`° (`releaseInfo`:
-the binary's tag and commit), `error`° (**why doctor could not run its checks —
-`--json` prints an object on every outcome**, so the console always gets
-parseable JSON).
+the binary's tag and commit), `notes`° (`config.Problem`: `path`°,
+`line`° and `message` — what doctor read and did not refuse, one entry per
+line), `error`° (**why doctor
+could not run its checks — `--json` prints an object on every outcome**, so the
+console always gets parseable JSON).
+
+**`notes` is not a check** and never moves `ok` or a `severity`: it carries the
+lines doctor's human view prints as `note: `, and each one says the same thing
+about the checkout — a key the project now owns that its `fugaro.yaml` still
+writes, a value the merge dropped with the project's that stands instead, and
+the recipes cleanup diff. A renderer shows them as text, after the checks.
 
 `doctorCheck`: `id`, `ok` bool, `problem`°, `fix`°,
 `severity`°, **`skipped`°** (CLI 0.24.0, the plugin-user-scope plan's U3: the
@@ -2843,7 +2852,7 @@ provenance reads both:
 | `reviewer` | string | **yes** | never | the senior review's model, resolved |
 | `background` | string | **yes** | never | the file's own `agent.models.background` |
 | `background_effective` | string | **yes** | never | the model Claude Code's background requests actually reach (`config.EffectiveBackground`). **Present only when it differs from `background`**, so a consumer draws `background_effective` when it has one and `background` otherwise |
-| `vision` | string | **yes** | never | the file's own `agent.models.vision`: the model a stage runs instead when its own model cannot read an image. **It is the one pin with no fallback**, so an absent key is the slot unset and never an inherited model — a consumer draws an empty cell rather than the coder's model |
+| `vision` | string | **yes** | never | the file's own `agent.models.vision`: the model a run's coder stages run when the task names an image their own model cannot read. **It is the one pin with no fallback**, so an absent key is the slot unset and never an inherited model — a consumer draws an empty cell rather than the coder's model |
 | `problems` | array of string | **yes** | never | what a launch would refuse this repository on, one line each (`config.CheckProviderPolicy`, the same check a run makes): a pin no route serves, a model the project's `allowed_models` leaves out. `omitempty`, so a repository with nothing wrong carries no key at all |
 
 **Version skew.** Every field is additive within `version: 1` (D784), and the

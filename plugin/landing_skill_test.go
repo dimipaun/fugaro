@@ -50,8 +50,11 @@ func TestLandingSkillDefinesTheWord(t *testing.T) {
 		{"the definition", "To land a pull request is to merge it as-is, with the findings it still carries recorded as follow-up tasks"},
 		{"that the leftover list is one line each", "one line each, concrete enough to be a task"},
 		{"that no further fix round runs", "instead of running another fix round"},
-		{"that it is an action and not a state", "Landing is an action and not a fifth state"},
-		{"where the four states are defined", "the `working` skill's"},
+		{"that it is an action and not a state", "Landing is an action and not a sixth state"},
+		{"where the five states are defined", "the `working` skill's"},
+		{"that a paused pull request is not one to land", "is nobody's to land"},
+		{"why it is not, and who resumes it", "a run suspended itself on it and the orchestrator will resume it at a named time"},
+		{"that the pause needs nothing of a person", "it needs nothing from a person and it takes no follow-up while the pause stands"},
 	} {
 		if !strings.Contains(skill, want.text) {
 			t.Errorf("%s never says %s (%q): landing is a word the owner ruled on, and a skill that names it without its definition leaves the reader merging with no idea what happens to the findings the pull request still carries", landingSkillPath, want.what, want.text)

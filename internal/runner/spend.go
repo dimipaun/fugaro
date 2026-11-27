@@ -188,9 +188,12 @@ func priceTable(providers map[string]config.ModelProvider, ov pricing.Overrides)
 	return config.PriceTable(providers, ov, cat, time.Now())
 }
 
-// priceTable is the run's own table (priceTable over the job's providers).
+// priceTable is the run's own table: priceTable over the routes the run routes
+// with (modelProviders) — the job's FUGARO_MODEL_PROVIDERS, or, on a shared
+// project job, the policy node's providers (resolvePolicy) — so the models the
+// run prices and the models it may send to a provider cannot disagree.
 func (r *run) priceTable(ov pricing.Overrides) (*pricing.Table, error) {
-	return priceTable(r.d.Providers, ov)
+	return priceTable(r.modelProviders(), ov)
 }
 
 // catalogStale reports whether any of the named models is a row the built-in

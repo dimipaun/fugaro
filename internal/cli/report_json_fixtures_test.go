@@ -33,7 +33,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/diagnoseagent"
+	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -647,6 +649,41 @@ var jsonCases = map[string]jsonCase{
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
 			return []string{"seats"}
+		},
+	},
+	// The pool family's four service calls print the answer the service gave
+	// as the document, through the seams the intake's own tests use.
+	"accounts pool contribute": {
+		stdin: intakeTestValue + "\n",
+		run: func(t *testing.T) []string {
+			intakeFixture(t)
+			fakeIntakeCalls(t, intakeAnswerFor(intake.ScopeUser))
+			return []string{"accounts", "pool", "contribute", "--to", "team", "--member", "alice"}
+		},
+	},
+	"accounts pool designate": {
+		run: func(t *testing.T) []string {
+			intakeFixture(t)
+			fakeDesignateCalls(t, routing.Designation{
+				Principal: routing.Principal{Kind: routing.PrincipalPerson, ID: "102938475610293847561"},
+				Project:   "aurora",
+				Pool:      "personal",
+			})
+			return []string{"accounts", "pool", "designate", "personal"}
+		},
+	},
+	"accounts pool rm-member": {
+		run: func(t *testing.T) []string {
+			intakeFixture(t)
+			fakeIntakeCalls(t, intakeAnswerFor(intake.ScopeUser))
+			return []string{"accounts", "pool", "rm-member", "team", "--member", "alice"}
+		},
+	},
+	"accounts pool withdraw": {
+		run: func(t *testing.T) []string {
+			intakeFixture(t)
+			fakeIntakeCalls(t, intakeAnswerFor(intake.ScopeUser))
+			return []string{"accounts", "pool", "withdraw", "team", "--member", "alice"}
 		},
 	},
 	"secrets ls": {

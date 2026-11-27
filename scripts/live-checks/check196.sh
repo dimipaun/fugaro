@@ -427,7 +427,12 @@ builds  argv: `gcloud builds list --region=<region> --format=json`'s file, a
         the served repository when one entry serves several), which of the two
         selected the build (`match=map` or `match=repourl`), the substitutions
         this check reads (`_SLUG`, `_WORKFLOW`, `_SECRET_ENVS`,
-        `_CREDENTIALS_SERVICE_URL`), the Secret Manager CONTAINER ids its
+        `_CREDENTIALS_SERVICE_URL`) and `record_slug=`, the storage slug its own
+        record step's KEY is written under (`builds/<slug>/catalog/<entry>/
+        image.json`, gcp.CatalogRecordKey) — the slug of the repository whose
+        credential the build asks the service for, which is what a catalog
+        build carries where `_SLUG` cannot (no catalog request has one, and a
+        slug is not invertible) — the Secret Manager CONTAINER ids its
         `availableSecrets` names (a container is a name and never a value, G18)
         and the env names its build step carries as `secretEnv`. With an entry
         the builds are the ones whose `_IMAGE` names `catalog-<entry>`, because
@@ -734,6 +739,30 @@ def secret_envs_of_build(b):
     return out
 
 
+def record_slug_of(b):
+    """The storage SLUG a catalog build's own record step writes under, or "" for
+    a build that carries no such step. Every catalog request carries the record
+    step (gcp.catalogRecordStep) and its KEY is the record's own key,
+    `builds/<slug>/catalog/<entry>/image.json` (gcp.CatalogRecordKey), so the slug
+    is carried by the build itself. It is the repository whose credential the
+    build's credential step asks the service for (gcp.CatalogBuildSpec.Slug) —
+    the entry's SOURCE repository, which is the served repository only where the
+    entry is sourced from it. This reading is what a catalog build answers where
+    `_SLUG` cannot: a catalog request carries no `_SLUG` substitution, and a slug
+    is not invertible (it ends in 16 hex of sha256, internal/task's Slug), so a
+    repository's name answers no slug."""
+    for st in b.get("steps") or []:
+        if not isinstance(st, dict):
+            continue
+        for e in st.get("env") or []:
+            if not isinstance(e, str) or not e.startswith("KEY=builds/"):
+                continue
+            slug, sep, _ = e[len("KEY=builds/"):].partition("/catalog/")
+            if sep and slug and "/" not in slug:
+                return slug
+    return ""
+
+
 def account_address(v):
     """A Cloud Build `serviceAccount` field, reduced to the address it ends in.
     The API reports a resource name (`projects/<p>/serviceAccounts/<a>`), and
@@ -763,6 +792,9 @@ if cmd == "builds":
         print("entry=%s" % word(catalog_entry_of(b), 100))
         print("image=%s" % text(subs.get("_IMAGE"), 200))
         print("slug=%s" % word(subs.get("_SLUG"), 100))
+        # The slug a catalog build carries where `_SLUG` cannot: its own record
+        # step's KEY, and the repository that key is the record of.
+        print("record_slug=%s" % word(record_slug_of(b), 100))
         print("workflow=%s" % word(subs.get("_WORKFLOW"), 80))
         print("secret_envs=%s" % word(subs.get("_SECRET_ENVS"), 200))
         url = subs.get("_CREDENTIALS_SERVICE_URL") or ""
@@ -1347,19 +1379,20 @@ job_read() {
   printf '%s\n' "$ans"
 }
 
-# repo_slug BUILD_SLUG LABEL REPO — the key a repository's record and the
+# repo_slug BUILD_SLUG RECORD_SLUG — the key a repository's record and the
 # service's own lines are written under (G20). A derived build carries it as its
-# own `_SLUG` substitution; a CATALOG build carries none, and the same slug is
-# written on the repository's daily check job as its `fugaro_repo` label, which
-# is where this reading takes it from then. `-` when neither answers.
-repo_slug() { # repo_slug BUILD_SLUG LABEL REPO
-  local slug=$1 ans
+# own `_SLUG` substitution; a CATALOG build carries no `_SLUG` and carries the
+# same slug in the KEY of its own record step, `builds/<slug>/catalog/<entry>/
+# image.json` (gcp.CatalogRecordKey), which is the slug of the repository whose
+# credential the build's credential step asks the service for. Nothing else
+# answers: a repository-level image and its daily check job are retired (D1900,
+# M2), and a slug is not invertible, so no repository name yields one. `-` when
+# neither answers.
+repo_slug() { # repo_slug BUILD_SLUG RECORD_SLUG
+  local slug=$1
   case "$slug" in "" | "-") ;; *) printf '%s\n' "$slug"; return 0 ;; esac
-  ans=$(job_read "$3" "$2")
-  if [ "$(field_of found "$ans")" = yes ]; then
-    slug=$(field_of slug "$ans")
-    case "$slug" in "" | "-") ;; *) printf '%s\n' "$slug"; return 0 ;; esac
-  fi
+  slug=$2
+  case "$slug" in "" | "-") ;; *) printf '%s\n' "$slug"; return 0 ;; esac
   printf '%s\n' -
 }
 
@@ -1486,7 +1519,7 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   envcount=$(field_of secretenv "$ans")
   url=$(field_of url "$ans")
   url_value=$(field_of url_value "$ans")
-  slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
+  slug=$(repo_slug "$(field_of slug "$ans")" "$(field_of record_slug "$ans")")
 
   # build-LABEL: the image this repository really runs — the CATALOG ENTRY its
   # own key in the map names, baked from the ENTRY's source repository (the checkout the
@@ -1541,11 +1574,14 @@ step_repo() { # step_repo LABEL REPO PROVIDER
   # one. The row therefore cannot find a catalog build's call under a
   # repository's slug, and it reads what the service wrote for the repository's
   # OWN builds and says which of the two shapes it is rather than calling the
-  # absence a failure.
+  # absence a failure. The slug it looks under is the build's own record step's
+  # (repo_slug), which belongs to the entry's SOURCE repository — the served
+  # repository only where the entry is sourced from it — so the row names that
+  # repository beside the slug wherever the two differ.
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
-    unmeasured "served-$label" "the repository's slug could not be read — neither from the build's _SLUG substitution (a catalog build carries none) nor from the fugaro_repo label of its daily check job — so the repository the service's own lines name cannot be looked up"
+    unmeasured "served-$label" "the repository's slug could not be read — the build carries neither a _SLUG substitution (no catalog build has one) nor the record step every catalog request carries, whose KEY is written under the repository's own slug (builds/<slug>/catalog/<entry>/image.json) — so the repository the service's own lines name cannot be looked up"
   else
-    step_served "served-$label" "$repo" "$slug" "$account" "$provider"
+    step_served "served-$label" "$repo" "$slug" "$account" "$provider" "$src_repo"
   fi
 }
 
@@ -1568,7 +1604,7 @@ read_audit_said() { # read_audit_said SLUG
   reader audit "$SCRATCH/audit-$1.json" 2>/dev/null | sed -n 's/^refused=[^|]*|//p' | head -n 1 | redact | cut -c1-300
 }
 
-# step_served KEY REPO SLUG ACCOUNT PROVIDER — the service's own lines. The
+# step_served KEY REPO SLUG ACCOUNT PROVIDER SRC — the service's own lines. The
 # credential a line must name is the provider's GIT credential and nothing else
 # (PurposeBuild): `github-app-key`, the App key a GitHub build signs with, or a
 # `bitbucket-token…` — the installation's bundle token, whose name carries which
@@ -1577,11 +1613,17 @@ read_audit_said() { # read_audit_said SLUG
 # These are the lines of a REPOSITORY's own build (purpose `build`, keyed by the
 # repository's slug); a catalog build's are the entry route's, which name no
 # repository at all, and an empty answer for a catalog build is therefore the
-# shape this installation predicts and not a failure.
+# shape this installation predicts and not a failure. SRC is the entry's SOURCE
+# repository, whose slug SLUG is: the two differ where one entry serves several
+# repositories, and the row names SRC beside the slug then rather than reading
+# the lookup as one of REPO's own.
 step_served() {
-  local key=$1 repo=$2 slug=$3 account=$4 provider=$5 ans lines
-  local cred
+  local key=$1 repo=$2 slug=$3 account=$4 provider=$5 src=$6 ans lines
+  local cred src_note=
   if [ "$provider" = github ]; then cred=github-app-key; else cred="bitbucket-token…"; fi
+  if [ -n "$src" ] && [ "$src" != "-" ] && [ "$src" != "$repo" ]; then
+    src_note=", the entry's source repository ${src}"
+  fi
   if ! ans=$(audit_read "$slug"); then
     unmeasured "$key" "the service's own lines for ${repo} could not be read (the log read failed): yours needs roles/logging.viewer on ${P}. Read them by hand with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
     return 0
@@ -1595,7 +1637,7 @@ step_served() {
       # installation's does: its catalog builds are answered by the entry route,
       # which names no repository, and a repository-level build is disabled
       # (D1900/IS2). So the refusal is the finding, in the service's own words.
-      fact "$key" FAIL "the service refused a call for ${repo} (slug ${slug}), and served it no 'credsvc: audit' line of purpose build: ${refused}. A catalog build's own call is answered by the service's entry route and names no repository (IS8/D3330), so a refusal under this repository's slug is not one of this installation's builds. Read the lines by hand with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
+      fact "$key" FAIL "the service refused a call for ${repo} (slug ${slug}${src_note}), and served it no 'credsvc: audit' line of purpose build: ${refused}. A catalog build's own call is answered by the service's entry route and names no repository (IS8/D3330), so a refusal under this slug is not one of this installation's builds. Read the lines by hand with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}'"
       return 0
     fi
     # No line and no refusal: the build the row is about is a CATALOG entry's —
@@ -1607,7 +1649,7 @@ step_served() {
     # and a FAIL here would end the switch mode on a working installation. What
     # the row settles is that the service wrote this repository no build line and
     # refused nothing of it.
-    fact "$key" INFO "the newest build of ${repo} is a catalog entry's, and the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}) — which is what this installation's shape predicts: a catalog build asks the service's ENTRY route, whose lines name the project's build identity and no repository (one token covers the entry's repositories, IS8/D3330), so its call cannot appear under a repository's slug. Read a repository's own lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}', and the entry route's with the same minus the repository and jsonPayload.purpose=\\\"build_token\\\""
+    fact "$key" INFO "the newest build of ${repo} is a catalog entry's, and the service wrote no 'credsvc: audit' line of purpose build for ${repo} (slug ${slug}${src_note}) — which is what this installation's shape predicts: a catalog build asks the service's ENTRY route, whose lines name the project's build identity and no repository (one token covers the entry's repositories, IS8/D3330), so its call cannot appear under a repository's slug. Read a repository's own lines with 'gcloud logging read \"resource.labels.service_name=${SVC} jsonPayload.repository=${slug}\" --project=${P}', and the entry route's with the same minus the repository and jsonPayload.purpose=\\\"build_token\\\""
     return 0
   fi
   local got
@@ -1621,9 +1663,9 @@ step_served() {
   elif ! credential_matches "$provider" "$acred"; then
     fact "$key" FAIL "the service's own line for ${repo} names the credential ${acred:-none}, not the ${provider} build's own git credential (${cred}): a build got a credential that is not its own repository's"
   elif [ -n "$arepo" ] && [ "$arepo" != "$slug" ]; then
-    fact "$key" FAIL "the service's own line for ${repo} names the repository ${arepo}, not this repository's slug ${slug}: a build was served another repository's record"
+    fact "$key" FAIL "the service's own line for ${repo} names the repository ${arepo}, not the slug this lookup is under ${slug}${src_note}: a build was served another repository's record"
   else
-    fact "$key" PASS "the service wrote ${lines} 'credsvc: audit' line(s) of purpose build for ${repo} (slug ${slug}), served to ${account} as ${acred}: the build's credential came from the service and the caller the service verified is this repository's own build account"
+    fact "$key" PASS "the service wrote ${lines} 'credsvc: audit' line(s) of purpose build for ${repo} (slug ${slug}${src_note}), served to ${account} as ${acred}: the build's credential came from the service and the caller the service verified is this repository's own build account"
   fi
 }
 
@@ -1804,7 +1846,7 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
   url_value=$(field_of url_value "$ans")
   containers=$(field_of containers "$ans")
   envcount=$(field_of secretenv "$ans")
-  slug=$(repo_slug "$(field_of slug "$ans")" "$label" "$repo")
+  slug=$(repo_slug "$(field_of slug "$ans")" "$(field_of record_slug "$ans")")
 
   # noavailable-LABEL: what the flip left on this repository's BUILD. A catalog
   # build carries no secret at all since IS8 (D3330) and takes its credential
@@ -1840,11 +1882,14 @@ step_flip_repo() { # step_flip_repo LABEL REPO PROVIDER
     fact "build-flip-$label" FAIL "the newest catalog build of ${repo} (${id}, entry ${entry:-unknown}) did not read as a success of a catalog build: status ${status}, account ${account:-none}, service ${url}. A catalog entry's build runs as the installation's build identity (${BUILD_IDENTITY_ID}@${P}.iam.gserviceaccount.com), which is the caller the service's entry route admits, so a build that could not finish is that call, the entry's definition or the entry's source repository (${src_repo:-unknown}) having broken"
   fi
 
-  # served-flip-LABEL: the service's own lines for that build.
+  # served-flip-LABEL: the service's own lines for that build. The slug is the
+  # build's own record step's (repo_slug), which belongs to the entry's SOURCE
+  # repository, so the row names that repository beside the slug where the two
+  # differ.
   if [ -z "$slug" ] || [ "$slug" = "-" ]; then
-    unmeasured "served-$label-flip" "the repository's slug could not be read (a catalog build carries no _SLUG, and no check job label answered), so the service's own lines for it cannot be looked up"
+    unmeasured "served-$label-flip" "the repository's slug could not be read — the build carries neither a _SLUG substitution (no catalog build has one) nor the record step every catalog request carries, whose KEY is written under the repository's own slug (builds/<slug>/catalog/<entry>/image.json) — so the service's own lines for it cannot be looked up"
   else
-    step_served "served-$label-flip" "$repo" "$slug" "$account" "$provider"
+    step_served "served-$label-flip" "$repo" "$slug" "$account" "$provider" "$src_repo"
   fi
 
   # noaccessor-LABEL: the daily check job mounts nothing AND is handed the

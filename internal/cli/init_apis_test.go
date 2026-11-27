@@ -152,19 +152,52 @@ func TestInitDisabledLoggingPlansCreate(t *testing.T) {
 
 // A disabled Storage API is an environment error at the state bucket,
 // the Terraform backend: exit 2, never a create offer or "no state".
+// `setup` on an installation this machine already has is the one case the
+// managed read stands in front of, and it is the read that gets there first:
+// the converge's first act is TN1's stop (T3), and with Storage answering 403
+// the read cannot prove the project and answers "is not managed" — which
+// internal/infra/managed answers a 403 as, on purpose, because a project the
+// caller cannot read is one whose confirmations are asked rather than skipped.
+// So that run is refused at the head, naming the command that flags a project,
+// and it never reaches the state bucket. The other three check the state bucket
+// before anything that reads the marks, and report the environment error.
+//
+// What all four still prove is the property the test is for: nothing is offered
+// to create, no request goes out that is not a read, and Terraform is never run
+// over a backend that is not there.
 func TestInitStorageDisabledIsRemote(t *testing.T) {
-	for _, args := range [][]string{
-		{"setup"},
-		{"setup", "--plan-only"},
-		{"update", "--forget"},
-		{"setup", "--config-only"},
+	for _, tc := range []struct {
+		args []string
+		// stoppedByTheManagedRead is whether the run's own first act is the
+		// gate's read rather than the state bucket check.
+		stoppedByTheManagedRead bool
+		// unmarked is a row whose own door refuses a managed project before it
+		// reaches the state bucket check at all (--forget): its world is the
+		// installation of a project nothing marks, which is the only one that
+		// has a rollback.
+		unmarked bool
+	}{
+		{args: []string{"setup"}, stoppedByTheManagedRead: true},
+		{args: []string{"setup", "--plan-only"}},
+		{args: []string{"update", "--forget"}, unmarked: true},
+		{args: []string{"setup", "--config-only"}},
 	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			r := newInitRig(t)
+			if tc.unmarked {
+				r.unmarkedInstallation(t)
+			}
 			r.stateBucket()
 			r.su.Disable("storage.googleapis.com", r.gcs.Server)
-			out, _, err := executeStdin(t, "", args...)
-			if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "state bucket") {
+			out, _, err := executeStdin(t, "", tc.args...)
+			if tc.stoppedByTheManagedRead {
+				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not managed") {
+					t.Fatalf("exit %d, err %v; want the stop naming the project's own half of the fact", ExitCode(err), err)
+				}
+				if !strings.Contains(err.Error(), managedFlagCommand()) {
+					t.Errorf("the refusal names no command that flags a project:\n%s", err)
+				}
+			} else if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "state bucket") {
 				t.Fatalf("exit %d, err %v", ExitCode(err), err)
 			}
 			if strings.Contains(out, "creates gs://") {

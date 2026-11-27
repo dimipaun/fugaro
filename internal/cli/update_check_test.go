@@ -146,15 +146,20 @@ func TestUpdateCheckReportsEveryStep(t *testing.T) {
 	}
 	convergeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.2"))
-	out, _, err := executeStdin(t, "", "update", "--check", root)
+	t.Chdir(root)
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if err != nil || convergeRead(t, settings) != wiredAt("v0.5.2") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, want := range []string{
 		"fugaro update --check with fugaro 0.5.2",
 		"== " + root,
+		"note: " + checkAdmitOnlyCaveat,
 		"plugin: skipped: not installed on this machine (fugaro update-skills installs it through the claude CLI)",
-		"cloud: skipped: no local project config selects this checkout",
+		// No local project config selects this checkout (convergeEnv's XDG
+		// config home is empty), so the cloud step read no list: it names that
+		// and not a repository (U10).
+		"cloud: skipped: no local project config selects a project here",
 		"rules: skipped: --check makes no cloud call, so the deployed security rules are not read",
 		"policy: skipped: --check makes no cloud call, so the published policy node is not read",
 		"nothing to do: " + root + " is current (apart from what the skipped steps name)",
@@ -172,13 +177,13 @@ func TestUpdateCheckReportsEveryStep(t *testing.T) {
 
 // TestUpdateCheckRefusesTheConvergeFlags: --check runs none of the converge, so
 // the door's own flags are refused by name rather than silently ignored — a run
-// that passed one would otherwise read as if it had honoured it. The checkout
-// is PATH in this mode (`fugaro update --check [PATH]`), which is why --repo is
-// on the refused side: it says the run onboards the repository of the checkout
-// at PATH, and this run onboards nothing.
+// that passed one would otherwise read as if it had honoured it. --repo is on
+// the refused side too: it says the run onboards the repository of a checkout,
+// and this run onboards nothing.
 func TestUpdateCheckRefusesTheConvergeFlags(t *testing.T) {
 	convergeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
+	t.Chdir(root)
 	for _, tc := range []struct {
 		args []string
 		want string
@@ -189,8 +194,7 @@ func TestUpdateCheckRefusesTheConvergeFlags(t *testing.T) {
 		{[]string{"--check", "--json"}, "--json is the converge's"},
 		{[]string{"--check", "--forget"}, "--forget is the converge's"},
 	} {
-		args := append(append([]string{"update"}, tc.args...), root)
-		out, _, err := executeStdin(t, "", args...)
+		out, _, err := executeStdin(t, "", append([]string{"update"}, tc.args...)...)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), tc.want) || strings.Contains(out, "== ") {
 			t.Errorf("%q: exit %d, err %v\n%s", tc.args, ExitCode(err), err, out)
 		}
@@ -198,10 +202,9 @@ func TestUpdateCheckRefusesTheConvergeFlags(t *testing.T) {
 	if convergeRead(t, settings) != wiredAt("v0.5.1") {
 		t.Error("a refused mode wrote the settings")
 	}
-	// The flags the mode does read are the cloud step's own, and the positional
-	// checkout: a run that passes one of them beside --check is the mode, not a
-	// refusal.
-	if _, _, err := executeStdin(t, "", "update", "--check", "--region", "europe-west1", root); err != nil {
+	// The flags the mode does read are the cloud step's own: a run that passes
+	// one of them beside --check is the mode, not a refusal.
+	if _, _, err := executeStdin(t, "", "update", "--check", "--region", "europe-west1"); err != nil {
 		t.Errorf("--check refused a flag it reads: %v", err)
 	}
 }
@@ -243,30 +246,29 @@ func TestTheRerunLineKeepsTheCheckoutFlags(t *testing.T) {
 	}
 }
 
-// TestUpdateCheckRefusesWhatIsNotACheckout: the mode reads the checkout, so a
-// path that is not one — or a checkout Fugaro is not set up in — is the mode's
-// own refusal, exit 1, and no step is run.
+// TestUpdateCheckRefusesWhatIsNotACheckout: the mode reads the project it is
+// run in, so a directory that is not a checkout — or a checkout Fugaro is not
+// set up in — is the mode's own refusal, exit 1, and no step is run. It takes
+// no PATH (U10), so the directory is the working one.
 func TestUpdateCheckRefusesWhatIsNotACheckout(t *testing.T) {
 	convergeEnv(t, "0.5.2")
 	notCheckout := t.TempDir()
 	plain := plainCheckout(t) // a checkout, but not a Fugaro one
-	for _, tc := range []struct {
-		path, want string
-		steps      string
-	}{
-		{notCheckout, "not in a git checkout", ""},
-		{plain, "not a Fugaro checkout", ""},
+	for _, tc := range []struct{ dir, want string }{
+		{notCheckout, "not in a git checkout"},
+		{plain, "not a Fugaro checkout"},
 	} {
-		out, _, err := executeStdin(t, "", "update", "--check", tc.path)
+		t.Chdir(tc.dir)
+		out, _, err := executeStdin(t, "", "update", "--check")
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), tc.want) {
-			t.Fatalf("%s: exit %d, err %v\n%s", tc.path, ExitCode(err), err, out)
+			t.Fatalf("%s: exit %d, err %v\n%s", tc.dir, ExitCode(err), err, out)
 		}
 		if !strings.Contains(out, "checkout: failed: "+tc.want) {
-			t.Errorf("%s: the refusal is not reported as the checkout's own:\n%s", tc.path, out)
+			t.Errorf("%s: the refusal is not reported as the checkout's own:\n%s", tc.dir, out)
 		}
 		for _, step := range []string{"plugin:", "cloud:", "rules:", "policy:"} {
 			if strings.Contains(out, step) {
-				t.Errorf("%s: a step ran for a path the mode refused (%s):\n%s", tc.path, step, out)
+				t.Errorf("%s: a step ran for a directory the mode refused (%s):\n%s", tc.dir, step, out)
 			}
 		}
 	}
@@ -282,8 +284,9 @@ func TestUpdateCheckWritesNothing(t *testing.T) {
 	record := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
 	checkoutFile(t, record, `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
+	t.Chdir(root)
 	before := convergeRead(t, settings)
-	out, _, err := executeStdin(t, "", "update", "--check", root)
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "something is stale") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -303,8 +306,9 @@ func TestUpdateCheckWritesNothing(t *testing.T) {
 func TestUpdateCheckDevBuild(t *testing.T) {
 	convergeEnv(t, "dev")
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
+	t.Chdir(root)
 	before := convergeRead(t, settings)
-	out, _, err := executeStdin(t, "", "update", "--check", root)
+	out, _, err := executeStdin(t, "", "update", "--check")
 	if err != nil || convergeRead(t, settings) != before {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -316,11 +320,12 @@ func TestUpdateCheckDevBuild(t *testing.T) {
 	if strings.Contains(out, "stale") || strings.Contains(out, "is current") {
 		t.Errorf("a development build judged the checkout:\n%s", out)
 	}
-	// The checkout is still the mode's argument, and the development build does
-	// not change that: a path that is not one is the mode's own refusal, before
-	// any step is asked anything.
+	// The working directory is still where the mode reads its project, and the
+	// development build does not change that: a directory that is not a
+	// checkout is the mode's own refusal, before any step is asked anything.
 	notCheckout := t.TempDir()
-	out, _, err = executeStdin(t, "", "update", "--check", notCheckout)
+	t.Chdir(notCheckout)
+	out, _, err = executeStdin(t, "", "update", "--check")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not in a git checkout") ||
 		strings.Contains(out, "plugin: skipped: a development build") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)

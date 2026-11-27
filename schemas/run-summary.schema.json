@@ -315,6 +315,10 @@
           "type": "boolean",
           "description": "The host refused draft pull requests; the PR is a normal one with a [DRAFT] title prefix."
         },
+        "needs_guidance": {
+          "type": "boolean",
+          "description": "The run's own needs_guidance (docs/rigor-modes/levels-implementation-plan.md LV5.2, LD8): the agent's hand-back asked a question the run may not settle by itself, so the pull request is a draft whose status section opens with OPEN QUESTIONS until a follow-up answers it. Absent for a run that asked nothing, which is every summary written before the field existed: none of a row's readings changes for it."
+        },
         "started_at": {
           "type": "string",
           "format": "date-time"

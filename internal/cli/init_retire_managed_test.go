@@ -321,14 +321,17 @@ func TestUpdateManagedStopsAtADataHoldingAddress(t *testing.T) {
 // The same set a managed project retires by itself, on an UNMANAGED project:
 // nothing changed. The refusal is the one it has always been, nothing of the
 // retirement runs, and no record of it is written — the gate is the managed
-// project's. The run is given --yes because on an unmanaged project the steps
-// before the repository one ask their own confirmations, and a question
-// answered in the wrong place is not what this test is about: what it is about
-// is that `--retire` is the only thing that retires here, exactly as before.
+// project's. The door is `--repo`, which is the one an unmanaged project has:
+// a plain `fugaro update` there stops at TN1's own door before any stage, so
+// the repository root's own judged plan is reached only through the door the
+// refusal names. What this test is about is that `--retire` is the only thing
+// that retires here, exactly as before, and no step of the run before it asks
+// a question an unmanaged project's run does not answer.
 func TestUpdateUnmanagedStillRefusesTheSameRetirement(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
+	r.unmarkedInstallation(t)
 	storedRepoSecrets(t, r)
-	out, errOut, err := executeStdin(t, "", "update")
+	out, errOut, err := executeStdin(t, "", "update", "--repo", ".")
 	text := out + errOut
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s; want the refusal an unmanaged project has always had", ExitCode(err), err, text)

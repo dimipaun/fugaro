@@ -404,6 +404,9 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 		{telemetryMobileReadme, "docs/mobile"},
 		{telemetryImplPlan, "docs/mobile"},
 		{"docs/mobile/design/voice-evaluation-switch.md", "docs/mobile/design"},
+		// P5.4.1's design of record is added here by its own task, which names
+		// this test as the one that resolves every link the document carries.
+		{"docs/mobile/design/front-agent.md", "docs/mobile/design"},
 	} {
 		targets := markdownLinkTargets(readDoc(t, doc.path))
 		if len(targets) == 0 {

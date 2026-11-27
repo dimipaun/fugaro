@@ -160,6 +160,18 @@ const (
 	// landing it; the stage's position is what makes the guard's answer a
 	// state the same run has already fixed.
 	CredentialsCopy = "credentials-copy"
+	// ImageMapRetire is the stage that takes the legacy repo-to-image member
+	// off the published policy node (internal/cli/repo_images_retire.go, U1c of
+	// docs/image-map-by-provider, D3376 as amended): image_map is the map a
+	// release from before L11 reads, repo_images the one this release's
+	// credentials service reads, and the old member stays on the node until the
+	// service that reads it has been replaced — the release behind finds no map
+	// at all on a node carrying only repo_images.
+	//
+	// It sits after the credentials service's own stage for exactly that
+	// reason, and the write is one conditional PUT of the node with the member
+	// removed.
+	ImageMapRetire = "image-map-retire"
 	// VersionStamp is the required-CLI stamp's stage
 	// (internal/cli/update_version_stamp.go, D3260, R1): the node
 	// config/policy/required_cli, which says the oldest fugaro release that may
@@ -170,8 +182,9 @@ const (
 	// It sits immediately AFTER the credentials copy, and with nothing between
 	// them that the stamp's own fence would refuse: the stage raises the node
 	// only once every other stage of the run — the policy and rules it needs
-	// among them — has converged, and the credentials copy is the last of the
-	// stages that writes a document a deployed service reads (R1). A stamp
+	// among them — has converged, and the image-map retire, which follows it, is
+	// the last of the stages that writes a document a deployed service reads
+	// (R1). A stamp
 	// raised before one of them left an installation whose own `fugaro update`
 	// could not finish: an older binary is refused by this node, so the run
 	// holding the half-finished installation has to be this release's.
@@ -358,6 +371,12 @@ var order = []slot{
 	// the stage before this one is the run's one move of that service's image
 	// (CredentialsCopy's own comment has the window).
 	{name: CredentialsCopy, needs: []string{CredentialsService}},
+	// The legacy repo-to-image member leaves the node after the process that
+	// reads it has been replaced (ImageMapRetire's own comment, U1c, D3376 as
+	// amended): the release behind's credentials service reads image_map and
+	// finds no map on a node that carries only repo_images, so the two moves
+	// are this order and no other.
+	{name: ImageMapRetire, needs: []string{CredentialsService}},
 	// The required-CLI stamp is raised last of the stages that write anything
 	// a deployed reader sees (R1, D3267): it names this release as the oldest
 	// that may act on the project, so a stamp raised before the run had
@@ -1014,11 +1033,12 @@ func GateProceeded() string {
 // gate does NOT judge document by document — the Terraform state bucket, an
 // image copy that only adds a tag, the local config — and which the run's own
 // review announced instead. It says what is true of it and no more: the plan
-// the step prints is the plan it applies, a person is at the terminal, and the
-// confirmation a managed project does not ask for is the one they asked not to
-// see. Saying GateProceeded's words here would claim a verdict for a document
-// no rule read, which is the direction every other sentence in this file
-// refuses to take.
+// the step prints is the plan it applies, the marks were read, and the
+// confirmation a managed project does not ask for is the one the person at the
+// terminal asked not to see — or, where nobody is at the session, the one no
+// person could have given (check 292). Saying GateProceeded's words here would
+// claim a verdict for a document no rule read, which is the direction every
+// other sentence in this file refuses to take.
 func GateOrdinary() string {
 	return "this project is managed and the run announced this step: the marks were read, so nothing is confirmed here"
 }
@@ -1240,6 +1260,18 @@ func (m Managed) Removes() bool {
 // to decide what the step proceeds on, and prints AgentProceeded's or
 // GateProceeded's sentence from the answer.
 //
+// The session nobody is at — a pipe with its input closed, a script, a cron,
+// check 292 (the owner's, 2026-11-26) — is deliberately NOT one of them, and
+// the two arms below are the whole of the reason: this predicate is what the
+// step's own confirmation is put to where a person or an agent is present, and
+// a step whose answer is instead the run's one confirmation (internal/cli's
+// runCovers, which asks NobodyIsAtTheSession beside the marks) reads
+// GateOrdinary's sentence rather than this one. Widening it here would reach
+// every caller at once, `fugaro apply` included, whose own question a person
+// must be there to answer (internal/managed's Request.confirm) — and a
+// predicate that answered a pipe would send that apply to a question with
+// nobody to give it.
+//
 // The order is the rule's: a session with a marker is the agent's case whatever
 // else is true of it, and the terminal case cannot have a marker
 // (PersonAtTheTerminal says so itself). --ask is asked FIRST, because it is the
@@ -1261,6 +1293,26 @@ func GateStandsIn(c Conditions, m Managed) bool {
 	return PersonAtTheTerminal(c) && m.Removes()
 }
 
+// NobodyIsAtTheSession reports whether the conditions are a session no person
+// is at and no confirmation can be put to: no coding agent's marker, no
+// terminal, and neither of the two flags that say what the run does with a
+// question (--json, --non-interactive) nor --ask, which is the owner asking for
+// the question back. It is a pipe with its input closed, a script, a cron — the
+// session check 292 and check 821 drive `fugaro update` in.
+//
+// It is the counterpart of PersonAtTheTerminal, and the two are the sessions a
+// managed project's run answers a step's confirmation in: the gate's own read
+// of the marks is what stands in for it in either of them (internal/cli's
+// runCovers, and the ruling of 2026-11-01 the managed case carries). A caller
+// asks it BESIDE its own read of the marks, never instead of one, and it is
+// never a licence to apply a step no verdict admitted: Removes is asked beside
+// it wherever a step is decided, and the plan's own cover is still what decides
+// whether a step is one the run may take silently (a delete, a replace or an
+// IAM binding asks, and a session nobody is at refuses it).
+func NobodyIsAtTheSession(c Conditions) bool {
+	return c.Agent == "" && !c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
+}
+
 // PersonAtTheTerminal reports whether the conditions put a person at the
 // project's own terminal, there to read a document and answer for it: the
 // owner's own session (no marker), a real terminal, and none of the three
@@ -1275,7 +1327,8 @@ func GateStandsIn(c Conditions, m Managed) bool {
 // owner's ruling of 2026-11-06 — asks it the same way. A caller asks this
 // beside its own read of the marks (the gate's own read, never a second one)
 // and prints OwnerProceeded's sentence; it is not a verdict about any plan, and
-// it admits nothing on its own.
+// it admits nothing on its own. NobodyIsAtTheSession is its counterpart, for
+// the other session a managed project's run answers in.
 //
 // The terminal is the load-bearing half and the one a caller writing this out
 // again would drop: a pipe carries no marker, so a session nobody is at reads

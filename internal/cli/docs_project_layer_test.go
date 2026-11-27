@@ -182,7 +182,8 @@ func TestDocsProjectLayerSaysRoutingIsApplied(t *testing.T) {
 		"**halts the run** rather than falling back to the direct path",
 		"`fugaro project policy publish` writes the block from the operator's own config",
 		"`budget.*`, `model_prices`, `allow_repos` and `routing` take effect in this release",
-		"a run routes by the providers its own job carries (`FUGARO_MODEL_PROVIDERS`)",
+		"A run on a **per-repository** job still routes by the providers its own job carries (`FUGARO_MODEL_PROVIDERS`)",
+		"**applied on a shared job**: there a run holds no route table of its own, so it routes by the node's block cut to the repository the run is for",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md lacks %q", want)
@@ -777,7 +778,7 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"the project's two grades for the escalation ladder",
 		"the model its rung runs and the credential or pool its calls go out on",
 		"A grade nobody sets is no grade: the rung that needs one refuses and asks, never a hidden default",
-		"a repository's `model_grades:` block is dropped and recorded by the merge",
+		"a repository's `model_grades:` block is dropped, its grade models by the lift (`config.LiftedKeys`), which names them where they are written, and its `.access` rows by the merge",
 		"the rungs that spend on it arrive with the ladder's own tasks",
 		"A version-6 reader lists the key as unknown and runs every rung on whatever its own configuration said, which is why the node is version 7",
 	} {

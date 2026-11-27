@@ -5765,26 +5765,27 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		// Without this a run could spend maxCredentialResumes attempts a
 		// stage and have the ceiling count one.
 		r.countTokens(res)
+		// The session the ended stage ran in: what its result reported (the
+		// result event's ID, else its init event's, so a stage killed before
+		// its result still names it), or the one it was asked for when it
+		// reported none — that one is the runner's own fresh ID, and its file
+		// exists from the moment the agent started. Read here rather than at
+		// the wait below because the pause records it (suspend.go).
+		session := res.SessionID
+		if !agent.ValidSessionID(session) {
+			session = req.SessionID
+		}
 		// The action the service decided decides what the run does about this
-		// answer (R19): a halt ends the run here, and only the wait goes on to
-		// the bound below and the wait itself, which is the one a run could
-		// repeat.
-		if herr := r.haltOnExhaustedAnswer(*ex); herr != nil {
+		// answer (R19): a halt ends the run here, a pause suspends it, and only
+		// the wait goes on to the bound below and the wait itself, which is the
+		// one a run could repeat.
+		if herr := r.followExhaustedAnswer(ctx, name, session, *ex); herr != nil {
 			return res, false, herr
 		}
 		if resumes++; resumes > maxCredentialResumes {
 			return res, false, r.haltNoCredential(fmt.Sprintf(
 				"the credential service answered that no credential was usable %d times while stage %s ran, the last until %s; the run stopped rather than resume the stage again (see 'fugaro accounts ls' for the accounts' states)",
 				resumes, name, ex.Until.UTC().Format(time.RFC3339)))
-		}
-		// The session the ended stage ran in: what its result reported (the
-		// result event's ID, else its init event's, so a stage killed before
-		// its result still names it), or the one it was asked for when it
-		// reported none — that one is the runner's own fresh ID, and its file
-		// exists from the moment the agent started.
-		session := res.SessionID
-		if !agent.ValidSessionID(session) {
-			session = req.SessionID
 		}
 		if werr := r.waitForCredential(ctx, name, ex.Until); werr != nil {
 			return res, false, werr
@@ -6935,6 +6936,13 @@ func (r *run) finalize(ctx context.Context) error {
 	// of it (LV5.1).
 	hb, fromAgent := r.handBack()
 	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions, hb, fromAgent, r.owesHandBack())
+	// The run's own answer about the questions its agent asked (LV5.2): read off
+	// the decision rather than the hand-back again, and written here and not by
+	// the ending below, because it is a fact about what the run left open and
+	// not a second word for why it stopped — a run that asked a question and
+	// then failed for its own reason still asked it, and a follow-up can still
+	// answer.
+	r.rec.NeedsGuidance = dec.NeedsGuidance
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	// The cap's leftovers are filed beside them and before the body is built:

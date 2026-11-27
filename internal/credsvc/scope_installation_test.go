@@ -93,7 +93,7 @@ func TestInstallationScopeIsTodaysBehaviour(t *testing.T) {
 	// with no identity read at all.
 	routes := []string{MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath,
 		BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath,
-		PoolDesignatePath,
+		PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath,
 		WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, WorkspaceKeepWarmPath,
 		identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath,
 		identitywire.ProbePath,
@@ -104,7 +104,7 @@ func TestInstallationScopeIsTodaysBehaviour(t *testing.T) {
 		}
 	}
 	early := []string{VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, BuildTokenPath,
-		BuildCredentialsPath, IssuePath, SlipPath, PoolDesignatePath,
+		BuildCredentialsPath, IssuePath, SlipPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath,
 		identitywire.TicketPath, identitywire.ClaimPath, identitywire.PairingPath, identitywire.DevicePath,
 		identitywire.ProbePath}
 	for _, path := range early {

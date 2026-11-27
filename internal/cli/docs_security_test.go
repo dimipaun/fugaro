@@ -76,6 +76,15 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		// read it (C6 as re-pointed by D651; the sentences themselves are
 		// pinned in docs_registry_readers_test.go).
 		"### The source an image carries, and who can read it",
+		// The shared image's own half of that claim, which the design's §12
+		// states and its prerequisites ask SECURITY.md to carry: it holds the
+		// dependency layer and no repository's source, so a repository's
+		// registry readers never read another's through it.
+		"**A shared dependency-layer image bakes no repository's source at all.**",
+		// And what C8b does and does not ship, so the paragraph above it cannot
+		// go back to claiming a refresh that builds a shared image out of
+		// nothing.
+		"no catalog entry is keyed by a resolved dependency set yet",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)
@@ -526,13 +535,15 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// does not.
 		"**The service reads the workflow's own `secrets:` too",
 		"the reach does not change",
-		"the same value in the same variable a mount put there",
+		"the same value in the same variable the job's environment carries",
 		"`creds/workflowsecrets/<slug>`",
 		"variable names and container IDs, never a value",
 		// The runner's fetch, and what it is bound to: the verified job
-		// account decides the repository and the workflow, never a header the
-		// run writes (G19).
-		"the service's own route, which binds the repository and the workflow to the **verified** job account",
+		// account decides the repository, never a header the run writes (G19).
+		// Version 2 names the logical secret and not a container (IS11's
+		// reading of IS1 and IS6): the service builds the container from the
+		// name, so the workflow stops being a fact the call carries.
+		"the service's own route, which binds the repository to the **verified** job account",
 		// A mounted value wins, so the flip is a no-op until B3.8 lands it.
 		"**A mounted value always wins:**",
 		// And the run-start dependency S3 adds, with D501's cold start and
@@ -541,12 +552,30 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"pays a **cold start** on a run's own start",
 		"keeps the instance serving it warm while it runs",
 		"no redundancy beyond Cloud Run's own",
-		// The permanent exception D2075 answers: a Batch VM is not a job
-		// account the service admits, so its workflow secrets stay the VM's
-		// own `secretVariables` and S3's fetch never reaches it.
-		"**A repository on `backend: cloud-batch` keeps its workflow secrets on the VM (D2075):**",
-		"a Batch VM is not a job account the service admits",
-		"a permanent listed exception",
+		// The exception D2075 stated, corrected: D3104 supersedes it (D3107,
+		// the owner's ruling of 2026-11-20, docs/batch-run-identity's
+		// reconciliation), so a Batch job mounts nothing at all and its
+		// workflow secrets are fetched from the service like any other
+		// repository's, while a launch the service does not serve is refused
+		// before the job exists. Pinned, because the sentence it replaced
+		// promised a Batch installation a mount it no longer has.
+		"**A repository on `backend: cloud-batch` is served like any other (D3104, D3107):**",
+		"a Batch job mounts nothing at all",
+		"a launch of a repository the service does not serve is refused before the job is created",
+		// The flip itself (IS6, D3324, D3328, D3333), which IS11 states where
+		// a person meets it. Each fact is pinned separately, because each is
+		// one a reader acts on: the mount that is gone, the container the
+		// value now lives in, what admits a fetch, the marker that keeps the
+		// two `fugaro_p_` classes apart, and the class the fetch refuses.
+		"**No job mounts one any more: the value is the project's own container (IS6, D3324), and a name `fugaro update` has not copied yet keeps its mount until the update that copies it.**",
+		"`fugaro_p_<name>`",
+		"serves it only to a repository the project's own record admits",
+		"`fugaro secrets allow` and `deny` write it, and `fugaro update` seeds it from the operator's `workflow_secrets` block, and never from a repository's own `fugaro.yaml`",
+		"A container that does not carry the intake's workflow-secret marker is refused rather than read",
+		"conditioned on the `fugaro_u_` and `fugaro_p_` prefixes",
+		"a shared project job's run, a review job, a launcher and a person are each refused",
+		"a shared job's run carries none at all",
+		"Version 1 of the call",
 		// S4 (B4.6). A build's credential step fetches from the service, and
 		// the claim that matters is D2076's: what moves is where the build
 		// reads the value, not what a Dockerfile can reach — the service
@@ -759,13 +788,14 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		"the class's own table (`FUGARO_SHARED_JOB_ACCOUNTS`) is rendered by the installation module",
 		"a service not re-applied since that release still carries an empty shared set and refuses the class whole",
 		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
-		// S3's own limit (B3.5): the fetch is wired, and the mount the flip
-		// takes away has NOT been taken away — a mounted value wins, so the
-		// workflow's `secrets:` stay in the job until B3.8 lands the flip.
-		// Stated here rather than only beside the fetch, because a reader who
-		// takes "the runner fetches them" as the whole story would conclude a
-		// switched job no longer holds one.
-		"the read leaves the job only when the flip lands",
+		// S3's limit (B3.5) as IS6 leaves it: the flip has landed, so the
+		// read has left the job for a name `fugaro update` has copied — and
+		// only for those. A name the update skipped keeps its mount, and a
+		// root not re-applied with the switch on keeps every one. Stated here
+		// rather than only beside the fetch, because a reader who takes "the
+		// runner fetches them" as the whole story would conclude a switched
+		// job no longer holds one.
+		"the read leaves the job only for a name `fugaro update` has copied",
 		// S4's own limit (B4.6): the build's fetch is wired and reached by no
 		// repository's build or check job, so the read is still the mount's;
 		// and the copy the flip ends is still there — the build account keeps

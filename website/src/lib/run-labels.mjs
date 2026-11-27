@@ -57,7 +57,7 @@ export const LABELS = {
   draft: { text: 'a draft opens at the first push (marked not verified)', source: README_HOW },
   // The band: the two caps, and that the run spends the reader's own credential.
   perRunCap: { text: "A run halts when its next call's worst case would pass the cap", source: GCP_BUDGET },
-  dailyCap: { text: 'runs also share daily caps per repository and project', source: README_SAFETY },
+  dailyCap: { text: 'Runs also share daily caps per repository and project', source: README_SAFETY },
   yourCredential: {
     text: 'There is no Fugaro service in between: it uses your Google Cloud project and your model credentials',
     source: README_WHY,

@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -317,7 +318,11 @@ func TestTheReviewCoversTheRenewalBindingTheUpdatePlans(t *testing.T) {
 	// The fixture's own check: the review really was taken, so the assertion
 	// above is about a step the review judged rather than about a run that
 	// asked each step separately.
-	if !strings.Contains(out, "covered by the run confirmation") {
+	// A managed project's covered step reads the gate's sentence rather than
+	// the review's: the run's one confirmation is the review's, and the gate
+	// takes that verdict on the plan and records it (U3, D1016), so it is what
+	// stands where the review's own question stood in an unmanaged project.
+	if !strings.Contains(out, initflow.GateProceeded()) {
 		t.Errorf("no step of this update read as covered by the run's one confirmation, so this fixture is not the review's own case:\n%s", out)
 	}
 }

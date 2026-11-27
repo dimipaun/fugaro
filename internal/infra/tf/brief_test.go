@@ -153,3 +153,24 @@ func TestThingNamesAnIndexedGrantByItsMember(t *testing.T) {
 		}
 	}
 }
+
+// TestThingLeavesTheModulesPlaceholderOut: the module convention's `this` is
+// the one resource of its type a module holds and names nothing, so printed
+// beside the noun it reads as "the this job" — a doubled article for a reader
+// with nothing to act on in it (the owner's finding of 2026-11-26, and the line
+// check 292's log carries for the project module's job). Every other local name
+// is the module's own and is printed.
+func TestThingLeavesTheModulesPlaceholderOut(t *testing.T) {
+	for _, tc := range []struct {
+		address, want string
+	}{
+		{`module.project["fugaro-p-acme-0123456789ab"].google_cloud_run_v2_job.this`, "the job"},
+		{"module.installation.google_cloud_run_v2_job.this", "the job"},
+		{`module.project["fugaro-p-acme-0123456789ab"].google_cloud_run_v2_job.reports`, "the reports job"},
+		{"module.installation.google_cloud_run_v2_job.catalog_check[0]", "the catalog check job"},
+	} {
+		if got := thing(ResourceChange{Address: tc.address, Type: "google_cloud_run_v2_job"}); got != tc.want {
+			t.Errorf("thing(%s) = %q, want %q", tc.address, got, tc.want)
+		}
+	}
+}

@@ -127,7 +127,11 @@ func tightenWins(path string, kind tightenKind, repo, project *yaml.Node) (bool,
 			if kind == tightenMore {
 				return r > p, repoText, projText
 			}
-			return r < p, repoText, projText
+			// A cap of 0 is the key's "unset" spelling, which applyDefaults
+			// turns into DefaultMaxBudgetUSD: a repository writing it asks for
+			// a larger cap than any project's, so it tightens nothing and is
+			// dropped and recorded like any other looser value.
+			return r > 0 && r < p, repoText, projText
 		}
 	case tightenRank:
 		r, rok := nodeRank(path, repo)

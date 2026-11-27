@@ -65,13 +65,13 @@ image_catalog:
 `
 
 // enrolRepo is the repository every test here enrols, enrolEntry the allow-list
-// entry that follows from github/, and enrolMapKey the image map's key for it —
-// owner/name, the name a job's own repository is looked up by (localcfg's
-// image_map rule), and not the canonical one.
+// entry that follows from github/, and enrolImageKey the key the
+// repository-to-image map holds it under (S3, D3370): provider/owner/name, the
+// one spelling of a repository's identity.
 const (
-	enrolRepo   = "owner/repo-b"
-	enrolEntry  = "github/owner/repo-b"
-	enrolMapKey = "owner/repo-b"
+	enrolRepo     = "owner/repo-b"
+	enrolEntry    = "github/owner/repo-b"
+	enrolImageKey = "github/owner/repo-b"
 )
 
 // enrolCheckoutYAML is the repository's own fugaro.yaml, which is where its
@@ -236,7 +236,7 @@ func TestReposAddPrintsTheSixStepsInOrder(t *testing.T) {
 	for i, want := range []string{
 		"the repository's own fugaro.yaml: read for its workflows ([web])",
 		"project config: writes repos." + enrolRepo + ": ",
-		"project config: writes image_map[" + enrolMapKey + "] = base",
+		"project config: writes repo_images[" + enrolImageKey + "] = base",
 		"allow-list: allow_repos:",
 		"publish: the policy node " + projectpolicy.PathShared(),
 		"job: the repository's job set and its roles/run.invoker grant",
@@ -499,7 +499,7 @@ func TestReposAddIsIdempotentOverACompletedEnrolment(t *testing.T) {
 	if !strings.Contains(out, enrolEntry+" is already on the allow-list; nothing changed") {
 		t.Errorf("the second run does not print the sentence the allow-list's own editor prints for that state:\n%s", out)
 	}
-	for _, want := range []string{"already repos." + enrolRepo, "already image_map[" + enrolMapKey + "]", "is already as this enrolment wants it"} {
+	for _, want := range []string{"already repos." + enrolRepo, "already repo_images[" + enrolImageKey + "]", "is already as this enrolment wants it"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the second run's answer does not say %q:\n%s", want, out)
 		}
@@ -511,8 +511,11 @@ func TestReposAddIsIdempotentOverACompletedEnrolment(t *testing.T) {
 	if !reflect.DeepEqual(after.Repos, before.Repos) {
 		t.Errorf("the second run changed the repos: block:\n--- before\n%+v\n--- after\n%+v", before.Repos, after.Repos)
 	}
-	if !reflect.DeepEqual(after.ImageMap, before.ImageMap) {
-		t.Errorf("the second run changed the image_map: block:\n--- before\n%+v\n--- after\n%+v", before.ImageMap, after.ImageMap)
+	if !reflect.DeepEqual(after.RepoImages, before.RepoImages) {
+		t.Errorf("the second run changed the repo_images: block:\n--- before\n%+v\n--- after\n%+v", before.RepoImages, after.RepoImages)
+	}
+	if after.ImageMap != nil {
+		t.Errorf("the second run left an image_map: block in this machine's config: %+v", after.ImageMap)
 	}
 	if !reflect.DeepEqual(after.Profiles, before.Profiles) {
 		t.Errorf("the second run changed the allow_repos the profiles carry:\n--- before\n%+v\n--- after\n%+v", before.Profiles, after.Profiles)
@@ -549,8 +552,8 @@ func TestReposAddConvergesAHalfDoneEnrolment(t *testing.T) {
 	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
 		t.Errorf("allow_repos = %v: the half-done enrolment did not converge", p.AllowRepos)
 	}
-	if got := r.addLocal(t).ImageMap[enrolMapKey]; got != "base" {
-		t.Errorf("image_map[%s] = %q: the half-done enrolment did not converge", enrolMapKey, got)
+	if got := r.addLocal(t).RepoImages[enrolImageKey]; got != "base" {
+		t.Errorf("repo_images[%s] = %q: the half-done enrolment did not converge", enrolImageKey, got)
 	}
 	// The entry that was already there is answered as already done and the step
 	// that was missing as written: one run, both readings.
@@ -586,8 +589,8 @@ func TestReposAddPublishesOverTheGenerationItsAllowListWriteLanded(t *testing.T)
 	// The two local steps are the ones a re-seed takes away with it: it writes
 	// the node's values into the file, and the node carries neither a repos entry
 	// for this repository nor a repo-to-image map.
-	if got := after.ImageMap[enrolMapKey]; got != "base" {
-		t.Errorf("image_map[%s] = %q after the run, want the mapping step 3 wrote: %v", enrolMapKey, got, after.ImageMap)
+	if got := after.RepoImages[enrolImageKey]; got != "base" {
+		t.Errorf("repo_images[%s] = %q after the run, want the mapping step 3 wrote: %v", enrolImageKey, got, after.RepoImages)
 	}
 	if _, ok := after.Repos[enrolRepo]; !ok {
 		t.Errorf("repos has no entry for %s after the run: %v", enrolRepo, after.Repos)
@@ -635,7 +638,9 @@ func enrolRecordGeneration(t *testing.T, r *addRig, gen string) {
 // TestReposAddMergesThePublishedImageMap is the trap D1906's keep rule sets: a
 // local config that names no repo-to-image map states, once this step writes
 // one, the project's WHOLE map — and would take every other repository's
-// mapping away with it. The effective map is what the write starts from.
+// mapping away with it. The effective map is what the write starts from, and
+// under R13 it is the migrated one (S3): the mapping the node holds as a bare
+// name reaches the file under its provider, beside this repository's key.
 func TestReposAddMergesThePublishedImageMap(t *testing.T) {
 	r := enrolRig(t)
 	if r.addLocal(t).ImageMap != nil {
@@ -643,6 +648,53 @@ func TestReposAddMergesThePublishedImageMap(t *testing.T) {
 	}
 	// The node holds the project's other repository's mapping, in the escaped
 	// shape the block is stored in on the node.
+	node := addPolicyNode()
+	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"owner/repo-a": "base"})
+	r.db.Set(projectpolicy.PathShared(), node)
+
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
+		t.Fatal(err)
+	}
+	m := r.addLocal(t).RepoImages
+	if m["github/owner/repo-a"] != "base" {
+		t.Errorf("repo_images = %v: the mapping the published node held for the project's other repository was replaced rather than merged into, under its provider", m)
+	}
+	if m[enrolImageKey] != "base" {
+		t.Errorf("repo_images = %v, want this repository's entry beside it", m)
+	}
+	// The node's own mapping is the project's, and the converge publishes what
+	// this machine's file now states — in the new member, the old one staying on
+	// the node until the step after the credentials service takes it away (R14).
+	if got := r.policy(t).RepoImages["github/owner/repo-a"]; got != "base" {
+		t.Errorf("the published repo_images lost the other repository's mapping: %v", r.policy(t).RepoImages)
+	}
+}
+
+// TestReposAddWritesProviderKey is S3's own claim: the mapping this command
+// writes is a key of repo_images — provider/owner/name (R8, D3370) — and the
+// bare name the old member was keyed by is not a key of it.
+func TestReposAddWritesProviderKey(t *testing.T) {
+	r := enrolRig(t)
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
+		t.Fatal(err)
+	}
+	m := r.addLocal(t).RepoImages
+	if got := m[enrolImageKey]; got != "base" {
+		t.Errorf("repo_images = %v, want %s = base", m, enrolImageKey)
+	}
+	if _, ok := m[enrolRepo]; ok {
+		t.Errorf("repo_images = %v: the bare name %s is a key of it, and a key of this member carries its provider", m, enrolRepo)
+	}
+}
+
+// TestReposAddNeverWritesImageMap is S3's red step and R13's rule in one: a
+// project whose map is still the legacy one has it MIGRATED into the file — the
+// mapping it served reaches repo_images under its provider — and the old member
+// is not written into this machine's config at all.
+func TestReposAddNeverWritesImageMap(t *testing.T) {
+	r := enrolRig(t)
+	// The node holds the project's map in the old form, as an installation that
+	// has not run this release's `update` does.
 	node := addPolicyNode()
 	raw, err := json.Marshal(projectpolicy.ImageMap{"owner/repo-a": "base"})
 	if err != nil {
@@ -658,17 +710,80 @@ func TestReposAddMergesThePublishedImageMap(t *testing.T) {
 	if _, _, err := r.enrol(t, enrolRepo); err != nil {
 		t.Fatal(err)
 	}
-	m := r.addLocal(t).ImageMap
-	if m["owner/repo-a"] != "base" {
-		t.Errorf("image_map = %v: the mapping the published node held for the project's other repository was replaced rather than merged into", m)
+	if got := readFileString(t, r.cfg); strings.Contains(got, "image_map") {
+		t.Errorf("the run wrote image_map into this machine's project config:\n%s", got)
 	}
-	if m[enrolMapKey] != "base" {
-		t.Errorf("image_map = %v, want this repository's entry beside it", m)
+	m := r.addLocal(t).RepoImages
+	if m["github/owner/repo-a"] != "base" {
+		t.Errorf("repo_images = %v: the mapping the project served as a bare name was not migrated into the file", m)
 	}
-	// The node's own mapping is the project's, and the converge publishes what
-	// this machine's file now states.
-	if got := r.policy(t).ImageMap["owner/repo-a"]; got != "base" {
-		t.Errorf("the published image_map lost the other repository's mapping: %v", r.policy(t).ImageMap)
+	if m[enrolImageKey] != "base" {
+		t.Errorf("repo_images = %v, want this repository's own key beside it", m)
+	}
+}
+
+// TestReposAddLeavesAFileThatNamesNoMapAlone is the other side of the merge: a
+// project already serving repo_images, in a file that names neither member, has
+// nothing for this step to write — and the node's map must not be copied into
+// this machine's file. A stated map is the whole one (D1906), so that copy would
+// become this machine's own answer for every repository and, at its next publish,
+// replace a teammate's later mapping with it.
+func TestReposAddLeavesAFileThatNamesNoMapAlone(t *testing.T) {
+	r := enrolRig(t)
+	node := addPolicyNode()
+	raw, err := json.Marshal(projectpolicy.RepoImages{"github/owner/repo-a": "base", enrolImageKey: "base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var block map[string]any
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatal(err)
+	}
+	node["repo_images"] = block
+	r.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileString(t, r.cfg); strings.Contains(got, "repo_images") {
+		t.Errorf("the run wrote the published node's map into a config that named none:\n%s", got)
+	}
+	if after := r.addLocal(t); after.RepoImages != nil || after.ImageMap != nil {
+		t.Errorf("this machine's project config names a map after a run with nothing to write: repo_images=%v image_map=%v", after.RepoImages, after.ImageMap)
+	}
+	if want := "already repo_images[" + enrolImageKey + "] = base"; !strings.Contains(out, want) {
+		t.Errorf("the plan does not report the mapping the project already serves (%q):\n%s", want, out)
+	}
+}
+
+// TestReposAddMigratesTheFileImageMap is the other half of the clearing write:
+// the map this machine's config holds ITSELF is the legacy one (R2 reads the
+// file's own member before the node's), and the step must migrate it into
+// repo_images and take image_map away — a file that kept the old member would
+// state the map twice, and the readers would serve the copy the write did not
+// touch.
+func TestReposAddMigratesTheFileImageMap(t *testing.T) {
+	r := enrolRigOver(t, enrolRigLocal+"image_map: { owner/repo-a: base }\n")
+	if got := r.addLocal(t).ImageMap; got["owner/repo-a"] != "base" {
+		t.Fatalf("the fixture's local config does not hold the legacy map: %v", got)
+	}
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileString(t, r.cfg); strings.Contains(got, "image_map") {
+		t.Errorf("the run left the legacy member in this machine's project config:\n%s", got)
+	}
+	after := r.addLocal(t)
+	if after.ImageMap != nil {
+		t.Errorf("this machine's config still names image_map: %v", after.ImageMap)
+	}
+	m := after.RepoImages
+	if m["github/owner/repo-a"] != "base" {
+		t.Errorf("repo_images = %v: the mapping the file itself served as a bare name was not migrated into it", m)
+	}
+	if m[enrolImageKey] != "base" {
+		t.Errorf("repo_images = %v, want this repository's own key beside it", m)
 	}
 }
 

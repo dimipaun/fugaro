@@ -142,17 +142,6 @@ type initEngine struct {
 	// and the lines each stage and step reported about them
 	// (update_repos.go).
 	reposState reposState
-
-	// flagFactVersion is the version the self-flag step's own read of the
-	// creation fact answered with, and 0 where that step read nothing
-	// (update_selfflag.go). The marker step asks it beside the gate's version
-	// for the one installation whose fact the gate never saw: the half-written
-	// flag, whose object write succeeded and whose label write then failed. A
-	// run that finishes that flag has read the object — the step could not
-	// complete the object otherwise — so the version the migration needs is
-	// already in hand, and taking a read of its own for it would be the second
-	// read of an object this run has answered once.
-	flagFactVersion int
 }
 
 // environment runs the environment check once (it prints the local
@@ -355,8 +344,15 @@ func initStages(e *initEngine) []initflow.Stage {
 	// both doors, like the service's own stage: an installation that has not
 	// turned the service on skips it with one line.
 	stages = append(stages, newCredentialsCopyStage(e))
+	// The legacy repo-to-image member off the published node, after the service
+	// that reads it has been replaced (U1c of docs/image-map-by-provider, D3376
+	// as amended): the release behind's credentials service reads image_map and
+	// finds no map on a node carrying only repo_images, so the removal waits
+	// for the stage above to have moved that service onto this release's. It
+	// sits after the copy because the copy is that service's own window.
+	stages = append(stages, newImageMapRetireStage(e))
 	// The required-CLI stamp, registered for both doors and immediately after
-	// the credentials copy: it is the last stage of the run that writes
+	// the image-map retire: it is the last stage of the run that writes
 	// something a deployed reader sees, and it raises the node that refuses
 	// every fugaro below this release (update_version_stamp.go, D3260, R1). It
 	// is registered unconditionally because the stage's own Check is what
@@ -518,6 +514,22 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 // decides is what is applied and in what order — the canonical one
 // (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	// TN1's stop, at the head of the engine and before anything of this run
+	// touches the installation (F16): a project the managed read answers is not
+	// managed is refused here, with the one command that flags it, and the
+	// steps below — every one of which either reads the installation's own
+	// files or writes them — are not reached at all.
+	if err := e.requireManagedInstallation(); err != nil {
+		return err
+	}
+	// D2215's rewrite, and R6's currency with it, in the same place and for the
+	// same reason: an explicit --budget is a figure the record has to agree
+	// with before this run's own apply carries it to the alert, and the figures
+	// the plan is made from are settled before the first stage plans anything.
+	// Only the two fences return from it, and each of them ends the run.
+	if err := e.settleExplicitBudget(ctx); err != nil {
+		return err
+	}
 	// The owner's own local config, read before anything else this run does and
 	// before the first stage plans (update_catalog_guard.go): every image
 	// catalog entry this release will refuse is named here, and the one entry
@@ -702,19 +714,6 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		}
 		return r.failureShown(res.Cause)
 	}
-	// D1553's self-flag, and it is here rather than beside markCreated above
-	// because of what each of the two marks means: markCreated records what a
-	// run created, which is true whatever the run did afterwards, while this
-	// one takes the installation's typed confirmation away, and a run that
-	// failed above applied nothing to be confirmed. So it is reached only by a
-	// run whose stages all succeeded, and its own test drives that path
-	// (update_selfflag.go, TestUpdateOnAnUnmanagedInstallation...). It is
-	// still before printResult, so what it says and the warnings it records are
-	// in the result the print encodes — the reason markCreated is where it is.
-	if err := e.selfFlagUnmanaged(ctx); err != nil {
-		_ = r.printResult()
-		return err
-	}
 	// And D1548's, on the same path and for the same reason: the converge has
 	// applied everything it had, and the mode a managed project's runs read is
 	// raised here or on no run at all (update_budget_mode.go). It returns no
@@ -735,13 +734,12 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	e.noticeRepoValues(ctx)
 	// And D1543's: the creation fact a release behind left at version 3 carries
 	// the image build count this one no longer bounds a build by, and a fact is
-	// migrated where it was written (update_marker_version.go). It is after the
-	// self-flag above for the reason that step has: a run which flags an
-	// installation writes the version this build writes, so the two together
-	// converge any installation the update reaches, and the step itself does
-	// nothing where the fact is already this release's. Like the two above it
-	// returns no error — a fact left behind is one this build still reads — and
-	// it is before printResult for the same reason.
+	// migrated where it was written (update_marker_version.go). It converges
+	// the installation this run reaches — nothing marks a project here any more
+	// (TN1) — and the step itself does nothing where the fact is already this
+	// release's. Like the two above it returns no error — a fact left behind is
+	// one this build still reads — and it is before printResult for the same
+	// reason.
 	e.convergeMarkerVersion(ctx)
 	// And D1940's: the roster's project-scoped admins, published for the intake
 	// that admits a caller to the shared prefix and may hold no database role
@@ -2170,7 +2168,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	// because this plan has none — every resource in it is in the state already,
 	// and the cover consults that list only for a change that carries an import
 	// (tf.Cover.NotCovered).
-	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons), nil, nil)
+	gated, err := r.gateStep(ctx, e.t, nil, r.coverOf(r.coverReasons), nil, nil, nil)
 	if err != nil {
 		return false, err
 	}

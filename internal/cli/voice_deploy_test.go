@@ -163,7 +163,7 @@ const voiceServiceURL = "https://fugaro-voice-123456789012.us-east5.run.app"
 // change ends.
 func TestUpdateLeavesTheVoiceHopOffOnAnInstallationThatNeverOptedIn(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	applies := r.captureApplies(t)
 	out, errOut, err := executeStdin(t, "", "update")
@@ -238,7 +238,7 @@ func TestUpdateLeavesTheVoiceHopOffOnAnInstallationThatNeverOptedIn(t *testing.T
 // and no apply carries this release's pin.
 func TestUpdateKeepsTheVoiceHopOnAnInstallationThatOptedIn(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.voice[0]", "update"))
+	r.setPlanAt(t, "installation", installationServicePlan(voiceServiceShape(), "update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("0.22.3"))
 	seedVoiceService(t, r, oldCredentialsRef("0.22.3"))
@@ -355,7 +355,7 @@ func TestUpdateKeepsTheVoiceHopOnAnInstallationThatOptedIn(t *testing.T) {
 // reference.
 func TestUpdateMovesTheVoiceHopWhoseCredentialsImageIsCurrent(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.voice[0]", "update"))
+	r.setPlanAt(t, "installation", installationServicePlan(voiceServiceShape(), "update", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	// The credentials service is already this release's — the state a second
 	// run of one upgrade leaves — and the hop's block is what the owner wrote by
@@ -466,7 +466,7 @@ func TestUpdateMovesTheVoiceHopWhoseCredentialsImageIsCurrent(t *testing.T) {
 // is what stops the run instead.
 func TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.voice[0]", "update"))
+	r.setPlanAt(t, "installation", installationServicePlan(voiceServiceShape(), "update", r.credentialsRef())...)
 	voiceServiceOutputs(t, r)
 	// This machine holds no document at all, which is the second machine and
 	// the lost state directory both: PrepareWorkdir finds nothing to snapshot
@@ -574,7 +574,7 @@ func TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars(t *testing.T) {
 // the document would have replaced the installation's service with.
 func TestUpdateKeepsTheVoiceHopUnderTheInstallationsOwnServiceName(t *testing.T) {
 	r := credentialsRig(t)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.voice[0]", "update"))
+	r.setPlanAt(t, "installation", installationServicePlan(voiceServiceShape(), "update", r.credentialsRef())...)
 	named := infra.VoiceServiceName + "-eu"
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
@@ -659,7 +659,7 @@ func TestUpdatePlansTheVoiceHopAwayWhenTheOwnerTurnsItOff(t *testing.T) {
 	// its plan: what the run PLANS is this test's own fixture, while what the
 	// plan is built from — the document every apply of this root reads — is the
 	// point.
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	// The installation HAS the hop: its own outputs carry the service, which is
 	// the module's voice_service output and exists exactly while the variable
 	// does. That is what makes this the owner turning it off rather than an

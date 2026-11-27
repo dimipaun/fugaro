@@ -159,6 +159,12 @@ func newAddRigMarks(t *testing.T, local string, marked bool) *addRig {
 	if marked {
 		r.markManaged(t, lc.GCPProject)
 		actingAccount(t)
+	} else {
+		// The fixture's default world is a managed installation (newInitRig),
+		// and this row is the other one: the project's own half of the fact is
+		// taken back out, so the read answers the not-managed direction every
+		// refusal this row is about stands on.
+		r.removeManagedInstallation(t)
 	}
 	r.managed = marked
 	return r

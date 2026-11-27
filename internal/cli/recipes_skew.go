@@ -269,6 +269,37 @@ func (e *cloudEnv) identityGate(ctx context.Context, slug string, spec *task.Spe
 // *Since constants.
 const vaultSince = "0.26.0"
 
+// vaultNameSince is the first fugaro release whose runner asks the credentials
+// service for a workflow secret BY NAME — version 2 of the route, answered from
+// the project record out of the fugaro_p_<name> grammar (IS2, C1, D3324,
+// D3333) — and it is the second constant the flip's own gate is judged on.
+//
+// It is one release after vaultSince and not a second reading of it: an image
+// at vaultSince knows the fetch but asks the version-1 way, naming the variable
+// and reading the container the per-repository record maps it to. That
+// container is the project copy IS6 stops deriving and IS13 retires and
+// deletes, so a job of this release — which mounts none of its workflow's
+// secrets — leaves such a runner with nothing to read and it stops at bootstrap
+// over a declared secret (the same failure vaultSince refuses one release
+// earlier). It names 0.30.0, the release this plan's S2 and S3 ship in
+// together, the same number l8Since carries for that reason, and
+// docs/release.md's Before-you-tag list is what holds it to the release
+// actually cut — TestVaultNameSinceHasAReleaseBullet is the test that reads
+// that bullet. The direction to fear is the same one: a value below the release
+// that carries IS2 admits a launch whose runner cannot fetch by name.
+const vaultNameSince = "0.30.0"
+
+// vaultNameSubject and vaultNameKnows are this gate's two names in the
+// family's sentence (checkImageSince): what is refused (a launch whose run
+// fetches its workflow secrets by name) and what its job image's runner has to
+// know (the by-name fetch, version 2 of the route). The refusal carries no alt:
+// the name is the whole of what the fetch travels on, so there is no other way
+// for an older image to be given one.
+const (
+	vaultNameSubject = "a run of a repository whose workflow secrets are brokered by name (the job mounts none of them, and the run asks the installation's credentials service for each declared secret's own name rather than for the container a record maps its variable to)"
+	vaultNameKnows   = "the by-name fetch (version 2 of the credentials service's workflow-secrets route, answered from the project record out of the fugaro_p_ grammar)"
+)
+
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
 // in, R4). Like cloneSince and unlike the policy's own integer `version` or
@@ -4842,23 +4873,21 @@ func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, wa
 }
 
 // modelGradesSince is the first fugaro release whose config reader knows the
-// escalation ladder's two model grades: fugaro.yaml's top-level model_grades:
-// block (docs/outer-loop-escalation, D2039's E2) and the project layer's
-// defaults.model_grades. Both files are decoded with KnownFields, so a runner
-// built from an older base image refuses either key at bootstrap. Like
-// planningSince, whose two homes are the same two, the judge is the
-// installation's base image and the gate is fugaro update --repo's
+// escalation ladder's two model grades: the project layer's
+// defaults.model_grades (docs/outer-loop-escalation, D2039's E2). The layer is
+// decoded with KnownFields, so a runner built from an older base image refuses
+// the key at bootstrap. Like planningSince, whose home is the same layer, the
+// judge is the installation's base image and the gate is fugaro update --repo's
 // (refuseModelGradesSkew); fugaro run gates the launch too
 // (checkModelGradesImage, checkCloneModelGradesImage), but only from a checkout
-// of the repository, where it can read the file the run will, so outside one
+// of the repository, where it can read the layer the run will, so outside one
 // only fugaro update --repo checks, and fugaro validate warns
 // (modelGradesImageWarnings).
 //
-// The repository's half is not a second opinion on the grade: a grade a
-// repository file writes is dropped and recorded by the merge (G3, E2's note),
-// so nothing a run reads changes. It is gated all the same, because what the
-// older runner refuses is the key itself: the line an operator added to their
-// fugaro.yaml is what dies at bootstrap, whoever was going to ignore it.
+// A repository's own fugaro.yaml is not judged: the two grade models left it
+// (config.LiftedKeys), so a file that still writes one is named where it is
+// written, by the reader that owns it, rather than gated on the image it would
+// die on — the line is the repository's own and its fix is a diff.
 //
 // It names 0.24.0, the release this work ships in ("Uakari": docs/release-streams.yaml
 // has 0.23.0 current and Uakari 0.24.0 next), which is not tagged yet: the
@@ -4868,66 +4897,50 @@ func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, wa
 const modelGradesSince = "0.24.0"
 
 // modelGradesLaunchSources reports, for the launch's modelGradesSince gate,
-// whether the configuration the run will read writes the key: the repository's
-// fugaro.yaml (fromRepo, RepoModelGradesSet) or the project layer it resolves
-// over (fromLayer, SetsModelGrades), read the way planningLaunchSources reads
-// them. Both are the key being written and not the value it holds: an older
-// runner's decoder refuses model_grades whatever it says — an explicit null,
-// model_grades: {} and two full grades are one line to it — so judging the
-// grades would launch the first two to die at bootstrap on a run already paid
+// whether the configuration the run will read writes the key: the project layer
+// it resolves over (fromLayer, SetsModelGrades), read the way
+// planningLaunchSources reads it. It is the key being written and not the value
+// it holds: an older runner's decoder refuses defaults.model_grades whatever it
+// says — an empty mapping and two full grades are one line to it — so judging
+// the grades would launch the first to die at bootstrap on a run already paid
 // for.
-func modelGradesLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fromRepo, fromLayer bool) {
+func modelGradesLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fromLayer bool) {
 	cfg := launchFileConfig(ctx, env, spec)
 	if cfg == nil {
-		return false, false
+		return false
 	}
-	return cfg.RepoModelGradesSet, cfg.Layer.SetsModelGrades()
+	return cfg.Layer.SetsModelGrades()
 }
 
-// modelGradesSubject names, for refuseModelGradesSkew's messages, which file
-// wrote the key, and the way out that file's author has: the repository's block
-// is the repository's to remove, while the layer's is read by every repository
-// of the project. The layer's key is defaults.model_grades, the one under
-// defaults:, rather than a top-level key of the layer file like jobs:'s — and
-// it is the home the ladder reads, so removing the repository's block leaves
-// the run with no grade at all rather than with a default.
-func modelGradesSubject(repo string, fromRepo, fromLayer bool) (subject, alt string) {
-	const layerAlt = "remove defaults.model_grades from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
-	switch {
-	case fromRepo && fromLayer:
-		return "fugaro.yaml's model_grades: block and the project layer's defaults.model_grades of " + repo,
-			"remove the model_grades: block from fugaro.yaml and " + layerAlt
-	case fromLayer:
-		return "the project layer's defaults.model_grades (read for " + repo + ")", layerAlt
-	}
-	return "fugaro.yaml's model_grades: block of " + repo, "remove the model_grades: block from fugaro.yaml"
+// modelGradesSubject names, for refuseModelGradesSkew's messages, the file that
+// wrote the key, and the way out that file's author has: the layer's block is
+// read by every repository of the project, so publishing the layer again is what
+// fixes them all. The layer's key is defaults.model_grades, the one under
+// defaults:, rather than a top-level key of the layer file like jobs:'s — and it
+// is the home the ladder reads, so removing the block leaves the run with no
+// grade at all rather than with a default.
+func modelGradesSubject(repo string) (subject, alt string) {
+	return "the project layer's defaults.model_grades (read for " + repo + ")",
+		"remove defaults.model_grades from the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
 }
 
-// modelGradesKnows names, for the image gates' messages, the key the job
-// image's runner has to know: the message reads "needs a job image whose runner
-// knows <this>", so it has to name whichever of the two the config wrote.
-func modelGradesKnows(fromRepo, fromLayer bool) string {
-	switch {
-	case fromRepo && fromLayer:
-		return "the model_grades: block and the project layer's defaults.model_grades"
-	case fromLayer:
-		return "the project layer's defaults.model_grades"
-	}
-	return "the model_grades: block"
-}
+// modelGradesKnows names, for the image gates' messages, the key the job image's
+// runner has to know: the message reads "needs a job image whose runner knows
+// <this>", and the layer is the one file the key is still written in.
+const modelGradesKnows = "the project layer's defaults.model_grades"
 
 // refuseModelGradesSkew refuses fugaro update --repo, before any cloud effect,
-// when the repository's fugaro.yaml writes a model_grades: block (fromRepo) or
-// the project layer it resolves over writes defaults.model_grades (fromLayer)
-// and the installation's base image predates modelGradesSince — a runner built
-// from it decodes the file with KnownFields and refuses the run at bootstrap on
-// a key it does not know. The states of ref are read as refuseRigorSkew reads
-// them: no base image passes, one that is not a release only warns.
-func refuseModelGradesSkew(repo string, fromRepo, fromLayer bool, ref string, warn io.Writer) error {
-	if !fromRepo && !fromLayer {
+// when the project layer the repository resolves over writes
+// defaults.model_grades (fromLayer) and the installation's base image predates
+// modelGradesSince — a runner built from it decodes the layer with KnownFields
+// and refuses the run at bootstrap on a key it does not know. The states of ref
+// are read as refuseRigorSkew reads them: no base image passes, one that is not
+// a release only warns.
+func refuseModelGradesSkew(repo string, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromLayer {
 		return nil
 	}
-	subject, alt := modelGradesSubject(repo, fromRepo, fromLayer)
+	subject, alt := modelGradesSubject(repo)
 	switch rel, ok := releaseOf(ref); {
 	case ref == "":
 		return nil
@@ -4951,23 +4964,21 @@ func refuseModelGradesSkew(repo string, fromRepo, fromLayer bool, ref string, wa
 // installation's own — and the way out the file's author has, from
 // modelGradesSubject.
 func checkModelGradesImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
-	fromRepo, fromLayer := modelGradesLaunchSources(ctx, env, spec)
-	if !fromRepo && !fromLayer {
+	if !modelGradesLaunchSources(ctx, env, spec) {
 		return nil
 	}
-	subject, alt := modelGradesSubject(spec.Repo, fromRepo, fromLayer)
-	return checkImageSince(ctx, env, slug, spec, kind, modelGradesSince, subject, modelGradesKnows(fromRepo, fromLayer), "; or "+alt, warn)
+	subject, alt := modelGradesSubject(spec.Repo)
+	return checkImageSince(ctx, env, slug, spec, kind, modelGradesSince, subject, modelGradesKnows, "; or "+alt, warn)
 }
 
 // checkCloneModelGradesImage is checkModelGradesImage for a checkout: clone
 // workflow: see checkCloneImageSince.
 func checkCloneModelGradesImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
-	fromRepo, fromLayer := modelGradesLaunchSources(ctx, env, spec)
-	if !fromRepo && !fromLayer {
+	if !modelGradesLaunchSources(ctx, env, spec) {
 		return nil
 	}
-	subject, alt := modelGradesSubject(spec.Repo, fromRepo, fromLayer)
-	return checkCloneImageSince(env.lc, spec, modelGradesSince, subject, modelGradesKnows(fromRepo, fromLayer), "; or "+alt, warn)
+	subject, alt := modelGradesSubject(spec.Repo)
+	return checkCloneImageSince(env.lc, spec, modelGradesSince, subject, modelGradesKnows, "; or "+alt, warn)
 }
 
 // taskGradeSince is the first fugaro release whose task reader knows a task's
@@ -5253,29 +5264,16 @@ func checkCloneMergeJudgeCraftImage(lc *localcfg.Config, spec *task.Spec, cfg *c
 }
 
 // modelGradesImageWarnings warns, once, that a configuration which writes the
-// key — the repository's file (RepoModelGradesSet) or the project layer it
-// resolved over (SetsModelGrades) — needs every job image on modelGradesSince.
-// It is validate's half of checkModelGradesImage, and a warning rather than a
-// Problem for rigorImageWarnings' reason: the file is valid, and what has to
-// move is the installation (the base image, or a workflow's derived one), which
-// is why both ways to move an image are named. It says which of the two wrote
-// the key, planningImageWarnings' distinction for the same reason.
+// key — the project layer the file resolved over (SetsModelGrades) — needs every
+// job image on modelGradesSince. It is validate's half of checkModelGradesImage,
+// and a warning rather than a Problem for rigorImageWarnings' reason: the file
+// is valid, and what has to move is the installation (the base image, or a
+// workflow's derived one), which is why both ways to move an image are named.
 func modelGradesImageWarnings(c *config.Config) []config.Problem {
-	if c == nil {
+	if c == nil || !c.Layer.SetsModelGrades() {
 		return nil
 	}
-	fromRepo, fromLayer := c.RepoModelGradesSet, c.Layer.SetsModelGrades()
-	if !fromRepo && !fromLayer {
-		return nil
-	}
-	subject := "this file's model_grades: block"
-	switch {
-	case fromRepo && fromLayer:
-		subject = "this file's model_grades: block and the project layer's defaults.model_grades"
-	case fromLayer:
-		subject = "the project layer's defaults.model_grades"
-	}
-	return []config.Problem{{Path: "model_grades", Message: subject + " needs fugaro " + modelGradesSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+	return []config.Problem{{Path: "model_grades", Message: "the project layer's defaults.model_grades needs fugaro " + modelGradesSince + " or later in the job image that runs it, and in the CLI of everyone who reads this layer: an older runner decodes the layer strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
 }
 
 // securityLaunchSources reports, for the launch's securitySince gate, whether

@@ -143,21 +143,37 @@ func (s *Server) poolDesignate(ctx context.Context, w http.ResponseWriter, r *ht
 	// member out of, so a route reading it here would refuse every honest
 	// designation on a real installation while passing on a fixture that writes
 	// the principal where no publish does.
-	pool, ok := namedLauncherPool(req.Pool, shared)
-	if !ok {
-		s.refuseDesignate(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+designationNoSuchPool)
-		return
-	}
-	if !poolServesPrincipal(pool, caller.Principal) {
-		s.refuseDesignate(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+designationNotTheCallers)
-		return
+	poolName := ""
+	if pool, ok := namedLauncherPool(req.Pool, shared); ok {
+		if !poolServesPrincipal(pool, caller.Principal) {
+			s.refuseDesignate(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+designationNotTheCallers)
+			return
+		}
+		poolName = pool.Name
+	} else {
+		// PL9: a person's own pool is not the project's published block, so a
+		// name the block holds none of is read out of the service's own store —
+		// for the caller's verified subject alone, which is what makes a
+		// designation name a pool of the caller's own and never another
+		// person's (personalPoolFor, R9, R26).
+		rec, ok, err := personalPoolFor(ctx, s, caller.Principal, req.Pool, project)
+		if err != nil {
+			s.log.Error("credsvc: a personal pool could not be read", "error", err)
+			s.refuseDesignate(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, personalPoolStoreUnread)
+			return
+		}
+		if !ok {
+			s.refuseDesignate(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+designationNoSuchPool)
+			return
+		}
+		poolName = rec.Pool
 	}
 	db, ok := s.cfg.DB.(creds.DB)
 	if !ok {
 		s.refuseDesignate(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, designationStoreUnwritten)
 		return
 	}
-	d := routing.Designation{Principal: caller.Principal, Project: project, Pool: pool.Name}
+	d := routing.Designation{Principal: caller.Principal, Project: project, Pool: poolName}
 	if err := creds.WriteDesignation(ctx, db, d); err != nil {
 		// The refusal names the field and never the record: the write's own
 		// error carries a node path and the decode's own words, and neither

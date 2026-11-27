@@ -1558,14 +1558,22 @@ const (
 	seniorModel = "claude-opus-5"
 )
 
+// visionTask is the task text that makes a run one that reads a picture: an
+// image file's own name in it (imageNamesInTask). Every run here but the ones
+// about the gate itself carries it.
+const visionTask = "Fix the console golden: docs/shot.png is out of date"
+
 // visionRun is the minimal run applyVision rewrites: the pins it reads, the
-// vision slot, and the price table the image question is asked of — the
-// embedded one unless a test hands in its own.
+// vision slot, the task that makes it a run which reads a picture, and the
+// price table the image question is asked of — the embedded one unless a test
+// hands in its own.
 func visionRun(models config.ModelRoles, prices *pricing.Table) *run {
-	return &run{
+	r := &run{
 		cfg:   &config.Config{Agent: config.Agent{Auth: "api-key", Models: models}},
 		spend: Spend{Mode: "enforce", Prices: prices},
 	}
+	r.spec = &task.Spec{Task: visionTask}
+	return r
 }
 
 // applyVisionOn is applyVision with the run's own table, the way resolvePolicy
@@ -1650,6 +1658,48 @@ func TestAShadowArmsChampionCoderMovesWithTheArm(t *testing.T) {
 	}
 }
 
+// TestACoderKeepsItsModelForARunThatReadsNoImage (D2017): the slot names what
+// serves an image, and a run whose task names none and was handed none has
+// none to serve — so the coder keeps the model the owner pinned, at the price
+// the owner chose it for, and the vision model is nowhere in the run. A project
+// that set the slot for the runs that need it must not pay for it on the runs
+// that do not (the owner's ruling of 2026-11-26).
+func TestACoderKeepsItsModelForARunThatReadsNoImage(t *testing.T) {
+	r := visionRun(config.ModelRoles{Coder: blindModel, Reviewer: seniorModel, Vision: seerModel}, nil)
+	r.spec = &task.Spec{Task: "Refactor the palette handling in the theme layer"}
+	r.shadow, r.championCoder = true, blindModel
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != blindModel {
+		t.Errorf("the coder = %q, want %q: a run that reads no picture keeps its own model (D2017)", got, blindModel)
+	}
+	if got := r.levelModel(policy.LevelL1); got != "" {
+		t.Errorf("level 1's own model = %q, want unset: nothing moved", got)
+	}
+	if r.championCoder != blindModel {
+		t.Errorf("the champion's coder = %q, want %q: neither arm moved", r.championCoder, blindModel)
+	}
+}
+
+// TestAnArtifactRunIsReadForItsAttachmentsAlone (D2017): an artifact run's task
+// names the picture its render is asked to produce (`render out/banner.png`),
+// which is a file it writes rather than one it reads, so it keeps its coder —
+// while a file the launch attached to it is an input a stage may really read,
+// and one that is an image moves the run as any other named picture does.
+func TestAnArtifactRunIsReadForItsAttachmentsAlone(t *testing.T) {
+	r := visionRun(config.ModelRoles{Coder: blindModel, Reviewer: seniorModel, Vision: seerModel}, nil)
+	r.artifact = true
+	r.spec = &task.Spec{Task: "Render out/banner.png at 1200x630"}
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != blindModel {
+		t.Errorf("the coder = %q, want %q: an artifact run's task names the file it writes", got, blindModel)
+	}
+	r.spec.Inputs = []task.InputFile{{Name: "brand/logo.png", Bytes: 1024, SHA256: strings.Repeat("a", 64)}}
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != seerModel {
+		t.Errorf("the coder = %q, want the vision model %q: an attached picture is one the stage reads", got, seerModel)
+	}
+}
+
 // TestTheVisionRewriteMovesNoFallback (V7, D2004): a file that names only
 // agent.model answers for all three roles (config.Agent.ModelFor,
 // config.EffectiveBackground), so a rewrite that wrote the coder's new model
@@ -1668,6 +1718,7 @@ func TestTheVisionRewriteMovesNoFallback(t *testing.T) {
 			Models: config.ModelRoles{Vision: seerModel},
 		}},
 		spend: Spend{Mode: "enforce"},
+		spec:  &task.Spec{Task: visionTask},
 		d: Deps{
 			Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			Providers: map[string]config.ModelProvider{
@@ -1703,6 +1754,7 @@ func TestTheVisionSlotIsRoutedWithTheOtherPins(t *testing.T) {
 	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
 	r := routedRun(t, &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{canonical}}, blindModel, seniorModel)
 	r.cfg.Agent.Models.Vision = canonical
+	r.spec = &task.Spec{Task: visionTask}
 	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
 		t.Fatalf("applyRouting: %v", err)
 	}

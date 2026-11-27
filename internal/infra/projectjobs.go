@@ -1350,11 +1350,14 @@ func profilesAsPolicy(profiles map[string]config.JobProfile) map[string]projectp
 // list of variables that job's secrets are mounted as.
 //
 // It is deliberately *not* budgetEnv, which sets per-repository values too
-// (the token ceiling, the model allow-list and the price overrides come from
-// the repository's own config and its policy): a project job is shared, so
-// those ride the execution (plan task 3.3) instead
-// of sitting in the job, where one repository's ceiling would become every
-// repository's. What stays is what belongs to the installation (D11, plan
+// (the model routes, the price overrides and the model allow-list, each cut to
+// one repository): a project job is shared, so those are the published
+// policy's, and a run reads them from the node (internal/runner's
+// resolvePolicy) rather than from its own environment, which a launcher would
+// otherwise be able to write — a route there names the host a repository's
+// code and the profile's provider key go to, and a price is the cap's own
+// arithmetic. The token ceiling and the cap are the node's the same way. What
+// stays is what belongs to the installation (D11, plan
 // task 1.4 step 1): a job deployed without the two backend variables cannot
 // read the project's policy at all, and the mode it names is the
 // installation's own — the fallback for a run whose policy node is absent
@@ -1668,14 +1671,19 @@ var projectJobAddress = regexp.MustCompile(`^module\.project(?:_review)?\["[^"]+
 // variant is the same module instance under the same axis, it is protected
 // from deletion the same way, and a plan that removes the coding job of a
 // triple removes its variant too (the variant is derived from the coding set,
-// so the profile that disappears takes both). Retiring a project job is
-// deferred: the module protects its job from deletion and, unlike the workflow
-// module (modules/workflow/job.tf's allow_job_delete, internal/infra/retire.go),
-// has no switch to lift it. A profile removed, or one whose provider or secrets
-// change and so its job's name, plans the old instance's delete, and an apply
-// let through would destroy the launchers' grants on the job and then fail on
-// the deletion protection, leaving the job unlaunchable. So the plan is
-// stopped before the apply, with the way back.
+// so the profile that disappears takes both).
+//
+// It is the backstop of the retirement and not the rule it used to be: the
+// module protects its job from deletion and, unlike the workflow module
+// (modules/workflow/job.tf's allow_job_delete), has no switch to lift it, so a
+// job the configuration no longer declares is retired BEFORE the plan is made
+// (internal/cli/update_retire_jobs.go: the instance's addresses out of the
+// state, the job through the Cloud Run API). What reaches this function is
+// therefore a plan deleting a job THIS run did not retire: an init, a
+// --plan-only, a state removal that failed, or an instance whose key the
+// document still declares and no removal covered. An apply let through would
+// destroy the launchers' grants on the job and then fail on the deletion
+// protection, leaving the job unlaunchable.
 func RefuseProjectJobDeletes(p *tf.Plan) error {
 	if p == nil {
 		return nil
@@ -1689,6 +1697,6 @@ func RefuseProjectJobDeletes(p *tf.Plan) error {
 	if len(refused) == 0 {
 		return nil
 	}
-	return userErr("the plan would delete or replace %d project job(s), and retiring a project job is not supported yet: the job has deletion protection and nothing lifts it, so the apply would remove its launchers' grants and then fail. Nothing was applied; restore the profile as it was in the local config (its name, provider and secrets):\n  %s",
+	return userErr("the plan would delete or replace %d project job(s) this run did not retire. Nothing was applied; run `fugaro update`, which retires a job no profile, provider and account names any more:\n  %s",
 		len(refused), strings.Join(refused, "\n  "))
 }

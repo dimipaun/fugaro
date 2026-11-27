@@ -50,6 +50,12 @@ func managedTerminalUpdate(t *testing.T, managed, terminal bool) (*initRig, *ini
 	r := updateRig(t)
 	if managed {
 		r.managedRuns(t, initProjectName, initProject)
+	} else {
+		// The rig is the default world (newInitRig's marks) and this arm is the
+		// other one the ruling tells apart: both halves of the fact taken back
+		// out, so the read answers the not-managed direction the gate's own
+		// sentence is not written for.
+		r.unmarkedInstallation(t)
 	}
 	isolateGateCredentials(t)
 	noAgentSession(t)

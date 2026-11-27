@@ -106,7 +106,8 @@ func newImageSurveyCmd() *cobra.Command {
 			"repository this machine's project config lists, the signals each one carries\n" +
 			"(its lockfiles and version files, a Dockerfile and its base image, its CI\n" +
 			"file, and the services its compose or Testcontainers files name), and the\n" +
-			"catalog, repository-to-image map and bake setting the project has today.\n\n" +
+			"catalog, the repository-to-image map (`repo_images`) and the bake setting\n" +
+			"the project has today.\n\n" +
 			"Nothing is cloned, built or written: each repository is read through the\n" +
 			"code host's own file API with the token this shell holds, at a fixed list of\n" +
 			"paths, and a path that is not there is a signal the repository does not have.\n" +
