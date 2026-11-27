@@ -237,10 +237,25 @@ func TestExtractRefusesLinksAndTraversal(t *testing.T) {
 		name    string
 		entries []entry
 	}{
-		{"symlink", []entry{link("fugaro", "/etc/passwd", tar.TypeSymlink)}},
-		{"hardlink", []entry{link("fugaro", "../../etc/passwd", tar.TypeLink)}},
-		{"absolute", []entry{regular("/tmp/fugaro", payload)}},
-		{"traversal", []entry{regular("../fugaro", payload)}},
+		// Each case carries a good `fugaro` beside the hostile entry, so
+		// the refusal is what fails it: without one it would fail on "no
+		// binary" whatever the extractor did with the hostile entry.
+		{"symlink", []entry{
+			regular("fugaro", payload),
+			link("LICENSE", "/etc/passwd", tar.TypeSymlink),
+		}},
+		{"hardlink", []entry{
+			regular("fugaro", payload),
+			link("LICENSE", "../../etc/passwd", tar.TypeLink),
+		}},
+		{"absolute", []entry{
+			regular("fugaro", payload),
+			regular("/tmp/x", payload),
+		}},
+		{"traversal", []entry{
+			regular("fugaro", payload),
+			regular("../x", payload),
+		}},
 		{"no binary", []entry{regular("README.md", payload)}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
