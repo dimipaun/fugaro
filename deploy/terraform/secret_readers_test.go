@@ -1070,6 +1070,12 @@ var runJobModules = []string{
 	"deploy/terraform/gcp/modules/repo",
 }
 
+// runJobWorkflowModule is the module the flip emptied: its job's mounts are
+// enumerated from the workflow's own secret_env, so the exclusion has to be
+// read OFF that enumeration and not only off the class reference inside it —
+// deleting the clause leaves a mount that names no class at all.
+var runJobWorkflowModule = "deploy/terraform/gcp/modules/workflow"
+
 // runJobMountClassTokens are T3's two classes in the tree's own spelling. The
 // workflow-secret class is the one IS6's flip took off every job spec, which
 // modules/workflow/sa.tf reads as local.vault_secret_names; the build-secret
@@ -1255,6 +1261,14 @@ func TestMountRuleCatchesAFixture(t *testing.T) {
 			files: []tfFile{{rel: "deploy/terraform/gcp/modules/repo/check.tf", src: fixtureDeliveryNameMounted}},
 		},
 		{
+			name: "the exclusion deleted from the mount's own enumeration",
+			why:  `the class is mounted again and named nowhere: reading only the class reference sees nothing, so the for_each over secret_env has to be held to the exclusion (IS6's clause deleted)`,
+			files: []tfFile{
+				{rel: "deploy/terraform/gcp/modules/workflow/sa.tf", src: fixtureWorkflowLocalDropsTheClause},
+				{rel: "deploy/terraform/gcp/modules/workflow/job.tf", src: fixtureGatedMount},
+			},
+		},
+		{
 			name: "the class mounted through a local another module names too",
 			why:  `modules/workflow and modules/project both declare a job_mounts: read as one module the project's definition wins and the workflow job's own rule is never inlined or judged`,
 			files: []tfFile{
@@ -1329,6 +1343,8 @@ func moduleFiles(t *testing.T, dir string) []tfFile {
 // expressions that decide which secrets reach it.
 type runJobSecretSite struct {
 	key         string
+	module      string
+	forEach     string
 	expressions []string
 	body        string
 }
@@ -1359,10 +1375,10 @@ func runJobSecretSites(files []tfFile) []runJobSecretSite {
 				if !holdsSecretValue(inner) {
 					continue
 				}
-				sites = append(sites, runJobSecretSite{key: key, body: inner, expressions: siteExpressions(mod, inner, b.body)})
+				sites = append(sites, newRunJobSecretSite(key, filepath.Dir(b.file), mod, inner, b.body))
 			}
 			if holdsSecretValue(rest) {
-				sites = append(sites, runJobSecretSite{key: key, body: rest, expressions: siteExpressions(mod, rest, b.body)})
+				sites = append(sites, newRunJobSecretSite(key, filepath.Dir(b.file), mod, rest, b.body))
 			}
 		}
 	}
@@ -1393,6 +1409,28 @@ func moduleGroups(files []tfFile) [][]tfFile {
 		out = append(out, byDir[dir])
 	}
 	return out
+}
+
+func newRunJobSecretSite(key, module string, mod *tfModule, block, resourceBody string) runJobSecretSite {
+	return runJobSecretSite{
+		key:         key,
+		module:      module,
+		forEach:     siteForEach(mod, block, resourceBody),
+		expressions: siteExpressions(mod, block, resourceBody),
+		body:        block,
+	}
+}
+
+// siteForEach is the mount's own for_each, inlined: the one expression that
+// says which entries reach it, and the one a deleted exclusion leaves with
+// nothing to read.
+func siteForEach(mod *tfModule, block, resourceBody string) string {
+	for _, body := range []string{block, resourceBody} {
+		if expr := terraformAttrExpr(body, "for_each"); expr != "" {
+			return inlineTerraformExpr(mod, expr, 0)
+		}
+	}
+	return ""
 }
 
 // siteExpressions are the expressions that decide which secrets reach a mount:
@@ -1468,6 +1506,29 @@ func ungatedClassRef(expr string) string {
 		}
 	}
 	return ""
+}
+
+// classDroppedInNegation reports whether an expression drops the class: a
+// class reference that sits inside a `!( ... )`. A mount whose for_each ranges
+// over the workflow's own secret_env and holds no such reference is one that
+// mounts the class — either because the exclusion was never written, or because
+// it was deleted, and the two are the same mount.
+func classDroppedInNegation(expr string) bool {
+	spans := negatedSpans(expr)
+	for _, token := range runJobMountClassTokens {
+		for at := 0; at < len(expr); {
+			j := strings.Index(expr[at:], token)
+			if j < 0 {
+				break
+			}
+			at += j
+			if insideSpans(spans, at) {
+				return true
+			}
+			at += len(token)
+		}
+	}
+	return false
 }
 
 // negatedSpans is every `!( ... )` in an expression, by the offsets of its
@@ -1562,6 +1623,14 @@ func runJobMountHitsInFiles(files []tfFile) []string {
 			if token := ungatedClassRef(expr); token != "" {
 				hits = append(hits, fmt.Sprintf("%s mounts the %s class (%s): a run job reads that class from the credentials service (D3331, T3)", site.key, runJobClassWord(token), token))
 			}
+		}
+		// The flip also disappears by DELETION: drop the clause from
+		// job_mounts and the class is mounted again without its name being
+		// written anywhere a reference could be read, which is why the
+		// enumeration is held to the exclusion rather than the exclusion to
+		// the enumeration.
+		if site.module == runJobWorkflowModule && strings.Contains(site.forEach, "secret_env") && !classDroppedInNegation(site.forEach) {
+			hits = append(hits, fmt.Sprintf("%s takes its mounts from the workflow's own secret_env and excludes no workflow-secret entry: IS6's clause deleted puts every workflow secret back on the job (D3323, T3)", site.key))
 		}
 		if prefix := deliveryGrammarRef(site.body); prefix != "" {
 			hits = append(hits, fmt.Sprintf("%s mounts a %s container: the installation's copy is not a run job's to mount (D3324)", site.key, prefix))
@@ -1758,10 +1827,12 @@ func mentionsAnyFold(text string, words []string) bool {
 	return false
 }
 
-// The fixtures the rule is shown to fail on (spec §6). The first two are the
-// shapes the flip removed: the fetched class mounted whole, and the
-// installation's own fugaro_p_ copy named by a job. The last three are the
-// shape IS6 and IS8 leave, which the rule must pass.
+// The fixtures the rule is shown to fail on (spec §6): the fetched class
+// mounted whole, the installation's own fugaro_p_ copy named by a job, and the
+// flip written three other ways — the exclusion deleted from the enumeration,
+// the clause reversed, and the class reached through a local another module
+// declares under the same name. The good fixtures, below those, are the shape
+// IS6 and IS8 leave.
 const fixtureWorkflowClassMounted = `
 locals {
   vault_secret_names = var.workflow.vault_secret_names
@@ -1901,6 +1972,21 @@ locals {
   job_mounts = {
     for env, logical in var.job.secret_env :
     env => logical if !local.is_served[env]
+  }
+}
+`
+
+// fixtureWorkflowLocalDropsTheClause is the other way the flip comes back: the
+// exclusion is DELETED rather than reversed, so the mount over the workflow's
+// own secret_env names the class nowhere and the enumeration is the only thing
+// left to read. It is the shape the rule's second half exists for.
+const fixtureWorkflowLocalDropsTheClause = `
+locals {
+  service_addressed = var.credentials_service != null
+  is_service_held   = { for env, logical in var.workflow.secret_env : env => startswith(env, "FUGARO_") }
+  job_mounts = {
+    for env, logical in var.workflow.secret_env :
+    env => logical if !(local.service_addressed && local.is_service_held[env])
   }
 }
 `
