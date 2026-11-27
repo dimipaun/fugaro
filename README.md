@@ -131,10 +131,13 @@ workflows:
     commands:
       build: npm run build
       test: npm test
-    # secrets:                # logical names; disabled for now and ignored: a shared job
-    #                         # mounts only the project's secrets, so store the value for the
-    #                         # project instead (`fugaro secrets set NAME`, no `--repo`)
+    # secrets:                # a workflow's own secret is stored once for the project
+    #                         # (`fugaro secrets set NAME`), and the repositories that may read
+    #                         # it are the operator's own record (`fugaro secrets allow NAME
+    #                         # PATTERN...`); a repository-level copy is ignored
     #   - { name: npm-token, env: NPM_TOKEN }
+    #   - { name: npmrc, env: NPM_CONFIG_USERCONFIG, file: true }   # file: writes the value to a
+    #                         # 0400 file and sets the variable to its path; absent in a review run
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }
 ```
