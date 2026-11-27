@@ -573,23 +573,6 @@ func (r *initRun) applyFirebaseRoot(ctx context.Context, c *infra.Clients, bin s
 	if err != nil {
 		return fo, false, initErr(err)
 	}
-	// The launcher-does-not-mint switch, carried forward from the document the
-	// workdir held before this run rebuilt the tree: the one run that turns it
-	// off is LM14's own stage, and every later run of this root that lost the
-	// key would hand the module its default and plan the people's rows back
-	// (infra.CarriedPeopleMinter's own note). The document read is PrevVars and
-	// not Vars(): PrepareWorkdir has already deleted the tree, so the workdir
-	// holds no tfvars at this point.
-	if fspec.PeopleMinter == nil {
-		off, err := infra.PeopleMinterOff(fwd.PrevVars)
-		if err != nil {
-			return fo, false, userErr("reading the Firebase tfvars: %v", err)
-		}
-		if off {
-			wasOff := false
-			fspec.PeopleMinter = &wasOff
-		}
-	}
 	backend, err := fwd.WriteBackend(spec.StateBucket, infra.StatePrefixFirebase)
 	if err != nil {
 		return fo, false, userErr("%v", err)
@@ -633,6 +616,18 @@ func (r *initRun) applyFirebaseRoot(ctx context.Context, c *infra.Clients, bin s
 	vars, err := infra.FirebaseVars(fspec)
 	if err != nil {
 		return fo, false, err
+	}
+	// The launcher-does-not-mint switch, carried forward from the document the
+	// workdir held before this run rebuilt the tree: the one run that turns it
+	// off is LM14's own stage, and every later run of this root that lost the
+	// key would hand the module its default — on — and plan the people's rows
+	// back (infra.CarriedPeopleMinter's own note). The document read is
+	// PrevVars and not Vars(): PrepareWorkdir has already deleted the tree, so
+	// the workdir holds no tfvars at this point.
+	if fspec.PeopleMinter == nil {
+		if vars, err = infra.CarriedPeopleMinter(vars, fwd.PrevVars); err != nil {
+			return fo, false, userErr("reading the Firebase tfvars: %v", err)
+		}
 	}
 	if err := fwd.WriteVars(vars); err != nil {
 		return fo, false, userErr("writing the Firebase tfvars: %v", err)

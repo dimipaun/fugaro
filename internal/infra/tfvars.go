@@ -323,8 +323,9 @@ type InstallationSpec struct {
 	// with omitempty could not write it at all, and one without would put
 	// `people_minter = true` into every document this build writes, moving
 	// the tfvars of every installation that never turned it off. nil on every
-	// run that is not the one moving the grant, and set from the document the
-	// workdir already held when the switch is off (prepare's carry).
+	// run that is not the one moving the grant (LM14's stage); every later run
+	// carries the key forward into the document (prepare's carry,
+	// CarriedPeopleMinter).
 	PeopleMinter *bool `json:"people_minter,omitempty"`
 }
 

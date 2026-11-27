@@ -110,6 +110,51 @@ func TestPeopleMinterIsReadOutOfThePlansOwnVariables(t *testing.T) {
 	}
 }
 
+// The carry both roots' writers make (prepare, applyFirebaseRoot) is the one
+// direction that must never be lost: a later document that dropped the switch
+// would hand the module its default — on — and plan the rows the switch owns
+// back, which nothing refuses because they are creates. The switch the run that
+// moved the grant turned off is carried into every later document, and a
+// document that says nothing about it is carried as it stands.
+func TestCarriedPeopleMinterKeepsTheSwitchOff(t *testing.T) {
+	canon := func(b []byte) string {
+		t.Helper()
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("%s is not a document: %v", b, err)
+		}
+		out, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	for _, tc := range []struct {
+		why              string
+		vars, prev, want string
+	}{
+		{"no document held one", `{"region":"europe-west1"}`, ``, `{"region":"europe-west1"}`},
+		{"the document before says on", `{"region":"europe-west1"}`, `{"people_minter":true}`, `{"region":"europe-west1"}`},
+		{"the document before says off", `{"region":"europe-west1"}`, `{"people_minter":false}`, `{"people_minter":false,"region":"europe-west1"}`},
+		{"the caller carries its own answer", `{"people_minter":true}`, `{"people_minter":false}`, `{"people_minter":true}`},
+	} {
+		got, err := CarriedPeopleMinter([]byte(tc.vars), []byte(tc.prev))
+		if err != nil {
+			t.Errorf("%s: %v", tc.why, err)
+			continue
+		}
+		if canon(got) != canon([]byte(tc.want)) {
+			t.Errorf("%s: got %s, want %s", tc.why, got, tc.want)
+		}
+	}
+	// A document this build cannot read is not permission to carry nothing: the
+	// caller writes a root from what this answers, and "nothing to carry" is a
+	// plan that puts the rows back.
+	if _, err := CarriedPeopleMinter([]byte(`{}`), []byte(`{"people_minter":"no"}`)); err == nil {
+		t.Error("a document this build cannot read was carried as one that says nothing")
+	}
+}
+
 // The list is exactly the minter rows, so any other delete of the same plan is
 // still refused: naming the update's own deletes must not be a way past the
 // guard for anything beside them.

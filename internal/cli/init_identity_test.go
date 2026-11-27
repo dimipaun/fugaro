@@ -435,7 +435,7 @@ func TestUpdateSaysItsLinesAtTheDoor(t *testing.T) {
 		t.Fatalf("the door said nothing about the runs' identity:\n%s", out)
 	}
 	want := []string{
-		"group:eng@example.invalid can no longer launch: a launch is admitted by the caller's own address now, so name each person it holds (fugaro user add user:<email>)",
+		"group:eng@example.invalid can no longer launch: a launch is admitted by the caller's own address now, so name each person it holds (fugaro user add user:<email> --role operator)",
 		"a CLI older than this release cannot launch until it is upgraded, and it is told so when it tries",
 		"`fugaro pair` now asks the credentials service",
 		"3 runs queued and not started halt with the policy this update publishes: relaunch them afterwards",
@@ -513,6 +513,43 @@ func TestUpdateSaysItsLinesAtTheDoor(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestTheGroupLineNamesTheRoleThatPutsItBack: `fugaro user add` refuses to
+// guess which of the installation's two lists a member belongs to (--role
+// operator or admin, and neither is the default), so a line that named neither
+// sends the person to a command that stops on the missing flag. The role is the
+// group's own list — the launchers' list is the operators' — and a group in
+// both is named once, as the admin, which is the role that also puts it back on
+// the launchers' list (deriveAccess gives an admin both).
+func TestTheGroupLineNamesTheRoleThatPutsItBack(t *testing.T) {
+	r := newGrantRig(t)
+	stubSelfCommand(t)
+	stubQueuedExecutions(t, 0)
+
+	e := rigEngine(t, r.initRig, &initOptions{})
+	e.spec.Launchers = []string{"group:eng@example.invalid", "group:both@example.invalid"}
+	e.spec.Operators = []string{"group:both@example.invalid", "group:boss@example.invalid"}
+
+	var got []string
+	for _, line := range e.identityMoveLines(context.Background()) {
+		if strings.Contains(line, "can no longer launch") {
+			got = append(got, line)
+		}
+	}
+	want := []string{
+		"group:boss@example.invalid can no longer launch: a launch is admitted by the caller's own address now, so name each person it holds (fugaro user add user:<email> --role admin)",
+		"group:both@example.invalid can no longer launch: a launch is admitted by the caller's own address now, so name each person it holds (fugaro user add user:<email> --role admin)",
+		"group:eng@example.invalid can no longer launch: a launch is admitted by the caller's own address now, so name each person it holds (fugaro user add user:<email> --role operator)",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("the roster's three group entries made %d lines:\n%s", len(got), strings.Join(got, "\n"))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d is\n%s\nwant\n%s", i, got[i], want[i])
+		}
+	}
 }
 
 // TestUpdateFromThePreviousReleaseConverges is LM14's own acceptance read at the
@@ -673,6 +710,76 @@ func TestOrchestratorRowGoesAfterItsImageMoved(t *testing.T) {
 	}
 	if !grantMoved(t, "installation") {
 		t.Errorf("the orchestrator's own root still keeps the switch on:\n%s", out)
+	}
+}
+
+// TestPrepareCarriesThePeopleMinterSwitchOff is the installation root's half of
+// the carry LM14 needs, at the writer that makes it: the run that moves the
+// grant is not the only one that rewrites this root's tfvars, and a later run
+// that dropped the key would hand the module its default — on — and plan the
+// resident orchestrator's minter row back, which the guard admits because it is
+// a create.
+//
+// Mutation (run, restore): drop the infra.CarriedPeopleMinter loop from prepare
+// and this test reports a document with no people_minter in it.
+func TestPrepareCarriesThePeopleMinterSwitchOff(t *testing.T) {
+	dir := t.TempDir()
+	// The document the run that moved the grant left, written where prepare
+	// reads it from BEFORE it rebuilds the tree: PrevVars, because
+	// PrepareWorkdir has already deleted this file by the time prepare runs.
+	const held = `{
+  "project": "proj-1234",
+  "people_minter": false
+}`
+	path := infra.WorkdirVarsPath(dir, "installation")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(held), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wd, err := infra.PrepareWorkdir(dir, "installation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := infra.InstallationSpec{
+		Project:     "proj-1234",
+		Region:      "us-east5",
+		RunsBucket:  "fugaro-runs-proj-1234",
+		StateBucket: "fugaro-state-proj-1234",
+	}
+	if _, err := prepare(wd, spec, infra.Imports{}, nil, false); err != nil {
+		t.Fatalf("prepare refused an installation whose grant has moved: %v", err)
+	}
+	now, err := wd.Vars()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off, err := infra.PeopleMinterOff(now); err != nil || !off {
+		t.Errorf("the document this run hands Terraform carries no people_minter off (err %v): the module reads its default and plans the rows this switch owns back:\n%s", err, now)
+	}
+
+	// And an installation whose documents never carried the key gets none: a run
+	// that wrote one would move the tfvars of every installation that never
+	// turned the switch off, and `true` there is a key nobody asked for.
+	plain := t.TempDir()
+	wdPlain, err := infra.PrepareWorkdir(plain, "installation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepare(wdPlain, spec, infra.Imports{}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	plainVars, err := wdPlain.Vars()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(plainVars, &doc); err != nil {
+		t.Fatalf("the tfvars this run wrote are not readable: %v\n%s", err, plainVars)
+	}
+	if _, ok := doc["people_minter"]; ok {
+		t.Errorf("a run over a document that never carried the switch wrote one:\n%s", plainVars)
 	}
 }
 

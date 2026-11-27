@@ -307,9 +307,9 @@ type FirebaseSpec struct {
 	// (modules/firebase/iam.tf's google_service_account_iam_member.minter)
 	// while it is on. It is a POINTER for the reason InstallationSpec's is:
 	// nil is the key's absence and the root's default (on), and only `false`
-	// is ever written. nil on every run that is not the one moving the grant,
-	// and set from the document the Firebase workdir already held when the
-	// switch is off (initFirebase's carry).
+	// is ever written. nil on every run that is not the one moving the grant
+	// (LM14's stage); every later run carries the key forward into the document
+	// (applyFirebaseRoot's carry, CarriedPeopleMinter).
 	PeopleMinter *bool `json:"people_minter,omitempty"`
 }
 

@@ -357,8 +357,8 @@ func (e *initEngine) announceIdentityMove(ctx context.Context) {
 // line a person reads past.
 func (e *initEngine) identityMoveLines(ctx context.Context) []string {
 	var out []string
-	for _, group := range e.launcherGroups() {
-		out = append(out, fmt.Sprintf("%s can no longer launch: a launch is admitted by the caller's own address now, so name each person it holds (%s user add user:<email>)", group, selfCommand()))
+	for _, g := range e.launcherGroups() {
+		out = append(out, fmt.Sprintf("%s can no longer launch: a launch is admitted by the caller's own address now, so name each person it holds (%s user add user:<email> --role %s)", g.member, selfCommand(), g.role))
 	}
 	out = append(out,
 		"a CLI older than this release cannot launch until it is upgraded, and it is told so when it tries",
@@ -370,24 +370,45 @@ func (e *initEngine) identityMoveLines(ctx context.Context) []string {
 	return out
 }
 
-// launcherGroups is the roster's `group:` entries, which are the ones the move
-// takes away: IAM admits a group's members through the binding, and the service
-// admits a caller by its own address, so a group entry is a grant the people
-// behind it lose.
+// launcherGroup is one roster entry the move takes away and the role that puts
+// it back: `fugaro user add` writes one of the installation's two lists and
+// refuses to guess which (--role operator names terraform.operators, --role
+// admin names terraform.admins), so a line that named neither would send the
+// person to a command that stops on the missing flag.
+type launcherGroup struct {
+	member string
+	role   string
+}
+
+// launcherGroups is the roster's `group:` entries with that role, which are the
+// ones the move takes away: IAM admits a group's members through the binding,
+// and the service admits a caller by its own address, so a group entry is a
+// grant the people behind it lose.
 //
 // The roster is this run's own lists (update_access.go's deriveAccess, which
 // the door's roles step has already run): the installation's launchers and
 // operators, which is the list the Firebase root's people's rows are planned
-// from and the list the service's person class is verified against.
-func (e *initEngine) launcherGroups() []string {
-	var out []string
-	for _, m := range append(slices.Clone(e.spec.Launchers), e.spec.Operators...) {
-		if strings.HasPrefix(m, "group:") {
-			out = append(out, safetext.Field(m))
+// from and the list the service's person class is verified against. A group in
+// both lists is named once, as the admin, which is the role that also puts it
+// back on the launchers' list (deriveAccess gives an admin both).
+func (e *initEngine) launcherGroups() []launcherGroup {
+	role := map[string]string{}
+	for _, l := range []struct {
+		role    string
+		members []string
+	}{{"operator", e.spec.Launchers}, {"admin", e.spec.Operators}} {
+		for _, m := range l.members {
+			if strings.HasPrefix(m, "group:") {
+				role[safetext.Field(m)] = l.role
+			}
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out)
+	out := make([]launcherGroup, 0, len(role))
+	for m, r := range role {
+		out = append(out, launcherGroup{member: m, role: r})
+	}
+	slices.SortFunc(out, func(a, b launcherGroup) int { return strings.Compare(a.member, b.member) })
+	return out
 }
 
 // queuedExecutions counts the runs this update's policy version bump will halt
