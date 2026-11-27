@@ -211,14 +211,23 @@ update)
     ;;
   refuse-no-tty)
     # A run nobody is at, on a machine whose update has a step to confirm: the
-    # CLI is left at that step and exits nonzero rather than carrying it
-    # through, and no flag stands in for the person. The fence is the same one
-    # read from a refused run instead of from a converged one. The marker file
-    # is the mutation: a refused run that wrote the unit anyway.
+    # CLI is left at that step and exits 1 rather than carrying it through, and
+    # no flag stands in for the person. The fence is the same one read from a
+    # refused run instead of from a converged one. The marker file is the
+    # mutation: a refused run that wrote the unit anyway.
     if [ -f "$D/refuse-writes-unit" ]; then render_unit; fi
     if [ ! -t 0 ]; then
       printf 'the confirmation of this step needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe\n' >&2
       exit 1
+    fi
+    ;;
+  cloud-fails-no-tty)
+    # The other exit a run nobody is at can make, and the one the fence is NOT:
+    # 2 is a cloud failure, so a run that wrote no unit has still failed, and
+    # the row must not read that as the fence holding.
+    if [ ! -t 0 ]; then
+      printf 'fugaro: the Terraform apply failed\n' >&2
+      exit 2
     fi
     ;;
   *)
@@ -908,6 +917,21 @@ case_upgrade_boundary_refused_writes_a_unit() {
   expect_contains "$out" "a login unit is now at" "refused run wrote a unit: what happened"
 }
 
+# case_upgrade_boundary_cloud_failure: exit 2 is not the fence. A run nobody is
+# at that failed in the cloud wrote no unit either, and the row has to say the
+# run failed rather than read its silence about the unit as the fence holding.
+case_upgrade_boundary_cloud_failure() {
+  setup_case upgrade-boundary-cloud
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'cloud-fails-no-tty\n' >"$dir/state/update.mode"
+  run301 upgrade
+  expect_status "$status" 2 "boundary cloud failure: the exit"
+  expect_fact boundary FAIL "boundary cloud failure: the row"
+  expect_contains "$out" "1 is the only exit a run left at a step makes" "boundary cloud failure: the exit is not the fence"
+}
+
 # case_upgrade_boundary_agent_writes_unit: the marker rule broken. An
 # agent-marked run that installs a login unit on a machine that had none is the
 # fence D2700 keeps and the one internal/agentenv's G2 rules on.
@@ -1240,6 +1264,7 @@ t case_upgrade_boundary_no_install
 t case_upgrade_boundary_no_terminal
 t case_upgrade_boundary_refused_no_terminal
 t case_upgrade_boundary_refused_writes_a_unit
+t case_upgrade_boundary_cloud_failure
 t case_upgrade_boundary_agent_writes_unit
 t case_upgrade_waits_for_the_human
 t case_upgrade_handover

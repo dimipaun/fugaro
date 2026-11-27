@@ -1097,11 +1097,14 @@ phase_upgrade() {
       else
         # A run nobody is at meets a step that needs a person and is left there
         # rather than carried through it: no flag stands in for the person any
-        # more, so this exit is the fence itself and not a failure of the run.
-        # What it must still be true of is the unit: nothing was written.
+        # more, so exit 1 here is the fence itself and not a failure of the run.
+        # Exit 2 is a cloud failure and stays a failure whatever it wrote.
+        # What the fence is read for is the unit: nothing was written.
         read_unit unit-status-3
-        if [ "$UNIT_STATE" = none ]; then
-          fact boundary PASS "fugaro update exited $BOUNDED_STATUS with no terminal at it and wrote no login unit at $UNIT_PATH: a run nobody is at is left at the step that needs a person, so the write happens only where one is — the fence F48 kept. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+        if [ "$BOUNDED_STATUS" -ne 1 ]; then
+          fact boundary FAIL "fugaro update exited $BOUNDED_STATUS with no terminal at it, and 1 is the only exit a run left at a step makes (0 done, 1 a refusal or a step left for you, 2 a cloud failure): this is the run failing rather than the fence holding. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+        elif [ "$UNIT_STATE" = none ]; then
+          fact boundary PASS "fugaro update exited 1 with no terminal at it and wrote no login unit at $UNIT_PATH: a run nobody is at is left at the step that needs a person, so the write happens only where one is — the fence F48 kept. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
         else
           fact boundary FAIL "fugaro update exited $BOUNDED_STATUS with no terminal at it, and a login unit is now at $UNIT_PATH: a run nobody is at writes none — the step that writes it needs a person at the terminal, and no flag stands in for one"
         fi
