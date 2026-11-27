@@ -105,8 +105,7 @@ Read together, that table says who can do what today:
   [docs/launcher-does-not-mint/implementation-plan.md](../launcher-does-not-mint/implementation-plan.md)).
   **What an operator keeps is a reach and not a grant**: an operator administers the installation's
   IAM, so they can re-grant the row to themselves and reach it through the deployer account the update
-  impersonates (D3127); `fugaro doctor` lists every principal holding it beyond the issuer, so the
-  standing state is readable rather than assumed. A launcher's own Google ID token is still a bearer a
+  impersonates (D3127). A launcher's own Google ID token is still a bearer a
   service can replay for about an hour (O5), which is what a ticket issued on a replay is.
 - **An RTDB `roles/firebasedatabase.viewer` holder bypasses the rules.** The rules bound *client
   tokens*; they are not what keeps `config/admin` private from a launcher, which reads it through
