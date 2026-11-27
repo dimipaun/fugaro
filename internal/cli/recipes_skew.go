@@ -5905,6 +5905,12 @@ type l8Skew struct {
 // every launch prints them once and a launch refused for any trigger has named
 // the keys first.
 //
+// L13's two grade models are the one exception (DK2, R11): they are neither
+// noted nor a trigger here, because a runner older than this release already
+// dropped them (G3's merge) rather than honouring them, so no image is owed
+// anything for the line — they are refused outright, whatever the image, by
+// deadGradeModelsRefusal.
+//
 // Everything is read from a checkout of the repository, or from the task's own
 // fields, and nothing at all otherwise — the pattern every other config-key gate
 // follows (checkoutRoot, launchFileConfig): a launch from outside the
@@ -5924,6 +5930,7 @@ func l8LaunchSkew(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.W
 	if db.read {
 		notes = config.LiftedKeyNotes(db.data)
 	}
+	notes = slices.DeleteFunc(notes, func(n config.RetiredKeyNote) bool { return deadGradeModelPath(n.Path) })
 	for _, n := range notes {
 		fmt.Fprintf(warn, "note: the default branch of %s writes a key the project now owns: %s\n", repo, n.Why)
 	}
@@ -5960,6 +5967,47 @@ func l8LaunchSkew(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.W
 		}, true
 	}
 	return l8Skew{}, false
+}
+
+// deadGradeModelPath is one of L13's two dead keys (DK2, R11): a repository's
+// own model_grades.<grade>.model, which the project owns — the ladder's grades
+// are a model choice of the project's (G3, D2039), and a file's entry has been
+// dropped and recorded by the merge since before this release. The two are
+// lifted keys (config.LiftedKeys) and the only model_grades entries on that
+// list: a grade's `.access` is model-credentials-routing's, retired and still
+// honoured until that plan's own release 2 (R11).
+func deadGradeModelPath(path string) bool { return strings.HasPrefix(path, "model_grades.") }
+
+// deadGradeModelsRefusal refuses a launch whose default branch's fugaro.yaml
+// still writes one of the ladder's two grade models (DK2, R11), with the
+// sentence the key's own row carries — the drop's own note, which is what a
+// person reads from `fugaro validate` and from `fugaro update` beside it.
+//
+// It is a refusal from this release rather than from release B, where every
+// other lifted key is refused (XB2): the merge has dropped a repository's grade
+// since G3, so a file that writes one decides nothing today and nothing a run
+// reads changes by refusing the line — which is why no image is owed anything
+// for it either (the note that would have gated the image is not a note here).
+//
+// It is the default branch's own read, like every other trigger of this gate
+// (R16): a launch of a repository the checkout cannot be read for — one from
+// outside a checkout — is judged on what the task carries, so this refuses
+// nothing there, and the runner drops the key the same way on every ref (R2).
+func deadGradeModelsRefusal(ctx context.Context, spec *task.Spec) error {
+	root := checkoutRoot(ctx, spec.Repo)
+	if root == "" {
+		return nil
+	}
+	db := defaultBranchParse(ctx, root)
+	if !db.read {
+		return nil
+	}
+	for _, n := range config.LiftedKeyNotes(db.data) {
+		if deadGradeModelPath(n.Path) {
+			return userErr("%s (the default branch of %s)", n.Why, pluginwire.Printable(spec.Repo))
+		}
+	}
+	return nil
 }
 
 // launchSetsABRepos reports whether the layer this launch resolves over writes
@@ -6027,6 +6075,12 @@ func defaultBranchRecipes(ctx context.Context, root string) (paths []string, kno
 // project holds, and the migration that empties it is that one command's.
 func checkL8Image(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	sk, ok := l8LaunchSkew(ctx, env, spec, warn)
+	// L13's dead keys first: they are refused whatever the image (DK2, R11),
+	// where every trigger below is about what an older image does with the
+	// launch.
+	if err := deadGradeModelsRefusal(ctx, spec); err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
@@ -6037,6 +6091,10 @@ func checkL8Image(ctx context.Context, env *cloudEnv, slug string, spec *task.Sp
 // checkCloneImageSince.
 func checkCloneL8Image(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
 	sk, ok := l8LaunchSkew(ctx, env, spec, warn)
+	// See checkL8Image: the dead keys are refused whatever the image.
+	if err := deadGradeModelsRefusal(ctx, spec); err != nil {
+		return err
+	}
 	if !ok {
 		return nil
 	}
