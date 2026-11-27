@@ -691,7 +691,7 @@ func cancelPauseRefusal(resp *http.Response) error {
 		return userErr("%s", msg)
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
-		return userErr("the credentials service lacks the pause cancel route (%d): run `fugaro update` and try again", resp.StatusCode)
+		return userErr("the credentials service lacks the pause cancel route (%d): it ships with `fugaro update`, the whole upgrade; run it and retry", resp.StatusCode)
 	}
 	return remote(fmt.Errorf("the installation's credentials service refused this call (%d) and its answer is not one this release reads", resp.StatusCode))
 }
@@ -736,7 +736,7 @@ func cancelPauseServiceURL(ctx context.Context, o cloudOptions) (string, error) 
 	}
 	raw := configuredCredentialsServiceURL(lc)
 	if raw == "" {
-		return "", userErr("no credentials service in the local config, so no pause can be cancelled: run `fugaro update` and try again")
+		return "", userErr("no credentials service in the local config, so no pause can be cancelled: it ships with `fugaro update`, the whole upgrade; run it and retry")
 	}
 	return raw, nil
 }
