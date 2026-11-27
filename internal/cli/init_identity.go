@@ -133,10 +133,65 @@ var (
 	errProbeUnusable      = fmt.Errorf("the credentials service's probe answer could not be used")
 )
 
+// minterGrantRecorded reports whether this installation records what a move is
+// made of at all: the runs' signer, the credentials service's address, and a
+// release this build can name. An installation that records no signer keeps no
+// row this release may judge an answer against (F33), one that records no
+// service has no issuer to probe — a launcher of it signs locally, and the row
+// is the grant that lets it — and a development build names no release, so no
+// recorded image can be its own.
+func (e *initEngine) minterGrantRecorded() bool {
+	return e.lc != nil && e.lc.Budget != nil && e.lc.Budget.TokenSigner != "" &&
+		configuredCredentialsServiceURL(e.lc) != "" && releaseVersion() != ""
+}
+
+// minterRowsStillThere reports whether the documents the two roots were written
+// with still keep the launcher-does-not-mint switch on: the rows are there
+// until BOTH say they are not, which is the state the move leaves, and a
+// document that cannot be read answers "still there" — the direction that must
+// not be missed is the one that tells the person.
+func (e *initEngine) minterRowsStillThere() bool {
+	doc, _, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil {
+		return true
+	}
+	off, err := infra.PeopleMinterOff(doc)
+	if err != nil || !off {
+		return true // the installation's own document still keeps the rows
+	}
+	return !e.firebaseMinterOff()
+}
+
+// minterMoveAtTheDoor reports whether this run will move the grant, and it is
+// the door's own question: whether R10's lines are printed at all (R10, LM14).
+//
+// It is minterGrantOwed without the image's half, and the difference is not a
+// shortcut. The door runs before any stage, so the images it reads are the
+// release behind's by definition — the credentials stage is what moves them —
+// and a door that waited for this release's image would say nothing on the one
+// update that makes the move, which is exactly the update a person has to be
+// told about. The stage's own predicate keeps the image, and it is the one that
+// decides whether a row really goes (R8).
+func (e *initEngine) minterMoveAtTheDoor() bool {
+	if !e.minterGrantRecorded() {
+		return false
+	}
+	doc, _, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil {
+		// No credentials block in the installation's own tfvars is a service
+		// this run deploys rather than moves, and the grant of a service
+		// deployed now waits for the next update to move: nothing is owed yet.
+		return false
+	}
+	return e.minterRowsStillThere()
+}
+
 // minterGrantOwed reports whether this run has a minter grant to move: the
-// installation records a credentials service on this release's image, the
-// service's own address and the runs' signer are recorded, and the switch is
-// still on in the documents the two roots were written with.
+// installation records what a move is made of, the credentials service and the
+// resident orchestrator beside it are already on this release's images — the
+// rows of a service that would sign with the release behind's binary must not
+// go (R8) — and the switch is still on in the documents the two roots were
+// written with.
 //
 // It is the credentials-service stage's second reason to run (init_stages.go):
 // a converged installation whose images are this release's is skipped with one
@@ -149,29 +204,14 @@ var (
 // upgrade is over a read of its own. The probe and the apply that follow are
 // what decide the move; this only says whether asking is worth a stage.
 func (e *initEngine) minterGrantOwed() bool {
-	if e.lc == nil || e.lc.Budget == nil || e.lc.Budget.TokenSigner == "" {
-		// No signer recorded is no row to move and nothing to judge an answer
-		// against (F33): the switch is the runs' identity, and a run of an
-		// installation whose config names no signer is not one this release
-		// can have moved.
-		return false
-	}
-	if configuredCredentialsServiceURL(e.lc) == "" {
-		// An installation that records no service has no issuer to probe and
-		// keeps its people's rows: a launcher of it signs locally, and the row
-		// is the grant that lets it.
-		return false
-	}
-	ver := releaseVersion()
-	if ver == "" {
-		// A development build names no release, so no recorded image can be
-		// this build's and no orchestrator can be shown to run one.
+	if !e.minterMoveAtTheDoor() {
 		return false
 	}
 	doc, _, err := e.recordedCredentialsImage()
 	if err != nil || doc == nil {
 		return false
 	}
+	ver := releaseVersion()
 	stale, err := servicesImageStale(ver, doc)
 	if err != nil {
 		// A document whose images this build cannot read is one the stage's own
@@ -186,11 +226,7 @@ func (e *initEngine) minterGrantOwed() bool {
 		// already answered for the run that cannot move an image at all.
 		return false
 	}
-	off, err := infra.PeopleMinterOff(doc)
-	if err != nil || !off {
-		return true // the installation's own document still keeps the rows
-	}
-	return !e.firebaseMinterOff()
+	return true
 }
 
 // firebaseMinterOff reports whether the Firebase root's own document says the
@@ -305,7 +341,7 @@ func (e *initEngine) announceIdentityMove(ctx context.Context) {
 	if o.doorName() != updateDoor.name || o.asJSON || o.printVars {
 		return
 	}
-	if !e.minterGrantOwed() {
+	if !e.minterMoveAtTheDoor() {
 		return
 	}
 	w := loggedOut(r.w, r.repLog)
