@@ -24,12 +24,6 @@ type Options struct {
 	NonInteractive bool
 	// PlanOnly checks and plans every stage and changes nothing.
 	PlanOnly bool
-	// AtEnd, when set, is called once after the last stage and before the
-	// closing account: work a stage started in the background and the run owes
-	// a join for. A step it returns is left for the user like any stage's. It
-	// runs whether the stages succeeded, failed or stopped, so nothing a stage
-	// started is abandoned.
-	AtEnd func() *Left
 	// Terminal is whether stdin is a terminal, where a confirmation can be
 	// typed.
 	Terminal bool
@@ -283,11 +277,6 @@ func Run(ctx context.Context, stages []Stage, o Options) (*Result, error) {
 		return l.res, nil
 	}
 	err = l.converge(ctx, stages)
-	if o.AtEnd != nil {
-		if lf := o.AtEnd(); lf != nil {
-			l.res.Left = append(l.res.Left, *lf)
-		}
-	}
 	l.finish()
 	// A refusal comes with the partial result: nothing was applied before
 	// it, and a caller printing JSON still has the account to print.

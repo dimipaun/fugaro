@@ -6,61 +6,103 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// A catalog image older than this release's base is the gap `fugaro update`
-// left behind twice on 2026-11-14: the images stage pins base_images.base and
-// copies the history image, and it rebuilt nothing FROM the base it recorded.
-// The catalog check job builds an entry once a night, so a project whose
-// schedule is paused — or whose entry nobody pushed — keeps an image built
-// from a release whose launches the launcher refuses, while the stage that
-// just pinned the new base says "No changes".
+// catalogRebuildAtOnce is how many catalog rebuilds this stage runs at a time:
+// four, the number D3444 and D3446 set.
+const catalogRebuildAtOnce = 4
+
+// A catalog image is stale in one of two ways (D3446), and an update treats
+// the two differently:
 //
-// So the stage reads the catalog's build records too. Every entry whose last
-// build was built FROM a release base image older than this release's is
-// rebuilt here, in process, by the machinery `fugaro image build <entry>`
-// runs (runImageBuildCatalogOrDerived) — bounded the way that command's builds
-// are, by the banner, the lease and the managed gate, never by a confirmation
-// of this stage's, which a Cloud Build does not ask. An entry whose build
-// belongs to another checkout is NOT
-// passed over in silence: a catalog build runs as the build account of the
-// checkout it is submitted from, holding that repository's credential and
-// secrets, so this run cannot submit it — it prints one line per such entry
-// naming the command to run in that checkout and ends not covered, and the
-// stage never prints "No changes" while one of them is stale.
+//   - its build record carries another base-image epoch (imagecheck.BaseEpoch),
+//     or none at all: the image was built from base-image files that have
+//     changed since, so a run that boots it may meet a runner the launcher
+//     refuses. That rebuild is eager — this stage submits it here, in process,
+//     by the machinery `fugaro image build <entry>` runs
+//     (runImageBuildCatalogOrDerived), and waits for it. A record stating no
+//     epoch is release A's own case: every entry an earlier release built is
+//     rebuilt once, which is D3445's one eager rebuild. A build that fails
+//     here fails the images step in one line naming the entry — it is on a
+//     runner the launcher may refuse, so it is never left silently behind —
+//     and the step that fixes it is the one the run is: `fugaro update` again.
+//   - its build is older than config.DefaultMaxAge: the image is current and
+//     merely old, which is what the nightly rebuild is for (D3444). This stage
+//     submits that build too, with --no-wait, and waits for none of them: the
+//     entry is current either way, and an update that blocked on it would be
+//     the release-long wait this task removes.
+//
+// A release alone makes nothing stale: the epoch moves when images/base,
+// images/derived or images/common changes, never when the Fugaro version does
+// (D3445, D3446), so a release's own images catch up on the nightly rebuild.
+//
+// Both kinds are submitted four at a time (D3444, D3446), each on a command of
+// its own. Two things follow from the four that did not from the one, and both
+// are named here rather than discovered later: four nested `fugaro image
+// build` runs in the same second open the same log file name — report.OpenLog
+// is O_EXCL and the name carries the pid and not the entry — so of two builds
+// opened in one second the second keeps no log; and each build's own lines
+// land in this stage's buffer, which is printed only for a build that failed,
+// so a submitted build's Cloud Build log URL is on no line of this run. The
+// build itself is untouched by either, and the entry's record and the Cloud
+// Build console both carry what the URL carried.
+//
+// The checkout's own case is the gap `fugaro update` left behind twice on
+// 2026-11-14: the images stage pins base_images.base and copies the history
+// image, and it rebuilt nothing FROM the base it recorded, while the catalog
+// check job builds an entry once a night — so a project whose schedule is
+// paused, or whose entry nobody pushed, kept an image built from a release
+// whose launches the launcher refuses, and the stage that had just pinned the
+// new base said "No changes".
+//
+// A rebuild is bounded the way `fugaro image build <entry>`'s builds are, by
+// the banner, the lease and the managed gate, never by a confirmation of this
+// stage's, which a Cloud Build does not ask. An entry whose build belongs to
+// another checkout is NOT passed over in silence while its epoch is behind: a
+// catalog build runs as the build account of the checkout it is submitted
+// from, holding that repository's credential and secrets, so this run cannot
+// submit it — it prints one line per such entry naming the command to run in
+// that checkout and ends not covered, and the stage never prints "No changes"
+// while an entry is on an older base image. Such an entry past its rebuild age
+// and no further behind is the nightly rebuild's alone, and this run says
+// nothing about it: the entry is current, and a step for it every update,
+// whether the vault checkout ran a build or not, would be a run that never
+// finishes over an image that is fine.
 //
 // A rebuild this run submits can also end on the entry's own definition being
 // refused — a pinned branch whose Dockerfile mounts a secret, a definition
 // over the ceiling — and such an entry is not handed a command: the run
-// watched `fugaro image build <entry>` refuse those bytes once, so the step
+// watched `fugaro image build <entry>` refuse those bytes once, so the line
 // prints the refusal, which names the line and the change, instead of a
 // command that would fail the same way and say nothing (the owner's 0.26.0
 // update, where the images step ended on exactly that command). It is the
 // refusal and not a reading of the file this run makes a second time: the
 // rebuild IS the command, its first stage the resolve and the validation, so
-// what the step prints is what the person would have watched happen.
+// what the line says is what the person would have watched happen.
 //
-// The rule is offline and record-only: it reads the base reference the
-// entry's own record carries and compares its release with this binary's,
-// exactly as the anchor check reads a workflow's record (baseRefReleaseRE,
-// imagePredates). An entry with no record has never been built — a build that
-// has not happened is not a stale image — and a base this tool did not write
-// (a custom image, a development tag) matches no release and is left alone.
+// The rule is offline and record-only: it reads the epoch and the build time
+// the entry's own record carries. An entry with no record has never been built
+// — a build that has not happened is not a stale image.
 
-// catalogStaleEntry is one catalog entry whose recorded build was built FROM
-// a base older than this release's, with the repository that build belongs
-// to.
+// catalogStaleEntry is one catalog entry whose recorded build is stale, with
+// the repository that build belongs to and which of the two stale kinds it is:
+// an eager rebuild (the base image changed, and this run waits for it) or one
+// past its rebuild age (the nightly rebuild's, submitted and not waited for).
 type catalogStaleEntry struct {
 	entry config.Entry
 	repo  infra.CatalogCheckRepoSpec
+	eager bool
 }
 
 // catalogStaleSet is what the images stage reads of the installation's
@@ -123,6 +165,7 @@ func (s *imagesStage) staleCatalog(ctx context.Context) catalogStaleSet {
 	}
 	defer func() { _ = rb.Close() }()
 	var set catalogStaleSet
+	now := time.Now()
 	for _, rs := range repos {
 		for _, name := range rs.Entries {
 			e, ok := catalogEntryNamed(cat, name)
@@ -130,14 +173,15 @@ func (s *imagesStage) staleCatalog(ctx context.Context) catalogStaleSet {
 				continue
 			}
 			rec, err := catalogEntryRecord(ctx, rb, []string{rs.Slug}, name)
-			switch {
-			case err != nil:
+			if err != nil {
 				set.unread = oneLine(err.Error())
 				continue
-			case rec == nil || !catalogBaseStale(rec.BaseRef):
+			}
+			stale, eager := catalogStaleRecord(rec, now)
+			if !stale {
 				continue
 			}
-			set.entries = append(set.entries, catalogStaleEntry{entry: e, repo: rs})
+			set.entries = append(set.entries, catalogStaleEntry{entry: e, repo: rs, eager: eager})
 		}
 	}
 	return set
@@ -159,14 +203,23 @@ func (s *imagesStage) buildable(ctx context.Context, se catalogStaleEntry) bool 
 	return false
 }
 
-// catalogBaseStale reports whether ref — the base an entry's build record
-// says it was built FROM — is a release base image older than this binary's.
-// A base this tool did not write (a custom image, a development tag) matches
-// no release and is left alone: the rule the anchor check reads a record's
-// base by, so the two never disagree about which images are behind.
-func catalogBaseStale(ref string) bool {
-	m := baseRefReleaseRE.FindStringSubmatch(ref)
-	return m != nil && imagePredates(m[2], releaseVersion())
+// catalogStaleRecord reads one entry's build record and says whether the entry
+// is stale and, when it is, whether its rebuild is eager — one this stage
+// submits and waits for, because the image is on a base the launcher may
+// refuse — rather than one it hands to the background (D3445, D3446).
+//
+// Two fields of the record answer, and nothing else does: the epoch it was
+// built under, and when. What the record says it was built FROM names no
+// release any more — a release is not what makes an image stale.
+func catalogStaleRecord(rec *imagecheck.CatalogRecordState, now time.Time) (stale, eager bool) {
+	if rec == nil {
+		// Never built: a build that has not happened is not a stale image.
+		return false, false
+	}
+	if rec.Epoch != imagecheck.BaseEpoch {
+		return true, true
+	}
+	return now.Sub(rec.BuiltAt) > config.DefaultMaxAge, false
 }
 
 // catalogRebuild is the submission of one catalog entry's rebuild, a var
@@ -200,22 +253,31 @@ type catalogLeft struct {
 }
 
 // catalogPlanDetail is the catalog half of a plan line: what the run will
-// rebuild here, what it will name, and whether it could tell at all.
+// rebuild here and wait for, what it will submit and leave running, what it
+// will name, and whether it could tell at all.
 func (s *imagesStage) catalogPlanDetail(ctx context.Context, set catalogStaleSet) string {
-	var mine, others []catalogStaleEntry
+	var eager, later, others []catalogStaleEntry
 	for _, se := range set.entries {
-		if s.buildable(ctx, se) {
-			mine = append(mine, se)
-			continue
+		switch {
+		case !s.buildable(ctx, se):
+			if se.eager {
+				others = append(others, se)
+			}
+		case se.eager:
+			eager = append(eager, se)
+		default:
+			later = append(later, se)
 		}
-		others = append(others, se)
 	}
 	var parts []string
-	if len(mine) > 0 {
-		parts = append(parts, fmt.Sprintf("rebuilds %d catalog image(s) FROM this release's base image with Cloud Build (%s)", len(mine), strings.Join(catalogEntryNames(mine), ", ")))
+	if len(eager) > 0 {
+		parts = append(parts, fmt.Sprintf("rebuilds %d catalog image(s) FROM this release's base image with Cloud Build and waits for it (%s)", len(eager), strings.Join(catalogEntryNames(eager), ", ")))
+	}
+	if len(later) > 0 {
+		parts = append(parts, fmt.Sprintf("submits %d catalog image(s) past their rebuild age to Cloud Build in the background (%s)", len(later), strings.Join(catalogEntryNames(later), ", ")))
 	}
 	if len(others) > 0 {
-		parts = append(parts, fmt.Sprintf("%d catalog image(s) are on a base older than this release's and are built from another checkout: this run names each one and the command that rebuilds it", len(others)))
+		parts = append(parts, fmt.Sprintf("%d catalog image(s) are behind this release's base image and are built from another checkout: this run names each one and the command that rebuilds it", len(others)))
 	}
 	if set.unread != "" {
 		parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
@@ -232,33 +294,62 @@ func catalogEntryNames(entries []catalogStaleEntry) []string {
 	return out
 }
 
-// rebuildCatalogEntry submits one stale entry's rebuild, in this process, the
-// way `fugaro image build <entry>` does: the entry's Dockerfile is copied out
-// of this checkout, the build runs as this repository's build account with
-// its credential and secrets, it is bounded by its own lease, and the record
-// it writes names this release's base for the next check to read.
+// catalogBuildResult is one entry's rebuild attempt: the error it ended on,
+// and what its nested run printed, which the stage writes out only for a build
+// that failed.
+type catalogBuildResult struct {
+	err error
+	out bytes.Buffer
+}
+
+// rebuildCatalog runs the entries' rebuilds, four at a time, and returns one
+// result per entry in the entries' order. Each runs in this process the way
+// `fugaro image build <entry>` does — the entry's Dockerfile is copied out of
+// this checkout, the build runs as this repository's build account with its
+// credential and secrets, it is bounded by its own lease, and the record it
+// writes carries this release's base for the next check to read — on a command
+// of its own that shares the run's flags and its input. The input is what the
+// managed gate reads a person at a terminal by, so the build is judged as it
+// would be on the run's own command.
 //
-// Nothing of the command's own account is captured: what bounds the build is
-// the banner it prints, the lease it takes and the gate's verdict, and its
-// progress and its closing line go where any nested run's do — the nested
-// reporter reads the flags off the command itself (reporterFor), so under
-// --json they land on stderr with the rest of this run's account rather than in
-// the document on stdout, and the stage's own lines below are what the reading
-// of this run needs.
+// noWait is the background arm (D3446): `fugaro image build --no-wait` submits
+// the build and returns without waiting for it. The call itself is always
+// waited for, in both arms: a submission's own answer is what says whether the
+// build was started at all.
 //
-// --json is therefore NOT handed on, and that is the one flag this call must
-// not carry: it becomes the nested build's own Conditions.JSON, which takes the
-// session out of judgedHere (PersonAtTheTerminal), and openBuildManaged then
-// returns nil — the build would be submitted with no kill-switch read, no
-// project build rules and no admission record, under its lease alone, which is
-// the opposite of the bound above. `fugaro image build` never gets there
-// because runImageBuild refuses --json for a Cloud Build; a caller inside
-// another command bypasses that refusal, so it must not create the state the
-// refusal exists to prevent.
-func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
+// --json is NOT handed on, and that is the one flag this call must not carry:
+// it becomes the nested build's own Conditions.JSON, which takes the session
+// out of judgedHere (PersonAtTheTerminal), and openBuildManaged then returns
+// nil — the build would be submitted with no kill-switch read, no project build
+// rules and no admission record, under its lease alone, which is the opposite
+// of the bound above. `fugaro image build` never gets there because
+// runImageBuild refuses --json for a Cloud Build; a caller inside another
+// command bypasses that refusal, so it must not create the state the refusal
+// exists to prevent. The nested reporter reads the rest of the flags off the
+// command itself (reporterFor), so a nested run's own account lands where this
+// run's does rather than in the document on stdout.
+func (s *imagesStage) rebuildCatalog(ctx context.Context, entries []catalogStaleEntry, noWait bool) []catalogBuildResult {
 	r := s.e.r
-	o := imageBuildOptions{cloud: r.o.cloud}
-	return catalogRebuild(r.cmd, se.entry.Name, o)
+	res := make([]catalogBuildResult, len(entries))
+	slots := make(chan struct{}, catalogRebuildAtOnce)
+	var wg sync.WaitGroup
+	for i, se := range entries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			sub := &cobra.Command{Use: r.cmd.Use}
+			sub.Flags().AddFlagSet(r.cmd.Flags())
+			sub.SetIn(r.cmd.InOrStdin())
+			sub.SetOut(&res[i].out)
+			sub.SetErr(&res[i].out)
+			sub.SetContext(ctx)
+			res[i].err = catalogRebuild(sub, se.entry.Name, imageBuildOptions{cloud: r.o.cloud, noWait: noWait})
+		}()
+	}
+	wg.Wait()
+	return res
 }
 
 // catalogOutcome is the images stage's catalog half, run once the base these
@@ -270,6 +361,17 @@ func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
 // these lines: the stage may not report nothing to do while a catalog image
 // of this installation is on an older base.
 //
+// The two kinds end differently on purpose. An eager rebuild is waited for and
+// its failure fails this stage, in one line naming the entry: the image is on
+// a base the launcher may refuse, and the run that fixes it is `fugaro update`
+// again — the loop's own fix line, so no second step is left saying the same
+// thing. A background submission's failure is said with the command that
+// rebuilds the entry, and leaves the step the missed entries have always left,
+// because the entry is current and the failure is the run's (a lease, a quota,
+// a read) and may well not repeat. An eager failure stops the background
+// submissions of the same run: a run about to fail leaves no build of its own
+// running.
+//
 // These rebuilds ask the run's one confirmation nothing, and that is the rule
 // and not an omission: a Cloud Build keeps its own bounds (a new file may not
 // call init_review.go's run confirmation at all, TestRunConfirmationCallSites),
@@ -278,49 +380,56 @@ func (s *imagesStage) rebuildCatalogEntry(se catalogStaleEntry) error {
 // checkout stage's image rebuilds and `fugaro image build <entry>` itself. A
 // session the gate refuses builds nothing here either: it is left the command,
 // which is the same step a stale entry of another checkout is left.
-func (s *imagesStage) catalogOutcome(ctx context.Context, set catalogStaleSet, out initflow.Outcome) initflow.Outcome {
+func (s *imagesStage) catalogOutcome(ctx context.Context, set catalogStaleSet, out initflow.Outcome) (initflow.Outcome, error) {
 	if !set.any() && set.unread == "" {
-		return out
+		return out, nil
 	}
-	w := s.e.r.w
+	w, errw := s.e.r.w, s.e.r.cmd.ErrOrStderr()
 	var parts []string
 	if out.Changed && out.Detail != "" {
 		parts = append(parts, out.Detail)
 	}
 	var missed []catalogLeft
-	var mine []catalogStaleEntry
+	var eager, later []catalogStaleEntry
 	for _, se := range set.entries {
 		if !s.buildable(ctx, se) {
-			missed = append(missed, catalogLeft{entry: se, why: fmt.Sprintf("its build runs as %s's build account, with that repository's credential and secrets", pluginwire.Printable(se.repo.Repo))})
+			if se.eager {
+				missed = append(missed, catalogLeft{entry: se, why: fmt.Sprintf("its build runs as %s's build account, with that repository's credential and secrets", pluginwire.Printable(se.repo.Repo))})
+			}
 			continue
 		}
-		mine = append(mine, se)
-	}
-	if s.background && len(mine) > 0 {
-		s.builds = startCatalogBuilds(ctx, s, mine, missed)
-		parts = append(parts, fmt.Sprintf("%d catalog image(s) rebuilding FROM this release's base image (%s), joined when the run's other steps are done", len(mine), strings.Join(catalogEntryNames(mine), ", ")))
-		if set.unread != "" {
-			parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
-		}
-		return initflow.Outcome{Changed: true, Detail: strings.Join(parts, "; ")}
-	}
-	var built []string
-	for _, se := range mine {
-		// The rebuild's own failure is read before it is described: the one
-		// failure `fugaro image build <entry>` could not answer differently on
-		// the same bytes is the entry's own definition being refused
-		// (catalog.Refused), and an entry refused there is one this run must
-		// not hand the person a command for. Every other failure — a lease
-		// with no room, a quota, a read that did not come back — leaves the
-		// command offered, because the command may well work where this run's
-		// did not.
-		if err := s.rebuildCatalogEntry(se); err != nil {
-			missed = append(missed, catalogLeft{entry: se, why: catalogRebuildWhy(err), refused: catalog.IsRefused(err)})
+		if se.eager {
+			eager = append(eager, se)
 			continue
 		}
-		built = append(built, pluginwire.Printable(se.entry.Name))
+		later = append(later, se)
 	}
-	parts = append(parts, reportCatalogBuilds(w, built, missed)...)
+	var built, submitted []string
+	for i, res := range s.rebuildCatalog(ctx, eager, false) {
+		if res.err != nil {
+			// The nested run's own account is what says why, in as much detail
+			// as the build had; the step's line is the one sentence.
+			_, _ = errw.Write(res.out.Bytes())
+			return initflow.Outcome{}, userErr("%s: the rebuild from this release's base image did not finish (%s); run %s again", pluginwire.Printable(eager[i].entry.Name), oneLine(res.err.Error()), selfCommand()+" update")
+		}
+		built = append(built, pluginwire.Printable(eager[i].entry.Name))
+	}
+	for i, res := range s.rebuildCatalog(ctx, later, true) {
+		// The failure is read before it is described: the one failure `fugaro
+		// image build <entry>` could not answer differently on the same bytes is
+		// the entry's own definition being refused (catalog.Refused), and an
+		// entry refused there is one this run must not hand the person a command
+		// for. Every other failure — a lease with no room, a quota, a read that
+		// did not come back — leaves the command offered, because the command may
+		// well work where this run's did not.
+		if res.err != nil {
+			missed = append(missed, catalogLeft{entry: later[i], why: catalogRebuildWhy(res.err), refused: catalog.IsRefused(res.err)})
+			_, _ = errw.Write(res.out.Bytes())
+			continue
+		}
+		submitted = append(submitted, pluginwire.Printable(later[i].entry.Name))
+	}
+	parts = append(parts, reportCatalogBuilds(w, built, submitted, missed)...)
 	if set.unread != "" {
 		parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
 	}
@@ -328,18 +437,23 @@ func (s *imagesStage) catalogOutcome(ctx context.Context, set catalogStaleSet, o
 	if detail == "" {
 		detail = "No changes"
 	}
-	return initflow.Outcome{Changed: out.Changed || len(built) > 0, Detail: detail, Left: catalogLeftFor(missed)}
+	changed := out.Changed || len(built) > 0 || len(submitted) > 0
+	return initflow.Outcome{Changed: changed, Detail: detail, Left: catalogLeftFor(missed)}, nil
 }
 
-// reportCatalogBuilds prints what a run's catalog rebuilds came to, one line
-// per entry it did not rebuild, and returns the parts of the stage's own line.
-// It is the one place both arms (the stage's own sequential rebuilds and the
-// converge's joined ones) say it, so the two cannot disagree.
-func reportCatalogBuilds(w io.Writer, built []string, missed []catalogLeft) []string {
+// reportCatalogBuilds prints what a run's catalog rebuilds came to — the ones
+// it rebuilt and waited for, the ones it left running in the background, one
+// line per entry it did not rebuild — and returns the parts of the stage's own
+// line.
+func reportCatalogBuilds(w io.Writer, built, submitted []string, missed []catalogLeft) []string {
 	var parts []string
 	if len(built) > 0 {
 		fmt.Fprintf(w, "  rebuilt %d catalog image(s) FROM this release's base image: %s\n", len(built), strings.Join(built, ", "))
 		parts = append(parts, fmt.Sprintf("%d catalog image(s) rebuilt FROM this release's base image (%s)", len(built), strings.Join(built, ", ")))
+	}
+	if len(submitted) > 0 {
+		fmt.Fprintf(w, "  submitted %d catalog image(s) to rebuild in the background: %s\n", len(submitted), strings.Join(submitted, ", "))
+		parts = append(parts, fmt.Sprintf("%d catalog image(s) rebuilding in the background (%s)", len(submitted), strings.Join(submitted, ", ")))
 	}
 	if len(missed) > 0 {
 		for _, m := range missed {
@@ -353,68 +467,10 @@ func reportCatalogBuilds(w io.Writer, built []string, missed []catalogLeft) []st
 			fmt.Fprintf(w, "  %s: NOT rebuilt: %s; run %s in %s's checkout\n",
 				pluginwire.Printable(m.entry.entry.Name), m.why, catalogBuildCommand(m.entry.entry.Name), pluginwire.Printable(m.entry.repo.Repo))
 		}
-		fmt.Fprintf(w, "  not covered: %d catalog image(s) of this installation are on a base older than this release's and this run did not rebuild them — the lines above name each one and what rebuilding it takes\n", len(missed))
+		fmt.Fprintf(w, "  not covered: %d catalog image(s) this run did not rebuild\n", len(missed))
 		parts = append(parts, catalogNotCovered(len(missed)))
 	}
 	return parts
-}
-
-// catalogBuilds is the rebuilds the converge started on one worker and has not
-// joined yet. One worker and not one per entry: the builds are submitted one at
-// a time (the Cloud Build and Cloud Run read quotas), and a second build in the
-// same second would open the same log file name.
-type catalogBuilds struct {
-	entries []catalogStaleEntry
-	missed  []catalogLeft
-	results []catalogBuildResult
-	done    chan struct{}
-}
-
-type catalogBuildResult struct {
-	err error
-	out bytes.Buffer
-}
-
-// startCatalogBuilds starts the worker. Each rebuild runs on a command of its
-// own that shares the run's flags and its input — the input is what the managed
-// gate reads a person at a terminal by, so the build is judged as it would be
-// on the run's own command — and writes to a buffer, so its progress does not
-// interleave with the steps running beside it; the buffer is printed only for a
-// build that failed.
-func startCatalogBuilds(ctx context.Context, s *imagesStage, mine []catalogStaleEntry, missed []catalogLeft) *catalogBuilds {
-	b := &catalogBuilds{entries: mine, missed: missed, results: make([]catalogBuildResult, len(mine)), done: make(chan struct{})}
-	r := s.e.r
-	go func() {
-		defer close(b.done)
-		for i, se := range mine {
-			res := &b.results[i]
-			sub := &cobra.Command{Use: r.cmd.Use}
-			sub.Flags().AddFlagSet(r.cmd.Flags())
-			sub.SetIn(r.cmd.InOrStdin())
-			sub.SetOut(&res.out)
-			sub.SetErr(&res.out)
-			sub.SetContext(ctx)
-			res.err = catalogRebuild(sub, se.entry.Name, imageBuildOptions{cloud: r.o.cloud})
-		}
-	}()
-	return b
-}
-
-// join waits for every started rebuild and says what they came to.
-func (b *catalogBuilds) join(w io.Writer, errw io.Writer) (parts []string, left *initflow.Left) {
-	<-b.done
-	var built []string
-	missed := append([]catalogLeft(nil), b.missed...)
-	for i, se := range b.entries {
-		res := &b.results[i]
-		if res.err != nil {
-			missed = append(missed, catalogLeft{entry: se, why: catalogRebuildWhy(res.err), refused: catalog.IsRefused(res.err)})
-			_, _ = errw.Write(res.out.Bytes())
-			continue
-		}
-		built = append(built, pluginwire.Printable(se.entry.Name))
-	}
-	return reportCatalogBuilds(w, built, missed), catalogLeftFor(missed)
 }
 
 // catalogLeftFor is the step this run leaves for the person when a stale
@@ -437,8 +493,7 @@ func (b *catalogBuilds) join(w io.Writer, errw io.Writer) (parts []string, left 
 // The step's reason is set here and not left to the loop: this stage applied
 // what it could before it left this, so its own line is a success line and not
 // a reason (loop.applied reads none from it), and what the reader is owed is
-// the fact the stage's own line carries — the images are on an older base and
-// this run did not rebuild them.
+// the fact the stage's own line carries — this run did not rebuild them.
 func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 	if len(missed) == 0 {
 		return nil
@@ -450,7 +505,7 @@ func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 			cmds = append(cmds, catalogBuildCommand(m.entry.entry.Name))
 		}
 	}
-	text := fmt.Sprintf("this run did not rebuild %d catalog image(s) that are on a base older than this release's: %s. ", len(missed), strings.Join(names, ", "))
+	text := fmt.Sprintf("this run did not rebuild %d catalog image(s): %s. ", len(missed), strings.Join(names, ", "))
 	if len(cmds) == 0 {
 		// Nothing below to run: every entry left is one whose own definition
 		// is refused, and each refusal says what about it has to change.
@@ -468,12 +523,14 @@ func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 }
 
 // catalogNotCovered is the fact the stage's own line and the step it leaves
-// both carry: the images are on a base older than this release's and this run
-// did not rebuild them. It is one sentence in two places — the stage's line,
-// where it follows what it did rebuild, and the step's reason, where it stands
-// alone — so the two can never disagree about what was left behind.
+// both carry: this run did not rebuild them. It is one sentence in two places
+// — the stage's line, where it follows what it did rebuild, and the step's
+// reason, where it stands alone — so the two can never disagree about what was
+// left behind. Which of the two kinds each entry is, and why it was left, is
+// on the line that names the entry: what the entries have in common is that
+// this run did not rebuild them.
 func catalogNotCovered(n int) string {
-	return fmt.Sprintf("not covered: %d catalog image(s) are on a base older than this release's and this run did not rebuild them", n)
+	return fmt.Sprintf("not covered: %d catalog image(s) this run did not rebuild", n)
 }
 
 // catalogRebuildWhy is why one of this checkout's entries was not rebuilt, in
@@ -499,26 +556,4 @@ func catalogRebuildWhy(err error) string {
 // process for the entries of this checkout.
 func catalogBuildCommand(entry string) string {
 	return selfCommand() + " image build " + quoteWord(entry)
-}
-
-// joinCatalogBuilds is the end of the converge's background rebuilds: the loop
-// calls it after the last stage and before its closing account, which is also
-// before the steps that read the catalog a rebuild moves (reconcileRepoJobs).
-// It waits for what the images stage started and returns the step they leave,
-// so the run says the same thing it said when the stage rebuilt in line. A run
-// that failed or was interrupted joins too: a build already submitted is never
-// abandoned, and nothing joins twice.
-func (e *initEngine) joinCatalogBuilds() *initflow.Left {
-	if e.images == nil || e.images.builds == nil {
-		return nil
-	}
-	b := e.images.builds
-	e.images.builds = nil
-	select {
-	case <-b.done:
-	default:
-		fmt.Fprintf(e.r.w, "  images: waiting for %d catalog rebuild(s) still running\n", len(b.entries))
-	}
-	_, left := b.join(e.r.w, e.r.cmd.ErrOrStderr())
-	return left
 }

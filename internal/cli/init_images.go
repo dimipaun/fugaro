@@ -194,13 +194,6 @@ type imagesStage struct {
 	// It limits base kinds only: the history image (--firebase-project) is unaffected.
 	// Kinds are de-duplicated and unknown ones (not in config.Bases) dropped.
 	only []string
-	// background, when set by the converge, starts the stale catalog entries'
-	// rebuilds on one worker and returns, and the run joins them after its last
-	// stage (initEngine.joinCatalogBuilds): nothing the later stages do reads a
-	// rebuilt entry, and the one step that does (reconcileRepoJobs) runs after
-	// the join. The converge sets it; the stage's own tests do not.
-	background bool
-	builds     *catalogBuilds
 }
 
 func newImagesStage(e *initEngine) *imagesStage { return &imagesStage{e: e} }
@@ -858,7 +851,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	if m == nil {
-		return s.catalogOutcome(ctx, set, initflow.Outcome{Detail: "No changes"}), nil
+		return s.catalogOutcome(ctx, set, initflow.Outcome{Detail: "No changes"})
 	}
 	pl, err := s.read(ctx, m, items)
 	if err != nil {
@@ -918,9 +911,9 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	if !changed && len(base) == 0 {
-		return s.catalogOutcome(ctx, set, initflow.Outcome{Detail: "No changes"}), nil
+		return s.catalogOutcome(ctx, set, initflow.Outcome{Detail: "No changes"})
 	}
-	return s.catalogOutcome(ctx, set, initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}), nil
+	return s.catalogOutcome(ctx, set, initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))})
 }
 
 // confirmText is the stage's own confirmation: what it copies (and how big,
