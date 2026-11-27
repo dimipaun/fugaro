@@ -930,8 +930,11 @@ function briefField(value, field, max) {
 // each segment shaped so that neither the repository nor a segment can begin with
 // the `-` or `.` that would make it a flag or a path to `git` or `gh`.
 function repoField(value) {
+  // Whatever the target is that is not a repository -- an array, a string, an
+  // object with a field this module does not name -- the answer is the same one:
+  // this is not a target, so there is nothing to launch in.
   const read = readFields(value, TARGET_FIELDS, 'target');
-  if (!read.ok) return { bad: read.code === REFUSAL.NOT_AN_OBJECT ? refuse(REFUSAL.BAD_REPO, 'target') : read };
+  if (!read.ok) return { bad: refuse(REFUSAL.BAD_REPO, 'target') };
   const repo = read.values.repo;
   if (typeof repo !== 'string' || repo === '' || repo.length > REPO_MAX) return { bad: refuse(REFUSAL.BAD_REPO, 'target.repo') };
   const segments = repo.split('/');
