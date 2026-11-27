@@ -82,6 +82,31 @@ func (r *signerRig) withOperators(t *testing.T, ops ...string) {
 	}
 }
 
+// withRoster records the two lists a current local config carries:
+// terraform.operators is the installation's launchers (the role word is
+// operator) and terraform.admins the admins (admin). A version-1 document has
+// one key for both of them — its `operators` is today's admins — so the
+// document is written as version 2.
+func (r *signerRig) withRoster(t *testing.T, operators, admins []string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Replace(string(b), "version: 1\n", "version: 2\n", 1)
+	list := func(members []string) string {
+		quoted := make([]string, len(members))
+		for i, m := range members {
+			quoted[i] = `"` + m + `"`
+		}
+		return "[" + strings.Join(quoted, ", ") + "]"
+	}
+	cfg += "terraform: { operators: " + list(operators) + ", admins: " + list(admins) + " }\n"
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // withDeployer gives the fake the managed deployment's deployer account and
 // the conditioned role the module binds it under (deployer.tf), with that
 // role's own four permissions.
@@ -301,26 +326,53 @@ func TestDoctorFlagsAPersonWhoStillSigns(t *testing.T) {
 // address, so the group can no longer launch and its people have to be named
 // (D3123).
 func TestDoctorFlagsAGroupLauncher(t *testing.T) {
-	r := newSignerDoctorRig(t)
-	r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"group:ops@example.com"}})
-	o, err := r.doctor(t, "--strict")
-	if err == nil {
-		t.Fatalf("--strict must fail on a group that still signs: %+v", o.Checks)
-	}
-	cs := signerChecks(o)
-	if len(cs) != 1 {
-		t.Fatalf("checks %+v", cs)
-	}
-	c := cs[0]
-	for _, want := range []string{"group:ops@example.com", "the row the design moves to the credentials service"} {
-		if !strings.Contains(c.Problem, want) {
-			t.Errorf("problem %q lacks %q", c.Problem, want)
-		}
-	}
-	for _, want := range []string{"update", "a group holds no token the service verifies now", "user: entry"} {
-		if !strings.Contains(c.Fix, want) {
-			t.Errorf("fix %q lacks %q", c.Fix, want)
-		}
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	for _, tc := range []struct {
+		what    string
+		ops     []string
+		admins  []string
+		roleArg string
+	}{
+		{"on the launchers' list", []string{"group:ops@example.com", "user:someone@example.com"}, nil, "--role operator"},
+		{"on the admins' list", nil, []string{"group:ops@example.com"}, "--role admin"},
+		{"on neither list", nil, nil, "--role <operator|admin>"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newSignerDoctorRig(t)
+			r.withRoster(t, tc.ops, tc.admins)
+			r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"group:ops@example.com"}})
+			o, err := r.doctor(t)
+			if err != nil {
+				t.Fatalf("a warning failed doctor without --strict: %v", err)
+			}
+			if _, err := r.doctor(t, "--strict"); err == nil {
+				t.Fatal("--strict: a group that still signs must fail doctor")
+			}
+			cs := signerChecks(o)
+			if len(cs) != 1 {
+				t.Fatalf("checks %+v", o.Checks)
+			}
+			c := cs[0]
+			for _, want := range []string{"group:ops@example.com", "the row the design moves to the credentials service"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("problem %q lacks %q", c.Problem, want)
+				}
+			}
+			// The fix names the update that removes the row and the command
+			// that puts the group's people back, role included: `fugaro user
+			// add` stops on a line that names no list.
+			for _, want := range []string{"run fugaro update, which removes the row",
+				"a group holds no token", "fugaro user add user:<email> " + tc.roleArg} {
+				if !strings.Contains(c.Fix, want) {
+					t.Errorf("fix %q lacks %q", c.Fix, want)
+				}
+			}
+			if n := len(c.Fix); n > 140 {
+				t.Errorf("fix is %d characters, over the bound a person reads: %q", n, c.Fix)
+			}
+		})
 	}
 }
 

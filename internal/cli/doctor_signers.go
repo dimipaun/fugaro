@@ -73,6 +73,19 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	if lc.GCPProject != "" {
 		managed.Issuer = infra.CredentialsAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
 	}
+	// The role word a `fugaro user add` line needs for a roster entry: the
+	// installation's two lists, the pair init_identity.go's launcherGroups
+	// reads (terraform.operators is the launchers' list, terraform.admins the
+	// admins', and an entry on both is named as the admin, which is the role
+	// that also puts it back on the launchers' list). An entry of neither is a
+	// binding no roster of this installation names.
+	rosterRole := map[string]string{}
+	for _, m := range lc.Terraform.Operators {
+		rosterRole[m] = "operator"
+	}
+	for _, m := range lc.Terraform.Admins {
+		rosterRole[m] = "admin"
+	}
 	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number, managed)
 	if err != nil {
 		// A warning: with nothing read, --strict must not go green.
@@ -119,7 +132,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 			}
 		default:
 			n++
-			out = append(out, signerCheck(fmt.Sprintf("token-signers-%d", n), fp, f))
+			out = append(out, signerCheck(fmt.Sprintf("token-signers-%d", n), fp, f, rosterRole[f.Member]))
 		}
 	}
 	var info []doctorCheck
@@ -196,9 +209,11 @@ func dedupe(s []string) []string {
 
 // signerCheck is the warning for one unexpected finding, with the one-line
 // command that removes the binding — or, for the minter row the design moved,
-// the update that moves it. Text from the policy (members, roles) is made
-// printable, so a hostile name cannot dress the line up.
-func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
+// the update that moves it. rosterRole is the role word that puts a `group:`
+// member back on the roster list it was on, "" when the local config carries
+// it on neither. Text from the policy (members, roles) is made printable, so a
+// hostile name cannot dress the line up.
+func signerCheck(id, fp string, f infra.SignerFinding, rosterRole string) doctorCheck {
 	member, role, account := pluginwire.Printable(f.Member), pluginwire.Printable(f.Role), pluginwire.Printable(f.Account)
 	pfp := pluginwire.Printable(fp)
 	where := "project " + pfp
@@ -231,7 +246,16 @@ func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
 		c.Problem = fmt.Sprintf("%s holds %s on %s%s: the row the design moves to the credentials service, which alone mints a run's identity now; %s", member, role, where, cond, signConsequence)
 		c.Fix = "run " + selfCommand() + " update, which moves the grant once the credentials service answers; if the row outlives it, remove it: " + cmd
 		if strings.HasPrefix(f.Member, "group:") {
-			c.Fix = "run " + selfCommand() + " update, which names this entry and its people before it removes the row; a group holds no token the service verifies now, so name each person it holds as a user: entry"
+			// A group holds no token the issuer verifies, so its people need
+			// their own entries before the row goes (D3123), and `fugaro user
+			// add` writes one of the installation's two lists and refuses to
+			// guess which, so the role is named — both words where the local
+			// config carries the entry on neither.
+			if rosterRole == "" {
+				rosterRole = "<operator|admin>"
+			}
+			c.Fix = fmt.Sprintf("run %s update, which removes the row; a group holds no token, so name each person: %s user add user:<email> --role %s",
+				selfCommand(), selfCommand(), rosterRole)
 		}
 	case f.Kind == infra.SignerSigns:
 		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and %s", member, role, where, cond, perms, signConsequence)
