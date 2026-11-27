@@ -1482,6 +1482,109 @@ func TestUpdateManagedDefaultViewShowsTheStepsOnly(t *testing.T) {
 	}
 }
 
+// catalogEntryPlan is the plan an added catalog entry leaves on the
+// installation root, as check 292's log holds it (the owner's, 2026-11-26): the
+// catalog check job's configuration — the env the catalog is read out of, which
+// is what the entry moved — and a project child's job, the repository the
+// entry's own jobs run from. Both are the module's `google_cloud_run_v2_job`,
+// and both are in the cover's tables.
+func catalogEntryPlan() []planChange {
+	return []planChange{
+		jobUpdate("module.installation.google_cloud_run_v2_job.catalog_check[0]"),
+		jobUpdate(`module.project["fugaro-p-acme-0123456789ab"].google_cloud_run_v2_job.this`),
+	}
+}
+
+// jobUpdate is one Cloud Run job's in-place update with its configuration
+// moved: the before/after views the plan carries, shaped as the modules write
+// them (a one-element template list, the container's env among its fields), so
+// the changed path is the sensitive location the step's warning line names.
+func jobUpdate(addr string) planChange {
+	job := func(catalog string) map[string]any {
+		return map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{
+			"containers": []any{map[string]any{
+				"image": "us-east5-docker.pkg.dev/" + initProject + "/fugaro/fugaro@sha256:0000",
+				"env": []any{
+					map[string]any{"name": "FUGARO_PROJECT", "value": initProject},
+					map[string]any{"name": "FUGARO_IMAGE_CATALOG", "value": catalog},
+				},
+			}},
+		}}}}}
+	}
+	return planChange{"address": addr, "type": "google_cloud_run_v2_job",
+		"change": map[string]any{"actions": []string{"update"},
+			"before": job(`{"version":2,"catalog":{"entries":[{"name":"tools"}]}}`),
+			"after":  job(`{"version":2,"catalog":{"entries":[{"name":"tools"},{"name":"chk292"}]}}`)}}
+}
+
+// TestUpdateManagedAppliesInASessionNobodyIsAt is check 292's own case: a
+// managed project, a session nobody is at — no coding agent's marker, no
+// terminal, no --json and no --non-interactive, which is the pipe a script, a
+// cron or a sandbox check drives the command in — and the plan an added catalog
+// entry leaves (catalogEntryPlan).
+//
+// The step applies and nothing is confirmed. What answers for it is the run's
+// own confirmation — the read of the two marks, which is the same answer the
+// owner's own terminal gets on a managed project (D1016, the ruling of
+// 2026-11-01) — because there is no one to put a question to: a run that asked
+// here would be asking a person who is not there, which is the prompt the
+// managed case exists to remove. What check 292 read instead was "CONFIRM
+// (project …): applies 0 imports, 0 creates, 7 updates …" and then "the
+// confirmation of this step needs a real terminal": the session rule answered
+// for the marks at the terminal only, a pipe carries no marker and is no
+// terminal, and the step kept a confirmation it asked of nobody.
+//
+// The plan is one the run's own cover covers (tf.Cover, whose tables name the
+// job and the paths an entry moves), so the step is one the run may take
+// silently; a plan outside it — a delete, a replace, an IAM binding — asks its
+// own question and refuses in this session, which is the half that must not
+// move.
+//
+// The plugin stage is current in this rig — Claude Code's own record of the
+// installed plugin, at this release's version — which is the machine a by-hand
+// update leaves behind: a stage with work of its own still stops the run, and
+// that stop is the stage's own and not this plan's.
+func TestUpdateManagedAppliesInASessionNobodyIsAt(t *testing.T) {
+	r := updateManagedRig(t)
+	clearAgentMarkers(t)
+	noTerminal(t)
+	updating(t, r)
+	r.setPlan(t, catalogEntryPlan()...)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.2.0"}]}}`)
+
+	got, err := updateRun(t, r, "update")
+	if err != nil {
+		t.Fatalf("a managed project's update stopped in a session nobody is at: %v\n%s", err, got)
+	}
+	for _, asked := range []string{"CONFIRM", "needs a real terminal", "[y/N]"} {
+		if strings.Contains(got, asked) {
+			t.Errorf("the run put a confirmation to a session nobody is at (%q):\n%s", asked, got)
+		}
+	}
+	// The installation stage's own apply, and installation-2's behind it: the
+	// stage that re-applies the root once the images stage has moved the base
+	// image the scheduled jobs run FROM (R7). Both are the one document.
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Errorf("%d terraform apply(s) ran, want the two the run covered:\n%s", n, got)
+	}
+	// The sentence the covered step prints is the run's own account of it and
+	// goes where that account goes (initRun.stageDetail): the log, which is
+	// where a run that is not --verbose keeps it.
+	if log := newestLog(t, "update"); !strings.Contains(log, initflow.GateOrdinary()) {
+		t.Errorf("the applied step does not say what covered it, so nothing reads as the run's own account:\n%s", log)
+	}
+	recs := audits(t, r)
+	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("%d record(s) after an admitted plan, want two admitted: %+v", len(recs), recs)
+	}
+	if recs[0].AgentMarker != "" {
+		t.Errorf("the record names a coding agent's marker (%q), and this session carries none: %+v", recs[0].AgentMarker, recs[0])
+	}
+}
+
 // The control the whole rule is read against, in the shape T3 of
 // docs/managed-flag-ergonomics leaves it: the same run on an installation the
 // managed read answers is not managed. TN1's stop reads the fact at the head of
