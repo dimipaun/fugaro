@@ -10,7 +10,7 @@ description: Set the current repository up for Fugaro with the user — investig
 
 **The cloud side is already done: the wizard did it.** The user ran `setup` in their terminal; this skill writes `fugaro.yaml` and opens the pull request on that installation.
 
-You are writing this repository's `fugaro.yaml` with the user: how Fugaro builds and tests it in a container, its services, and the team's choices. The engine never guesses these: read the repository, propose, and the user decides.
+You are writing this repository's `fugaro.yaml` with the user: how Fugaro builds and tests it in a container and what services it needs. The engine never guesses these: read the repository, propose, and the user decides.
 
 You are done when `fugaro.yaml` validates for every workflow, each workflow's job runs an image the project can give it (step 7), and the user has the hand-off (step 9).
 
@@ -49,7 +49,7 @@ A surface drives the same wizard with no prompt: `--answers-file` and `--events`
 
 If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: both tell new setup from fixing.
 
-**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves; the owner's command writes it, in their own terminal, not through the agent, and it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself. [reference/managed.md](reference/managed.md) carries the object and the command.
+**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves; the owner's command writes it, in their own terminal, not through the agent, and it refuses an agent's session. Your session holds the owner's credentials: never write that object yourself. [reference/managed.md](reference/managed.md) carries the object and the command.
 
 A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is open as of 0.10.0, fence unmeasured**: `managedDeployerShipped` (`internal/cli/recipes_skew.go`) is true as of 0.10.0, so `--create-project --managed`, flagging one, `fugaro managed apply` and `fugaro restore` are available; earlier releases refused all four (`managed projects are disabled in this release`). Check 68 (`docs/gcp-live-checklist.md`) is owner-run **after** the release and **NOT RUN**: read its refusals as what they are. [reference/managed.md](reference/managed.md) has the rest.
 
@@ -77,7 +77,7 @@ Read, don't run. Take the facts from the files, with lines: `reference/discovery
 ## 3. Choose workflows, services and the image
 
 One workflow per buildable unit, all on the one Fugaro base. Write the runtimes into the root `mise.toml` (or respect the one there), and the image's extras in `image:`. `reference/services-and-images.md` has the details. In short:
-- **The image is the project's.** A job runs a project-level image from the project's catalog — the workflow's `image_name:` or `needs:`, else the project's `repo_images` map, else the catalog's default; proposing those entries, their Dockerfiles and their builds is the `images` skill's work (say `/fugaro:images`). This repository's `image:` block, `dockerfile:` and `rebuild:` are the fallback where the catalog serves this workflow no entry (step 7).
+- **The image is the project's.** A job runs a project-level image from the project's catalog — the workflow's `image_name:` or `needs:`, else the project's `repo_images` map, keyed `provider/owner/name` (the user runs `fugaro image map set github/acme/app web` in their own terminal), else the catalog's default; proposing those entries, their Dockerfiles and their builds is the `images` skill's work (say `/fugaro:images`). This repository's `image:` block, `dockerfile:` and `rebuild:` are the fallback where the catalog serves this workflow no entry (step 7).
 - **Services.** A test that needs Postgres, Redis or the Firebase emulators starts them with `fugaro-services start` as the first step of `commands.test`. Anything else is `image.apt` or `image.setup` plus a start line in the test command.
 - **No Docker daemon.** A Cloud Run job has none. Tests needing Docker, docker-compose or Testcontainers can't run there: use a local-services mode of the repository, cover only the suites that don't need Docker, or have the user run them elsewhere. Say so; never work around it.
 - **The Dockerfile rule.** For the fallback, use `image:` by default. Only when the evidence needs what it can't express, run `fugaro image render --workflow <name>`, save it as `.fugaro/<workflow>.Dockerfile`, make the minimal edits, and set `dockerfile:`. Never start from a blank Dockerfile or write one at the repository root (the application's).
@@ -113,7 +113,7 @@ Before the first build, and before any rebuild after a change, show every line t
 - the names of the declared `secrets` variables, and whether each is already set (presence only, never a value): the build mounts the workflow's `secrets:` as file secrets, so a registry token reaches it that way, never as a build argument or a copied file
 - any file you add that a command runs, such as the `agent.instructions` file (appended to the agent's prompt; it must exist in the repository)
 
-Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's code in Cloud Build, in the project's own cloud project, as the build account with the workflow's secrets. Wait for an explicit yes. The user then submits it in their own terminal, after the merge (step 10): it is billable. If the user declines, say what is unverified (the runtime contract's smoke checks); their first run is the test.
+Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's code in Cloud Build, as the build account with the workflow's secrets. Wait for an explicit yes. The user then submits it in their own terminal, after the merge (step 10): it is billable. If the user declines, say what is unverified (the runtime contract's smoke checks); their first run is the test.
 
 ## 7. Check the image the workflow runs
 
