@@ -173,6 +173,15 @@ func credentialsServiceDeploys(lc *localcfg.Config, repo string) map[string]bool
 // not serve) all refuse something a run needs, so they print and --strict is
 // where they become a failure.
 //
+// The arms a read that did not answer produces are none of those six: what they
+// say is that doctor could not look, which is doctor's own state and not the
+// installation's, so each carries the unread marker with its warning — the pair
+// orchestrator-identity's read failures write and the serving half's write — and
+// a reader outside the Go code (workspaceMemberServing, the class rule) reads
+// that marker, not the sentence, to tell "not read" from a fact of the service.
+// The severity stays a warning: nothing was read, so --strict may not go green
+// over an installation whose service nobody could look at.
+//
 // The no-service state's fix is not an instruction to run something: DON1's
 // deploy is the ordinary `fugaro update`, and it switches nothing on by
 // itself — a run reaches the service only where the bundle holds what its auth
@@ -224,7 +233,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 			Fix:     "nothing to run for this: where " + selfCommand() + " update does deploy one, the deploy alone switches nothing on — a run reaches it only where the bundle holds the credential its auth needs and that repository's own root has been re-applied with the switch, which a cascade repository of any installation that has a service is on, and an api-key or oauth one only where its budget mode is observe or enforce and the bundle holds that credential (the credential is dropped from the job's mounts by the apply that turns the switch on: from the flip a switched api-key or oauth repository's job mounts neither the Anthropic key nor the Claude OAuth token, its provider keys staying its own), and a GitHub run of such a repository refuses to mint until the bundle holds the App's key (" + selfCommand() + " creds set github-app-key)"}}
 	}
 	unreadable := func(what string) []doctorCheck {
-		return []doctorCheck{{ID: id, Severity: "warning",
+		return []doctorCheck{{ID: id, Severity: "warning", unread: true,
 			Problem: fmt.Sprintf("the credentials service could not be read. The installation has opted into the credentials service (%s), and %s could not be read: whether it is deployed and whether its callers may invoke it could not be checked", infra.CredentialsServiceName, what),
 			Fix:     "rerun doctor with your credentials and the Cloud Run API available, or check by hand: " + selfCommand() + " update re-applies the installation and its service"}}
 	}
@@ -292,7 +301,12 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	case len(missing) == 0 && len(unread) == 0:
 		return doctorCredentialsServiceServing(ctx, lc, id)
 	case len(missing) == 0:
-		return []doctorCheck{{ID: id, Severity: "warning",
+		// The one state of the grant's own read: every account the table names
+		// either holds the role or could not be judged, so what the line says is
+		// that nothing was read — the marker, not the sentence, is what tells a
+		// reader of this check (and the workspace's own read of a member's
+		// service) that this is doctor's state rather than the service's.
+		return []doctorCheck{{ID: id, Severity: "warning", unread: true,
 			Problem: fmt.Sprintf("the credentials service's invoker grant could not be read. The credentials service %s is deployed, and whether %s may invoke it could not be checked: a custom role on its or the project's policy could not be read", infra.CredentialsServiceName, strings.Join(unread, ", ")),
 			Fix:     "rerun doctor with the IAM API available, or read the policy yourself: gcloud run services get-iam-policy " + infra.CredentialsServiceName}}
 	}
