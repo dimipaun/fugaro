@@ -387,7 +387,16 @@ setup)
     exit 0
   fi
   if [ "$tty" != yes ]; then
-    printf 'ERROR: creating %s needs your own terminal, and this run has none\n' "${3:-the project}" >&2
+    # The real CLI's own order, which is what makes the negative's row a reading
+    # of the step it is about: a first run given no region and no rigor is refused
+    # for the missing answer before it reaches any typed step (init.go's wizard
+    # answers), and one given both is refused by the step that needs a person at
+    # the terminal, in the sentence naming the flag that answers it (NeedsTerminal).
+    if [ -z "$(flag --region "$@" || true)" ] || [ -z "$(flag --rigor "$@" || true)" ]; then
+      printf 'ERROR: (fugaro) there is no project config yet: pass --location <us|eu> (where the installation lives: us or eu), --region <region> (the GCP region, such as us-east5), --rigor <mode> to create one\n' >&2
+      exit 1
+    fi
+    printf 'ERROR: (fugaro) the billing account to link to %s (a number, or none to link none now) needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe; to supply it without one, pass --link-billing\n' "$(flag --gcp-project "$@" || true)" >&2
     if [ -n "${FAKE27_NEG_CREATES:-}" ]; then
       installation_of "${3:-}"
     fi
@@ -465,7 +474,7 @@ update)
   if [ "$n" -lt 2 ] && [ -n "${FAKE27_UPDATE1_CHANGED:-}" ]; then
     if [ "$tty" != yes ]; then
       printf '%s %s\n' '!' "installation: left for you — a step of this converge needs your own terminal"
-      printf 'ERROR: (fugaro) not confirmed (needs a real terminal, or pass --yes once you have read what it does); installation: nothing was applied\n' >&2
+      printf 'ERROR: (fugaro) the confirmation of this step needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe; installation: nothing was applied\n' >&2
       exit 1
     fi
     converged_steps '✔ installation creates the runs bucket'
@@ -742,8 +751,12 @@ test_the_create_run_is_given_a_real_terminal() {
   plan=$(grep 'setup --create-project' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$plan" "--rigor pro" "the plan-only run's rigor answer"
   expect_contains "$create" "--rigor pro" "the create run's rigor answer"
-  neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1 || true)
+  neg=$(grep -- '-neg-' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$neg" "tty=no" "the negative run has no terminal at all"
+  # The two answers the wizard needs, without which the run is refused for the
+  # missing answer rather than by the typed step step 2 reads.
+  expect_contains "$neg" "--region us-east5" "the negative run's own region answer"
+  expect_contains "$neg" "--rigor pro" "the negative run's own rigor answer"
   # The two updates are told apart on purpose: the FIRST is the owner's own run
   # and needs the terminal a step of the converge is confirmed by (confirmNow), the
   # second is the assertion and must hold with none at all — a stage with work left
@@ -1486,7 +1499,7 @@ test_the_negative_uses_a_config_root_of_its_own() {
   run27_default
   expect_status "$status" 0 "a full run"
   local neg create
-  neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1 || true)
+  neg=$(grep -- '-neg-' "$dir/state/calls.fugaro" | head -1 || true)
   create=$(grep 'setup --name' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$create" "xdg=$dir/root/config" "the create run resolves the check's own root"
   expect_absent "$neg" "xdg=$dir/root/config" "the negative run never reads the check's root"

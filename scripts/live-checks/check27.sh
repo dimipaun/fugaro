@@ -35,10 +35,14 @@
 #     already runs a project that says nothing in (rigor.Default), and the mode
 #     is not what this check is about.
 #   - step 2's deliberate NEGATIVE, on a second drawn id and with no terminal at
-#     all (`fugaro setup --gcp-project <other-id> --name fugaro --yes` with
-#     stdin at /dev/null): the refusal's exit code and text, and that the id
-#     still does not exist, over a config root of its own so nothing it wrote
-#     can reach the installation this check is building.
+#     all (`fugaro setup --gcp-project <other-id> --name fugaro --region <region>
+#     --rigor pro` with stdin at /dev/null): the refusal's exit code and text —
+#     the typed step a first run is made of, which needs a person at the terminal
+#     — and that the id still does not exist, over a config root of its own so
+#     nothing it wrote can reach the installation this check is building. The two
+#     answers are there so the refusal is that step's: a run given no region and
+#     no rigor is refused for the missing answer instead, which is not what step
+#     2 reads.
 #   - step 11's `--plan-only`: the stage list prints, nothing is created, exit 0.
 #     It is a first run like the create one, so it asks the wizard's questions
 #     too and its rigor answer is the same `--rigor pro`.
@@ -918,7 +922,7 @@ rows_of() { printf '%s\n' "$1" | grep -v '^[[:space:]]*$' || true; }
 # step_plan_only: Check 27's step 11 — the same create path with --plan-only: the
 # stage list prints, nothing is created, exit 0. Every input is a flag, so the
 # plan is printed without a question; the pty is what --plan-only itself needs
-# (it never takes --yes, since it creates nothing on a flag's word). --rigor pro
+# (it creates nothing, so no answer of a run reaches its steps). --rigor pro
 # is one of those flags and not a decoration: a plan-only run is a first run and
 # asks the wizard's questions like any other, and the rigor question has no
 # suggestion to take with Enter — drop the flag and this run waits at the
@@ -955,11 +959,13 @@ step_plan_only() {
   fact plan-only PASS "exit 0, $named of the six stages named, and the project still does not exist. A config file left behind: ${cfg:-none} (the create run resumes from one when it is there; a plan-only run that wrote one is worth reading)"
 }
 
-# step_negative: Check 27's step 2 deliberate negative — a second unused id, no
-# terminal at all, and --yes: `fugaro setup --gcp-project <other> --name fugaro
-# --yes` must refuse (project creation is typed and --yes never covers it),
-# create nothing and link nothing. Its config root is its own, so whatever it
-# wrote cannot reach the installation this check is building.
+# step_negative: Check 27's step 2 deliberate negative — a second unused id and
+# no terminal at all: `fugaro setup --gcp-project <other> --name fugaro --region
+# <region> --rigor pro` must refuse at the typed step a first run is made of
+# (creating the project and linking its billing account: no flag stands in for
+# the person at the terminal), create nothing and link nothing. Its config root
+# is its own, so whatever it wrote cannot reach the installation this check is
+# building.
 step_negative() {
   local negroot="$SCRATCH/negative-config"
   mkdir -p "$negroot"
@@ -971,7 +977,11 @@ step_negative() {
   fi
   if [ "$NEG_STATUS" -eq 0 ]; then
     fact negative FAIL "the run exited 0: nothing was created, but a create with no terminal must be REFUSED rather than pass silently ($NEG_LOG)"
-    stop "the negative run exited 0 (transcript $NEG_LOG): step 2 expects a refusal, since the project's creation is typed and --yes never covers it"
+    stop "the negative run exited 0 (transcript $NEG_LOG): step 2 expects a refusal, since a first run's project step is typed and no flag stands in for the person at the terminal"
+  fi
+  if ! grep -q 'needs a real terminal' "$NEG_LOG" 2>/dev/null; then
+    fact negative FAIL "the run was refused (exit $NEG_STATUS) for a reason that is not the typed step's: with no terminal a first run has to be refused by the step that needs a person at it, in the sentence naming the flag that answers it. What it printed: $(one_line "$(tail -n 3 "$NEG_LOG" 2>/dev/null)")"
+    return 0
   fi
   local left=""
   left=$(find "$negroot" -type f -print 2>/dev/null | head -3 | tr '\n' ' ' || true)
@@ -982,7 +992,7 @@ step_negative_run() {
   local negroot=$1
   LOG_FOR_MODE=$NEG_LOG
   run_plain negative "$QUICK_SECONDS" "$NEG_DIR" "$NEG_LOG" -- \
-    env "XDG_CONFIG_HOME=$negroot" fugaro setup --gcp-project "$OTHER" --name "$N" --yes
+    env "XDG_CONFIG_HOME=$negroot" fugaro setup --gcp-project "$OTHER" --name "$N" --region "$REGION" --rigor pro
   NEG_STATUS=$LAST_STATUS
   if [ "$NEG_STATUS" -eq 124 ] || grep -q 'CHECK27-RUNNER: TIMEOUT' "$NEG_LOG" 2>/dev/null; then
     fact negative FAIL "the negative run did not finish in ${QUICK_SECONDS}s and was killed: with no terminal it must refuse at once rather than wait for a person ($NEG_LOG)"
@@ -1305,7 +1315,7 @@ step_human() {
   owner "  step 14 the mirror's DIGESTS: docker buildx imagetools inspect against the source, and the rerun that sends nothing"
   owner "  step 15 gcloud services enable compute.googleapis.com, then fugaro doctor: the default Compute account's roles/editor and the fix it prints"
   owner "  step 16 the hidden secret pastes in the sandbox checkout (fugaro update: the App key and claude setup-token's output), and the refusals beside them"
-  owner "  step 17 the hostile clone: your own scratch repository, --yes --non-interactive, and the url.<x>.insteadOf rewrite"
+  owner "  step 17 the hostile clone: your own scratch repository, --non-interactive, and the url.<x>.insteadOf rewrite"
   owner "  step 18 doctor's breakages, one at a time, and the one fix line each prints"
   owner "  step 19 a teammate (a second machine, or XDG_CONFIG_HOME=\$(mktemp -d)): the fresh-only refusal, then the update that writes the config"
   owner "  step 20 /fugaro:setup on the sandbox, the repository stage's billable TYPED first build, and a first fugaro run that ends in a pull request"
@@ -1453,7 +1463,7 @@ print_plan() {
   say "  [network+local, reads] fugaro update --project $N twice: the FIRST at a real terminal (a step of the converge is confirmed by the person being there, and nothing is typed), the second with no terminal (it must print No changes for every stage and exit 0)"
   say "  [local, writes] before any of that: fugaro setup --create-project --gcp-project $P --name $N --region $REGION --firebase-project $P --budget-mode observe --link-billing <account> --bake-repos --rigor pro --plan-only at a pty (the stage list prints, nothing is created, exit 0)"
   say "  [network, reads] gcloud projects describe $P again after the plan-only run (it must still not exist)"
-  say "  [network+local, reads] fugaro setup --gcp-project $OTHER --name $N --yes with stdin at /dev/null, over a config root of its own: it must be REFUSED (project creation is typed, and --yes never covers it), and gcloud projects describe $OTHER must still answer not-found"
+  say "  [network+local, reads] fugaro setup --gcp-project $OTHER --name $N --region $REGION --rigor pro with stdin at /dev/null, over a config root of its own: it must be REFUSED at the typed step a first run is made of (no flag stands in for the person at the terminal), and gcloud projects describe $OTHER must still answer not-found"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, reads+deletes] gcloud run jobs list --project=$P --region=$REGION, then gcloud run jobs delete <each> --project=$P --region=$REGION --quiet, then the list again (it must be empty)"
   say "  [network, deletes] gcloud storage rm --recursive gs://fugaro-runs-$P and gs://fugaro-tfstate-$P, then gcloud storage buckets list (neither may be named; the Firebase default bucket and Artifact Registry's are the project's own)"
