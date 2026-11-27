@@ -145,6 +145,36 @@ func TestParallelismSkillContractTaskRigor(t *testing.T) {
 	}
 }
 
+// TestParallelismSkillRanksAMatchOnlyAreaAboveTheProjectDefault: the reference
+// tells a planner which mode a task resolves, and the mode decides the pass's
+// behaviour, so the fallback it states for a repository the project's
+// `rigor.repos` map leaves out has to be the one the resolver gives. It is not
+// the project default alone: a `defaults.rigor.areas` rule in effect through
+// its `match` alone outranks that default (D3294), so such a repository
+// resolves to the rule. A reference that stops at the default sends a planner
+// to the wrong row of the table — the defect a review left on the file.
+//
+// The skill is held to internal/rigor's own answer rather than to a restatement
+// of it: Resolve is asked for a repository the map does not name, with a
+// match-only project area over the run's path, and the text has to rank that
+// rule where the resolver does.
+func TestParallelismSkillRanksAMatchOnlyAreaAboveTheProjectDefault(t *testing.T) {
+	cfg := rigor.Config{
+		Project:      rigor.Pro,
+		ProjectAreas: []rigor.Area{{Name: "payments", Match: "payments/**", Level: rigor.Critical}},
+		ProjectRepos: map[string]rigor.Rigor{"acme/other": rigor.POC},
+	}
+	req := rigor.Request{Repo: "acme/app", Paths: []string{"payments/x.go"}}
+	got := rigor.Resolve(cfg, req)
+	if got.From != rigor.FromArea || got.Level != rigor.Critical {
+		t.Fatalf("a match-only project area over a repository the repos map leaves out resolved to %s from %s; want critical from area: the fallback the reference states must match this", got.Level, got.From)
+	}
+	text := decouplingReferenceText(t)
+	if !strings.Contains(text, "above the default") {
+		t.Errorf("%s does not rank a match-only project area above `layer.defaults.rigor.default`, so a repository the `rigor.repos` map leaves out is read as the default where the resolver really answers with the rule", decouplingReferencePath)
+	}
+}
+
 // TestFollowupInstructionsNameTheContractFile: a task already launched against
 // an amended contract cannot be reached by the plan, so it is driven by a
 // follow-up run (D1812). The instructions are trusted text that must not relay
