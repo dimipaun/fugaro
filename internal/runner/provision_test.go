@@ -46,19 +46,17 @@ followup:
 `
 
 // sharedYAML is the fixture workflow a shared job runs, and it is written as
-// checkout: clone: the runner decides whether it clones from the job's
-// FUGARO_CHECKOUT alone and never from the checkout's config — before the
-// clone there is no checkout to read one from — so what a shared job's clone
-// needs is that env value, which sharedJob sets. The file's own checkout:
-// cannot say shared until 0.15.0 builds a shared image: validation refuses
-// the kind outright (config/image.go's sharedCheckoutShipped), and the
-// runner reads this file after cloning, so a file that says shared would
-// fail bootstrap instead of provisioning.
+// checkout: clone: a shared job's image holds no checkout, so the run clones
+// its own repository (CF1, D3440) and reads this file afterwards — and the
+// file's own checkout: cannot say shared until 0.15.0 builds a shared image:
+// validation refuses the kind outright (config/image.go's
+// sharedCheckoutShipped), so a file that says shared would fail bootstrap
+// instead of provisioning.
 var sharedYAML = cloneYAML
 
 // cloneJob makes the run's job a checkout: clone one: no checkout in
-// WorkDir (the harness never creates it) and FUGARO_CHECKOUT=clone in the
-// job's environment, with a provider token for mise's rate limit. The
+// WorkDir (the harness never creates it), which is what makes the run clone
+// (CF1, D3440), with a provider token for mise's rate limit. The
 // provider is GitHub, so provision may hand mise the run's git token —
 // which is what the tests below are about.
 func (h *harness) cloneJob(t *testing.T) {
@@ -80,6 +78,9 @@ func (h *harness) cloneShapedJob(t *testing.T, kind string) {
 	if _, err := os.Stat(h.deps.WorkDir); !os.IsNotExist(err) {
 		t.Fatalf("the harness's checkout already exists: %v", err)
 	}
+	// The mark a deployed job still carries, and reads nothing: the run
+	// decides from the tree alone (CF1, D3440), which is the empty work
+	// directory asserted above. internal/infra stops writing it in CF2a.
 	h.deps.Env = append(h.deps.Env, runner.CheckoutEnv+"="+kind)
 	h.deps.ProviderKind = gitprovKindGitHub
 	h.provider.Auth = staticAuth(gitToken)
