@@ -970,6 +970,9 @@ func settingsHintRow(row settings.Row) bool {
 	if strings.Contains(row.Key, "*") {
 		return false
 	}
+	if settingsDefaultLayer(row) == "" {
+		return false
+	}
 	return settingsGenericKey(row.Key)
 }
 

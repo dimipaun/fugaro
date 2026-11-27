@@ -2161,16 +2161,12 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 	}
 }
 
-// TestUpdateRulesUnconfirmedRefusesPolicyWrite: the deploy is behind the
-// confirmation the database step of `--firebase-project` takes, and a session
-// where nobody can answer it stops the run where it stands. It must not go on to
-// migrate the policy node: the gate the migration holds (requirePolicyRules) is
-// the marker the never-made deploy would have written, so a run that carried on
-// would write a policy under rules that are not deployed. Nothing is typed at a
-// confirmation any more (T7, docs/no-prompt-policy): a person at a terminal
-// confirms this step by being there, so the session that leaves it — and stops
-// the run with it — is one with no terminal at all. The rules and the node are
-// read back exactly as they were.
+// TestUpdateRulesUnconfirmedRefusesPolicyWrite: a managed project's gate
+// answers the rules deploy for a session nobody is at (#4170), so the deploy
+// goes ahead and writes the marker the migration's own gate (requirePolicyRules)
+// reads; the published node's rewrite is not a document the gate judges, so the
+// run stops there for want of a terminal and the node stays as it was. A person
+// at a terminal confirms that step by being there (T7, docs/no-prompt-policy).
 //
 // The first run converges the installation, so the second one's first step with
 // something to do is the rules deploy: on a fixture that has never run, the
@@ -2209,22 +2205,23 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	if text := out + errOut + ErrorText(err); !strings.Contains(text, "needs a real terminal") {
 		t.Errorf("the refusal is not the step's own unconfirmed confirmation: %s", text)
 	}
-	// And it is the rules step's own: the run reaches this stage's
-	// confirmation and stops there, not at a step of a stage before it.
-	if !strings.Contains(out, "to resume at "+initflow.Rules+".") {
-		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
+	// A managed project's gate answers the ordinary steps for a session nobody is
+	// at (#4170), so the rules deploy goes ahead and the run stops at the next
+	// step the gate does not judge: the published node's rewrite.
+	if !strings.Contains(out, "to resume at "+initflow.Policy+".") {
+		t.Errorf("the run did not stop at the policy stage's own confirmation:\n%s", out)
 	}
-	if db.RulePuts() != puts {
-		t.Errorf("the rules were deployed anyway: %d deploy(s), want the %d the converging run made", db.RulePuts(), puts)
+	if db.RulePuts() != puts+1 {
+		t.Errorf("the rules were deployed %d time(s) in all, want the %d of the converging run and the one the gate covered", db.RulePuts(), puts+1)
 	}
-	if !bytes.Equal(db.Rules(), stale) {
-		t.Errorf("the deployed document changed:\n%s", db.Rules())
+	if bytes.Equal(db.Rules(), stale) {
+		t.Error("the gate-covered rules deploy left the stale document in place")
 	}
-	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.PolicyRulesVersion); got != want {
-		t.Errorf("the rules generation marker is %q, want the stale %q the deploy would have moved", got, want)
+	if got, stale := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.PolicyRulesVersion); got == stale {
+		t.Errorf("the rules generation marker is still the stale %q: the deploy the gate covered recorded nothing", got)
 	}
 	if got := nodeVersionOn(t, db); got != 3 {
-		t.Errorf("the published policy moved to version %d after the rules deploy was left unconfirmed: the migration's own gate is the marker that deploy did not write", got)
+		t.Errorf("the published policy moved to version %d with nobody to confirm its rewrite", got)
 	}
 }
 
