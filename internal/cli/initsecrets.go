@@ -360,19 +360,6 @@ func allowedHarnessOAuthMounts(lc *localcfg.Config, repo string, mounts []infra.
 // which list is the run's.
 func (s *secretsStage) listDoor() bool { return s.e.r.o.doorName() == updateDoor.name }
 
-// listTargets are the repositories this run works on: the update door's
-// enrolled list, or the one checkout the setup door resolved. A caller that
-// must not guess which of the two a run has asks this.
-func (s *secretsStage) listTargets() []*secretTarget {
-	if s.list != nil {
-		return s.list
-	}
-	if s.tg != nil {
-		return []*secretTarget{s.tg}
-	}
-	return nil
-}
-
 // singleCheckout is whether this run takes a value the way `fugaro update`
 // always has: the list it read is one repository, that repository is the
 // checkout the run was started in and one the stage can work on, and a person
