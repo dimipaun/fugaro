@@ -28265,3 +28265,69 @@ config. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
 4. **Restore.** Uninstall the development build or sign it out, and confirm the sandbox project's Crashlytics shows nothing from this check.
 
 **Paste back:** every `FACT` line above — the startup reading and how it was read, the empty Crashlytics after the crash and the relaunch, and the deletion of the unsent. Until this check runs, T3.1's fail-closed switch is built and **unverified live**: the hermetic tests pin the reader's four answers, and this check is the reading that a real build before pairing sends nothing **once a task wires the entry** (the prerequisite above). **No agent runs any step of it** — every step is yours.
+
+
+## Check 940: the repository-to-image map keyed by provider, on a live installation (an installation you name, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K1** of
+[docs/image-map-by-provider/implementation-plan.md](image-map-by-provider/implementation-plan.md), whose
+**Check 940** is that plan's owner-run half. Nothing offline settles it: whether the published node really
+carries `repo_images` and no `image_map`, whether `fugaro image survey --json` really prints version 2, and
+whether the job of a repository at each provider really runs the image its own `provider/owner/name` key
+names, are answers of an installation. Run it **after the release that carries U1b and its `fugaro update`**
+— the release that publishes `repo_images` on the node and, after the credentials service's own step,
+removes the legacy `image_map` (D3370, D3371; the spec's acceptance 2, 6 and 7).
+
+**What it measures.** Three steps, one row each, and it only reads:
+
+- **The node (D3371).** The project's published policy node, read through `fugaro project policy show
+  --json`, must carry the repository-to-image map `repo_images` (one or more keys) and **no** legacy
+  `image_map`. `repo_images` present with `image_map` absent is PASS. Both present is FAIL — the release's
+  own member is on the node but the old one is still there, which is an `update` that stopped between the
+  two, and the fix is `fugaro update`. Neither, or a legacy `image_map` alone, is FAIL — the map is not yet
+  keyed by provider, so two providers of one name still share one entry.
+- **The survey (R4).** `fugaro image survey --json` must print **version 2**, carrying `setup.repo_images`
+  keyed by `provider/owner/name`, and `setup.legacy_image_map` only while the project's effective map is
+  still the bare-name one. A version-1 document carries the bare-name `image_map` instead.
+- **One job image per provider (RC51, D3370).** For each provider the map names a repository at — `github`
+  and `bitbucket` — the map's **first** key of that provider (sorted, so the same repository is read on
+  every run of the same project) is the repository, and the Cloud Run job of that repository must run the
+  catalog image of the **entry its own `provider/owner/name` key names** (`catalog-<entry>`), so two
+  providers of one name are two repositories with their own images. The job is the repository's own: its
+  containers name the repository's clone URL as `FUGARO_REMOTE`, or the installation wrote the repository's
+  slug on it as the `fugaro_repo` label, and the daily check jobs (`fugarochk-…`) are skipped. A provider
+  the map names no repository at is **skipped with a line** and never failed (V3); the known Bitbucket
+  sandbox is the workspace `dimi_bmb`.
+
+**The installation's project and region come from `fugaro doctor --json`, never `gcloud config`**, so a
+stray config cannot point the check at another project. The installation is the one `--project` names
+(`fugaro` by default, **never `belong`**); a project or region naming `belong` stops the run.
+
+**The command.**
+
+```sh
+bash scripts/live-checks/check940.sh --project fugaro --dry-run   # prints the plan and calls NOTHING at all
+bash scripts/live-checks/check940.sh --project fugaro             # the reading
+```
+
+`--dry-run` calls neither `gcloud` nor `fugaro`, so it is safe on a machine with no credentials. The check
+needs `bash`, `mktemp`, `python3`, `gcloud` and `fugaro`, and refuses a shell that arrived tracing (`bash
+-x`). Its knobs, each read with a default: `CHECK940_PROJECT`, `CHECK940_DRY_RUN` and
+`CHECK940_KEEP_SCRATCH` (which keeps the scratch directory).
+
+**Reading the result.** Progress goes to stderr; ONE block on stdout, headed `CHECK 940 RESULT` and ending
+`CHECK 940 RESULT END (exit N)`, is what you copy back. Its keys are fixed in one order whatever happened —
+`xtrace`, `project`, `node`, `survey`, `job-github`, `job-bitbucket`, `restore`, `scratch-removed` — and a
+key the run never reached reads `FAIL — not reached`. Exit **0** is PASS (every measured criterion held);
+**1** is FAIL (a measured criterion that did not hold, or a guard that stopped the check before it
+measured); **2** is a row that could not be measured for a reason of the check's own setup rather than the
+installation, which the block names by key.
+
+**Costs.** It only reads — the project's node, the survey document and Cloud Run's job list — and writes
+nothing anywhere but its own scratch directory: no build is submitted, no run is launched and no credential
+value is read, so it costs wall clock and not money (a minute at the terminal). Its Restore removes the
+scratch directory, which its exit trap does too, so a Ctrl-C leaves nothing of the check's behind.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check940_test.sh`, which drives it against a fake `gcloud` and `fugaro` (no cloud, no
+run) and is run by `go test ./scripts`.
