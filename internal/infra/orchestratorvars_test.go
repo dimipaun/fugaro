@@ -18,11 +18,11 @@ import (
 // key, taken from the documents the workdir holds, so a document rebuilt from a
 // spec — which never carries the key, Orchestrator composing the one write the
 // installation's own opt-in asks for —
-// does not plan the account's destruction. That plan removes the account and
-// its bindings, which are deletes Fugaro's rules judge by class (D3430,
-// internal/infra/tf's RemovalClass) and not something an update makes by
-// rebuilding a document, so the carry is the difference between an installation
-// that opted in converging and one that plans its own daemon away.
+// does not plan the account's destruction. That plan is refused (the removal of
+// a google_service_account is data-bearing under D1551, RefusesRemovalType), and
+// the refusal repeats on every later update, which is what makes the carry the
+// difference between an installation that opted in converging and one that
+// stopped.
 //
 // Mutation (run, restore): drop the `doc[OrchestratorKey] = block` write and the
 // first half of this test reports a document with no orchestrator in it.

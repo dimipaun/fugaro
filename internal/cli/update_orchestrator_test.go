@@ -301,9 +301,10 @@ func orchestratorConvergeRig(t *testing.T, withBlock bool) *convergeRig {
 // document from never carries the key (Orchestrator is the one writer that
 // echoes the installation's own opt-in). A run whose carry dropped it would
 // hand Terraform a document without var.orchestrator, which is the plan of the
-// account's removal and its five bindings' — deletes Fugaro's rules judge by
-// class (D3430, tf.RemovalClass) and not something an update makes by rebuilding
-// a document — so the installation would lose the daemon this block is. What the
+// account's removal — a google_service_account is data-bearing under D1551 and
+// the removal rule REFUSES that plan rather than applying it (tf/cover.go's
+// RefusesRemovalType), so the installation would not merely lose its daemon,
+// it would stop converging: every later update repeats the refusal. What the
 // run must leave is therefore the block it found, with one member moved.
 //
 // The moved member is the image, onto the pin this release resolved for the
