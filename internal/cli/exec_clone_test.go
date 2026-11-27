@@ -95,9 +95,14 @@ func TestExecCloneJobClonesTheRepositoryItWasDeployedFor(t *testing.T) {
 		t.Fatalf("%s = %q, want the repository's clone URL", infra.RemoteEnv, want)
 	}
 	// git itself must reach the fixture's bare remote while the job's
-	// environment still names the repository's real URL.
+	// environment still names the repository's real URL. The rewrite names a
+	// plain path and not a file:// URL: the runner holds the checkout it uses
+	// to the same binding the admission applies (CF1, F39), and a remote
+	// spelled as a URL with a host it cannot read is one of the spellings that
+	// binding refuses — a path names no repository at all, and a run's git
+	// reaches it the same way.
 	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
-	rule := "[url \"file://" + remote + "\"]\n\tinsteadOf = " + want + "\n"
+	rule := "[url \"" + remote + "\"]\n\tinsteadOf = " + want + "\n"
 	if err := os.WriteFile(gitcfg, []byte(rule), 0o644); err != nil {
 		t.Fatal(err)
 	}

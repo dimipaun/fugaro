@@ -3004,19 +3004,26 @@ func (r *run) checkoutTree(ctx context.Context, repo *gitops.Repo) error {
 	return nil
 }
 
-// checkBakedCheckoutOrigin refuses a checkout the image already held when it is
-// not this run's repository's (F7, IS8): the run would commit another
+// checkBakedCheckoutOrigin refuses the checkout a run works on when it is not
+// this run's repository's (F7, IS8, CF1): the run would commit another
 // repository's source under this run's slug, push it with a git credential
 // minted for this run's repository, and open the pull request as this
 // repository's.
+//
+// It runs on whichever checkout the run opens, and that is now two kinds of
+// them (CF1, D3440): a tree the image laid down — the work directory's or the
+// per-slug one openBakedCheckout has just adopted, which admission never saw —
+// and the clone the run makes for itself when it finds no usable tree
+// (openCheckout), whose own configuration can carry a rewrite from the
+// environment it was cloned in. The binding is the one that holds either: a
+// checkout is where the run's branch lands, and whether the run made it is no
+// part of that.
 //
 // The refusal is the admission's own remote binding (remoteAdmissionErr), read
 // against the checkout the run is about to work on instead of the remote it was
 // launched with. On a per-repository job a cloud run has had its origin checked
 // there already; what this adds is the origin of the checkout the run actually
-// opens — including the per-slug one openBakedCheckout has just adopted, which
-// admission never saw — and the same check for a local run, which has no
-// admission at all. A remote that names no repository at all — a local path,
+// opens, and the same check for a local run, which has no admission at all. A remote that names no repository at all — a local path,
 // an empty remote, an scp-like remote whose userinfo is everything in front of
 // its colon — passes exactly as it does there, which is what keeps a local
 // invocation's own checkout usable. An scp-like remote that does name a
@@ -3068,14 +3075,14 @@ func (r *run) checkoutTree(ctx context.Context, repo *gitops.Repo) error {
 func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *gitops.Repo) error {
 	origin, err := strip(repo).OriginURL(ctx)
 	if err != nil {
-		return fmt.Errorf("the checkout in the image at %s carries no origin this run can read, and this run is for %s: what a run pushes to and works on is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
+		return fmt.Errorf("the checkout at %s carries no origin this run can read, and this run is for %s: what a run pushes to and works on is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
 	}
 	if err := remoteAdmissionErr(origin, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
-		return fmt.Errorf("the checkout in the image at %s is not this run's repository: %w", repo.Dir, err)
+		return fmt.Errorf("the checkout at %s is not this run's repository: %w", repo.Dir, err)
 	}
 	pushURLs, err := strip(repo).PushURLs(ctx, origin)
 	if err != nil {
-		return fmt.Errorf("the checkout in the image at %s carries no push URL this run can read, and this run is for %s: the run's branch is pushed to this checkout's own origin, so a checkout whose push URL cannot be read is one this run cannot say where its work would land, and the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
+		return fmt.Errorf("the checkout at %s carries no push URL this run can read, and this run is for %s: the run's branch is pushed to this checkout's own origin, so a checkout whose push URL cannot be read is one this run cannot say where its work would land, and the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
 	}
 	for _, url := range pushURLs {
 		if url == origin {
@@ -3089,7 +3096,7 @@ func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *g
 		// an endpoint a credential is scoped to that the launcher writes none
 		// of — so the decision is reused and the sentence is this one's.
 		if err := remoteAdmissionErr(url, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
-			return fmt.Errorf("the checkout in the image at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git sends to the remote that URL names when the checkout has one and otherwise rewrites by the checkout's url.*.pushInsteadOf and url.*.insteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
+			return fmt.Errorf("the checkout at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git sends to the remote that URL names when the checkout has one and otherwise rewrites by the checkout's url.*.pushInsteadOf and url.*.insteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
 		}
 	}
 	return nil
