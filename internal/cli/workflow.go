@@ -325,7 +325,7 @@ func workflowApply(cmd *cobra.Command, w workflowWrite) error {
 	// what lets a write move what runs as shell in every run of the repository,
 	// so it is read and refused before the edit is judged at all.
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" && w.o.executable {
-		return userErr("nothing was written: --executable-changes is the repository's owner's word for a change to what runs as shell in its runs, so a coding agent's session does not write one: %s", initflow.AgentRefusal(m))
+		return userErr("nothing was written: --executable-changes is the owner's word, not a coding agent's: %s", initflow.AgentRefusal(m))
 	}
 	if !yamledit.Changed(w.old, w.next) {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: workflows already reads what was asked for\n", w.target.path)
