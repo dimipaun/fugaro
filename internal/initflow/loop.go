@@ -1143,11 +1143,21 @@ func waitTarget(r StageResult) string {
 // openStep starts the stage's line in flight, before the stage is even looked
 // at: its checks and its plan are seconds and what follows them is minutes,
 // and a stage somebody is watching is a stage nobody interrupts.
+//
+// The line carries the stage's plain-words name and not its ID (newStep): what a
+// person watches is the work, and the ID is what the log and --json record.
 func (l *loop) openStep(name string) {
 	if l.o.Report == nil || !l.executing {
 		return
 	}
-	l.step, l.stepStage = l.o.Report.Step(name), name
+	l.step, l.stepStage = l.newStep(name), name
+}
+
+// step is one stage's step, opened on the reporter: the ID is the name the log
+// and the result carry, and DisplayName is what every line a person reads
+// says (D3435).
+func (l *loop) newStep(name string) *report.Step {
+	return l.o.Report.StepShown(name, DisplayName(name))
 }
 
 // closeStep takes down a line in flight that no result ended: a refusal stops
@@ -1289,7 +1299,7 @@ func (l *loop) endStep(r StageResult, shown string) {
 	if s == nil || l.stepStage != r.Name {
 		// A stage nothing was opened for: one that waits for a stage before
 		// it. Its whole line prints at once, the moment the loop reaches it.
-		s = l.o.Report.Step(r.Name)
+		s = l.newStep(r.Name)
 	}
 	l.step, l.stepStage = nil, ""
 	switch r.State {

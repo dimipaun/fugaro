@@ -188,14 +188,37 @@ func (r *Reporter) IsBrief() bool {
 
 // Step starts a step named name and returns it, to be ended by exactly one of
 // Done, Skipped, Failed, Left and Abandon. Ending it twice does nothing, so a
-// caller that reports twice cannot print two lines for one step.
+// caller that reports twice cannot print two lines for one step. StepShown is
+// the same step with a name that is not the one a person reads.
 func (r *Reporter) Step(name string) *Step {
+	return r.step(name, "")
+}
+
+// StepShown starts a step the log names name and a person reads as shown: a
+// step whose own name is an internal ID says the work in plain words on the
+// line in flight and on its result, and keeps the ID in the log the run is
+// read from afterwards. An empty shown is Step.
+func (r *Reporter) StepShown(name, shown string) *Step {
+	return r.step(name, shown)
+}
+
+func (r *Reporter) step(name, shown string) *Step {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stopSpinner()
 	r.spinPaused = false
-	r.startSpinner(name)
-	return &Step{r: r, name: name}
+	r.startSpinner(shownName(name, shown))
+	return &Step{r: r, name: name, shown: shown}
+}
+
+// shownName is what a step's line carries: the shown name where the caller
+// gave one, and the name itself otherwise. It is a function rather than a
+// method because the line in flight is drawn before the Step exists.
+func shownName(name, shown string) string {
+	if shown != "" {
+		return shown
+	}
+	return name
 }
 
 // Summary ends the run: it clears the line in flight, prints the closing line
@@ -281,10 +304,17 @@ func (s *stream) Write(p []byte) (int, error) {
 // Step is one unit of work a person watches: a short phrase, and the one
 // result it ends in.
 type Step struct {
-	r     *Reporter
-	name  string
+	r    *Reporter
+	name string
+	// shown is the plain-words name the screen draws where the step's name is
+	// an internal ID (StepShown): the log keeps the name, and every line a
+	// person reads carries this.
+	shown string
 	ended bool // guarded by r.mu
 }
+
+// label is the name the step's own line carries on the screen.
+func (s *Step) label() string { return shownName(s.name, s.shown) }
 
 // Done ends the step with a tick. detail says what changed, when there is
 // anything to say: a stage that did nothing and one that changed something
@@ -356,7 +386,7 @@ func (s *Step) Failed(err error, context []string) {
 	r.appendLogLine(&body)
 	r.appendDiagnoseLine(&body)
 	r.logLine(glyphFailed.text(r.o.ASCII) + " " + s.name + "\n")
-	fmt.Fprintln(r.human, r.painted(glyphFailed.text(r.o.ASCII), colourFailed)+" "+s.name)
+	fmt.Fprintln(r.human, r.painted(glyphFailed.text(r.o.ASCII), colourFailed)+" "+s.label())
 	if len(body) == 0 {
 		return
 	}
@@ -450,7 +480,7 @@ func (s *Step) end(g glyph, c termenv.ANSIColor, state State, sep, reason string
 	// because the sink's redaction is by line and a line split across two could
 	// carry half a value.
 	r.logLine(g.text(r.o.ASCII) + " " + s.name + tail + "\n")
-	line := r.painted(g.text(r.o.ASCII), c) + " " + s.name + human
+	line := r.painted(g.text(r.o.ASCII), c) + " " + s.label() + human
 	fmt.Fprintln(r.human, line)
 	r.under(under)
 }
