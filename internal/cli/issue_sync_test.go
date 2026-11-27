@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -484,10 +485,21 @@ func TestListShowUseLocalInAgentSession(t *testing.T) {
 	if !strings.Contains(errOut, "coding agent's session") {
 		t.Errorf("a session's listing does not say what it read:\n%s", errOut)
 	}
-	if row := syncRow(out, rec.LocalID); row == nil {
+	// A session is one `issue list` has --json in (D3437): stdout is the
+	// listing's document and the rows are read as fields.
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("a session's listing is not the listing's document: %v\n%s", err, out)
+	}
+	own, stored := false, false
+	for _, row := range rows {
+		own = own || row["local_id"] == rec.LocalID
+		stored = stored || row["number"] == float64(mateUp.Number)
+	}
+	if !own {
 		t.Errorf("a session's listing drops this machine's own issue:\n%s", out)
 	}
-	if strings.Contains(out, mineRefOf(mateUp.Number)) {
+	if stored {
 		t.Errorf("a session's listing shows an issue only the project's store has:\n%s", out)
 	}
 
