@@ -1315,7 +1315,7 @@ step_human() {
   owner "  step 14 the mirror's DIGESTS: docker buildx imagetools inspect against the source, and the rerun that sends nothing"
   owner "  step 15 gcloud services enable compute.googleapis.com, then fugaro doctor: the default Compute account's roles/editor and the fix it prints"
   owner "  step 16 the hidden secret pastes in the sandbox checkout (fugaro update: the App key and claude setup-token's output), and the refusals beside them"
-  owner "  step 17 the hostile clone: your own scratch repository, --non-interactive, and the url.<x>.insteadOf rewrite"
+  owner "  step 17 the hostile clone: your own scratch repository, and the url.<x>.insteadOf rewrite"
   owner "  step 18 doctor's breakages, one at a time, and the one fix line each prints"
   owner "  step 19 a teammate (a second machine, or XDG_CONFIG_HOME=\$(mktemp -d)): the fresh-only refusal, then the update that writes the config"
   owner "  step 20 /fugaro:setup on the sandbox, the repository stage's billable TYPED first build, and a first fugaro run that ends in a pull request"

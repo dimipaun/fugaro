@@ -396,6 +396,12 @@ setup)
       printf 'ERROR: (fugaro) there is no project config yet: pass --location <us|eu> (where the installation lives: us or eu), --region <region> (the GCP region, such as us-east5), --rigor <mode> to create one\n' >&2
       exit 1
     fi
+    if [ -n "${FAKE27_NEG_REFUSES_ELSEWHERE:-}" ]; then
+      # A refusal that is NOT the typed step's: step_negative's own guard has to
+      # fail the row on it rather than pass a run refused for some other reason.
+      printf 'ERROR: (fugaro) project %s already exists\n' "$(flag --gcp-project "$@" || true)" >&2
+      exit "${FAKE27_NEG_EXIT:-1}"
+    fi
     printf 'ERROR: (fugaro) the billing account to link to %s (a number, or none to link none now) needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe; to supply it without one, pass --link-billing\n' "$(flag --gcp-project "$@" || true)" >&2
     if [ -n "${FAKE27_NEG_CREATES:-}" ]; then
       installation_of "${3:-}"
@@ -950,6 +956,20 @@ test_the_negative_that_created_the_id_is_a_fail() {
   expect_status "$status" 2 "a negative run that created the id"
   expect_contains "$(fact_line negative)" "FAIL" "the negative row"
   expect_contains "$(fact_line negative)" "EXISTS" "the row says the id exists"
+}
+
+# A refusal is not enough on its own: step 2 reads the typed step's own sentence,
+# and a run refused for anything else — a project that was already there, a
+# region it does not offer — proves nothing about the step the terminal-less run
+# has to be stopped by.
+test_a_negative_refused_for_another_reason_is_a_fail() {
+  setup_case neg-elsewhere
+  RUN27_ENV=(FAKE27_NEG_REFUSES_ELSEWHERE=1)
+  run27_default
+  expect_status "$status" 1 "a negative run refused for another reason"
+  expect_contains "$(fact_line negative)" "FAIL" "the negative row"
+  expect_contains "$(fact_line negative)" "for a reason that is not the typed step's" "the row says the refusal is not the one step 2 reads"
+  expect_contains "$(fact_line negative)" "already exists" "the row carries what the run printed instead"
 }
 
 test_a_create_that_never_asks_the_project_id_is_a_fail() {
@@ -1598,6 +1618,7 @@ t test_a_plan_only_run_left_at_the_rigor_question_is_a_fail
 t test_a_create_run_left_at_the_rigor_question_is_a_fail
 t test_the_negative_that_is_not_refused_is_a_fail
 t test_the_negative_that_created_the_id_is_a_fail
+t test_a_negative_refused_for_another_reason_is_a_fail
 t test_a_create_that_never_asks_the_project_id_is_a_fail
 t test_a_create_that_blocks_is_killed_and_fails
 t test_an_interrupt_during_the_create_run_is_a_failed_restore
