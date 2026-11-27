@@ -638,10 +638,11 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 //     count D1013 recorded is gone (D1543), and this command asks the owner for
 //     no bound either.
 //   - one replacement, of one object, and of nothing else. An object that is
-//     there and is the version-1 creation fact of THIS project — the state
-//     every `fugaro setup --create-project` without --managed leaves, and the
-//     state internal/managed's gate refusal names this command as the way out
-//     of — is replaced by the managed version, because adding the budget to an
+//     there and is the version-1 creation fact of THIS project — the state an
+//     earlier release's `fugaro setup --create-project` left, before every
+//     creating run recorded a budget (D2214), and the state internal/managed's
+//     gate refusal names this command as the way out of — is replaced by the
+//     managed version, because adding the budget to an
 //     existing fact is what this command is for, and a flag that refused it
 //     would leave that project with no path at all. Everything else that is
 //     there is ErrAlreadyMarked: a marker that already records an amount (this

@@ -596,7 +596,7 @@ func TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget(t *testing.T) {
 		initProjectName + " has no budget recorded (",
 		"records no budget amount for " + initProjectName,
 		"`fugaro managed flag`",
-		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID",
+		"fugaro setup --create-project --budget N --budget-currency CCC --billing-account ID",
 		"this apply proceeds on that warning, and the warning is in this apply's audit record",
 	} {
 		if !strings.Contains(got, want) {
