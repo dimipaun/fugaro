@@ -734,6 +734,37 @@ func (s *RTDBStore) Pause(ctx context.Context, slug, run string) (Pause, bool, e
 	return p, true, nil
 }
 
+// Cancel marks a pause cancelled by its launcher (D3197), which is the one mark
+// that stops it ever being resumed: the resume refuses a record carrying it, and
+// so does the orchestrator's own gate. It is written under the same
+// compare-and-set the resume mark is, so a cancel racing a resume is decided by
+// whichever write reaches the record first — and a cancel that finds the pause
+// already resumed is refused, because a chain that is in flight again is not one
+// this mark can end.
+//
+// A pause already cancelled is the mark and nothing else: the write is
+// idempotent, because a caller that lost the answer to its own cancel may ask
+// again, and the second ask sets the same mark rather than inventing a state to
+// report.
+func (s *RTDBStore) Cancel(ctx context.Context, slug, run string) error {
+	if slug == "" || run == "" {
+		return ErrPauseMalformed
+	}
+	_, err := cas(ctx, s.db(), PathPause(slug, run), s.attempts(), func(prev Pause, found bool) (Pause, error) {
+		switch {
+		case !found:
+			return Pause{}, ErrNoPause
+		case prev.checkWritable() != nil:
+			return Pause{}, ErrPauseMalformed
+		case prev.ResumedBy != "":
+			return Pause{}, ErrPauseResumed
+		}
+		prev.Cancelled = true
+		return prev, nil
+	})
+	return err
+}
+
 // Resume marks a pause resumed by one run, and it is the whole of "once": the
 // mark is written under a compare-and-set against the record it read, so two
 // asks arriving in the same instant resume one chain once and the loser is

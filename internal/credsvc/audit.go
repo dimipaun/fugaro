@@ -485,7 +485,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposePoolDesignate, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue, PurposePause,
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposePoolDesignate, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue, PurposePause, PurposePauseCancel,
 		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
 		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken, PurposeBuild,
 		PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke:
@@ -550,11 +550,15 @@ func credentialWithoutTier(purpose string) bool {
 // repository's image build and daily check run as, which holds no run identity
 // either, so its one purpose is here too. The mobile routes' four are the
 // eighth (P0): their caller is the member's own email address the assertion was
-// verified for, and a phone is not a job of this installation either.
+// verified for, and a phone is not a job of this installation either. A pause's
+// cancel (PurposePauseCancel) is the ninth and the designation's own shape one
+// step further (PR10, D3197): the launcher's act about a run it launched, made
+// with its own token and no run identity, so its line names a run and a
+// repository and no job.
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
-		purpose == PurposePoolDesignate ||
+		purpose == PurposePoolDesignate || purpose == PurposePauseCancel ||
 		purpose == PurposeMergeMint || purpose == PurposeLabel ||
 		purpose == PurposeIssue ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGrant ||
