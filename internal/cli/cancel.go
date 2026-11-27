@@ -1,18 +1,23 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -27,11 +32,19 @@ const (
 	cancelFinalized       = "finalized"         // the runner finalized after the marker (a PR, draft or ready, unless the run needed none: cancelResult.NoPR)
 	cancelCancelled       = "cancelled"         // the execution was cancelled through the backend
 	cancelUnfinalized     = "ended-unfinalized" // the execution ended (or vanished) without a final record
+	cancelPauseCancelled  = "pause-cancelled"   // a paused run's chain was ended: the service marked its pause cancelled
 )
 
 // defaultFinalizeReserve is the grace floor when the run's workflow is not
 // known here: the default timeouts.finalize_reserve's cap (config defaults).
 const defaultFinalizeReserve = 5 * time.Minute
+
+// cancelPauseDo is the one seam the paused run's cancel goes through, and it is
+// a package variable for the reason the designation call's is: no test mints an
+// identity token or reaches a service.
+var cancelPauseDo = func(ctx context.Context, serviceURL string, req credsvc.PauseCancelRequest) error {
+	return cancelPauseOver(ctx, serviceURL, req)
+}
 
 type cancelOptions struct {
 	cloud        cloudOptions
@@ -190,6 +203,14 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		return printCancel(out, r, o)
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
+	// A paused run has nothing running to end: it suspended itself on a pull
+	// request and the resident orchestrator resumes it, so the act is the
+	// pause's own route — the service's mark, which the resume reads and is
+	// refused on (PR10, D3197). It is the launcher's own act, and the service
+	// holds the caller it verifies to the launcher it recorded for the pause.
+	if rec, rerr := absent(s.ReadRecord(ctx)); rerr == nil && rec != nil && rec.Status == runstore.StatusPaused {
+		return cancelPausedRun(ctx, o, slug, id, ref, emit)
+	}
 	l, err := ownerLaunch(ctx, env, s, id)
 	if err != nil {
 		return err
@@ -578,6 +599,8 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 		}
 	case cancelUnfinalized:
 		msg = fmt.Sprintf("the run ended without finalizing; check fugaro diagnose %s%s", r.Run, lockNote)
+	case cancelPauseCancelled:
+		msg = fmt.Sprintf("cancelled the pause of %s; the run will not be resumed", r.Run)
 	default:
 		lead := "grace period over; cancelled the execution."
 		if o.now {
@@ -587,4 +610,133 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 	}
 	_, err := fmt.Fprintln(w, msg)
 	return err
+}
+
+// cancelPauseTimeout bounds one call to the pause's route. The route reads one
+// record, writes one and patches one node.
+const cancelPauseTimeout = 30 * time.Second
+
+// maxPauseCancelAnswerBytes is the most of a refusal this command reads: the
+// service's own typed body is small, and an answer larger than this is not one.
+const maxPauseCancelAnswerBytes = 8 << 10
+
+// cancelPausedRun ends a paused run's chain: it asks the installation's
+// credentials service to mark the pause cancelled, which is the mark the resume
+// grant reads and is refused on (contract-pause, PR10). Nothing of the run's is
+// running, so this command writes no marker and cancels no execution: what ends
+// the pause is the service's own mark, and the node it writes beside it is the
+// gate the resident orchestrator's tick reads.
+func cancelPausedRun(ctx context.Context, o *cancelOptions, slug, id, ref string, emit func(cancelResult) error) error {
+	serviceURL, err := cancelPauseServiceURL(ctx, o.cloud)
+	if err != nil {
+		return err
+	}
+	if err := cancelPauseDo(ctx, serviceURL, credsvc.PauseCancelRequest{Slug: slug, Run: id}); err != nil {
+		return err
+	}
+	return emit(cancelResult{Run: ref, Status: cancelPauseCancelled})
+}
+
+// cancelPauseOver is the call: the route PR10 declares, the caller's own Google
+// ID token as the bearer, and a body the service reads strictly. The answer
+// carries no member — the mark is the service's own — so a 200 is the whole of
+// what is read back.
+//
+// Nothing here can put a credential into a sentence: the token is never
+// formatted into one, the body is a repository and a run, and a refusal is read
+// for its status and its shape alone.
+func cancelPauseOver(ctx context.Context, serviceURL string, req credsvc.PauseCancelRequest) error {
+	if err := checkCancelPauseServiceURL(serviceURL); err != nil {
+		return err
+	}
+	identity, err := personIdentity(ctx, serviceURL, "the pause of your run is cancelled")
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return errors.New("the pause cancel's request could not be built")
+	}
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(serviceURL, "/")+credsvc.PauseCancelPath, bytes.NewReader(body))
+	if err != nil {
+		return errors.New("the pause cancel's request could not be built")
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("Accept", "application/json")
+	hreq.Header.Set("Authorization", "Bearer "+identity)
+	resp, err := cancelPauseClient().Do(hreq)
+	if err != nil {
+		return errors.New("the installation's credentials service could not be reached")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return cancelPauseRefusal(resp)
+	}
+	return nil
+}
+
+// cancelPauseRefusal turns a non-200 answer into this CLI's refusal, the
+// designation's shape: the service's own typed body is what the person reads,
+// and its sentences name the field and never a value.
+func cancelPauseRefusal(resp *http.Response) error {
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, maxPauseCancelAnswerBytes))
+	if e, err := credsvc.ReadWireError(resp.StatusCode, data); err == nil {
+		msg := fmt.Sprintf("the installation's credentials service refused this call (%s, %d)", pluginwire.Printable(e.Error), resp.StatusCode)
+		if e.Message != "" {
+			msg += ": " + oneLine(e.Message)
+		}
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return remote(errors.New(msg))
+		}
+		return userErr("%s", msg)
+	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return userErr("the credentials service lacks the pause cancel route (%d): run `fugaro update` and try again", resp.StatusCode)
+	}
+	return remote(fmt.Errorf("the installation's credentials service refused this call (%d) and its answer is not one this release reads", resp.StatusCode))
+}
+
+// cancelPauseClient is the client the call is made with: it never follows a
+// redirect, because the request carries the person's own Google ID token and a
+// followed 307 or 308 would carry it to whatever host the Location named, it
+// keeps no cookie jar, and it does not wait on an answer forever.
+func cancelPauseClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	return &http.Client{
+		Transport:     t,
+		Timeout:       cancelPauseTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// checkCancelPauseServiceURL refuses an address this command will not send the
+// person's own Google ID token to: the token is a bearer credential, and over
+// plain http it would travel in cleartext. The rule is the intake's
+// (checkIntakeServiceURL), which is the designation's (checkDesignateServiceURL).
+func checkCancelPauseServiceURL(raw string) error {
+	if err := checkIntakeServiceURL(raw); err != nil {
+		return userErr("credentials_service.url in this installation's local config is not an address this command presents your Google ID token to: it must be the https URL Cloud Run serves the service on, with no path, query or fragment")
+	}
+	return nil
+}
+
+// cancelPauseServiceURL answers the installation's credentials service address
+// from the selected project's own config file, the read the designation makes
+// and for the same reason: the address is where a person's own Google ID token
+// goes, and the config published to the runs bucket is one anyone who can write
+// that bucket may edit. A selection that fell back to it is refused by name.
+func cancelPauseServiceURL(ctx context.Context, o cloudOptions) (string, error) {
+	sel, lc, err := selectProject(ctx, o)
+	if err != nil {
+		return "", err
+	}
+	if sel.From == "shared config" {
+		return "", userErr("nothing was cancelled: the shared config is bucket-editable and routes your token; select the owner's config with `--config <file>`")
+	}
+	raw := configuredCredentialsServiceURL(lc)
+	if raw == "" {
+		return "", userErr("no credentials service in the local config, so no pause can be cancelled: run `fugaro update` and try again")
+	}
+	return raw, nil
 }

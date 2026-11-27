@@ -161,6 +161,15 @@ func routeAct(path string) (purpose, credential string) {
 		// service decided and issues nothing. Its line is written for a job of
 		// this installation (callerWithoutJobPurpose).
 		return PurposePause, ""
+	case PauseCancelPath:
+		// A cancel's line is a launcher's own act about a run it launched
+		// (PR10, D3197), and it names no credential for the designation's
+		// reason: it sets a mark and touches no bundle entry, so there is no
+		// name of one for the line to carry. It is the launcher class's route,
+		// answered ahead of the shared parse, and its line carries the run and
+		// the repository the cancel is about and no job
+		// (callerWithoutJobPurpose).
+		return PurposePauseCancel, ""
 	case SlipClaimPath:
 		// A claim's line is an ordinary job-class one and names no credential,
 		// for the grant's reason: the claim answers a claim secret and issues
@@ -285,7 +294,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, runstore.PausePath:
+	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, runstore.PausePath, PauseCancelPath:
 		return true
 	// The six identity routes (C1, R2): a run's identity is issued here, with
 	// every one of them answered ahead of the shared parse below. The
@@ -1284,7 +1293,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+runstore.PausePath+", "+PoolDesignatePath+", "+PersonalPoolPath+", "+PersonalPoolGetPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+runstore.PausePath+", "+PauseCancelPath+", "+PoolDesignatePath+", "+PersonalPoolPath+", "+PersonalPoolGetPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1491,6 +1500,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == PersonalPoolGetPath {
 		s.poolPersonalGet(ctx, w, r)
+		return
+	}
+	if r.URL.Path == PauseCancelPath {
+		// The cancel route, answered ahead of the shared parse for the launcher
+		// class's own reason one step further (PR10, D3197): its caller is the
+		// launcher of the run whose pause it ends — a person or a roster service
+		// account holding its own token, and no run identity at all, because the
+		// run it cancels is one it launched rather than one that is calling. The
+		// body is this route's own read (readPauseCancelRequest), and the
+		// launcher it verifies is held to the launcher the service recorded for
+		// that run's pause.
+		s.pauseCancel(ctx, w, r)
 		return
 	}
 	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {
