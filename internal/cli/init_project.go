@@ -81,7 +81,7 @@ func (o *initOptions) checkCreateProject() error {
 	// that say which flag is missing, and a figure is what this case reads.
 	case o.budget > 0 && o.budgetCurrency != "" && o.billingAccount != "" &&
 		(managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}).Check() != nil:
-		return userErr("%v. Pass --budget as a whole amount from %d to %d units of the currency and --budget-currency as the billing account's three-letter ISO 4217 code in upper case, such as USD", (managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}).Check(), managed.MinBudgetAmount, managed.MaxBudgetAmount)
+		return userErr("%v. Pass --budget as a whole amount from %d to %d, and --budget-currency as its three-letter ISO 4217 code in upper case (USD)", (managed.Budget{Amount: o.budget, Currency: o.budgetCurrency}).Check(), managed.MinBudgetAmount, managed.MaxBudgetAmount)
 	case o.forget || o.configOnly || o.printVars:
 		return userErr("--create-project creates a project; it excludes --forget, --config-only and --print-vars")
 	case o.cloud.gcpProject == "":
