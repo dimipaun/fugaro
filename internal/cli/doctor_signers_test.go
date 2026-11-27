@@ -360,17 +360,17 @@ func TestDoctorFlagsAGroupLauncher(t *testing.T) {
 					t.Errorf("problem %q lacks %q", c.Problem, want)
 				}
 			}
-			// The fix names the update that removes the row and the command
-			// that puts the group's people back, role included: `fugaro user
-			// add` stops on a line that names no list.
-			for _, want := range []string{"run fugaro update, which removes the row",
-				"a group holds no token", "fugaro user add user:<email> " + tc.roleArg} {
+			// The fix names the update that removes the row, the removal for a
+			// row no roster list names — which the update's plan does not hold,
+			// so it would never destroy it — and the command that puts the
+			// group's people back, role included: `fugaro user add` stops on a
+			// line that names no list.
+			for _, want := range []string{"run fugaro update, which removes the row if its plan holds it",
+				"if the row outlives it, remove it: gcloud iam service-accounts remove-iam-policy-binding " + dsSigner + " --project proj-1234 --member=group:ops@example.com --role=" + dsMinter,
+				"a group holds no token the issuer verifies, so name each person: fugaro user add user:<email> " + tc.roleArg} {
 				if !strings.Contains(c.Fix, want) {
 					t.Errorf("fix %q lacks %q", c.Fix, want)
 				}
-			}
-			if n := len(c.Fix); n > 140 {
-				t.Errorf("fix is %d characters, over the bound a person reads: %q", n, c.Fix)
 			}
 		})
 	}

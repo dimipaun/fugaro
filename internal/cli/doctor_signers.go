@@ -250,12 +250,14 @@ func signerCheck(id, fp string, f infra.SignerFinding, rosterRole string) doctor
 			// their own entries before the row goes (D3123), and `fugaro user
 			// add` writes one of the installation's two lists and refuses to
 			// guess which, so the role is named — both words where the local
-			// config carries the entry on neither.
+			// config carries the entry on neither. A row no roster list names is
+			// not in the update's plan, which never destroys what it did not
+			// write, so the removal stays the fallback it is for a person.
 			if rosterRole == "" {
 				rosterRole = "<operator|admin>"
 			}
-			c.Fix = fmt.Sprintf("run %s update, which removes the row; a group holds no token, so name each person: %s user add user:<email> --role %s",
-				selfCommand(), selfCommand(), rosterRole)
+			c.Fix = fmt.Sprintf("run %s update, which removes the row if its plan holds it; if the row outlives it, remove it: %s; a group holds no token the issuer verifies, so name each person: %s user add user:<email> --role %s",
+				selfCommand(), cmd, selfCommand(), rosterRole)
 		}
 	case f.Kind == infra.SignerSigns:
 		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and %s", member, role, where, cond, perms, signConsequence)
