@@ -364,6 +364,7 @@ gives it a command — with the converge flag that changes it when the two doors
 | `endpoints.service_usage` | — |
 | `endpoints.storage` | — |
 | `image_source` | `--image-source` |
+| `images.retention_days` | — |
 | `layer_generation` | — |
 | `local.gcp_project` | `--gcp-project` |
 | `local.version` | — |

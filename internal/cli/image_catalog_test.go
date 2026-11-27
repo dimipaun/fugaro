@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/catalog"
@@ -161,23 +162,14 @@ func TestImageLsListsCatalogEntriesAndTheDefault(t *testing.T) {
 // lock's entries instead of the catalog (D1143), the C8c design's columns.
 func TestImageLsSharedListsTheLockEntries(t *testing.T) {
 	f := catalogFixture(t)
-	lock, err := json.Marshal(imagecheck.Lock{Version: imagecheck.LockVersion, Images: map[string]imagecheck.LockedImage{
-		"node20": {
-			Key: "node20", Image: "us-east5-docker.pkg.dev/proj-1234/fugaro-shared/node20",
-			Digest: "sha256:" + strings.Repeat("e", 64), BaseRef: "ghcr.io/dimipaun/fugaro-base:0.16.0",
-			Repositories: []string{"acme/app"}, Jobs: map[string]string{"acme/app": "web"},
-		},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeBucketFile(t, f, imagecheck.LockKey, string(lock))
+	img := lockedImage(keyA, time.Date(2026, 10, 29, 9, 40, 11, 0, time.UTC), map[string]string{"acme/app": "web"})
+	writeSharedLock(t, f, map[string]imagecheck.LockedImage{keyA: img})
 
 	out, _, err := execute(t, "image", "ls", "--shared")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"node20", "sha256:" + strings.Repeat("e", 64), "acme/app", "web"} {
+	for _, want := range []string{"IMAGE", "HASH", "REPOSITORIES", "LAST USE", sharedImageRef(keyA), shortHash(keyA), "acme/app", "2026-10-29"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("image ls --shared lacks %q:\n%s", want, out)
 		}

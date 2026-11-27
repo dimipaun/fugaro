@@ -36,6 +36,28 @@ const LockVersion = 1
 // build record, whose key is builds/<slug>/<workflow>/image.json.
 const LockKey = "builds/image-lock.json"
 
+// ImageCap is the installation's image count above which doctor and
+// `fugaro image ls` warn (design §8, ruled 2026-10-29). It is a warning and
+// nothing else: no build, no refresh and no command is refused by it, and
+// nothing is deleted for being over it. A fixed number and not a multiple
+// of the enrolled-repository count, because what grows is a repository's own
+// set across its workflows and its dependency churn, which is the case the
+// cap exists for.
+const ImageCap = 20
+
+// OverCap reports whether a lock's image count passes ImageCap.
+func (l *Lock) OverCap() bool { return l != nil && len(l.Images) > ImageCap }
+
+// PruneEligible reports whether a lock entry `fugaro image prune` may
+// remove (design §9): no job points at it — its Jobs is empty, which is what
+// a fork leaves behind for the old key and what a repository removed from
+// the installation leaves behind — and its last use is older than retention
+// days. A pinned image keeps the repository's job on it and so is never
+// eligible, whatever its age.
+func PruneEligible(img LockedImage, now time.Time, retentionDays int) bool {
+	return len(img.Jobs) == 0 && now.Sub(img.LastUsedAt) > time.Duration(retentionDays)*24*time.Hour
+}
+
 // lockContentType is what the lock's object is written as.
 const lockContentType = "application/json"
 

@@ -155,6 +155,7 @@ image_catalog.entries.tools.source.repo	open:no-writer
 image_catalog.entries.tools.tags	open:no-writer
 image_map	open:no-writer
 image_source	label:plumbing
+images.retention_days	label:file
 issue_sync	open:no-writer
 job_profiles.conformance.allow_repos	open:no-writer
 job_profiles.conformance.claude_accounts	open:no-writer

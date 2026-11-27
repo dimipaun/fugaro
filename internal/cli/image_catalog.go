@@ -46,23 +46,6 @@ type catalogLsOut struct {
 	Entries []catalogEntryRow `json:"entries"`
 }
 
-// sharedRow is one entry of `fugaro image ls --shared`: the C8c design's
-// columns, read from the shared-image lock.
-type sharedRow struct {
-	Key          string   `json:"key"`
-	Image        string   `json:"image"`
-	Digest       string   `json:"digest,omitempty"`
-	BaseRef      string   `json:"base_ref,omitempty"`
-	Repositories []string `json:"repositories,omitempty"`
-	Jobs         []string `json:"jobs,omitempty"`
-}
-
-// catalogSharedOut is fugaro image ls --shared --json.
-type catalogSharedOut struct {
-	Project string      `json:"project"`
-	Images  []sharedRow `json:"images"`
-}
-
 func newImageLsCmd() *cobra.Command {
 	var (
 		o      cloudOptions
@@ -150,63 +133,6 @@ func runImageLsCatalog(cmd *cobra.Command, env *cloudEnv, records *blobx.Bucket,
 		fmt.Fprintln(w, line)
 	}
 	return nil
-}
-
-// runImageLsShared lists the shared-image lock (D1143). An installation with
-// no lock has not migrated to shared images, which is not an error: the
-// listing says there are none.
-func runImageLsShared(cmd *cobra.Command, env *cloudEnv, records *blobx.Bucket, asJSON bool) error {
-	lock, err := imagecheck.ReadLock(cmd.Context(), records)
-	if err != nil {
-		return remote(err)
-	}
-	out := catalogSharedOut{Project: env.lc.Name, Images: []sharedRow{}}
-	if lock != nil {
-		for _, key := range slices.Sorted(maps.Keys(lock.Images)) {
-			im := lock.Images[key]
-			out.Images = append(out.Images, sharedRow{
-				Key: key, Image: im.Image, Digest: im.Digest, BaseRef: im.BaseRef,
-				Repositories: im.Repositories, Jobs: sharedJobNames(im.Jobs),
-			})
-		}
-	}
-	w := cmd.OutOrStdout()
-	if asJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(out)
-	}
-	if len(out.Images) == 0 {
-		fmt.Fprintln(w, "this installation has no shared images: the lock is empty (or was never written), and no job runs one")
-		return nil
-	}
-	for _, r := range out.Images {
-		line := fmt.Sprintf("%s  %s", oneLine(r.Key), oneLine(r.Image))
-		if r.Digest != "" {
-			line += "  " + oneLine(r.Digest)
-		}
-		if len(r.Repositories) > 0 {
-			line += "  repos: " + oneLine(strings.Join(r.Repositories, " "))
-		}
-		if len(r.Jobs) > 0 {
-			line += "  jobs: " + oneLine(strings.Join(r.Jobs, " "))
-		}
-		fmt.Fprintln(w, line)
-	}
-	return nil
-}
-
-// sharedJobNames is the lock's job names, sorted and deduplicated: the map is
-// keyed by repository, so two repositories may carry the same job name.
-func sharedJobNames(jobs map[string]string) []string {
-	out := make([]string, 0, len(jobs))
-	for _, name := range jobs {
-		if name != "" {
-			out = append(out, name)
-		}
-	}
-	slices.Sort(out)
-	return slices.Compact(out)
 }
 
 // catalogDefaultWord marks the entry a job that names nothing runs (D1146) in
