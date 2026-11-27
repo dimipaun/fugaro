@@ -201,7 +201,7 @@ func newOwnershipWorld(t *testing.T) *ownershipWorld {
 	terminal(t, false)
 	r, db := updateBudgetRig(t)
 	// D2217: every command of the walk writes the project's own state — the
-	// published node, the pool, the craft's access — so the installation they
+	// published node, the pool, the craft — so the installation they
 	// run at is a managed one, with both halves of the read the fence makes:
 	// the creation fact in the project's runs bucket and the label on the
 	// project itself. A walk run at an installation carrying neither would
@@ -219,7 +219,7 @@ func newOwnershipWorld(t *testing.T) *ownershipWorld {
 	// once. The project's own marker is the rig's already (budget.PathProject).
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	// The credentials the pool and the craft name must be defined, and the
-	// craft must exist before the write that moves its access: a pool member no
+	// craft must exist before the write that takes it away: a pool member no
 	// credential of the document defines and a craft the file does not state
 	// are each command's own refusal BEFORE its write, and a walk that stopped
 	// at one of them would prove nothing about the hook.
@@ -246,17 +246,24 @@ var ownershipSteps = []struct {
 		},
 	},
 	{
-		what: "fugaro accounts craft set",
-		args: []string{"accounts", "craft", "set", "coder", "--access", "team-b"},
+		// MG4 retired the write that moved a craft's access, so the craft step
+		// of the walk is the other command of that family: the removal takes the
+		// whole craft out of this machine's config and owes the publish that
+		// takes it off the node, which is the same agreement read one block
+		// emptier. A craft write that no longer exists would leave the crafts
+		// carrier unreachable, and the walk would be about three blocks rather
+		// than four.
+		what: "fugaro accounts craft rm",
+		args: []string{"accounts", "craft", "rm", "coder"},
 		wrote: func(lc *localcfg.Config) bool {
-			return lc.Crafts.Of(config.CraftCoder).Access == "team-b"
+			return lc.Crafts.Of(config.CraftCoder) == config.Craft{}
 		},
 	},
 	{
 		what: "fugaro accounts cascade set",
-		args: []string{"accounts", "cascade", "set", "--fallback", "oauth-only"},
+		args: []string{"accounts", "cascade", "set", "--backoff-cap", "1h"},
 		wrote: func(lc *localcfg.Config) bool {
-			return lc.CredentialCascade != nil && lc.CredentialCascade.Fallback == "oauth-only"
+			return lc.CredentialCascade != nil && lc.CredentialCascade.Backoff != nil && lc.CredentialCascade.Backoff.Cap == "1h"
 		},
 	},
 	{
@@ -349,8 +356,8 @@ func (w *ownershipWorld) agree(step string) {
 // walk's comparisons changes the commands made rather than a node that was
 // already carrying them: three of the four blocks are absent from it, and the
 // fourth — the crafts, which this machine's config seeds so that `accounts
-// craft set` has a craft to move — carries the seed's own value and not the one
-// the walk writes.
+// craft rm` has a craft to take away — carries the seed's own value, and the
+// walk's own step is what takes it off.
 //
 // It is a reading of the node block by block and not "the node is empty": the
 // publish writes the whole config, so a block the seed states IS published, and
@@ -375,7 +382,7 @@ func (w *ownershipWorld) prePublish(t *testing.T) {
 		t.Fatalf("the node carries no crafts block after the initial publish, although this machine's config seeds one: `accounts craft set` has no craft to move and the walk would fail on its own fixture")
 	}
 	if got := p.Crafts.Of(config.CraftCoder).Access; got != "team-a" {
-		t.Errorf("the node's coder craft reads %q after the initial publish, want the seed's team-a: the step that writes team-b would otherwise be agreeing with a value it did not write", got)
+		t.Errorf("the node's coder craft reads %q after the initial publish, want the seed's team-a: the step that takes the craft away would otherwise be agreeing with a value it did not take off", got)
 	}
 }
 

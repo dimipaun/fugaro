@@ -90,6 +90,15 @@ var settingsFamilyCommands = map[string]string{
 	// is that command, and the refusal names it rather than `fugaro project`,
 	// which writes the project's other policy keys and not this block.
 	"project binaries": "fugaro project binaries",
+	// The keys the routing table replaced are a family of one command as well
+	// (MG4 of docs/model-credentials-routing/): a craft's access, a grade's
+	// access and the cascade's two retired members are written by no command
+	// any more, and `fugaro routing set` writes the entry that replaced each.
+	// The token is what makes the family branch answer for them, which is what
+	// keeps the generic path out of the layer's own spellings of the two
+	// grades' keys — `layer.defaults.*` is on the allowlist — and the writer
+	// table's line for a retired key is the one a person runs.
+	"routing": "fugaro routing set",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings

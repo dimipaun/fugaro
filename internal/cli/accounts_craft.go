@@ -90,31 +90,24 @@ func newAccountsCraftSetCmd() *cobra.Command {
 	var o accountsAccessOptions
 	cmd := &cobra.Command{
 		Use:   "set NAME --access CREDENTIAL|POOL",
-		Short: "Point one craft's calls at a credential or a pool",
-		Long: `Write crafts.<NAME>.access in this installation's own config: the credential or
-pool every stage of that craft sends its calls out on.
+		Short: "Retired: the project's routing table says which credential a craft's calls go out on",
+		Long: `crafts.<NAME>.access is retired: which credential a craft's calls go out on is
+the project's routing table now (docs/model-credentials-routing/spec.md), so
+this command writes nothing and refuses, naming the command that does.
 
-The name must be a credential this installation defines, a pool it defines, or
-the built-in vertex, which needs no declaration. A name it defines nowhere is
-refused before the file is touched, and the refusal lists what it does define.
-Nothing else in the file changes: the craft's model, every comment and every
-other byte are kept.
+` + "`fugaro routing ls`" + ` shows the table and ` + "`fugaro routing set`" + ` writes the entry a craft's
+model is served by; a subscription account has to sit in a pool first
+(` + "`fugaro accounts pool add`" + `), because a pool is what a run spends a token through.
 
-A craft declared here is not a removed one: a name this command writes is
-cleared from node_removals.crafts on the same bytes, so a craft you took away
-and then declared again is served by the node rather than dropped by the record
-of the removal (F22).
-
-An access is a spending and data-egress grant, so it is a widening write: a
-coding agent's session is refused whatever the managed gate answers (D2617).
-Run it at your own terminal.`,
+The two flags are kept for one release so that a line already written down
+reaches this sentence rather than "unknown flag", and neither is read.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAccountsCraftSet(cmd, args[0], o)
 		},
 	}
-	cmd.Flags().StringVar(&o.access, "access", "", "the credential or pool this craft's calls go out on (fugaro accounts ls lists the accounts; fugaro accounts pool ls the pools)")
-	cmd.Flags().StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+"); a craft is this installation's own config, so local is the layer it has")
+	cmd.Flags().StringVar(&o.access, "access", "", "retired: the project's routing table says which credential a craft's calls go out on, and `fugaro routing set` writes the entry")
+	cmd.Flags().StringVar(&o.layer, "layer", "", "retired with --access: a craft's access has no layer to write any more")
 	return cmd
 }
 
@@ -122,77 +115,22 @@ func runAccountsCraftSet(cmd *cobra.Command, name string, o accountsAccessOption
 	if !slices.Contains(config.CraftNames, name) {
 		return userErr("%s: a craft is one of %s", oneLine(name), strings.Join(config.CraftNames, ", "))
 	}
-	if o.access == "" {
-		// The flag is the whole of what this command writes, so its absence is
-		// answered by the flag's own sentence and not by an inventory: a list built
-		// from no config at all would read "this installation defines no credential
-		// and no pool" beside one that defines both, which is a false statement
-		// about the owner's file in place of the one fact that is missing.
-		return userErr("--access names the credential or pool the %s craft's calls go out on: `fugaro accounts ls` lists the accounts this installation defines, `fugaro accounts pool ls` the pools, and %s is built in", name, config.CredentialVertex)
-	}
-	sel, lc, err := settingsSelection()
-	if err != nil {
-		return err
-	}
-	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "pointing a craft at a credential"); err != nil {
-		return err
-	}
-	if msg := accountsAccessProblem(lc, o.access); msg != "" {
-		return userErr("--access %s: %s", pluginwire.Printable(o.access), msg)
-	}
-	key := "crafts." + name + ".access"
-	row, ok := settings.Lookup(key)
-	if !ok {
-		return userErr("%s: this fugaro has no registry row for a craft's access, so it cannot say which layer it is written in; upgrade it or file a bug", key)
-	}
-	wo := settingsWriteOptions{layer: o.layer}
-	target, err := settingsResolveTarget(cmd.Context(), row, wo, lc, sel)
-	if err != nil {
-		return err
-	}
-	old, err := settingsReadDocument(target)
-	if err != nil {
-		return err
-	}
-	if lc.Crafts.Of(name).Access == o.access && !slices.Contains(removedNames(lc).Crafts, name) {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: crafts.%s.access already reads %s\n", target.path, name, pluginwire.Printable(o.access))
-		return nil
-	}
-	next, err := accountsCraftSetEdit(old, name, o.access)
-	if err != nil {
-		return err
-	}
-	what := fmt.Sprintf("point the %s craft at %s: crafts.%s.access = %s, so every %s stage of a run of this installation sends its calls out on it",
-		name, pluginwire.Printable(o.access), name, pluginwire.Printable(o.access), name)
-	return accountsAccessWrite(cmd, lc, target, row, wo, key, settingsEdit{
-		Path:     target.path,
-		Old:      old,
-		New:      next,
-		What:     what,
-		Kind:     target.kind,
-		Command:  "fugaro accounts craft set " + quoteWord(name) + " --access " + quoteWord(o.access),
-		Typed:    true,
-		TypedWhy: fmt.Sprintf("crafts.%s.access hands this installation's %s stage the right to spend that credential or pool, which every run of the installation resolves its calls against", name, name),
-	})
+	return accountsRetiredAccess("crafts." + name + ".access")
 }
 
-// accountsCraftSetEdit is the bytes this write leaves: the access written at the
-// craft's own leaf, and the removal record cleared where it named the craft.
+// accountsRetiredAccess is the refusal the three retired access writes share
+// (MG4 of docs/model-credentials-routing/implementation-plan.md): a craft's
+// access, a grade's access and the cascade's two members the chain replaced. The
+// key is named, the write is refused, and the sentence names the command that
+// owns it now — the project's routing table for which credential serves a model,
+// and a pool for a subscription account, which may only be spent from one.
 //
-// The record is cleared on the same bytes for the pools' reason (F22): a craft
-// declared here is not a removed one, and a record left standing would make the
-// next publish take off the node the craft the owner has just pointed somewhere.
-func accountsCraftSetEdit(old []byte, name, access string) ([]byte, error) {
-	next, err := yamledit.SetScalar(old, []string{"crafts", name, "access"}, access)
-	if err != nil {
-		return nil, userErr("crafts.%s.access: %v", name, err)
-	}
-	next, err = yamledit.RemoveListItemWithOptions(next, []string{"node_removals", "crafts"}, name,
-		yamledit.RemoveOptions{DropEmptyParents: true})
-	if err != nil {
-		return nil, userErr("node_removals.crafts: %v", err)
-	}
-	return next, nil
+// It is one sentence and not three: all three commands refuse at their first
+// line, before the file is read and before any gate, so a coding agent's session
+// and a person at their terminal read the same answer, and neither is asked
+// anything (D1540).
+func accountsRetiredAccess(key string) error {
+	return userErr("%s is retired: which credential reaches a model is the project's routing table now, so `fugaro routing set` writes the entry (`fugaro routing ls` shows it), and a subscription account has to sit in a pool first (`fugaro accounts pool add`); nothing was written", key)
 }
 
 func newAccountsCraftRmCmd() *cobra.Command {
@@ -323,37 +261,28 @@ func newAccountsGradeSetCmd() *cobra.Command {
 	var o accountsAccessOptions
 	cmd := &cobra.Command{
 		Use:   "set strong|strongest --access CREDENTIAL|POOL",
-		Short: "Point one escalation grade's calls at a credential or a pool",
-		Long: `Write model_grades.<GRADE>.access: the credential or pool the rung's escalated
-calls go out on.
+		Short: "Retired: the project's routing table says which credential an escalation rung's calls go out on",
+		Long: `model_grades.<GRADE>.access is retired: which credential serves a model is the
+project's routing table now (docs/model-credentials-routing/spec.md), and a
+rung's escalated calls are routed by the model they ask for like every other
+call, so this command writes nothing and refuses, naming the command that does.
 
-The name must be a credential this installation defines, a pool it defines, or
-the built-in vertex, which needs no declaration; a name it defines nowhere is
-refused before the file is touched, naming what it does define.
+` + "`fugaro routing ls`" + ` shows the table and ` + "`fugaro routing set`" + ` writes the entry the grade's
+model is served by; a subscription account has to sit in a pool first
+(` + "`fugaro accounts pool add`" + `).
 
---layer repo, the default, writes the repository's own fugaro.yaml in the
-checkout's working tree for you to review and commit — a repository's change
-reaches runs when your own branch is merged to the base branch, which is what
-every run reads. --layer project writes this machine's project layer file
-(layer.defaults.model_grades.<GRADE>.access), where the grade is every repository
-of the project's default.
+A grade's own model (model_grades.<GRADE>.model) is unchanged by this: it says
+which model the rung runs, and the table says which credential reaches it.
 
-A grade states the model its rung runs as well, and a grade written with no model
-is one no reader can resolve: this command writes the access alone, so it refuses
-where the grade's own model is not already stated in the document it is aimed at.
-Write model_grades.<GRADE>.model there first (there is no command for it in this
-release) and set the access on it.
-
-An access is a spending and data-egress grant, so it is a widening write: a
-coding agent's session is refused whatever the managed gate answers (D2617). Run
-it at your own terminal.`,
+The two flags are kept for one release so that a line already written down
+reaches this sentence rather than "unknown flag", and neither is read.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAccountsGradeSet(cmd, args[0], o)
 		},
 	}
-	cmd.Flags().StringVar(&o.access, "access", "", "the credential or pool this grade's calls go out on (fugaro accounts ls lists the accounts; fugaro accounts pool ls the pools)")
-	cmd.Flags().StringVar(&o.layer, "layer", "", "where the write lands: "+strings.Join(settingsWriteLayers, ", ")+" (repo is the default)")
+	cmd.Flags().StringVar(&o.access, "access", "", "retired: the project's routing table says which credential an escalated call goes out on, and `fugaro routing set` writes the entry")
+	cmd.Flags().StringVar(&o.layer, "layer", "", "retired with --access: a grade's access has no layer to write any more")
 	return cmd
 }
 
@@ -361,90 +290,7 @@ func runAccountsGradeSet(cmd *cobra.Command, grade string, o accountsAccessOptio
 	if !slices.Contains(config.GradeNames, grade) {
 		return userErr("%s: a grade is one of %s", oneLine(grade), strings.Join(config.GradeNames, ", "))
 	}
-	if o.access == "" {
-		// The sentence `craft set` prints, for the same reason: what is missing is
-		// the flag, and no inventory read off no config can say anything true about
-		// the file this command would have written.
-		return userErr("--access names the credential or pool the %s grade's calls go out on: `fugaro accounts ls` lists the accounts this installation defines, `fugaro accounts pool ls` the pools, and %s is built in", grade, config.CredentialVertex)
-	}
-	sel, lc, err := settingsSelection()
-	if err != nil {
-		return err
-	}
-	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "pointing an escalation grade at a credential"); err != nil {
-		return err
-	}
-	if msg := accountsAccessProblem(lc, o.access); msg != "" {
-		return userErr("--access %s: %s", pluginwire.Printable(o.access), msg)
-	}
-	key := "model_grades." + grade + ".access"
-	wo := settingsWriteOptions{layer: o.layer}
-	row, ok := settings.Lookup(key)
-	if !ok {
-		return userErr("%s: this fugaro has no registry row for a grade's access, so it cannot say which layer it is written in; upgrade it or file a bug", key)
-	}
-	// The project layer spells every key it carries with the `layer.` prefix and
-	// holds the grades under its own defaults: block, so a --layer project write
-	// of model_grades.<grade>.access resolves through the
-	// layer.defaults.model_grades.<grade>.access row — the models use rule, and
-	// the reason its argv names the layer (models_use.go).
-	if !strings.HasPrefix(key, "layer.") && (o.layer == settingsLayerProject || (o.layer == "" && settingsDefaultLayer(row) == settingsLayerProject)) {
-		row, ok = settings.Lookup("layer.defaults." + key)
-		if !ok {
-			return userErr("%s: the project layer has no key for it", key)
-		}
-	}
-	target, err := settingsResolveTarget(cmd.Context(), row, wo, lc, sel)
-	if err != nil {
-		return err
-	}
-	old, err := settingsReadDocument(target)
-	if err != nil {
-		return err
-	}
-	// A grade's model is the other half of the entry, and a grade written with an
-	// access and no model is a document no reader loads (config.ValidateModelGrades):
-	// the refusal names the key that is missing rather than the parse error the
-	// write would leave behind.
-	modelKey := append(slices.Clone(target.keyPath[:len(target.keyPath)-1]), "model")
-	if settingsValueIn(old, modelKey) == "" {
-		return userErr("%s states no %s, and a grade written with an access and no model is a grade no run can resolve: write %s there first (no command of this release writes it) and set the access on it; nothing was written",
-			target.path, strings.Join(modelKey, "."), strings.Join(modelKey, "."))
-	}
-	if settingsValueIn(old, target.keyPath) == o.access {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s: %s already reads %s\n", target.path, strings.Join(target.keyPath, "."), pluginwire.Printable(o.access))
-		return nil
-	}
-	next, err := yamledit.SetScalar(old, target.keyPath, o.access)
-	if err != nil {
-		return userErr("%s: %v", strings.Join(target.keyPath, "."), err)
-	}
-	where := "the project layer's"
-	if target.kind == settingsDocRepo {
-		where = "the repository's"
-	}
-	what := fmt.Sprintf("point %s %s grade at %s: %s = %s", where, grade, pluginwire.Printable(o.access), strings.Join(target.keyPath, "."), pluginwire.Printable(o.access))
-	return accountsAccessWrite(cmd, lc, target, row, wo, row.Key, settingsEdit{
-		Path:     target.path,
-		Old:      old,
-		New:      next,
-		What:     what,
-		Kind:     target.kind,
-		Command:  accountsGradeCommand(grade, o.access, target),
-		Typed:    true,
-		TypedWhy: fmt.Sprintf("%s hands every escalated call of that rung this credential or pool to spend, which is a grant and not a value", strings.Join(target.keyPath, ".")),
-	})
-}
-
-// accountsGradeCommand is the command line that makes the same write, spelled
-// whole: what the refusal a coding agent's session reads names as the thing to
-// run at the owner's own terminal.
-func accountsGradeCommand(grade, access string, target settingsTarget) string {
-	command := "fugaro accounts grade set " + grade + " --access " + quoteWord(access)
-	if target.kind == settingsDocLayer {
-		command += " --layer " + settingsLayerProject
-	}
-	return command
+	return accountsRetiredAccess("model_grades." + grade + ".access")
 }
 
 func newAccountsRepoCmd() *cobra.Command {
@@ -660,58 +506,4 @@ func accountsAccessStore(t settingsTarget) settings.Store {
 	default:
 		return settings.StoreLocal
 	}
-}
-
-// accountsAccessProblem is why access may not be written where an access goes,
-// and "" when it may: a name that is not a credential name at all (the loader's
-// own sentence, config.ValidCredentialRef), and a name no layer of this
-// installation defines — which is the one refusal this command adds to the
-// block's own, because a file that names a credential nothing defines is one
-// whose runs are refused at their next call rather than at this write.
-func accountsAccessProblem(lc *localcfg.Config, access string) string {
-	if msg := config.ValidCredentialRef(access); msg != "" {
-		return msg
-	}
-	if lc == nil {
-		return ""
-	}
-	if access == config.CredentialVertex {
-		return ""
-	}
-	for _, c := range lc.Credentials {
-		if c.Name == access {
-			return ""
-		}
-	}
-	for _, p := range lc.Pools {
-		if p.Name == access {
-			return ""
-		}
-	}
-	return fmt.Sprintf("names no credential and no pool this installation defines: it defines %s; name one of those, or the built-in %s", accountsAccessKnown(lc), config.CredentialVertex)
-}
-
-// accountsAccessKnown lists what this installation defines, for the refusals
-// above: the credentials it declares, the pools it declares, and the built-in
-// vertex. It is written for a person to act on, so an installation that declares
-// neither says that rather than printing an empty list.
-func accountsAccessKnown(lc *localcfg.Config) string {
-	var creds, pools []string
-	if lc != nil {
-		for _, c := range lc.Credentials {
-			creds = append(creds, pluginwire.Printable(c.Name))
-		}
-		for _, p := range lc.Pools {
-			pools = append(pools, pluginwire.Printable(p.Name))
-		}
-	}
-	switch {
-	case len(creds) == 0 && len(pools) == 0:
-		return "no credential and no pool (" + config.CredentialVertex + " is built in and needs no declaration)"
-	case len(pools) == 0:
-		return "the credential " + strings.Join(creds, ", ")
-	case len(creds) == 0:
-		return "the pool " + strings.Join(pools, ", ")
-	}
-	return "the credentials " + strings.Join(creds, ", ") + " and the pools " + strings.Join(pools, ", ")
 }

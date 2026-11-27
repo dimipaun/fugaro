@@ -470,6 +470,13 @@ var settingsOwnerCommands = map[string]string{
 	"budget":            "fugaro setup, which writes the installation's own budget backend",
 	"config":            "fugaro config publish, which carries the layer file the key is stated in",
 	"config init":       "fugaro config init, which writes the repository's own file",
+	// The keys the routing table replaced (MG4 of
+	// docs/model-credentials-routing/): a craft's access, a grade's access and
+	// the cascade's two retired members. The word is the write's own — its
+	// refusal is built from the same token — so the pair the console draws,
+	// `written by <owner>, not by the generic path`, names the command that
+	// writes what replaced the key rather than one that refuses it.
+	"routing": "fugaro routing set",
 }
 
 // settingsOwnerDefaultToken is the registry's owner for a key no family and no
