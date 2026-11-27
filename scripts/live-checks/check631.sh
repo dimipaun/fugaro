@@ -530,7 +530,9 @@ end_active_runner() {
   local pid=$ACTIVE_RUNNER i=0
   ACTIVE_RUNNER=""
   kill -TERM "$pid" 2>/dev/null || true
-  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 20 ]; do
+  # Long enough for a runner that is ending the command itself to do it (the
+  # command's grace, then the terminals drained) and put the terminal back.
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 30 ]; do
     sleep 0.1
     i=$((i + 1))
   done
