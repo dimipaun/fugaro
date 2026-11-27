@@ -566,6 +566,11 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 		// on while any input is unreadable.
 		"escalate, then recommend-only, then merge-as-is, then restart",
 		"Chosen when **every input was read**",
+		// BF1's writer landing does not end the fail-closed path for every
+		// input: a severity word the triage does not know still takes the
+		// recommend-only outcome on a run of any release, so each sentence
+		// naming who remains fail-closed has to name it too.
+		"a finding whose severity word the triage does not know",
 	} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s: the triage's fail-closed reading lost %q", soReconciled, want)
