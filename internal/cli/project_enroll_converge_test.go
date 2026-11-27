@@ -687,6 +687,23 @@ func TestReposAddWritesProviderKey(t *testing.T) {
 	}
 }
 
+// TestReposAddPublishesTheNewKey is the finding S3's review left, pinned where
+// it lands: the node every teammate and the credentials service read has to
+// carry the repository the command just enrolled. Step 5 publishes through the
+// policy stage, and the key reaches the node only while the publisher carries
+// the member the command wrote (R14, U1b) — a stage that carried the legacy
+// image_map alone would leave the node without this repository's mapping.
+func TestReposAddPublishesTheNewKey(t *testing.T) {
+	r := enrolRig(t)
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
+		t.Fatal(err)
+	}
+	published := r.policy(t)
+	if got := published.RepoImages[enrolImageKey]; got != "base" {
+		t.Errorf("the published repo_images = %v, want %s = base: the policy stage did not carry the mapping this command wrote", published.RepoImages, enrolImageKey)
+	}
+}
+
 // TestReposAddNeverWritesImageMap is S3's red step and R13's rule in one: a
 // project whose map is still the legacy one has it MIGRATED into the file — the
 // mapping it served reaches repo_images under its provider — and the old member
