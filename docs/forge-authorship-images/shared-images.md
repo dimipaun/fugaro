@@ -761,6 +761,11 @@ test names are the plan's C8 list, distributed to the task that makes them pass.
 - **Depends on:** C8a, C8b.
 - **Commit:** `cli: fugaro image ls and image prune, and the image-count cap in doctor`
 - **Reviewer:** standard.
+- **Added on top (owner's ruling, 2026-11-27):** §9's crash — a lock entry whose digest the registry
+  has lost — is now doctor's own line (`doctorSharedImageDigests`, the `HasManifest` read
+  `imagecheck.Registry` gained for it), and `image prune` gained `--json`. Files: the two above,
+  `internal/imagecheck/registry.go`, the pin in `report_json_fixtures_test.go` and the
+  `scripts/live-checks/lib/fugaro-surface.tsv` regeneration.
 
 ### Prerequisites the plan's C8 file list omits
 
