@@ -178,12 +178,13 @@ export class SecretStore {
    * per-pairing MAC key of D171 has to be used somewhere: P3.6's client signs
    * an inbox message with it and verifies the consumer's tags with it. The only
    * way to the material is `reveal()`, which `src/boundary.test.js` allows in
-   * exactly two files -- `secret.js`, which defines it, and this one. A client
-   * that called `reveal()` itself would be a third file, and widening that list
-   * is how the fence is lost. So the reveal happens here, inside the store that
-   * is already allowed to make it, and the material never becomes a value the
-   * caller holds: it is an argument to the callback, and a callback cannot
-   * return it by accident without being caught (below).
+   * three files -- `secret.js`, which defines it; this one; and
+   * `src/session/devicekey.js`, which hands the device key's seed to Ed25519
+   * once. A client that called `reveal()` itself would be a fourth file, and
+   * widening that list is how the fence is lost. So the reveal happens here,
+   * inside the store that is already allowed to make it, and the material never
+   * becomes a value the caller holds: it is an argument to the callback, and a
+   * callback cannot return it by accident without being caught (below).
    *
    * **The fence against the material leaving.** The callback's result is
    * walked -- strings, arrays and plain objects, four levels deep -- and if the
