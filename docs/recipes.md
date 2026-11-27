@@ -168,7 +168,7 @@ The first of these wins:
 
 For a name, the first match wins:
 
-1. The project's copy of the repository's own recipe: `fugaro/recipes/<name>.<readable>-<8 hex>.yaml` in the runs bucket, the copy the repository's `.fugaro/recipes/<name>.yaml` became when `fugaro update` published it (section 7). A run never reads a checkout's `.fugaro/recipes/`: the copy is what every run of that repository gets, in a checkout or not, and it is listed under its own name.
+1. The project's copy of the repository's own recipe: `fugaro/recipes/<name>.<readable>-<8 hex>.yaml` in the runs bucket, the name the repository's `.fugaro/recipes/<name>.yaml` took when `fugaro update` published it and the name clashed. A name nothing else answered is published flat, under rule 2. A run never reads a checkout's `.fugaro/recipes/`: the copy is what every run of that repository gets, in a checkout or not, and it is listed under its own name.
 2. The project's flat store: `fugaro/recipes/<name>.yaml` in the runs bucket `fugaro-runs-<gcp_project>`, for every repository of the project.
 3. The catalog.
 
