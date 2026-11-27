@@ -426,20 +426,20 @@ step_update() {
     return 0
   fi
   local status=0
-  fugaro update --yes >"$SCRATCH/update.out" 2>"$SCRATCH/update.err" || status=$?
+  fugaro update >"$SCRATCH/update.out" 2>"$SCRATCH/update.err" || status=$?
   if [ "$status" -ne 0 ]; then
-    owner "fugaro update --yes exited $status; its last lines:"
+    owner "fugaro update exited $status; its last lines:"
     tail -n 12 "$SCRATCH/update.out" >&4 || true
     tail -n 12 "$SCRATCH/update.err" >&4 || true
-    fact update FAIL "fugaro update --yes exited $status: the one command did not finish on this installation. Its last lines are above; the rows below still read what the database holds"
+    fact update FAIL "fugaro update exited $status: the one command did not finish on this installation. Its last lines are above; the rows below still read what the database holds"
     return 0
   fi
   local planned=no
   if grep -q 'config/limits/orchestratorRules' "$SCRATCH/update.out"; then planned=yes; fi
   if [ "$planned" = yes ]; then
-    fact update PASS "fugaro update --yes exited 0 and its plan named config/limits/orchestratorRules, so this run was the one that converged the subtree's generation"
+    fact update PASS "fugaro update exited 0 and its plan named config/limits/orchestratorRules, so this run was the one that converged the subtree's generation"
   else
-    fact update PASS "fugaro update --yes exited 0; its plan named no config/limits/orchestratorRules line, which is what a database already on this generation prints (a settled run plans nothing). Whether the generation is there is the marker row's to say"
+    fact update PASS "fugaro update exited 0; its plan named no config/limits/orchestratorRules line, which is what a database already on this generation prints (a settled run plans nothing). Whether the generation is there is the marker row's to say"
   fi
 }
 

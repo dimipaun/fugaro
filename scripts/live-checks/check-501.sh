@@ -17,9 +17,9 @@
 #     records (`project.base_images.base`). Doctor's own `local-config-base` check
 #     fails on a config that has none, so a missing pin is a finding here too;
 #   * **`fugaro update`, run by you at your own terminal and not by this script**:
-#     it is launched with no `--yes`, so the review of the run's steps and the
-#     billable rebuilds the upgrade asks for are answered by you in the session
-#     you are sitting in. Its transcript is echoed to the terminal and kept in
+#     it is launched at your own terminal, so the review of the run's steps and
+#     the billable rebuilds the upgrade asks for are answered by you in the
+#     session you are sitting in. Its transcript is echoed to the terminal and kept in
 #     the scratch directory, and the check reads its exit status — nothing here
 #     answers a question of it;
 #   * the pin **after** the update, read the same way: the one command is the
@@ -431,9 +431,10 @@ step_base_pin() {
 }
 
 # step_update: the one command that is the whole upgrade, run by the person this
-# check belongs to. No --yes is passed — that is the point of the row: the review
-# of the run's steps and the billable rebuilds it asks for are answered by you in
-# your own session, and the transcript below is what it said.
+# check belongs to. Nothing of it is answered here — that is the point of the
+# row: the review of the run's steps and the billable rebuilds it asks for are
+# answered by you in your own session, and the transcript below is what it
+# said.
 step_update() {
   if [ -z "$PROJECT" ]; then
     unmeasured update "there is no installation to update: the row above says why"
@@ -444,7 +445,7 @@ step_update() {
     return 0
   fi
   UPDATE_STARTED=$(date +%s)
-  say "running: fugaro update, in ${SANDBOX} — it asks YOU its questions (no --yes), and its output is echoed below and kept as a transcript"
+  say "running: fugaro update, in ${SANDBOX} — it asks YOU its questions, and its output is echoed below and kept as a transcript"
   # `|| BOUNDED_STATUS=$?` and not a bare call: the update's failing status is one
   # of this check's own readings, and a bare call under `set -e` would end the
   # check here with an internal error instead of recording the row below.
@@ -460,7 +461,7 @@ step_update() {
   else
     UPDATE_ASKED="and it named no build, so no workflow image of this checkout needed rebuilding — its transcript is in $SCRATCH/update.out"
   fi
-  fact update PASS "fugaro update ran to its end in ${SANDBOX} (exit 0, $((${UPDATE_ENDED} - ${UPDATE_STARTED}))s) at your own terminal and with no --yes, so its review and its billable rebuilds were answered by you ${UPDATE_ASKED}: it is the one command that is the whole upgrade, and the one that moves the base pin the row below reads"
+  fact update PASS "fugaro update ran to its end in ${SANDBOX} (exit 0, $((${UPDATE_ENDED} - ${UPDATE_STARTED}))s) at your own terminal, so its review and its billable rebuilds were answered by you ${UPDATE_ASKED}: it is the one command that is the whole upgrade, and the one that moves the base pin the row below reads"
 }
 
 # step_pin_after: what the update left. The pin is read again with the same
@@ -680,7 +681,7 @@ plan() {
   if [ -n "$SKIP_UPDATE" ]; then
     say "  [not asked for] fugaro update: CHECK501_SKIP_UPDATE is set, and this check only reads the pin and launches the run"
   else
-    say "  [network, BILLABLE, asks YOU] fugaro update in ${SANDBOX} — the one command that is the whole upgrade, run with no --yes at your own terminal: its review, its Terraform and the rebuild of the checkout's workflow images are answered by you"
+    say "  [network, BILLABLE, asks YOU] fugaro update in ${SANDBOX} — the one command that is the whole upgrade, run at your own terminal: its review, its Terraform and the rebuild of the checkout's workflow images are answered by you"
   fi
   say "  [read] fugaro doctor --json again — the base pin after the update"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX}${RECIPE:+ --recipe ${RECIPE}} --json \"${TASK}\" — one sandbox run, followed with fugaro runs ls --json until it is terminal"

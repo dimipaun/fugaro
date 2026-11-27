@@ -42,7 +42,7 @@
 #             recorded. The one thing it cannot undo is the breaker: the pause a
 #             trip earns is an unanswered decision, and closing one is a
 #             person's own op at a real terminal (`fugaro orchestrator patch`
-#             asks you to type the project name and takes no --yes), so the
+#             asks you to type the project name), so the
 #             Restore row says whether the daemon is paused and names the
 #             command that lifts it. That is the register's own wording:
 #             "unpause it, or say that it is paused".
@@ -663,7 +663,7 @@ step_restore() {
   if [ "$BREAKER_TRIPPED" = yes ] || paused_reading "$SCRATCH/paused.now"; then
     local paused_id
     paused_id=$(grep -ho 'breaker-tripped-[0-9A-Za-z:_-]*' "$SCRATCH/paused.now" 2>/dev/null | head -n 1 || true)
-    fact restore PASS "this check wrote nothing of its own, so nothing of its is left to undo — but the DAEMON IS PAUSED: the node carries the breaker's question ${paused_id:-breaker-tripped-<stamp>}, and the pause is an unanswered decision, which only a person closes. Lift it at your own terminal: read the id with 'fugaro orchestrator state --project $INSTALLATION', then close it with 'fugaro orchestrator patch -f <a document holding a decision_resolve op for that id>' — the typed confirmation takes the project's name and no --yes. Answering it is also what re-arms the breaker"
+    fact restore PASS "this check wrote nothing of its own, so nothing of its is left to undo — but the DAEMON IS PAUSED: the node carries the breaker's question ${paused_id:-breaker-tripped-<stamp>}, and the pause is an unanswered decision, which only a person closes. Lift it at your own terminal: read the id with 'fugaro orchestrator state --project $INSTALLATION', then close it with 'fugaro orchestrator patch -f <a document holding a decision_resolve op for that id>' — the typed confirmation takes the project's name. Answering it is also what re-arms the breaker"
     return 0
   fi
   fact restore PASS "this check wrote nothing of its own and the daemon is not paused: the node carries no unanswered breaker question, so nothing is left to undo"
