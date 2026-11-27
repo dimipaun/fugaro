@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,7 @@ func newImagePruneCmd() *cobra.Command {
 	var (
 		o      cloudOptions
 		dryRun bool
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use:   "prune",
@@ -53,15 +55,50 @@ func newImagePruneCmd() *cobra.Command {
 			"per-repository image of a repository that has moved onto a shared one, whose\n" +
 			"build is that old too.\n\n" +
 			"An image a job still points at is never removed, whatever its age, so a pinned\n" +
-			"image stays. --dry-run prints the list and removes nothing.\n\n" +
+			"image stays. --dry-run prints the list and removes nothing, and --json prints\n" +
+			"the same list as one document instead of one line an image.\n\n" +
 			"Nothing is asked: the eligibility is a rule, so read the list with --dry-run and\n" +
 			"then run it.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runImagePrune(cmd, o, dryRun) },
+		RunE: func(cmd *cobra.Command, _ []string) error { return runImagePrune(cmd, o, dryRun, asJSON) },
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print what would be removed and remove nothing")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o)
 	return cmd
+}
+
+// imagePruneOut is `fugaro image prune --json`: what the run removed — or,
+// under --dry-run, would remove — the retention the ages were measured
+// against, and the project the lock belongs to. Five fields are new here and
+// nothing already printed changes shape: the human lines are unchanged.
+type imagePruneOut struct {
+	Version       int              `json:"version"`
+	Project       string           `json:"project,omitempty"`
+	RetentionDays int              `json:"retention_days"`
+	DryRun        bool             `json:"dry_run"`
+	Count         int              `json:"count"`
+	Images        []prunedImageRow `json:"images"`
+}
+
+// prunedImageRow is one image of that document: the lock entry's key (empty
+// for a repository's own image, which no key names), the build record's object
+// key (empty for a lock entry), the image and the digest the removal names,
+// and the date the entry's age is measured from.
+type prunedImageRow struct {
+	Key    string    `json:"key,omitempty"`
+	Record string    `json:"record,omitempty"`
+	Image  string    `json:"image"`
+	Digest string    `json:"digest"`
+	Since  time.Time `json:"since"`
+}
+
+// writeImagePruneJSON prints the run's document, which is stdout's whole
+// content under --json: the human lines are what it replaces.
+func writeImagePruneJSON(w io.Writer, out imagePruneOut) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 // pruneRegistry is the registry prune deletes through. Production leaves it
@@ -74,14 +111,31 @@ type prunedImage struct {
 	// what is the row's own name: the image's key for a lock entry, or the
 	// record's object for a repository's own image.
 	what string
-	ref  string
+	// image and digest are the removal's reference, together: the lock entry's
+	// image at the digest it promoted, or a build record's.
+	image  string
+	digest string
 	// since is the date the row's age is measured from.
 	since time.Time
 	// record is the record's object key, empty for a lock entry.
 	record string
 }
 
-func runImagePrune(cmd *cobra.Command, o cloudOptions, dryRun bool) error {
+// ref is the image@digest both views name the removal by.
+func (r prunedImage) ref() string { return r.image + "@" + r.digest }
+
+// row is this image's line of the --json document: the lock key names a lock
+// entry, and a repository's own image is named by its build record's object
+// instead, so exactly one of the two is set.
+func (r prunedImage) row() prunedImageRow {
+	out := prunedImageRow{Record: r.record, Image: r.image, Digest: r.digest, Since: r.since}
+	if r.record == "" {
+		out.Key = r.what
+	}
+	return out
+}
+
+func runImagePrune(cmd *cobra.Command, o cloudOptions, dryRun, asJSON bool) error {
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o)
 	if err != nil {
@@ -102,8 +156,13 @@ func runImagePrune(cmd *cobra.Command, o cloudOptions, dryRun bool) error {
 	if err != nil {
 		return remote(err)
 	}
+	out := cmd.OutOrStdout()
+	doc := imagePruneOut{Version: 1, Project: env.lc.Name, RetentionDays: retention, DryRun: dryRun, Images: []prunedImageRow{}}
 	if lock == nil {
-		fmt.Fprintf(cmd.OutOrStdout(), "nothing to prune: this installation has no shared images (no lock in %s), and a repository that never migrated keeps its own image\n", imagecheck.LockKey)
+		if asJSON {
+			return writeImagePruneJSON(out, doc)
+		}
+		fmt.Fprintf(out, "nothing to prune: this installation has no shared images (no lock in %s), and a repository that never migrated keeps its own image\n", imagecheck.LockKey)
 		return nil
 	}
 	rows := prunableLockEntries(lock, now, retention)
@@ -112,19 +171,28 @@ func runImagePrune(cmd *cobra.Command, o cloudOptions, dryRun bool) error {
 		return remote(err)
 	}
 	rows = append(rows, own...)
-
-	out := cmd.OutOrStdout()
-	if len(rows) == 0 {
-		fmt.Fprintf(out, "nothing to prune: every image is either pointed at by a job or used in the last %d days (images.retention_days)\n", retention)
-		return nil
-	}
 	for _, r := range rows {
-		fmt.Fprintf(out, "%s  %s  %s\n", oneLine(r.what), oneLine(r.ref), r.since.UTC().Format("2006-01-02"))
+		doc.Images = append(doc.Images, r.row())
+	}
+	doc.Count = len(doc.Images)
+	if !asJSON {
+		if len(rows) == 0 {
+			fmt.Fprintf(out, "nothing to prune: every image is either pointed at by a job or used in the last %d days (images.retention_days)\n", retention)
+			return nil
+		}
+		for _, r := range rows {
+			fmt.Fprintf(out, "%s  %s  %s\n", oneLine(r.what), oneLine(r.ref()), r.since.UTC().Format("2006-01-02"))
+		}
+		if dryRun {
+			fmt.Fprintf(out, "%d %s to remove (images.retention_days is %d); nothing was removed\n",
+				len(rows), plural(len(rows), "image", "images"), retention)
+			return nil
+		}
 	}
 	if dryRun {
-		fmt.Fprintf(out, "%d %s to remove (images.retention_days is %d); nothing was removed\n",
-			len(rows), plural(len(rows), "image", "images"), retention)
-		return nil
+		// The document is the whole of what --json prints, and --dry-run
+		// removes nothing whether or not it is asked with it.
+		return writeImagePruneJSON(out, doc)
 	}
 	reg := pruneRegistry()
 	removed := 0
@@ -133,7 +201,7 @@ func runImagePrune(cmd *cobra.Command, o cloudOptions, dryRun bool) error {
 		// registry that no longer has the manifest is the state a crash
 		// between the two leaves, and the removal is finished rather than
 		// repeated.
-		if err := reg.DeleteManifest(ctx, r.ref); err != nil && !errors.Is(err, imagecheck.ErrManifestUnknown) {
+		if err := reg.DeleteManifest(ctx, r.ref()); err != nil && !errors.Is(err, imagecheck.ErrManifestUnknown) {
 			return remote(err)
 		}
 		if r.record != "" {
@@ -145,6 +213,9 @@ func runImagePrune(cmd *cobra.Command, o cloudOptions, dryRun bool) error {
 	}
 	if err := dropLockEntries(ctx, records, rows); err != nil {
 		return remote(err)
+	}
+	if asJSON {
+		return writeImagePruneJSON(out, doc)
 	}
 	fmt.Fprintf(out, "%d %s removed (images.retention_days is %d); a job on an image that is kept was never a candidate\n",
 		removed, plural(removed, "image", "images"), retention)
@@ -160,7 +231,7 @@ func prunableLockEntries(lock *imagecheck.Lock, now time.Time, retention int) []
 			continue
 		}
 		out = append(out, prunedImage{
-			what: key, ref: img.Image + "@" + img.Digest, since: img.LastUsedAt,
+			what: key, image: img.Image, digest: img.Digest, since: img.LastUsedAt,
 		})
 	}
 	return out
@@ -198,7 +269,7 @@ func prunableOwnImages(ctx context.Context, records *blobx.Bucket, lock *imagech
 			continue
 		}
 		out = append(out, prunedImage{
-			what: key, ref: rec.Image + "@" + rec.ImageDigest, since: rec.BuiltAt, record: key,
+			what: key, image: rec.Image, digest: rec.ImageDigest, since: rec.BuiltAt, record: key,
 		})
 	}
 	return out, nil

@@ -656,6 +656,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if c := doctorSharedImageCap(ctx, lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
+	o.Checks = append(o.Checks, doctorSharedImageDigests(ctx, lc)...)
 	// The login unit that runs the orchestrator daemon (O9): the one drift
 	// `fugaro update` re-renders in place, reported here like every other
 	// version drift so the person is told to update rather than handed a second
@@ -813,11 +814,11 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 // under the cap says nothing at all rather than a passing line.
 //
 // It reads the lock, which is the runs bucket's own object, and makes no
-// registry call: whether the registry still holds each entry's digest is §9's
-// other question, and nothing asks it here. The bucket is opened through the
-// seam doctor's other runs-bucket checks use, and skipped when the config's
-// endpoints are fakes, because the gs:// bucket a fake endpoint stands for is
-// not the one a test put the lock in (publishSharedWarn's rule).
+// registry call: whether the registry still holds each entry's digest is
+// doctorSharedImageDigests' question, one check below. The bucket is opened
+// through the seam doctor's other runs-bucket checks use, and skipped when the
+// config's endpoints are fakes, because the gs:// bucket a fake endpoint
+// stands for is not the one a test put the lock in (publishSharedWarn's rule).
 func doctorSharedImageCap(ctx context.Context, lc *localcfg.Config) *doctorCheck {
 	if lc == nil || fakeEndpointsOnGS(lc, lc.BucketURL()) {
 		return nil
@@ -834,6 +835,79 @@ func doctorSharedImageCap(ctx context.Context, lc *localcfg.Config) *doctorCheck
 	return &doctorCheck{ID: "shared-image-cap", OK: false, Severity: "warning",
 		Problem: fmt.Sprintf("this installation's %d shared images are over the cap of %d", len(lock.Images), imagecheck.ImageCap),
 		Fix:     "fugaro image ls lists them; fugaro image prune removes the ones no job uses"}
+}
+
+// doctorRegistry reads the lock's digests from the registry: the
+// installation's Artifact Registry, with the operator's own ADC. Production
+// leaves it as it is; tests point it at a fake.
+var doctorRegistry = func() *imagecheck.Registry { return &imagecheck.Registry{} }
+
+// doctorSharedImageDigests is §9's other question, the one the cap check does
+// not ask: is the digest the lock names still in the registry? A crash between
+// prune's two deletes leaves an entry the registry has lost (§9), and a lock
+// entry naming a manifest that is not there is a job that cannot start — so
+// each one is a warning naming the entry, whose one remedy is prune, which
+// finishes the removal the crash interrupted.
+//
+// The registry is read once per entry, and a read that did not answer is not
+// the same fact as a manifest that is gone: it is one line saying how many
+// entries could not be read and which, marked unread so it is never a
+// measurement (doctorClassOf) — the state is unknown, and an installation
+// doctor could not read is not an installation that is fine.
+//
+// It reads the lock through the seam doctorSharedImageCap reads it with, and
+// skips where that one skips. It is a network call, and --offline returns
+// before this point of runDoctor like it does for every other cloud read.
+func doctorSharedImageDigests(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+	if lc == nil || fakeEndpointsOnGS(lc, lc.BucketURL()) {
+		return nil
+	}
+	b, err := sharedBucketOpener(ctx, lc.BucketURL())
+	if err != nil {
+		return nil
+	}
+	defer b.Close()
+	lock, err := imagecheck.ReadLock(ctx, b)
+	if err != nil || lock == nil || len(lock.Images) == 0 {
+		return nil
+	}
+	reg := doctorRegistry()
+	var out []doctorCheck
+	var unread []string
+	for _, key := range slices.Sorted(maps.Keys(lock.Images)) {
+		img := lock.Images[key]
+		// An entry with no digest names no image: a refresh that never
+		// promoted one writes it (imagecheck's key-only entry), and there is
+		// no digest for the registry to have lost.
+		if img.Image == "" || img.Digest == "" {
+			continue
+		}
+		switch ok, err := reg.HasManifest(ctx, img.Image+"@"+img.Digest); {
+		case err != nil:
+			unread = append(unread, shortHash(key))
+		case !ok:
+			out = append(out, doctorCheck{ID: "shared-image-missing-" + shortHash(key), OK: false, Severity: "warning",
+				Problem: fmt.Sprintf("image lock entry %s is not in the registry: digest %s is gone, so a job on it cannot start", shortHash(key), shortDigest(img.Digest)),
+				Fix:     "fugaro image prune removes it once no job points at it and it is past images.retention_days; an image a job points at must be rebuilt"})
+		}
+	}
+	if len(unread) > 0 {
+		out = append(out, doctorCheck{ID: "shared-image-unread", Severity: "info", unread: true,
+			Problem: fmt.Sprintf("unchecked: cannot read %d shared image(s) in the registry, so whether each digest is still there is not known: %s", len(unread), strings.Join(unread, ", ")),
+			Fix:     "rerun fugaro doctor with registry access, which can read it"})
+	}
+	return out
+}
+
+// shortDigest is a digest as a line names it: the algorithm and the first 12
+// hex characters, the length §2.6 names the image after. A shorter digest
+// stands as it is, so a value this never wrote is not cut into a lie.
+func shortDigest(digest string) string {
+	algo, hex, ok := strings.Cut(digest, ":")
+	if !ok || len(hex) <= 12 {
+		return digest
+	}
+	return algo + ":" + hex[:12]
 }
 
 // doctorOfflineChecks is `fugaro doctor --offline`'s half of the update class:

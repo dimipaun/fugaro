@@ -154,17 +154,21 @@ func doctorCheckByID(checks []doctorCheck, id string) (doctorCheck, bool) {
 // TestDoctorWarnsOverImageCap: the image-count cap's warning is doctor's too
 // (design docs/forge-authorship-images/shared-images.md §8) — over the cap,
 // one warning naming the count, the cap and the two remedies; under it,
-// nothing at all. It reads the lock and no registry.
+// nothing at all. It reads the lock, and the registry a fake holding every
+// entry's digest, so this test's subject stays the cap.
 func TestDoctorWarnsOverImageCap(t *testing.T) {
 	r := newDoctorRig(t)
 	noProjectLayerBucket(t)
 	runs := rigSharedBucket(t, r)
 	images := map[string]imagecheck.LockedImage{}
+	var held []imagecheck.LockedImage
 	for i := range imagecheck.ImageCap + 1 {
 		key := fmt.Sprintf("%064x", i)
-		images[key] = lockedImage(key, time.Date(2026, 11, 2, 1, 5, 0, 0, time.UTC), nil)
+		img := lockedImage(key, time.Date(2026, 11, 2, 1, 5, 0, 0, time.UTC), nil)
+		images[key], held = img, append(held, img)
 	}
 	writeRigLock(t, runs, images)
+	rigDoctorRegistry(t, held...)
 
 	o := doctorJSON(t)
 	c, ok := doctorCheckByID(o.Checks, "shared-image-cap")
@@ -184,7 +188,9 @@ func TestDoctorWarnsOverImageCap(t *testing.T) {
 	}
 
 	key := strings.Repeat("a", 64)
-	writeRigLock(t, runs, map[string]imagecheck.LockedImage{key: lockedImage(key, time.Date(2026, 11, 2, 1, 5, 0, 0, time.UTC), nil)})
+	under := lockedImage(key, time.Date(2026, 11, 2, 1, 5, 0, 0, time.UTC), nil)
+	writeRigLock(t, runs, map[string]imagecheck.LockedImage{key: under})
+	rigDoctorRegistry(t, under)
 	if c, ok := doctorCheckByID(doctorJSON(t).Checks, "shared-image-cap"); ok {
 		t.Errorf("doctor warned under the cap: %+v", c)
 	}

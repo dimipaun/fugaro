@@ -4567,7 +4567,8 @@ per-repository image of a repository that has moved onto a shared one, whose
 build is that old too.
 
 An image a job still points at is never removed, whatever its age, so a pinned
-image stays. --dry-run prints the list and removes nothing.
+image stays. --dry-run prints the list and removes nothing, and --json prints
+the same list as one document instead of one line an image.
 
 Nothing is asked: the eligibility is a rule, so read the list with --dry-run and
 then run it.
@@ -4582,6 +4583,7 @@ Flags:
 | `--dry-run` | bool | `false` | no | print what would be removed and remove nothing |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for prune |
+| `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 

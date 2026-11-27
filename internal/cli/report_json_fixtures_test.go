@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/diagnoseagent"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/routing"
@@ -269,6 +270,22 @@ var jsonCases = map[string]jsonCase{
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
 			return []string{"image", "ls"}
+		},
+	},
+	"image prune": {
+		// The dry run is the one arm here a fixture can reach and change
+		// nothing: the real prune deletes the registry manifests and the lock
+		// entries, and its own tests drive that arm against the registry fake.
+		// The lock is seeded with an eligible entry, so the document lists an
+		// image rather than an empty list.
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			key := keyA
+			writeSharedLock(t, f, map[string]imagecheck.LockedImage{
+				key: lockedImage(key, time.Now().UTC().AddDate(0, 0, -40), nil),
+			})
+			return []string{"image", "prune", "--dry-run"}
 		},
 	},
 	"image status": {
