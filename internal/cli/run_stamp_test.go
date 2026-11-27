@@ -13,6 +13,11 @@ package cli
 // is read back from the bucket. The repeat case is the other half of D3441: a
 // repeated --run-id judged on the caller's request alone, never on which
 // release happened to run the repeat.
+//
+// Every run ID here is minted from the wall clock rather than written out:
+// these cases drive entry points the recency window reads (run --pr, and
+// through the shared fixture, run itself), and a literal ID would pass only
+// until its own date fell out of that window (TestNoFixedRunIDsInRecencyTests).
 
 import (
 	"strings"
@@ -58,7 +63,7 @@ func TestEveryLaunchStampsCLIVersion(t *testing.T) {
 	t.Run("run", func(t *testing.T) {
 		useVersion(t, stampRelease)
 		f := stampLaunchFixture(t)
-		const run = "20261008-100000-abcd"
+		run := wallRunID(t, -2*time.Hour, "a11a")
 		if _, _, err := execute(t, "run", "--run-id", run, "A task"); err != nil {
 			t.Fatalf("the launch was refused: %v", err)
 		}
@@ -83,7 +88,7 @@ func TestEveryLaunchStampsCLIVersion(t *testing.T) {
 		useVersion(t, stampRelease)
 		f := newProjectJobFixture(t)
 		projectJobCheckout(t)
-		const run = "20261110-110001-bbbb"
+		run := wallRunID(t, -time.Hour, "b22b")
 		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--recipe", "review-only", "--pr", "7"); err != nil {
 			t.Fatalf("the review was refused: %v", err)
 		}
@@ -95,7 +100,7 @@ func TestEveryLaunchStampsCLIVersion(t *testing.T) {
 	t.Run("orchestrator", func(t *testing.T) {
 		useVersion(t, stampRelease)
 		f := newLauncherFixture(t)
-		const run = "20261127-050000-abcd"
+		run := wallRunID(t, -30*time.Minute, "c33c")
 		spec := orchestrator.Spec{ItemID: "vs2", Title: "the launcher stamps the task", Repo: "acme/app",
 			Recipe: "standard", RigorTier: "medium", Brief: "Stamp the task."}
 		if _, err := f.launcher(t).Launch(t.Context(), spec, run); err != nil {
@@ -135,7 +140,7 @@ func TestDevBuildDoesNotStamp(t *testing.T) {
 		t.Fatalf("this build's version is %q, which releaseVersion reads as a release: the case below would stamp it", Version)
 	}
 	f := stampLaunchFixture(t)
-	const run = "20261008-100000-abcd"
+	run := wallRunID(t, -2*time.Hour, "a11b")
 	if _, _, err := execute(t, "run", "--run-id", run, "A task"); err != nil {
 		t.Fatalf("the launch was refused: %v", err)
 	}
@@ -164,7 +169,7 @@ func TestRepeatIgnoresStamp(t *testing.T) {
 	ctx := t.Context()
 	b := memblob.OpenBucket(nil)
 	defer b.Close()
-	s := runstore.Open(b, appSlug, "20261127-120000-abcd")
+	s := runstore.Open(b, appSlug, wallRunID(t, -time.Hour, "d44d"))
 	// A launch's spec as its own caller builds it: no stamp of its own, and the
 	// one createTask adds.
 	stored := func() *task.Spec {
