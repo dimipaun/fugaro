@@ -117,6 +117,18 @@ test('the door exports the port’s factory and the vocabulary, and no transport
   assert.equal('refreshSession' in session, false);
 });
 
+test('the door’s vocabulary is one name per code, with `bad-endpoint` spelled once', () => {
+  // `refresh.js` and the port both name `bad-endpoint`, and the door's spread
+  // lets the later set win: a respelling on either side would hand a caller a
+  // code the other set does not carry, so the overlap is pinned rather than
+  // assumed away.
+  assert.equal(REFRESH_CODES.BAD_ENDPOINT, PORT_CODES.BAD_ENDPOINT);
+  const codes = Object.values(session.SESSION_CODES);
+  const names = Object.keys(session.SESSION_CODES);
+  assert.equal(new Set(codes).size, codes.length, 'two names share one code');
+  assert.equal(names.length, codes.length, 'a name has no code');
+});
+
 test('the session it builds is one C2’s port accepts', async () => {
   const { built } = await build();
   assert.equal(built.ok, true);
