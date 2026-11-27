@@ -15,7 +15,7 @@ import { MemorySecureStore } from '../accounts/secure-store.js';
 
 import { DeviceKeyStore } from './devicekey.js';
 import * as session from './index.js';
-import { ProjectSessionStore } from './refresh.js';
+import { REFRESH_CODES, REFRESH_SKEW_MS, ProjectSessionStore } from './refresh.js';
 
 const ENDPOINT = 'https://mobile-example.a.run.app';
 const PROJECT = 'fugaro-example';
@@ -62,8 +62,28 @@ function fetchOf(refresh = { status: 200, body: refreshAnswer() }) {
   };
 }
 
-async function build({ fetch = fetchOf(), now = () => 1_000_000, policy = POLICY } = {}) {
-  const port = new MemorySecureStore();
+/** A fetch that counts rotations and answers a token numbered by them. */
+function countingFetch() {
+  const state = { refreshes: 0 };
+  const fetch = async (url) => {
+    if (url.includes('/mobile/v1/refresh')) {
+      state.refreshes += 1;
+      return { status: 200, text: async () => refreshAnswer({ custom_token: `not-a-credential-test-custom-token-${state.refreshes}` }) };
+    }
+    return {
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          idToken: `not-a-credential-test-id-token-${state.refreshes}`,
+          refreshToken: 'not-a-credential-test-firebase-refresh',
+          expiresIn: '3600',
+        }),
+    };
+  };
+  return { fetch, state };
+}
+
+async function build({ fetch = fetchOf(), now = () => 1_000_000, policy = POLICY, port = new MemorySecureStore() } = {}) {
   const store = new ProjectSessionStore(port);
   await store.put(PROJECT, TOKEN);
   const deviceKey = new DeviceKeyStore({ port, ed25519 });
@@ -109,21 +129,53 @@ test('the session it builds is one C2’s port accepts', async () => {
 });
 
 test('idToken() refreshes through the project and stores the successor token', async () => {
-  const { built, store } = await build();
+  const { fetch, state } = countingFetch();
+  const { built, store } = await build({ fetch });
   const token = await built.session.idToken();
-  assert.equal(token, 'not-a-credential-test-id-token');
+  assert.equal(token, 'not-a-credential-test-id-token-1');
   // The presented token is dead; the successor is what the phone holds now.
   assert.equal((await store.get(PROJECT)).token, 'not-a-credential-test-next-refresh-token');
-  // A second call inside the hour does not rotate again.
+  // A second call inside the hour does not rotate again: the held token is
+  // handed back, and the fetch would have numbered a second one.
   assert.equal(await built.session.idToken(), token);
+  assert.equal(state.refreshes, 1);
 });
 
 test('a held token near its hour is refreshed rather than trusted', async () => {
   let now = 1_000_000;
-  const { built } = await build({ now: () => now });
-  await built.session.idToken();
-  now += 3600 * 1000 - 1_000; // inside the skew before the hour is up
-  assert.equal(await built.session.idToken(), 'not-a-credential-test-id-token');
+  const { fetch, state } = countingFetch();
+  const { built } = await build({ fetch, now: () => now });
+  assert.equal(await built.session.idToken(), 'not-a-credential-test-id-token-1');
+  // Inside the skew the held token is still trusted ...
+  now += 3600 * 1000 - REFRESH_SKEW_MS - 1;
+  assert.equal(await built.session.idToken(), 'not-a-credential-test-id-token-1');
+  assert.equal(state.refreshes, 1);
+  // ... and one millisecond later it is not.
+  now += 1;
+  assert.equal(await built.session.idToken(), 'not-a-credential-test-id-token-2');
+  assert.equal(state.refreshes, 2);
+});
+
+test('a successor that cannot be written is a refusal, and no token is cached', async () => {
+  const port = new MemorySecureStore();
+  const write = port.setItem.bind(port);
+  const locked = { on: false };
+  port.setItem = async (key, value) => {
+    if (locked.on) throw new Error('the keychain is locked');
+    return write(key, value);
+  };
+  const { fetch, state } = countingFetch();
+  const { built, store } = await build({ fetch, port });
+  locked.on = true;
+  // A rotation the phone cannot write is not one it may report as a success:
+  // the caller must see the failure rather than a token that is not on disk.
+  await assert.rejects(() => built.session.idToken(), (error) => error.code === REFRESH_CODES.STORE_FAILED);
+  // Nothing was written and nothing is cached, so the next call rotates again
+  // rather than handing back the token it never stored.
+  assert.equal((await store.get(PROJECT)).token, TOKEN);
+  locked.on = false;
+  assert.equal(await built.session.idToken(), 'not-a-credential-test-id-token-2');
+  assert.equal(state.refreshes, 2);
 });
 
 test('signMessage() signs with the device key and refuses bytes it is not given', async () => {
