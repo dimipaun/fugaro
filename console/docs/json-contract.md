@@ -4344,7 +4344,12 @@ a stage that reports lines says their summary as its `detail`) —
 carrying the step's own line to run, `{"type":"notice",…}` is one line the run
 reported outside its stages (a step after the stage loop, or an admit pattern the
 CLI could not expand into repository names: `step` is the step's own name, and
-`repo` and `state` are empty for a notice about no repository), and the last line
+`repo` and `state` are empty for a notice about no repository),
+`{"type":"heartbeat",…}` is the feed's own liveness — one a minute for a step
+still running — which the console accepts and draws nothing for, and which this
+schema does not yet name (CO2c is the CLI task that writes one): a console older
+than the release that carries the kind refuses the line, so a CLI that writes one
+needs that console updated (D3453), and the last line
 is `{"type":"done",
 "exit_code":N}` or `{"type":"error",…}`. **A run that ends with steps left for
 you ends `done` with exit code 1** — it did not fail, and the handed-back steps

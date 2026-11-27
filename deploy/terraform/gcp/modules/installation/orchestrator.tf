@@ -229,6 +229,38 @@ resource "google_project_iam_member" "orchestrator_launcher" {
   depends_on = [google_service_account.orchestrator, google_project_iam_custom_role.launcher]
 }
 
+# The account's read of this installation's database (P5.1c's finding A). The
+# tick reads orchestrator/<id>/{state,lease} out of the Realtime Database as
+# this revision's own service account, and that read is an IAM one: the rules
+# fence a client's write and a service-account bearer never passes them, so
+# without a grant on the database the account reaches nothing at all and every
+# tick answers 503 with the store's own words ("rtdb: GET
+# /orchestrator/<id>/state: 401: Unauthorized request.").
+#
+# The role is state_read.tf's, and it is the ONE role this tree declares for
+# reading the orchestrator's node — the front door and the voice hop read
+# through it, and it holds firebasedatabase.instances.get and nothing else, so
+# the account reads the whole instance and writes none of it. The binding names
+# the project the role is declared in through state_read.tf's own local, the
+# same expression the role and the other two bindings carry, so the grant can
+# never name a project the role is not in. What the account reaches with the
+# read is nothing new: it already holds iam.serviceAccounts.signJwt on the
+# budget signer, which is "may be anyone" (section 4.5 E4), and what narrows
+# this read to the node the tick needs is internal/orchestrator's own paths.
+#
+# The member is written out like every other binding in this file (the header
+# says why), and this row lives here rather than beside the role in
+# state_read.tf because section 4.3's table is this file's alone.
+resource "google_project_iam_member" "orchestrator_state_read" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project = local.state_read_firebase_project
+  role    = "projects/${local.state_read_firebase_project}/roles/fugaroStateRead"
+  member  = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+
+  depends_on = [google_service_account.orchestrator, google_project_iam_custom_role.state_read]
+}
+
 # The table's `run.jobs.run` and `run.jobs.runWithOverrides` row is the ONE row
 # this file cannot carry, and it is one row of the table rather than a gap in
 # it: the account must be able to start the installation's jobs, and the jobs

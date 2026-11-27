@@ -215,9 +215,7 @@ func tightenKnobs(cfg *config.Config, k previewKnobs) previewKnobs {
 	defaults := rigor.DefaultRounds(k.mode)
 	k.first = config.TightenRounds(cfg, "agent.first_line_rounds", k.first, defaults.Inner)
 	k.rounds = config.TightenRounds(cfg, "agent.review_rounds", k.rounds, defaults.Senior)
-	if k.maxStageUSD > config.DefaultMaxBudgetUSD && cfg.ProjectSilent("agent.max_budget_usd") {
-		k.maxStageUSD = config.DefaultMaxBudgetUSD
-	}
+	k.maxStageUSD = config.TightenUSD(cfg, k.maxStageUSD)
 	return k
 }
 
@@ -343,6 +341,9 @@ func previewComputeCeilings(cfg *config.Config, p backend.Prices, region string)
 		return out
 	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		// w.Resources is the profile's, not a repository's: a repository's
+		// workflows.*.resources is read and ignored (D3421), so the figure is
+		// the sizing a run of this workflow really gets.
 		w := cfg.Workflows[name]
 		c := previewCompute{Workflow: name, VCPU: w.Resources.CPU, Memory: w.Resources.Memory,
 			TotalS: w.Timeouts.Total.Duration.Seconds()}

@@ -227,9 +227,16 @@ func TestConfigExample(t *testing.T) {
 	}
 }
 
+// TestValidateReportsCloudRunLimits: the sizing a run is held to is the
+// profile's — a repository's workflows.*.resources is read and ignored (D3421)
+// — and Cloud Run's own sizes are checked on it, at the workflow that starts
+// from the profile stating them.
 func TestValidateReportsCloudRunLimits(t *testing.T) {
-	cfg := strings.Replace(cliMinimalYAML, "{ commands:", "{ resources: { cpu: 3, memory: 4Gi }, commands:", 1)
-	out, _, err := execute(t, "validate", "--json", writeConfig(t, cfg))
+	attachLayer(t, "aurora", strings.Replace(testProjectLayer,
+		"  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n",
+		"  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n    resources: { cpu: 3, memory: 4Gi }\n", 1))
+	cfg := strings.Replace(cliMinimalYAML, "  app: { commands:", "  app: { profile: svc, commands:", 1)
+	out, _, err := execute(t, "validate", "--json", writeRawConfig(t, anchoredText(cfg)))
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d (%v), output %s", ExitCode(err), err, out)
 	}

@@ -547,6 +547,21 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 			safetext.Field(who), safetext.Field(onDisk.Name), safetext.Field(who))
 	}
 	r.set(&next, list)
+	if !add {
+		// The IAM half first, and before the file is written (DG5, D3454): the
+		// member loses the cloud access the lists grant them now rather than at
+		// the next fugaro update, and the removal is recorded in the roster for
+		// the grants on other projects this command cannot reach. A re-run after
+		// a failure between the two halves converges — the revoke is a removal,
+		// so the second run finds nothing left to take and goes on to write.
+		revoked, err := memberRevokeAtOnce(ctx, lc, nil, who)
+		if err != nil {
+			return err
+		}
+		if revoked > 0 {
+			fmt.Fprintf(w, "%s's IAM grants on %s were revoked with this change\n", safetext.Field(who), safetext.Field(lc.Name))
+		}
+	}
 	if err := userSave(w, sel.Path, old, &next); err != nil {
 		return err
 	}

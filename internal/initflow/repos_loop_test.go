@@ -216,9 +216,10 @@ func TestLoopKeepsItsOwnDetailOnItsOwnResults(t *testing.T) {
 			t.Errorf("the waiting stage came back with %+v, want no lines: it did not run, so the lines it reported are not this run's account of it", got.Repos)
 		}
 		// The account's closing line names what the steps wait for, read off
-		// the detail above (waitTarget, flushWaits): a count in its place is
-		// the line a summary dropped there would print.
-		if !strings.Contains(b.String(), "it needs installation)") {
+		// the detail above (waitTarget, flushWaits) and said in plain words
+		// (DisplayName, D3435): a count in its place is the line a summary
+		// dropped there would print.
+		if !strings.Contains(b.String(), "it needs "+DisplayName("installation")+")") {
 			t.Errorf("the account does not name what the steps wait for:\n%s", b.String())
 		}
 		if strings.Contains(b.String(), "repos:") {

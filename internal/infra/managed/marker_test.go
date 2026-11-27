@@ -2872,7 +2872,7 @@ var runAccountGrants = setOf(
 	// var.launchers (the design's eleventh never-rule: that list is what the
 	// Firebase root binds roles/firebasedatabase.viewer with, an IAM read that
 	// bypasses the Realtime Database rules). Its reach is therefore here one
-	// grant at a time, and none of the seven reaches fugaro/managed.json:
+	// grant at a time, and none of the nine reaches fugaro/managed.json:
 	//
 	//   - the launcher project role (fugaroLauncher) is metadata: run.jobs.get,
 	//     run.jobs.list, run.executions.get/list/cancel, run.operations.get and
@@ -2929,6 +2929,17 @@ var runAccountGrants = setOf(
 	//     orchestrator block and the credentials service (orchestrator.tf's
 	//     orchestrator_credentials_on) — so an installation with either off
 	//     plans exactly what it planned before.
+	//   - and the database read P5.1c's finding A adds (the tick that wakes the
+	//     service reads this installation's node and, with no grant, took a 401):
+	//     the tree's one-permission custom role `fugaroStateRead`, whose whole
+	//     permission list is firebasedatabase.instances.get. Realtime Database
+	//     IAM has no path-level scope and a service-account bearer bypasses the
+	//     rules, so the read is the whole database — and the only write this API
+	//     has is instances.update, which the role withholds by absence. It
+	//     carries no storage permission, nothing that grants a role, no
+	//     iam.serviceAccounts.actAs and no token minting, and its target is the
+	//     installation's Firebase database rather than the runs bucket, the
+	//     project or a job.
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroLauncher" | project=var.project | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=run.executions.cancel,run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get,secretmanager.secrets.list,secretmanager.versions.list`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
@@ -2976,6 +2987,28 @@ var runAccountGrants = setOf(
 	// sixth, and it adds a signature the phones verify to what it could do,
 	// nothing it could reach.
 	`google_kms_crypto_key_iam_member | "projects/${var.project}/roles/fugaroMailboxSigner" | crypto_key_id=local.mailbox_crypto_key_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=cloudkms.cryptoKeyVersions.useToSign`,
+	// Reviewed for P5.1c's finding A (the resident tick's 401 reading its own
+	// node): the account's ONE grant on the Realtime Database, and the whole of
+	// what it reaches through it. The role is the tree's one-permission custom
+	// role `fugaroStateRead` (state_read.tf, the same role the MCP front door and
+	// the voice hop hold), whose entire permission list is
+	// firebasedatabase.instances.get — the whole-instance read a
+	// service-account bearer has, since Realtime Database IAM has no path-level
+	// scope and the rules are bypassed by it. That is why the tick reached its
+	// node with nothing before: no grant, no read.
+	//
+	// Why none of it is a write path to the marker: instances.get is a read of
+	// the whole database and carries no write of any kind — the only write this
+	// API has is instances.update, which this role deliberately does not hold
+	// (the design withholds the write by the role's absence, D2021) — and no
+	// storage permission, nothing that grants a role, no
+	// iam.serviceAccounts.actAs and no token minting. The target is the
+	// installation's own Firebase database and not the runs bucket, whose root
+	// is where fugaro/managed.json lives, nor the project nor a job. The grant
+	// is made only where the installation carries the orchestrator block
+	// (local.orchestrator_on), so an installation without one plans exactly what
+	// it planned before.
+	`google_project_iam_member | "projects/${local.state_read_firebase_project}/roles/fugaroStateRead" | project=local.state_read_firebase_project | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=firebasedatabase.instances.get`,
 )
 
 // setOf is a set of strings.

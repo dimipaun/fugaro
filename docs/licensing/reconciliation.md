@@ -476,7 +476,8 @@ Console"), [`mobile/LICENSE.md`](../../mobile/LICENSE.md) ("Fugaro Mobile") and
   Nothing under `ee/` has ever been released.
 - **Applied before counsel has read it.** Each file's first line is `DRAFT FOR COUNSEL REVIEW: not
   yet reviewed by counsel`, and the owner removes it when counsel has read the text. The
-  Subscription Terms do not exist yet: each licence names them as `<URL TO BE PUBLISHED>`, and the
+  Subscription Terms did not then exist: each licence named them as `<URL TO BE PUBLISHED>` (counsel
+  approved the text on 2026-10-28 and the page has been published since 2026-11-11), and the
   owner publishes them or replaces that sentence before a component is distributed under it.
 
 **What it changes here.** **D302 is reversed for the console and the mobile app**: they no longer
@@ -544,8 +545,9 @@ wording is what it was and `ee/LICENSE` and the `LICENSES/` copy stay byte for b
 [implementation-plan.md](implementation-plan.md#l02--install-the-hosted-cla-app-owner-run).
 **Because the URL names a revision, editing the Gist later does not change what the licence files
 say**: a new revision needs a new URL written into the licence files, which is a change counsel
-should see. The Subscription Terms page is still not published (L4.3), CLA Assistant is still to be
-installed (the CONTRIBUTING gate), and `docs/ee-reorg/` is untouched: it is on another branch.
+should see. The Subscription Terms page was then not published (L4.3; published since 2026-11-11),
+CLA Assistant is still to be installed (the CONTRIBUTING gate), and `docs/ee-reorg/` is untouched:
+it is on another branch.
 
 ## Amendment 2026-10-28 (the CLA Assistant install)
 
@@ -705,7 +707,7 @@ organisation; no covered-versions date, O4; the free seat per legal person, T15)
 the Customer cannot turn off (section 7.3); publicity without consent (section 30.1); the
 coordinator named as Core in section 7.1 (D531); and whether the licence files need a matching
 revision now that the Terms no longer cite the licence's clauses. The licence files are not edited.
-(amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate must be released before the Terms go public).
+(amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate had to be released before the Terms went public).
 
 ## UNVERIFIED
 

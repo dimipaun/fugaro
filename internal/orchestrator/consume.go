@@ -143,9 +143,10 @@ const consumerStopRequest = "nothing was stopped: the resident orchestrator read
 // nodes whose `.read` is `MAILBOX`-only are all unreadable to the `mc` ID token
 // the writes below use, and a pass that read with it would read nothing. What
 // makes the read possible is an identity the rules do not see: section 4.3's
-// table owes the `orch` account that permission and does not carry the row yet
-// (the P5.1c review's finding A), which is one of the three facts the service's
-// own header names as this release's reason to wire no consumer.
+// table carries the row now (orchestrator.tf binds the one-permission read role
+// to the `orch` account, P5.1c's finding A), so the read is granted; the
+// service still wires no consumer, and the facts it names as the reason are the
+// pairing key container and the Firebase web API key, no longer this.
 //
 // It is deliberately NOT the `mc` credential and not a store that can write:
 // this half reads, and a wiring that could write through what it reads with is

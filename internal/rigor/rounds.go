@@ -8,11 +8,14 @@ package rigor
 // They are **defaults, not caps**. The number a run's review step actually
 // runs comes from the precedence first — the task's Overrides.ReviewRounds,
 // else the recipe's max_rounds, else the repository's agent.review_rounds,
-// else the project layer's — and the level's row supplies the number only where
-// none of the four set one, up or down. A task override of one round is one
-// round at Critical too, and a repository's `agent.review_rounds: 8` is eight
-// at POC; the recipe's own bounds (recipe.MaxFirstLineRounds,
-// recipe.MaxReviewRounds) are the only ceiling either number is held under.
+// else the project layer's — and the level's row supplies the number where none
+// of the four set one. A repository's number the project layer says nothing
+// about is judged against the row (R20, RT2): one that tightens it — more
+// rounds — stands, and a looser one reads as unwritten, so the row supplies the
+// number there too. A task override of one round is one round at Critical too,
+// and a repository's `agent.review_rounds: 8` is eight at POC; the recipe's own
+// bounds (recipe.MaxFirstLineRounds, recipe.MaxReviewRounds) are the only
+// ceiling either number is held under.
 //
 // That is why the names say "default" and not "ceiling": the table this
 // replaced (roundCeilings, whose rows only ever lowered the precedence) meant
@@ -69,12 +72,12 @@ func DefaultRounds(m Rigor) Rounds {
 // the senior one on the same budget, so the number a level starts from is the
 // one it already spends on the review it follows. The step's own max_rounds and
 // the layer key the senior loop reads (agent.review_rounds, and the project
-// layer's default for it) still set another number, up or down, as they do
-// there: this is a default and not a ceiling, and the recipe's bounds are what
-// holds it. Level 3's own number sits above it in one place — the step's
-// max_rounds, and agent.adversarial_rounds (L1.3) beside it — so this is the
-// row internal/runner's planOf and internal/cli's budget preview fall back to
-// only where neither of the two is set.
+// layer's default for it) still set another number, as they do there: this is a
+// default and not a ceiling, and the recipe's bounds are what holds it. Level
+// 3's own number sits above it in one place — the step's max_rounds, and
+// agent.adversarial_rounds (L1.3) beside it — so this is the row
+// internal/runner's planOf and internal/cli's budget preview fall back to only
+// where neither of the two is set.
 //
 // A level the table cannot place takes DefaultRounds' answer for it, which is
 // the strictest row — an unplaced level raises nothing and drops nothing.

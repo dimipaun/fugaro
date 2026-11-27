@@ -1840,7 +1840,7 @@ func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v:\n%s", err, out)
 			}
-			if l := stepLineOf(reportLines(out), "firebase"); !strings.HasPrefix(l, markDone+" firebase no budget database was created") {
+			if l := stepLineOf(reportLines(out), initflow.Firebase); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Firebase)+" no budget database was created") {
 				t.Errorf("with %s the Firebase stage is %q, want the no-flag arm's one line: the default names which project a backend would use, it does not ask for one\n%s", name, l, out)
 			}
 			for _, c := range r.calls(t) {
@@ -2005,10 +2005,10 @@ func TestUpdateDeploysStaleRulesWithoutFirebaseProjectFlag(t *testing.T) {
 		t.Fatalf("fugaro update did not deploy stale rules: %v\n%s%s", err, out, errOut)
 	}
 	account := reportLines(out)
-	if l := stepLineOf(account, initflow.Firebase); !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) {
+	if l := stepLineOf(account, initflow.Firebase); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Firebase)) {
 		t.Errorf("the firebase stage is %q: no --firebase-project was given, so the rules stage is what deploys the rules", l)
 	}
-	if l := stepLineOf(account, initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+	if l := stepLineOf(account, initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want a tick:\n%s", l, out)
 	}
 	gen, err := rules.Generate()
@@ -2076,7 +2076,7 @@ func TestUpdateNeverDowngradesNewerRules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a newer deployed generation stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want skipped: nothing may be deployed over a newer generation:\n%s", l, out)
 	}
 	if db.RulePuts() != 0 {
@@ -2113,7 +2113,7 @@ func TestUpdateLeavesCurrentRulesAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want a tick:\n%s", l, out)
 	}
 	if db.RulePuts() != 0 {
@@ -2150,7 +2150,7 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
 	if detail := out + errOut + newestLog(t, "update"); !strings.Contains(detail, "budget.firebase_project") {
@@ -2208,7 +2208,7 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	// A managed project's gate answers the ordinary steps for a session nobody is
 	// at (#4170), so the rules deploy goes ahead and the run stops at the next
 	// step the gate does not judge: the published node's rewrite.
-	if !strings.Contains(out, "to resume at "+initflow.Policy+".") {
+	if !strings.Contains(out, "to resume at "+initflow.DisplayName(initflow.Policy)+".") {
 		t.Errorf("the run did not stop at the policy stage's own confirmation:\n%s", out)
 	}
 	if db.RulePuts() != puts+1 {
@@ -2246,7 +2246,7 @@ func TestUpdateRulesStageReportsADatabaseThatIsNotOurs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a database that is not ours stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
 	if detail := out + errOut + newestLog(t, "update"); !strings.Contains(detail, "no Fugaro mark") {
@@ -2352,7 +2352,7 @@ func TestUpdateRulesSkipsUnadoptedSeparateFirebaseProject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a Firebase project the installation never adopted stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
 	detail := out + errOut + newestLog(t, "update")
@@ -2389,7 +2389,7 @@ func TestUpdateRulesNeverAdoptedSeparateProjectDoesNotMark(t *testing.T) {
 	if err != nil {
 		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 	}
 	detail := out + errOut + newestLog(t, "update")
@@ -2467,7 +2467,7 @@ func TestUpdatePolicyMigrationSkipsUnadoptedSeparateFirebaseProject(t *testing.T
 	if err != nil {
 		t.Fatalf("another installation's database stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+	if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Policy)) {
 		t.Errorf("the policy stage is %q, want skipped:\n%s", l, out)
 	}
 	detail := out + errOut + newestLog(t, "update")
@@ -2508,7 +2508,7 @@ func TestUpdatePolicyMigrationNamesTheWayOutBeforeItReadsTheNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a config naming another project stopped the whole update: %v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+	if l := stepLineOf(reportLines(out), initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Policy)) {
 		t.Errorf("the policy stage is %q, want skipped:\n%s", l, out)
 	}
 	detail := out + errOut + newestLog(t, "update")
@@ -2655,10 +2655,10 @@ func TestUpdatePolicyStageSkipsTheDatabaseTheRulesStageSkipped(t *testing.T) {
 				t.Fatalf("a database the pair does not prove is ours stopped the whole update: %v\n%s%s", err, out, errOut)
 			}
 			account := reportLines(out)
-			if l := stepLineOf(account, initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.Rules) {
+			if l := stepLineOf(account, initflow.Rules); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Rules)) {
 				t.Errorf("the rules stage is %q, want skipped:\n%s", l, out)
 			}
-			if l := stepLineOf(account, initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.Policy) {
+			if l := stepLineOf(account, initflow.Policy); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Policy)) {
 				t.Errorf("the policy stage is %q, want skipped: the rules stage skipped this database, and the migration behind it wrote there anyway\n%s", l, out)
 			}
 			detail := out + errOut + newestLog(t, "update")
@@ -2811,7 +2811,7 @@ func TestPreviousRulesGenerationConvergesOnUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update did not reach the build lease family, so this installation needs a second command: %v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q, want a tick:\n%s", l, out)
 	}
 	gen, err := rules.Generate()
@@ -2976,7 +2976,7 @@ func TestUpdateTwiceLeavesTheRulesAndMarkerAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.Rules) {
+	if l := stepLineOf(reportLines(out), initflow.Rules); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Rules)) {
 		t.Errorf("the rules stage is %q on the second update, want a tick:\n%s", l, out)
 	}
 	if db.RulePuts() != puts {

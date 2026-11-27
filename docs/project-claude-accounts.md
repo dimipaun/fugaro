@@ -650,8 +650,9 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
   0.8.x, where a clone launch is refused — so on the released CLI no clone run reaches a shared job
   at all. What a shared job still does not carry is the table in
   [project-layer.md §"Which runs work on a shared job today"](project-layer.md#which-runs-work-on-a-shared-job-today):
-  no `FUGARO_CHECKOUT` (a full clone rather than a blobless one, and no `mise install`), no local
-  compute-price override, the default budget grace, and no repository-level
+  no `FUGARO_CHECKOUT` (which no run reads any more: whether a run clones is the absence of a usable
+  baked checkout, D3440), no local compute-price override, the default budget grace, and no
+  repository-level
   `workflows.<n>.secrets` — only the profile's project-wide ones. The model variables are no longer
   among them: the routes, the price overrides and the allow-list a run on a shared job goes by are
   the published policy's (`fugaro project policy publish` writes them, and `internal/runner`'s

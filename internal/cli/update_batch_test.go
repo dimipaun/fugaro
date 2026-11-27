@@ -131,7 +131,7 @@ func TestUpdateAppliesTheComputeRootWhereTheInstallationOptedIn(t *testing.T) {
 	if init := calls[1]; !slicesContains(init, "-backend-config=prefix="+infra.StatePrefixCompute) {
 		t.Errorf("the update did not converge the compute root's own state: %q", init)
 	}
-	if !strings.Contains(out, "✔ compute applied:") {
+	if !strings.Contains(out, markDone+" "+initflow.DisplayName(initflow.Compute)+" applied:") {
 		t.Errorf("the transcript does not show the compute root applied:\n%s", out)
 	}
 	// No rebuild is started for a grant: R12's other half, pinned here as well
@@ -241,7 +241,7 @@ func TestANonOperatorsUpdateSkipsTheStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a non-operator's update did not finish: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "– compute skipped: only an operator applies the compute root") {
+	if !strings.Contains(out, markSkipped+" "+initflow.DisplayName(initflow.Compute)+" skipped: only an operator applies the compute root") {
 		t.Errorf("the non-operator's update does not say why the compute root was left alone:\n%s", out)
 	}
 	if calls := subcommands(computeCalls(t, r)); len(calls) != 0 {

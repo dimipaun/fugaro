@@ -216,6 +216,10 @@ func (m *wu18Members) Offboard(context.Context, workspace.MemberTarget, string) 
 	return m.elsewhere("Offboard")
 }
 
+func (m *wu18Members) RecordRemoval(context.Context, workspace.MemberTarget, string) error {
+	return m.elsewhere("RecordRemoval")
+}
+
 // The member's own config is the one this machine holds for aurora, joined to
 // workspace-alpha: the pin names the workspace, so the command has everything
 // the member owner's own act needs and nothing from the workspace's side.

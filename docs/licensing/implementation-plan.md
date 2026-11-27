@@ -579,6 +579,8 @@ the v2 `fgk_` keys, and the note's "no revocation" limit is overturned (D2130, D
   and on the draft page; it still carries counsel's draft banner and bracketed party details, so
   the step is not done; the two figures first held back (the late-payment interest rate and the
   Community liability cap) went in on the owner's ruling of 2026-10-29.
+- **Status 2026-11-11:** done. The owner filled the party details on 2026-10-30, the page carries
+  no draft banner, and the text is live at https://fugaro.dev/legal/subscription-terms.
 
 #### L4.5 — Amend the Subscription Terms to the owner's answers (new 2026-10-27, done)
 - **Files:** `docs/licensing/subscription-terms.md` (the answers applied, prices kept as bracketed
@@ -591,7 +593,7 @@ the v2 `fgk_` keys, and the note's "no revocation" limit is overturned (D2130, D
 - **Commit:** `docs(licensing): the Subscription Terms, amended to the owner's answers (for counsel)`
 
 #### L4.4 — Fill the Subscription Terms URL in the licence files
-- **Status 2026-10-27:** the URL (`https://fugaro.dev/legal/subscription-terms`, the owner's choice) is filled in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the `LICENSES/` copy, and the docs test pins it; the page itself (L4.3) is still to be published after counsel approves the text. **Status 2026-10-29:** the CLA's placeholder is gone too -- L0.2's last item, done in a separate change: the four licence files and the docs test's pin name the Gist's revision-pinned raw URL, and the Subscription Terms page is the one document still unpublished.
+- **Status 2026-10-27:** the URL (`https://fugaro.dev/legal/subscription-terms`, the owner's choice) is filled in `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` and the `LICENSES/` copy, and the docs test pins it; the page itself (L4.3) is still to be published after counsel approves the text. **Status 2026-10-29:** the CLA's placeholder is gone too -- L0.2's last item, done in a separate change: the four licence files and the docs test's pin name the Gist's revision-pinned raw URL, and the Subscription Terms page is the one document still unpublished. **Status 2026-11-11:** the page is published, `LICENSING.md`, `ee/README.md` and `README.md` name it as published, and the licensing folder's own sentences that said it was not are corrected.
 - **Files:** `ee/LICENSE`, `console/LICENSE.md`, `mobile/LICENSE.md` (`[URL TO BE PUBLISHED]`
   becomes L4.3's URL, the only change), `internal/cli/docs_ee_reserved_test.go` (its pinned
   placeholder follows), `LICENSING.md` and `ee/README.md` (they stop saying the Subscription Terms

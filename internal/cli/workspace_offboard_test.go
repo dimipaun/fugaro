@@ -164,6 +164,10 @@ func (f *wu9FakeMemberOps) Offboard(context.Context, workspace.MemberTarget, str
 	return nil
 }
 
+func (f *wu9FakeMemberOps) RecordRemoval(context.Context, workspace.MemberTarget, string) error {
+	return nil
+}
+
 // wu9SweepCall is one Sweep the core made.
 type wu9SweepCall struct {
 	m       workspace.MemberTarget

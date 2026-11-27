@@ -51,6 +51,10 @@ var orchestratorResources = []struct{ typ, name string }{
 	{"google_secret_manager_secret", "pairing_key"},
 	{"google_secret_manager_secret_iam_member", "orchestrator_pairing_key"},
 	{"google_project_iam_member", "orchestrator_launcher"},
+	// The account's read of this installation's database (P5.1c's finding A):
+	// the tick's node read is an IAM one, and state_read.tf's fugaroStateRead
+	// is the ONE role this tree declares for it.
+	{"google_project_iam_member", "orchestrator_state_read"},
 	{"google_storage_bucket_iam_member", "orchestrator_runs_launcher"},
 	{"google_storage_bucket_iam_member", "orchestrator_runs_reader"},
 	{"google_service_account_iam_member", "orchestrator_token_minter"},
@@ -182,6 +186,22 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 				`member  = ` + orchestratorMemberExpr,
 			},
 			absent: []string{"orchestrator[0].member"},
+		},
+		{
+			what:  "the account's read of this installation's database: state_read.tf's one-permission role, on the project the role is declared in",
+			block: tfBlock(src, "google_project_iam_member", "orchestrator_state_read"),
+			need: []string{
+				`role    = "projects/${local.state_read_firebase_project}/roles/fugaroStateRead"`,
+				`project = local.state_read_firebase_project`,
+				`depends_on = [google_service_account.orchestrator, google_project_iam_custom_role.state_read]`,
+				`member  = ` + orchestratorMemberExpr,
+			},
+			// The write direction is not this row's to give, and the read is
+			// the ONE role the tree declares for the node: a second permission
+			// (which RolePermissions pins), the predefined read every launcher
+			// holds, or a project the role is not in are each a widening
+			// section 4.3's table does not have.
+			absent: []string{"orchestrator[0].member", "instances.update", "firebasedatabase.viewer", "condition"},
 		},
 		{
 			what:  "the runs bucket's write: objectUser under the launchers' own condition",

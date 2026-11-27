@@ -164,6 +164,33 @@ func TightenRounds(c *Config, key string, set, modeDefault int) int {
 	return set
 }
 
+// TightenUSD is agent.max_budget_usd as the run really reads it (R3, R20,
+// RT2): the figure a layer set where it tightens Fugaro's own per-stage cap
+// (DefaultMaxBudgetUSD, the key no mode row holds), and that cap where the
+// project layer says nothing about the key and the figure is larger — so a
+// repository that wrote more has its runs stop at the baseline. The preview
+// (internal/cli's budget preview) and the runner's stage budget both read it
+// through here, so the figure quoted and the figure a stage runs under agree.
+func TightenUSD(c *Config, set float64) float64 {
+	if set > DefaultMaxBudgetUSD && c.ProjectSilent("agent.max_budget_usd") {
+		return DefaultMaxBudgetUSD
+	}
+	return set
+}
+
+// TightenStopFraction is agent.review_stop_fraction as the run really reads it
+// (R3, R20, RT2): the share a layer set where it tightens the baseline the run
+// would have taken without it — DefaultReviewStopFraction, the key no mode row
+// holds — and 0, the layers' "unset", where the project layer says nothing
+// about the key and the share is smaller, so the reader takes the baseline
+// exactly as for a key no layer wrote (runner's Budget.stopAt).
+func TightenStopFraction(c *Config, set float64) float64 {
+	if set > 0 && set < DefaultReviewStopFraction && c.ProjectSilent("agent.review_stop_fraction") {
+		return 0
+	}
+	return set
+}
+
 // ResolveLevels decides the three review levels of one run.
 //
 // It returns the levels, the warnings a caller shows, and the refusal that

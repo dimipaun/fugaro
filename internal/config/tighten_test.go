@@ -387,3 +387,52 @@ func TestSilentProjectCriticalRunKeepsL3(t *testing.T) {
 		t.Errorf("l3 = %+v at pro under a silent project; want it off: the mode's row sets no level 3", got.L3)
 	}
 }
+
+// TestTightenUSDAndStopFractionTakeTheBaseline is RT2's leftover (R3, R20,
+// spec §5.2): the two keys no mode row holds are judged against Fugaro's own
+// default where the project layer says nothing — config.DefaultMaxBudgetUSD
+// for the stage cap and config.DefaultReviewStopFraction for the stop rule —
+// so a silent project's runs stop where the baseline says and not where the
+// repository's file asks. A figure that tightens the baseline stands, a looser
+// one reads as unset (0, the layers' spelling of it), and a project that sets
+// the key is not judged here at all: the merge already did that (RT1).
+func TestTightenUSDAndStopFractionTakeTheBaseline(t *testing.T) {
+	silent := tightenLayer(t, "{ git: { provider: github } }")
+	for _, tc := range []struct {
+		name     string
+		agent    string
+		wantUSD  float64
+		wantStop float64
+	}{
+		{"a silent project and figures over the baseline", "agent:\n  max_budget_usd: 100\n  review_stop_fraction: 0.2\n", DefaultMaxBudgetUSD, 0},
+		{"a silent project and figures under the baseline", "agent:\n  max_budget_usd: 10\n  review_stop_fraction: 0.9\n", 10, 0.9},
+		{"a silent project and nothing written", "", DefaultMaxBudgetUSD, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, ps := Resolve([]byte(minimalRepo+tc.agent), silent)
+			if len(ps) > 0 {
+				t.Fatalf("%s: %s", tc.name, problemsText(ps))
+			}
+			if got := TightenUSD(c, c.Agent.MaxBudgetUSD); got != tc.wantUSD {
+				t.Errorf("max_budget_usd = %v, want %v", got, tc.wantUSD)
+			}
+			if got := TightenStopFraction(c, c.Agent.ReviewStopFraction); got != tc.wantStop {
+				t.Errorf("review_stop_fraction = %v, want %v", got, tc.wantStop)
+			}
+		})
+	}
+
+	// A project that sets the keys: the merge already judged the repository's
+	// value (RT1), so the reader takes the resolved figure as it stands.
+	set := tightenLayer(t, "{ git: { provider: github }, agent: { max_budget_usd: 100, review_stop_fraction: 0.2 } }")
+	c, _, ps := Resolve([]byte(minimalRepo), set)
+	if len(ps) > 0 {
+		t.Fatalf("a project that sets the keys: %s", problemsText(ps))
+	}
+	if got := TightenUSD(c, c.Agent.MaxBudgetUSD); got != 100 {
+		t.Errorf("a project that sets max_budget_usd: %v, want 100", got)
+	}
+	if got := TightenStopFraction(c, c.Agent.ReviewStopFraction); got != 0.2 {
+		t.Errorf("a project that sets review_stop_fraction: %v, want 0.2", got)
+	}
+}

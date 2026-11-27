@@ -2122,9 +2122,11 @@ var (
 	// row (orchestrator.tf), which binds the FP's signer account inside the
 	// installation module for the same reason. The state readers' role names
 	// its project through a LOCAL rather than through one of the five
-	// variables, because it is created when EITHER of two readers is on and an
-	// installation that turned the voice hop on and asked for no front door has
-	// no var.coordinator at all: the local is the same plan-time-known string
+	// variables, because it is created when ANY of the three readers is on (the
+	// resident orchestrator, whose own binding is orchestrator.tf's, is the
+	// third) and an installation that turned the voice hop on and asked for no
+	// front door has no var.coordinator at all: the local is the same
+	// plan-time-known string
 	// (state_read.tf's own comment says which variable wins), so the plan still
 	// carries a literal role path and the cover can still read it. All of them
 	// are known at plan time, and the ID must be one the modules create
@@ -2972,22 +2974,26 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			// exact pin.
 			// The state readers' read of the installation's database
 			// (installation/state_read.tf, O16b, D2020 (a) for the front door
-			// and P5.3.3 for the voice hop): the third knowing exception, and
-			// the narrowest of the three — the instance's read and no write at
-			// all. The state group's two tools answer get_state and get_events
-			// as the front door's own account and the hop reads the device
-			// node and the project's voice policy as its own, and apply_patch
-			// is served by nothing (D2021), so the write (instances.update, the
-			// only one RTDB has) is withheld by its absence from this list
-			// rather than by a handler: a later revision of either reader has
-			// none to reach for. The exact list is pinned by tf.RolePermissions
-			// and by the module's own
+			// and P5.3.3 for the voice hop; P5.1c's finding A for the resident
+			// orchestrator, whose binding lives in orchestrator.tf): the third
+			// knowing exception, and the narrowest of the three — the instance's
+			// read and no write at all. The state group's two tools answer
+			// get_state and get_events as the front door's own account, the hop
+			// reads the device node and the project's voice policy as its own,
+			// and the resident orchestrator's tick reads
+			// orchestrator/<id>/{state,lease} as its own — without it every tick
+			// answered 503 with the store's own "401: Unauthorized request." and
+			// no pull request was ever labelled. apply_patch is served by
+			// nothing (D2021), so the write (instances.update, the only one RTDB
+			// has) is withheld by its absence from this list rather than by a
+			// handler: a later revision of any reader has none to reach for. The
+			// exact list is pinned by tf.RolePermissions and by the module's own
 			// TestFrontDoorStateRoleHoldsNoDatabaseWrite; this ban continues
 			// past it because the role reaches further than "read one node" —
-			// no path-level scope exists — and it is bound to those two
+			// no path-level scope exists — and it is bound to those three
 			// accounts alone (the module's own
-			// TestTheStateReadGrantIsTheTwoReadersOwnAccountsAndNoOneElses is
-			// the pin on the two bindings).
+			// TestTheStateReadGrantIsTheThreeReadersOwnAccountsAndNoOneElses is
+			// the pin on the three bindings).
 			if blk.name == "google_project_iam_custom_role.state_read" {
 				if !strings.HasPrefix(path, "gcp/modules/installation/state_read") {
 					t.Errorf("%s: %s is not in the installation module's state_read.tf", path, blk.name)

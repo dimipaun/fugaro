@@ -242,7 +242,7 @@ These still differ from a per-repository job, because the shared job's environme
 
 | Missing from a shared job | Effect |
 |---|---|
-| `FUGARO_CHECKOUT` | the runner does not treat the job as a clone job: a full clone instead of a blobless one, and no mise provisioning or prefetch |
+| `FUGARO_CHECKOUT` | nothing: no run reads it (D3440). Whether a run clones is the absence of a usable baked checkout in its image, so a shared job's run works on the checkout the project's catalog image baked for its repository, and clones blobless — with `mise install` — when there is none |
 | the job's own `FUGARO_MODEL_PROVIDERS` and `FUGARO_MODEL_PRICES` | a job every repository of a profile shares may not hold one repository's table: the routes, the prices and the allow-list such a run goes by are the published policy's, which the runner reads and cuts to the repository the run is for |
 | `FUGARO_COMPUTE_PRICES` | the region's list prices are used, not the local config's override |
 | `FUGARO_BUDGET_GRACE` | the default grace applies |

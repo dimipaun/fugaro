@@ -551,6 +551,39 @@ func TestBakedCheckoutOnAProjectJobIsResetBeforeFetch(t *testing.T) {
 	}
 }
 
+// The failures that are the run's own machinery and not the tree stop the run:
+// a state directory that would sit inside the checkout the run adopts is one of
+// them, and it ends the run instead of being read as one more unusable tree.
+// Discarding would remove the checkout and the run's own state directory inside
+// it, and send the run to a clone it can work on -- a run that works with its
+// state and its checkout in one directory, which is what the check refuses (the
+// review finding on this change).
+//
+// Mutation (run, restored): route every error of settleProjectCheckout through
+// discardBakedCheckout. The tree and the state directory inside it go, and this
+// run ends as one that succeeded rather than one that stopped on the state
+// directory.
+func TestProjectJobStateDirInsideTheBakedCheckoutStopsTheRun(t *testing.T) {
+	b := projectRun(t, projectJobOf(), "off", "", projectPolicyFor(`["github/acme/*"]`, ""))
+	// A cloud run in a project job, as a deployed container is: the fallback
+	// this test is about is the cloud's (a local invocation keeps the refusal
+	// and removes nothing, F24), and the URL the run would clone its own
+	// repository from is pointed at the fixture's remote, so a run that read the
+	// state-dir failure as an unusable tree would clone and work on rather than
+	// end here.
+	b.deps.Local, b.deps.Project = false, "aurora"
+	urlRewrite(t, map[string]string{"https://github.com/acme/app.git": b.remote})
+	baked := bakedProjectCheckout(t, b, projectHost(t, b), nil)
+	b.deps.StateDir = filepath.Join(baked, "state")
+	rec, _ := b.run(t, implement("feature"))
+	if rec == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "outside the checkout") {
+		t.Fatalf("rec = %+v, want the run ended on the state directory inside the checkout it would adopt", rec)
+	}
+	if _, err := os.Stat(filepath.Join(baked, ".git")); err != nil {
+		t.Errorf("the baked checkout went (%v) even though the run stopped on its own state directory: it was read as an unusable tree", err)
+	}
+}
+
 // A hook the image baked never runs (D2308). The image's build is free to leave
 // one in the hook directory git resolves — its own configuration's
 // core.hooksPath, or .git/hooks, which is git's default — and the run's agent
