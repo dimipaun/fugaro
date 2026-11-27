@@ -218,12 +218,14 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// owner's own cache-price keys renamed in place (update_model_prices.go, SA4.2),
 	// the login unit that runs the orchestrator daemon (init_orchestrator_stage.go,
 	// O9), the copy of the installation's model keys into the credentials
-	// service's bundle (update_keys.go, KS12), the required-CLI stamp raised
+	// service's bundle (update_keys.go, KS12), the legacy repo-to-image member
+	// leaving the node once that service is this release's
+	// (repo_images_retire.go, U1c), the required-CLI stamp raised
 	// once the installation has converged (update_version_stamp.go, D3260/R1)
 	// and the compute backend's provisioning, which the design puts last
 	// (compute-backend §8.1 task 6).
-	if len(names) != 24 {
-		t.Fatalf("the design has twenty-four stages, got %v", names)
+	if len(names) != 25 {
+		t.Fatalf("the design has twenty-five stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -238,7 +240,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, CredentialsCopy, VersionStamp, WorkspaceProject, Workspace, CredentialsRoute, Lift, Layer, Checkout, Unit, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, ModelPrices, Policy, CredentialsService, CredentialsCopy, ImageMapRetire, VersionStamp, WorkspaceProject, Workspace, CredentialsRoute, Lift, Layer, Checkout, Unit, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}

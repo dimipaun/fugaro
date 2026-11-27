@@ -69,6 +69,29 @@ func publishedMode(mode string) string {
 	return mode
 }
 
+// repoImagesForPublish is the keep rule for the repository-to-image map's new
+// member (R14, D3371): ImageMapEffective's rule one member over, and stated
+// beside it for its reason — this file's map when it writes one, a written map
+// with no entry included, which is how a published one is taken away on purpose,
+// and the published node's otherwise.
+//
+// A nil answer is the whole of the answer, as it is for the old member: the
+// publisher omits the key when the map names no entry, so a project that maps
+// nothing keeps the node byte for byte what it was before the key existed. And
+// the two halves cannot be one field, for the reason the old member's rule
+// gives: "this file says nothing" must keep the node's map, and "this file says
+// nothing is mapped" must take it away.
+func repoImagesForPublish(lc *localcfg.Config, published projectpolicy.RepoImages) projectpolicy.RepoImages {
+	effective := published
+	if lc.RepoImages != nil {
+		effective = projectpolicy.RepoImages(lc.RepoImages)
+	}
+	if len(effective) == 0 {
+		return nil
+	}
+	return effective
+}
+
 // policyConfigDrift is the members of the published node the local config is
 // the source of and that the node does not carry, in the order a diff reads.
 //
@@ -172,6 +195,21 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 		// the node is written with — the escaped keys — and not the config
 		// spelling of a name against the node's (ImageMap).
 		add("image_map", projectpolicy.ImageMap(lc.ImageMapEffective(nil)), p.ImageMap, false)
+	}
+	// The repository-to-image map in its new form is compared the same way and
+	// for the same reason (R14, D3371), one member over: from L11 on it is where
+	// a run's own repository is looked up, so a config that maps a repository
+	// and a node that carries no repo_images is exactly the gap this stage
+	// exists to close. The row above stays while a file or a node still holds
+	// the old member: `update` migrates it (migratedImageMapConfig), and the two
+	// rows are then what the operator's diff reads, one naming what leaves the
+	// file and one naming what the node gains.
+	//
+	// The map the file states is the effective one, so a machine whose config
+	// predates the field does not report the node's own map back at it as a
+	// difference the next run would publish on every update.
+	if lc.RepoImages != nil {
+		add("repo_images", repoImagesForPublish(lc, nil), p.RepoImages, false)
 	}
 	// The bake switch reaches a run off this node too (D1901), so a config that
 	// states it where the node states the other answer is a difference a publish

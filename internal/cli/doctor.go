@@ -255,6 +255,11 @@ type doctorOutput struct {
 	// Release is the binary's tag and commit, and the command that checks the
 	// tag still names the commit (no network call here).
 	Release *releaseInfo `json:"release,omitempty"`
+	// Notes are what doctor read and did not refuse: the keys the project now
+	// owns that this checkout's file still writes, the values the merge
+	// dropped, and the recipes cleanup diff. Neither a problem nor a warning,
+	// and each printed once (S2, spec §4).
+	Notes []config.Problem `json:"notes,omitempty"`
 	// Error is why doctor could not run its checks (an unreadable or invalid
 	// local config, no credentials), so --json prints an object on every outcome.
 	Error string `json:"error,omitempty"`
@@ -756,6 +761,17 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 					Problem: "could not determine this checkout's repository (no origin remote), so whether its agent.oauth_token names an allowed account could not be checked",
 					Fix:     "run doctor from a checkout with a parseable owner/name origin remote, or check fugaro.yaml and the local config's claude_accounts by hand"})
 			}
+		}
+		// This checkout's own notes, beside the file's check: the keys the
+		// project now owns that its fugaro.yaml still writes, the values the
+		// merge dropped, and the recipes cleanup diff (S2, spec §4, D3296).
+		// rf is the resolution fugaroYAMLCheck made and handed back only for a
+		// file with no problem, so a nil one is a file that did not resolve and
+		// answers no notes; the cleanup diff reaches the project store the way
+		// validate's does and is silence when it cannot.
+		if rf != nil && rf.Cfg != nil {
+			o.Notes = append(o.Notes, resolutionNotes(rf.Res)...)
+			o.Notes = append(o.Notes, recipesCleanupNotes(ctx, co.Root, rf.Cfg, lc, offline)...)
 		}
 	}
 
@@ -2484,6 +2500,13 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool, view doctorView
 			}
 		}
 		printDoctorReport(out, o.Checks, view)
+		// The notes follow the report in every view, as validate prints them:
+		// a key the project now owns or a value the merge dropped is something
+		// the reader acts on, so it is never behind `--all` — and a note is
+		// not a check, so it never moves the verdict above it.
+		for _, n := range o.Notes {
+			fmt.Fprintln(out, "note: "+n.String())
+		}
 		if view.all {
 			if p := o.Project; p != nil {
 				fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)

@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/routing"
@@ -1001,6 +1002,26 @@ func TestUpdateIdempotent(t *testing.T) {
 	}
 }
 
+// managedInstallation writes the two marks a creating run leaves (the creation
+// fact in the runs bucket and the project's label): `fugaro update` stops on an
+// installation that carries neither, so a test that means an installation
+// already there calls it first.
+func (r *initRepoRig) managedInstallation(t *testing.T) {
+	t.Helper()
+	body, err := managed.Marker{
+		Version:    managed.MarkerVersionNoBuilds,
+		GCPProject: initRepoProject,
+		Budget:     &managed.Budget{Amount: managed.DefaultBudgetAmount, Currency: managed.DefaultBudgetCurrency},
+	}.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.crm.SetLabels(initRepoProject, map[string]string{managed.ProjectLabelKey: managed.ProjectLabelValue})
+	if err := r.runs.WriteAll(context.Background(), managed.MarkerObject, body, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestUpdateMigratesRouting: an installation at the release behind — a local
 // config that names its account and its repository the old way, and a checkout
 // whose fugaro.yaml calls one Claude model on it — converges, and the routing
@@ -1017,6 +1038,7 @@ func TestUpdateMigratesRouting(t *testing.T) {
 	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
 		return strings.Replace(y, "agent: { auth: oauth,", "agent: { auth: oauth, oauth_token: ada, model: claude-haiku-4-5,", 1)
 	})
+	r.managedInstallation(t)
 	// The installation's own config at the release behind: the repository it
 	// holds, the account its runs go out on, and nothing about routing — the
 	// shape the converge leaves behind, with `repos` the entry a run of the
@@ -1313,6 +1335,10 @@ func TestUpdateForgetThenReinitImports(t *testing.T) {
 	if calls := r.calls(t); count(calls, "repo state rm module.repo") != 1 || count(calls, "installation state rm module.installation") != 1 {
 		t.Fatalf("calls = %q", calls)
 	}
+
+	// The rollback needed the installation unmanaged (it refuses a managed
+	// one); the retries below are updates, which stop on one that is not.
+	r.managedInstallation(t)
 
 	// A retry before the undelete is refused, naming the undelete, and
 	// plans nothing.

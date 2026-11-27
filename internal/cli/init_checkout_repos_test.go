@@ -214,3 +214,29 @@ func viewFromRepoOnly(t *testing.T, dir, repo string) repoView {
 	}
 	return repoView{Repo: repo, Provider: "github", Unread: "no fugaro.yaml on the default branch"}
 }
+
+// TestSkippedHereSaysTheStepOncePerReason: the one line the run keeps about
+// the cloud step it did not run names the step and the repositories for each
+// reason, and a project the step was skipped for entirely says it once rather
+// than once per repository — four clauses of a whole project's worth of
+// repositories is a line nobody reads (skippedHere).
+func TestSkippedHereSaysTheStepOncePerReason(t *testing.T) {
+	agent := "a coding agent's session never applies cloud changes"
+	places := []repoPlace{
+		{step: checkStep{name: "cloud"}, view: repoView{Repo: "acme/app"}, clause: agent},
+		{step: checkStep{name: "cloud"}, view: repoView{Repo: "acme/web"}, clause: agent},
+		{step: checkStep{name: "cloud"}, view: repoView{Repo: "acme/old"}, clause: "the repository could not be read"},
+		{step: checkStep{name: "cloud"}, view: repoView{Repo: "acme/new"}},
+	}
+	got := skippedHere(places)
+	want := "skipped here: acme/app, acme/web: cloud (" + agent + "); acme/old: cloud (the repository could not be read)"
+	if got != want {
+		t.Errorf("the run's line about the step it did not run is\n%q\nwant\n%q", got, want)
+	}
+	if n := strings.Count(got, "cloud ("); n != 2 {
+		t.Errorf("the line says the step was skipped %d times, want once per reason", n)
+	}
+	if got := skippedHere([]repoPlace{{step: checkStep{name: "cloud"}, view: repoView{Repo: "acme/app"}}}); got != "" {
+		t.Errorf("a run that ran the step for every repository says %q, want nothing", got)
+	}
+}

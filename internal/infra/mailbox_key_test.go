@@ -252,6 +252,14 @@ func TestMailboxKeyIsTheConsumersSignerAlone(t *testing.T) {
 	}
 }
 
+// pushSenderAddrPrefix is the push sender's key ring and key (push_key.tf),
+// which ride enable_budget and not either opt-in of J6: the golden installation
+// has the budget job, so its default plan carries them.
+const (
+	pushRingAddr = "module.installation.google_kms_key_ring.push[0]"
+	pushKeyAddr  = "module.installation.google_kms_crypto_key.push_sender[0]"
+)
+
 // mailboxAddrPrefix is how every row of mailbox_key.tf is addressed in a plan:
 // the module they are declared in, so that a refusal item naming one of them is
 // the one thing this test refuses however the cover phrased it.
@@ -271,6 +279,9 @@ func TestMailboxKeyIsTheOptInsAlone(t *testing.T) {
 	// asked for a consumer or a pairing front end is the plan it always made.
 	_, _, rows := mailboxKeyPlanOff(t)
 	for addr, rc := range rows {
+		if addr == pushRingAddr || addr == pushKeyAddr {
+			continue
+		}
 		if strings.HasSuffix(rc.Type, "kms_crypto_key") || rc.Type == "google_kms_crypto_key_iam_member" || rc.Type == "google_kms_key_ring" {
 			t.Errorf("the plan of an installation with neither opt-in carries %s: the key is the pairing front end's and the consumer's (mailbox_key.tf's header), so an installation that has neither acquires nothing of J6", addr)
 		}

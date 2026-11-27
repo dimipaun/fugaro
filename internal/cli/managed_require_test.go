@@ -217,6 +217,11 @@ func TestFencedCommandRefusesUnmanaged(t *testing.T) {
 	// call, and the refusal is the command's own.
 	t.Run("the seams outside openCloudFor", func(t *testing.T) {
 		world := newInitRig(t)
+		// The refusal is what these commands are run for, and the fence is the
+		// one an unmanaged project gets: a world the marks answer managed for
+		// would let each command past the fence and into a step no fake can
+		// finish.
+		world.unmarkedInstallation(t)
 		buildBudgetForRig(t, world)
 		t.Chdir(t.TempDir())
 		patch := patchFile(t, patchDoc(t, 0, orchestrator.Op{Op: orchestrator.OpFactSet,

@@ -52,6 +52,7 @@ const (
 	whyCredentialAccess = "it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here"
 	whyRemoved          = "it was removed in 0.7.0 (" + MigrationDoc + ")"
 	whyGrade            = "it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and recorded by the merge (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so this is the one layer a grade's credential or pool can be named in"
+	whyGradeModel       = "it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and named where it is written (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so the project layer states every grade's model"
 	whyGovernance       = "it is a guardrail Fugaro ships: the project layer sets it for every repository of the project" +
 		" (a top-level key of the layer file, like claude_models) and a repository can only tighten it," +
 		" because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6)"
@@ -136,12 +137,13 @@ var Scopes = []ScopeRow{
 	{Key: "agent.crafts.merge-judge.access", In: InRepo, Why: whyCredentialAccess, Retired: InRepo, RetiredWhy: whyRetiredCraftAccess},
 	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
 	// D2039): the pair a craft carries, in one block of its own, and the one
-	// place a project layer may name an access (whyGrade). A repository's entry
-	// is admitted, so that the merge can drop it and record it rather than the
-	// file being refused where the value is what lost.
-	{Key: "model_grades.strong.model", In: InProject | InRepo, Why: whyGrade},
+	// place a project layer may name an access (whyGrade). A grade's model is
+	// the project's (whyGradeModel): a repository's entry is admitted so that
+	// the lift can drop and name it — release B takes InRepo off these two rows
+	// (XB1) — while the access rows beside them stay retired and honoured (R11).
+	{Key: "model_grades.strong.model", In: InProject | InRepo, Why: whyGradeModel},
 	{Key: "model_grades.strong.access", In: InProject | InRepo, Why: whyGrade, Retired: InRepo, RetiredWhy: whyRetiredGradeAccess},
-	{Key: "model_grades.strongest.model", In: InProject | InRepo, Why: whyGrade},
+	{Key: "model_grades.strongest.model", In: InProject | InRepo, Why: whyGradeModel},
 	{Key: "model_grades.strongest.access", In: InProject | InRepo, Why: whyGrade, Retired: InRepo, RetiredWhy: whyRetiredGradeAccess},
 	{Key: "agent.review_rounds", In: InProject | InRepo | InOverride, Why: whyKept},
 	{Key: "agent.max_budget_usd", In: InProject | InRepo | InOverride, Why: whyKept},
@@ -181,7 +183,12 @@ var Scopes = []ScopeRow{
 	{Key: "agent.workspace_beat", In: InProject | InRepo, Why: whyKept},
 	{Key: "agent.recipe", In: InProject | InRepo | InOverride, Why: whyKept},
 	{Key: "agent.oauth_token", In: InRepo | InOverride, Retired: InRepo, RetiredWhy: whyRetiredAccount, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
-	{Key: "agent.compression", In: InRepo | InOverride, Why: "it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},
+	// The context-compression proxy (docs/headroom-compression): the project
+	// layer and a profile are the launcher-writable bucket object
+	// agent.oauth_token already distrusts, and a repository's file decides
+	// nothing by writing it either (config.Validate admits no value but off,
+	// F16), so the override --no-compression takes is the one scope left.
+	{Key: "agent.compression", In: InOverride, Why: "it changes what the model sees on every call, and no value but the empty one it defaults to is admitted, so a repository's file sets nothing by writing it; a profile is the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},
 	// The triage stage's switch (D1854): the repository's own reviewed file and
 	// nothing else, not even a task flag. A launcher writes the task and the
 	// project layer travels inside it (task.Spec.ProjectLayer), so a layer key

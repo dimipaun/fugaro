@@ -489,6 +489,13 @@ func reposViewCanonicalOf(canonical string) (string, error) {
 // generation it was read at, and the catalog and image map the node publishes,
 // which are the pair every row's image is resolved against (D1140, D1906).
 //
+// The map is the one the project SERVES and not the member one machine wrote
+// (R2, configImageMap): the file's repo_images first, the node's, then the
+// legacy image_map either place, so a row draws the image a launch of it would
+// run — `project repos add` writes repo_images, and a reader left on the legacy
+// member alone would answer the catalog's default for a repository the command
+// had just mapped.
+//
 // The project's base branch comes back with them: this installation's own
 // top-level base_branch where it names one, else the node's, which is the order
 // projectBaseBranchErr resolves layer 3 in — an installation that names one does
@@ -508,9 +515,9 @@ func reposViewCanonicalOf(canonical string) (string, error) {
 // refusals every reader of the node makes (refuseUnknownPolicyKeys' own posture,
 // P8: the runner is the tolerant side), and the one reader that turned them into
 // a member would act on the half of the policy it could decode.
-func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (reposViewAllow, *config.Catalog, map[string]string, string, error) {
-	fileOnly := func(state string) (reposViewAllow, *config.Catalog, map[string]string, string, error) {
-		return reposViewAllow{Entries: []string{}, State: state}, lc.ImageCatalogEffective(nil), lc.ImageMapEffective(nil), lc.BaseBranch, nil
+func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (reposViewAllow, *config.Catalog, imageMapping, string, error) {
+	fileOnly := func(state string) (reposViewAllow, *config.Catalog, imageMapping, string, error) {
+		return reposViewAllow{Entries: []string{}, State: state}, lc.ImageCatalogEffective(nil), configImageMap(lc, nil), lc.BaseBranch, nil
 	}
 	etag, found, raw, err := readPolicyNode(ctx, db, lc)
 	switch {
@@ -521,14 +528,14 @@ func reposViewAllowOf(ctx context.Context, lc *localcfg.Config, db *rtdb.Client)
 	}
 	p, err := publishedPolicyOf(raw, true)
 	if err != nil {
-		return reposViewAllow{}, nil, nil, "", err
+		return reposViewAllow{}, nil, imageMapping{}, "", err
 	}
 	projectBase := lc.BaseBranch
 	if projectBase == "" {
 		projectBase = p.BaseBranch
 	}
 	return reposViewAllow{Entries: nonNil(p.AllowRepos), Generation: etag},
-		lc.ImageCatalogEffective(p.ImageCatalog), lc.ImageMapEffective(p.ImageMap), projectBase, nil
+		lc.ImageCatalogEffective(p.ImageCatalog), configImageMap(lc, p), projectBase, nil
 }
 
 // reposViewLocalOf is this machine's own half: the canonical names its config
@@ -594,7 +601,7 @@ func reposViewRowNames(allow reposViewAllow, keys map[string]string) []string {
 // value alone would print "" for an installation that names neither, in a
 // versioned document the console reads, with no state sentence to say what the
 // empty string meant.
-func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, projectBase, canonical, localKey string, allow reposViewAllow) reposViewRepo {
+func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap imageMapping, projectBase, canonical, localKey string, allow reposViewAllow) reposViewRepo {
 	row := reposViewRepo{
 		Canonical: canonical,
 		Provider:  providerOf(canonical),
@@ -624,31 +631,31 @@ func reposViewRowOf(ctx context.Context, lc *localcfg.Config, cat *config.Catalo
 	// could not answer the question anyway (the same choice catalogPointedAt
 	// makes). Without a checkout the names are all there is, and a name alone
 	// resolves through the map or the catalog's default.
-	// The resolver is asked with the owner/name and never with the
-	// provider-qualified name: catalog.ImageRequest.Canonical is the form the
-	// image map is keyed by and the form the resolver canonicalizes again, and
-	// a "github/acme/app" handed to it would read as an owner called
-	// "github/acme" and find no mapping.
+	// The resolver is asked with the owner/name and the row's provider apart:
+	// catalog.ImageRequest.Canonical is the bare name the legacy map is keyed by
+	// and the form the resolver canonicalizes again, while the provider is what
+	// turns it into the repo_images key — a "github/acme/app" handed in as
+	// Canonical would read as an owner called "github/acme" and find no mapping.
 	localName := reposViewLocalNameOf(canonical, localKey)
 	names, defs := reposViewWorkflowDefs(ctx, lc, localKey)
 	for _, name := range names {
-		row.Workflows = append(row.Workflows, reposViewWorkflowOf(lc, cat, imap, localName, name, defs[name]))
+		row.Workflows = append(row.Workflows, reposViewWorkflowOf(lc, cat, imap, localName, row.Provider, name, defs[name]))
 	}
 	// The row names one image, and it is the repository's job's: the first
 	// workflow by name where the repository states any, and the project's own
 	// answer for the repository where it states none. A repository whose
 	// workflows disagree is a state its per-workflow entries carry.
-	row.ImageEntry, row.ImageSource = reposViewRowImage(lc, cat, imap, localName, row.Workflows)
+	row.ImageEntry, row.ImageSource = reposViewRowImage(lc, cat, imap, localName, row.Provider, row.Workflows)
 	row.Workflows, row.ClaudeAccounts = nonNil(row.Workflows), nonNil(row.ClaudeAccounts)
 	return row
 }
 
 // reposViewRowImage is the row's single image answer.
-func reposViewRowImage(lc *localcfg.Config, cat *config.Catalog, imap map[string]string, localName string, workflows []reposViewWorkflow) (string, reposViewImageSource) {
+func reposViewRowImage(lc *localcfg.Config, cat *config.Catalog, imap imageMapping, localName, provider string, workflows []reposViewWorkflow) (string, reposViewImageSource) {
 	if len(workflows) > 0 {
 		return workflows[0].Entry, workflows[0].Source
 	}
-	sel, err := catalog.JobImage(catalog.ImageRequest{Catalog: cat, ImageMap: imap, Canonical: localName, Backend: catalog.Backend(lc.Backend())})
+	sel, err := catalog.JobImage(imap.request(cat, localName, provider, config.Workflow{}, catalog.Backend(lc.Backend())))
 	if err != nil {
 		return "", reposViewImageUnresolved
 	}
@@ -679,11 +686,9 @@ func reposViewWorkflowDefs(ctx context.Context, lc *localcfg.Config, localKey st
 }
 
 // reposViewWorkflowOf resolves one workflow's image through the one resolver.
-func reposViewWorkflowOf(lc *localcfg.Config, cat *config.Catalog, imap map[string]string, localName, name string, w config.Workflow) reposViewWorkflow {
+func reposViewWorkflowOf(lc *localcfg.Config, cat *config.Catalog, imap imageMapping, localName, provider, name string, w config.Workflow) reposViewWorkflow {
 	out := reposViewWorkflow{Name: name}
-	sel, err := catalog.JobImage(catalog.ImageRequest{
-		Catalog: cat, ImageMap: imap, Canonical: localName, Workflow: w, Backend: catalog.Backend(lc.Backend()),
-	})
+	sel, err := catalog.JobImage(imap.request(cat, localName, provider, w, catalog.Backend(lc.Backend())))
 	if err != nil {
 		out.Source = reposViewImageUnresolved
 		out.State = fmt.Sprintf("this workflow's image is not resolved: %s", oneLineCLI(err.Error()))

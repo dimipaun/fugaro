@@ -167,6 +167,15 @@ func routeAct(path string) (purpose, credential string) {
 		// pool — and issuing no credential at all, so there is no name of one
 		// for the line to carry (credentiallessPurpose, callerWithoutJobPurpose).
 		return PurposePoolDesignate, ""
+	case PersonalPoolPath, PersonalPoolGetPath:
+		// A personal pool's two routes are the designation's own shape one step
+		// further (PL9): the launcher's act, writing or reading a record of
+		// names — the person, the project, the pool and the member NAMES — and
+		// touching no credential at all, so there is no name of one for the line
+		// to carry. The two are answered under the designation's own purpose for
+		// the same reason: one class of caller, one shape of act, and a record of
+		// names either way.
+		return PurposePoolDesignate, ""
 	case WorkflowSecretsPath:
 		// The workflow-secrets route's credential is the CONTAINER the value
 		// was read from, and THAT NAME IS NOT IN THE PATH: it is the record's
@@ -269,7 +278,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
 		return true
 	// The six identity routes (C1, R2): a run's identity is issued here, with
 	// every one of them answered ahead of the shared parse below. The
@@ -1246,7 +1255,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+PoolDesignatePath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+PoolDesignatePath+", "+PersonalPoolPath+", "+PersonalPoolGetPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1437,6 +1446,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// the member's own pool is the installation's answer, not the
 		// workspace's.
 		s.poolDesignate(ctx, w, r)
+		return
+	}
+	if r.URL.Path == PersonalPoolPath {
+		// The personal-pool route, answered ahead of the shared parse for the
+		// designation route's reason exactly (PL9): its caller records or reads
+		// the pool of its OWN runs, holds no run identity, and would be refused
+		// by RequestFromHTTP for the identity headers it never had. The body is
+		// this route's own read (readPersonalPoolRequest). Like a designation,
+		// it is not a workspace's route: a personal pool lives in the project
+		// (D3179 as amended), so a workspace's service resolves it to the
+		// unserved scope.
+		s.poolPersonal(ctx, w, r)
+		return
+	}
+	if r.URL.Path == PersonalPoolGetPath {
+		s.poolPersonalGet(ctx, w, r)
 		return
 	}
 	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {

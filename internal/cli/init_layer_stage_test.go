@@ -321,7 +321,13 @@ func TestUpdatePublishesTheProjectLayerWhenItIsUnpublished(t *testing.T) {
 		t.Errorf("the object is not the local layer file: %q %v", got, ok)
 	}
 	all := out + errOut
-	if !strings.Contains(all, "replacing the project layer") || !strings.Contains(all, "base_branch") {
+	// The diff of what the publish replaces, and not a summary of it: the key
+	// the owner's local file moves, on the side it moved to. The rig's project
+	// is a managed one, so what the run's own local config diff carries (the
+	// repositories' base_branch line) goes to the step's detail and not to this
+	// screen (init.go: under the gate nothing is asked, so the diff is the
+	// run's account of the file rather than a question's evidence).
+	if !strings.Contains(all, "replacing the project layer") || !strings.Contains(all, "+ governance: { review_ratio: 20 }") {
 		t.Errorf("the diff of what the publish replaces was not shown:\n%s", all)
 	}
 	slug := mustSlug("bitbucket", "acme/sandbox")
@@ -554,6 +560,11 @@ func TestUpdateLayerStageRefusesExecutableChangesWithoutTheFlag(t *testing.T) {
 // write like any other and a coding agent's session never reaches it.
 func TestUpdateLayerStageAppliesNothingInAnAgentSession(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
+	// The runs bucket's project Viewers have no grant to lose here, so the one
+	// step of this run that is not a Terraform plan (the removal of that
+	// access, which an agent's session refuses) is not a step at all: the run
+	// reaches the layer stage instead of stopping at the installation one.
+	r.gcs.SetBucketPolicy(initRunsBucket, nil)
 	t.Setenv(agentMarkers[0], "1")
 
 	out, errOut, err := executeStdin(t, "", "update")

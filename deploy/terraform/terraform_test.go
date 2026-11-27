@@ -5301,10 +5301,11 @@ func TestBuildAccountInvokesOnlyTheService(t *testing.T) {
 	}
 	body := blocks[0].body
 	for _, want := range []string{
-		// Null is the switch's own answer on this side, and the whole of it:
-		// an installation that has not opted in plans no binding at all, and
-		// one that has plans this one.
-		"count = var.installation.credentials_service == null || !var.installation.credentials_service_serves ? 0 : 1",
+		// The address is the switch's own answer on this side, and the whole of
+		// it: an installation that has not opted in plans no binding at all, and
+		// one that has plans this one — the `vertex` repository included, whose
+		// build fetches where a served one's does (IS6).
+		"count = var.installation.credentials_service == null ? 0 : 1",
 		// The service's own name and the region it runs in: the two values
 		// internal/infra writes (infra.CredentialsServiceName and the
 		// installation's region), and never a URL.
@@ -7313,9 +7314,15 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 
 	// The drop is gated on the opt-in, in the same expression that reads the
 	// names: with credentials_service null the set is the workflow's own
-	// secret_env and nothing changes (D147).
-	if !strings.Contains(squash(code), "logical if !local.service_serves || !local.is_service_held[env]") {
-		t.Errorf("%s: the job's secret set must be the workflow's own secret_env while the credentials service is off, and drop the credentials it holds only when it is on:\n%s", path, code)
+	// secret_env and nothing changes (D147). Two gates, one per half (IS6): the
+	// credentials the service HOLDS leave where it serves this repository
+	// (local.service_serves, false for a `vertex` one, which is handed the
+	// address and served nothing of its own), and the FETCHED class leaves
+	// wherever the job is handed the address at all — that drop is the run's
+	// fetch and not the service's bundle, so a vertex job gives its workflow
+	// secrets up like any other (D3326, F17).
+	if !strings.Contains(squash(code), jobSecretNamesExpr) {
+		t.Errorf("%s: job_secret_names must be the workflow's own secret_env while the credentials service is off, drop the credentials it holds where it serves them, and drop the FETCHED class wherever the job is handed the address:\n%s", path, code)
 	}
 
 	// And the grant the job gains: one invoker grant, on the one service the
@@ -7348,8 +7355,8 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	// halves here, and the tftest run credentials_service_on_github_app_key_
 	// stays plans the state this branch ships them in: neither moves, because
 	// the list is empty and the job still reads the key.
-	if !strings.Contains(squash(code), "env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical)") {
-		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key) once it is on, by logical name:\n%s", path, code)
+	if !strings.Contains(squash(code), jobMountsExpr) {
+		t.Errorf("%s: job_mounts must keep every mount while the credentials service is off and drop the service-held ones (the App key, the proxied git token) once it is on — and drop the FETCHED class (local.vault_secret_names) wherever the repository is handed the service's ADDRESS, which is one condition wider (IS6, IS9):\n%s", path, code)
 	}
 	// The container is the consumer of that local, and it is what a missing
 	// pass-down would leave out: iterating var.workflow.secret_env instead
@@ -7362,6 +7369,19 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 		t.Errorf("gcp/modules/workflow/job.tf: the container's secret env must iterate local.job_mounts rather than var.workflow.secret_env, or the App key's mount outlives its accessor (C2.3, F1):\n%s", jb)
 	}
 }
+
+// jobSecretNamesExpr and jobMountsExpr are the workflow module's two drop
+// expressions, squashed byte for byte: the places every test that pins them
+// reads them from, so a rewrite of the rule is one edit and not several that
+// can drift apart (IS6's own edit is what showed the need). The accessor set
+// and the mount are one rule in two spellings — the mount's is the wider one,
+// because it names what the accessor set reaches through local.is_service_held
+// — and both carry IS6's two gates: local.service_serves for everything the
+// service holds, local.service_addressed for the fetched class (D3326, F17).
+const (
+	jobSecretNamesExpr = "logical if !(local.service_serves && local.is_service_held[env]) && !(local.service_addressed && contains(local.vault_secret_names, logical))"
+	jobMountsExpr      = "env => logical if !(local.service_serves && (contains(local.service_held_secret_names, logical) || local.is_proxied_git[env])) && !(local.service_addressed && contains(local.vault_secret_names, logical))"
+)
 
 // The `google_secret_manager_secret_iam_member` blocks of the workflow
 // module, squashed, by Terraform name.
@@ -7397,8 +7417,14 @@ func workflowSecretGrants(t *testing.T) map[string]string {
 // a run plans the module with the variables it passes, so a second expression
 // that agreed on those and drifted on another shape would pass there. What
 // this test refuses is the drift: a grant written out afresh from
-// var.workflow.secret_env, or a set that outlives a mount some later task
-// drops (C2.3's App key, B1.13's proxied token, C1.20's model mounts).
+// var.workflow.secret_env, a set that outlives a mount some later task drops
+// (C2.3's App key, B1.13's proxied token, C1.20's model mounts), or — IS6's own
+// direction, and the one this test was rewritten for — a set that outlives a
+// mount B3.8's FETCH took off the job: local.vault_secret_names was added back
+// here while a run's fetch read this job's own container, and it is not any
+// more, because the value a fetch is served now lives in the installation's
+// fugaro_p_<name> copy and the service's reach on that grammar is the
+// prefix-conditioned grant of D3323 (modules/installation/credentials.tf).
 //
 // The job's own grant is the other half of the rule and is pinned here too:
 // D2074 adds a member to a container, it never moves the job's accessor to the
@@ -7413,16 +7439,16 @@ func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
 	code := squash(stripComments(string(b)))
 
 	// The set is the mounts' values — the same map job.tf iterates, read here
-	// rather than recomputed — plus the one class of secret B3.8's flip takes
-	// off the job while the service keeps reading it: a workflow secret's value
-	// is fetched from THIS job's container (B3.4), so its container is in the
-	// set whether or not the job still mounts it. The gate is a `try`, and not
-	// the obvious `var.credentials_service == null || var.credentials_service.account == ""`:
+	// rather than recomputed — and nothing else. B3.8's fetched class is NOT
+	// added back (IS6): a grant on the project copy a run's fetch no longer
+	// reads is one no run asks for, and that copy is what IS13 retires and
+	// deletes. The gate is a `try`, and not the obvious
+	// `var.credentials_service == null || var.credentials_service.account == ""`:
 	// Terraform's `||` does not short-circuit before 1.12 while these modules
 	// require 1.9 (versions.tf), so the `||` form reads an attribute of a null
 	// value and fails the plan of every repository root whose switch is off.
-	if !strings.Contains(code, `service_secret_names = local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])`) {
-		t.Errorf("%s: service_secret_names must be the mounts' own values, plus local.vault_secret_names (empty only while the class list is), behind a `try(...) == \"\"` gate — a set built any other way can drift from the containers it has to cover (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
+	if !strings.Contains(code, `service_secret_names = local.service_serves && try(var.credentials_service.account, "") != "" ? toset(values(local.job_mounts)) : toset([])`) {
+		t.Errorf("%s: service_secret_names must be the mounts' own values and nothing else, behind a `try(...) == \"\"` gate — a set built any other way can drift from the containers it has to cover (D2074), a name the flip took off the job is one the service reads in the fugaro_p_ grammar rather than in a per-container grant of ours (IS6, D3323), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
 	}
 
 	grants := workflowSecretGrants(t)
@@ -7508,7 +7534,7 @@ func TestNoServiceGrantWithoutTheService(t *testing.T) {
 		}
 	}
 
-	if !strings.Contains(code, `local.service_serves && try(var.credentials_service.account, "") != "" ? toset(concat(values(local.job_mounts), local.vault_secret_names)) : toset([])`) {
+	if !strings.Contains(code, `local.service_serves && try(var.credentials_service.account, "") != "" ? toset(values(local.job_mounts)) : toset([])`) {
 		t.Errorf("%s: service_secret_names must be empty BOTH while the installation has no service and while the service it names has no account in it yet — an empty for_each creates nothing, so both plans are the ones this root planned before D2074 (D147, and the outputs of an installation applied before the account existed). It is `try(...)`, not `var.credentials_service == null || ...`: `||` does not short-circuit before Terraform 1.12, and the `||` form reads an attribute of a null value, which fails the plan of every repository root whose switch is off on 1.9-1.11:\n%s", path, code)
 	}
 
@@ -7650,11 +7676,11 @@ func TestAppKeyAndProxiedGitClausesStayOnTheVariable(t *testing.T) {
 	if got := local("is_service_held"); !strings.Contains(got, "contains(local.service_held_secret_names, logical)") || !strings.Contains(got, "|| local.is_proxied_git[env]") {
 		t.Errorf("%s: is_service_held = %s; the App key's clause and the proxied repository's must stay keyed on the installation's opt-in, or the App key outlives the service that mints with it (#907) and a proxied repository's token goes with it (G9)", path, got)
 	}
-	if got := local("job_mounts"); got != "env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)" {
-		t.Errorf("%s: job_mounts = %s, want the opt-in, the App key's name, the proxied repository's clause and B3.8's fetched class and nothing else: the model mounts are dropped by Go's own spec from the tfvars this module plans (C1.20's pairing), a mount removed here for a runner that cannot read the service yet breaks every run, and the fetched class's clause is the rule written down where the accessor is decided (a tfvars that still names one of those cannot be applied into a job that reads it)", path, got)
+	if got, want := local("job_mounts"), jobMountsExpr; got != want {
+		t.Errorf("%s: job_mounts = %s, want %s: the opt-in carries the App key's name and the proxied repository's clause, the ADDRESS carries B3.8's fetched class (IS6), and nothing else is in it — the model mounts are dropped by Go's own spec from the tfvars this module plans (C1.20's pairing), and each clause is the rule written down where its accessor is decided (a tfvars that still names one of those cannot be applied into a job that reads it)", path, got, want)
 	}
-	if !strings.Contains(squash(code), "logical if !local.service_serves || !local.is_service_held[env]") {
-		t.Errorf("%s: the job's accessor set must still be gated on the installation's opt-in (D147):\n%s", path, code)
+	if !strings.Contains(squash(code), "logical if !(local.service_serves && local.is_service_held[env])") {
+		t.Errorf("%s: the job's accessor set must still be gated on the installation's opt-in for the class the service HOLDS, and on the address for the class it FETCHES (D147, IS6):\n%s", path, code)
 	}
 	if !strings.Contains(squash(code), "count = var.credentials_service == null ? 0 : 1") {
 		t.Errorf("%s: the invoker grant must stay keyed on var.credentials_service: the switch's other conditions decide whether a LAUNCH hands the job the address, never whether the grant exists (D2071):\n%s", path, code)
@@ -7735,8 +7761,8 @@ func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
 	// create. The drop is the list AND the input, inside the same opt-in gate
 	// as the service-held names — a non-proxied repository of an opted-in
 	// installation still mounts its Bitbucket token (G9).
-	if got, want := local("job_mounts"), "env => logical if !local.service_serves || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)"; got != want {
-		t.Errorf("%s: job_mounts = %s, want %s: the mount must go with the accessor, for a proxied repository only, with B3.8's fetched class as the one further clause", path, got, want)
+	if got, want := local("job_mounts"), jobMountsExpr; got != want {
+		t.Errorf("%s: job_mounts = %s, want %s: the mount must go with the accessor, for a proxied repository only, with B3.8's fetched class as the one further clause — and that one gated on the ADDRESS rather than on the opt-in (IS6)", path, got, want)
 	}
 }
 
@@ -7750,9 +7776,11 @@ func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
 // of the secret (a workflow's own `secrets:`), and whether a class is fetched
 // is the flip itself. Go drops the mount (internal/infra's dropVaultMounts,
 // whose answer is WorkflowSpec.VaultSecretNames) and the module drops the
-// accessor off the same names while KEEPING the credentials service's own
-// grant, so the two sides have to agree on one thing twice over: which class is
-// fetched at all, and which names of it this workflow contributed.
+// accessor off the same names, so the two sides have to agree on one thing
+// twice over: which class is fetched at all, and which names of it this
+// workflow contributed. The DROP goes on both sides; the service's own grant
+// does not follow it any more (IS6) — the container a fetch reads is the
+// installation's fugaro_p_<name> copy, under D3323's prefix-conditioned grant.
 //
 // The two lists are filled in one commit, and the drift this test refuses is
 // silent in both directions: a class filled in Go and not in the module leaves
@@ -7818,21 +7846,21 @@ func TestVaultFetchedClassesMatchTheModule(t *testing.T) {
 		}
 		return squash(found[1])
 	}
-	if got := mounts("job_secret_names"); !strings.Contains(got, "!contains(local.vault_secret_names, logical)") {
-		t.Errorf("%s: job_secret_names = %s: the job's accessor must drop the fetched class with its mount, or the job mounts a secret its account keeps no accessor on", path, got)
+	if got := mounts("job_secret_names"); !strings.Contains(got, "!(local.service_addressed && contains(local.vault_secret_names, logical))") {
+		t.Errorf("%s: job_secret_names = %s: the job's accessor must drop the fetched class with its mount — and on the ADDRESS rather than on the opt-in, or a `vertex` repository's job keeps an accessor on a container its workflow no longer mounts (IS6, D3326):", path, got)
 	}
-	if got := mounts("job_mounts"); !strings.Contains(got, "!contains(local.vault_secret_names, logical)") {
-		t.Errorf("%s: job_mounts = %s: the mount must go with the accessor (C2.3), for the fetched class exactly as for the App key and a proxied repository's token", path, got)
+	if got := mounts("job_mounts"); !strings.Contains(got, "!(local.service_addressed && contains(local.vault_secret_names, logical))") {
+		t.Errorf("%s: job_mounts = %s: the mount must go with the accessor (C2.3), for the fetched class exactly as for the App key and a proxied repository's token, and on the address gate", path, got)
 	}
 
-	// And the other direction, which is what makes the flip work at all: the
-	// service keeps its grant on those containers. The set is the mounts' own
-	// values plus the fetched names — the one flip that does NOT narrow it
-	// (D2074), because a workflow secret's value is read from this job's
-	// container when the run fetches it (B3.4) — and the grants test holds the
-	// set to this expression.
-	if !strings.Contains(code, "toset(concat(values(local.job_mounts), local.vault_secret_names))") {
-		t.Errorf("%s: service_secret_names does not add local.vault_secret_names to the mounts: the service has no accessor on a container the job no longer mounts, so every fetch of a workflow secret fails for the runs the flip exists to serve (D2074, B3.4):\n%s", path, code)
+	// And the other direction, which is what makes the flip work at all, and
+	// which IS6 SHRANK: the service's own grant is the mounts' own values and
+	// nothing else. A name the fetch took off the job is read by the service in
+	// the installation's fugaro_p_<name> copy, which D3323's prefix-conditioned
+	// grant already covers, so a per-container grant on the project copy is one
+	// no run asks for — and that copy is what IS13 retires and deletes.
+	if !strings.Contains(code, "toset(values(local.job_mounts))") {
+		t.Errorf("%s: service_secret_names is not the mounts' own values alone: the service reads a fetched workflow secret in the fugaro_p_ grammar (IS6, D3323), and a set that still added local.vault_secret_names here would grant it a container no run asks it for (D2074):\n%s", path, code)
 	}
 }
 
@@ -7891,11 +7919,11 @@ func TestBuildServedClassesMatchTheModule(t *testing.T) {
 		}
 		return squash(found[1])
 	}
-	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && var.installation.credentials_service_serves && contains(local.build_served_secret_classes, "build")`; got != want {
-		t.Errorf("%s: build_mounts_served = %s, want %s: the accessor list leaves with the class \"build\" (D2077), for a repository the service serves alone (G9, D147)", path, got, want)
+	if got, want := local("build_mounts_served"), `var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")`; got != want {
+		t.Errorf("%s: build_mounts_served = %s, want %s: the accessor list leaves with the class \"build\" (D2077), for a repository whose build carries the service's address (IS6)", path, got, want)
 	}
-	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && var.installation.credentials_service_serves && length(local.build_served_secret_classes) > 0`; got != want {
-		t.Errorf("%s: check_mount_served = %s, want %s: the check job's mount leaves with either class — it mounts the git credential, whose accessor is the build account's own — and for a repository the service serves alone (C2.3, G9)", path, got, want)
+	if got, want := local("check_mount_served"), `var.installation.credentials_service != null && length(local.build_served_secret_classes) > 0`; got != want {
+		t.Errorf("%s: check_mount_served = %s, want %s: the check job's mount leaves with either class — it mounts the git credential, whose accessor is the build account's own — and for a repository whose build carries the service's address (C2.3, IS6)", path, got, want)
 	}
 
 	// Both clauses, and each is read through one of those gates: the accessor
@@ -8100,7 +8128,7 @@ func TestProxiedGitDropIsKeyedOnTheFactAndOffByDefault(t *testing.T) {
 	}
 	for _, clause := range []struct{ name, want string }{
 		{"the job's accessor set", "|| local.is_proxied_git[env]"},
-		{"the job's mounts", "&& !local.is_proxied_git[env]"},
+		{"the job's mounts", jobMountsExpr},
 	} {
 		if !strings.Contains(squash(scode), clause.want) {
 			t.Errorf("gcp/modules/workflow/sa.tf: %s does not read local.is_proxied_git (%q), so the flip list would not be the one thing that moves it:\n%s", clause.name, clause.want, scode)

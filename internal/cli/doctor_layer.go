@@ -39,8 +39,10 @@ import (
 //     gives its image to runs an entry that has been built — judged against
 //     the catalog the job spec resolves, with an unread line of its own when
 //     that catalog could not be read at all;
-//   - the one local layer file (localLayerFileCheck), which reads no bucket
-//     and so is reported even when none of the above can be.
+//   - the one local layer file (localLayerFileCheck) and the two members of
+//     the repository-to-image map a project config may hold (localFileChecks),
+//     which read no bucket and so are reported even when none of the above can
+//     be.
 //
 // Best effort: what cannot be read says nothing.
 func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf resolvedFile) []doctorCheck {
@@ -57,7 +59,7 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		if rf.Layer.Note != "" {
 			msg += ": " + rf.Layer.Note
 		}
-		return append([]doctorCheck{{ID: "project-layer", Severity: "info", unread: unknown, Problem: msg}}, localLayerFileCheck(lc, rf)...)
+		return append([]doctorCheck{{ID: "project-layer", Severity: "info", unread: unknown, Problem: msg}}, localFileChecks(lc, rf)...)
 	}
 	problem := fmt.Sprintf("project layer %s generation %d (sha256 %s) applies; fugaro config show prints where each value comes from", l.Project, rf.Layer.Generation, shortSHA(l.SHA256))
 	if rf.Layer.Note != "" {
@@ -75,19 +77,19 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 	// layer-drift, copy-staleness and image-config state here.
 	oi, ok := readOrigin(ctx, root)
 	if !ok || oi.Rewritten {
-		return append(out, localLayerFileCheck(lc, rf)...)
+		return append(out, localFileChecks(lc, rf)...)
 	}
 	slug, err := task.Slug(rf.Cfg.Git.Provider, oi.Repo)
 	if err != nil {
-		return append(out, localLayerFileCheck(lc, rf)...)
+		return append(out, localFileChecks(lc, rf)...)
 	}
 	b, err := blobx.Open(ctx, lc.BucketURL())
 	if err != nil {
-		return append(out, localLayerFileCheck(lc, rf)...)
+		return append(out, localFileChecks(lc, rf)...)
 	}
 	env := &cloudEnv{lc: lc, bucket: b}
 	defer env.Close() // closes b, and env.records if recordBucket opened one
-	out = append(out, localLayerFileCheck(lc, rf)...)
+	out = append(out, localFileChecks(lc, rf)...)
 	out = append(out, layerDrift(ctx, b, slug, l)...)
 	out = append(out, layerCopyCheck(ctx, b, slug, l)...)
 	if rb, err := env.recordBucket(ctx); err == nil {
@@ -301,6 +303,34 @@ func localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck {
 	}
 	return []doctorCheck{{ID: "local-layer-file", Severity: "info",
 		Problem: fmt.Sprintf("the local layer file %s (sha256 %s) is the published project layer (generation %d)", st.Path, shortSHA(st.SHA256), st.Generation)}}
+}
+
+// localFileChecks are doctor's lines that read no bucket, so they are reported
+// on every path doctorLayerChecks returns from — the state that breaks the
+// owner's next command must not vanish with the network.
+func localFileChecks(lc *localcfg.Config, rf resolvedFile) []doctorCheck {
+	return append(localLayerFileCheck(lc, rf), imageMapMembersCheck(lc)...)
+}
+
+// imageMapMembersCheck names the one state a project config can be in that
+// nothing a job runs is wrong about: a file holding repo_images and the legacy
+// image_map beside it. repo_images is read and image_map is ignored (R2), so
+// every job resolves the entry the new member gives it — and the legacy member
+// is dead weight the next `fugaro update` takes away (R14). The file is the one
+// place it can be named, because it is the file's own bytes that hold it; the
+// published node is not read here, which is what makes the check stand on the
+// path where the bucket is unreachable.
+func imageMapMembersCheck(lc *localcfg.Config) []doctorCheck {
+	if lc == nil || lc.RepoImages == nil || lc.ImageMap == nil {
+		return nil
+	}
+	where := policyConfigPath(lc)
+	if where == "" {
+		where = "this machine's project config"
+	}
+	fix := selfCommand() + " update"
+	return []doctorCheck{{ID: "image-map-both-members", Severity: "warning", Fix: fix,
+		Problem: fmt.Sprintf("the project config %s holds both repository-to-image maps: repo_images is read and image_map is ignored, and %s removes image_map", where, fix)}}
 }
 
 // layerRigorRepoAdmissionCheck judges the repository names the project layer's

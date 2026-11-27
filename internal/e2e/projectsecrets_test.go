@@ -1140,6 +1140,7 @@ func envValue(env []string, key string) string {
 // contract's version-2 shape.
 func TestProjectSecretFetchedEndToEnd(t *testing.T) {
 	r := newPSRig(t, psRepoName)
+	r.managedInstallation(t)
 	if _, ok := r.projectRule(t); ok {
 		t.Fatalf("the record holds an entry for %s before the migration", psSecretName)
 	}

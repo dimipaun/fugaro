@@ -25,7 +25,10 @@ import (
 //   - The gate never answers for a session nobody is at. Removes may be true in
 //     a run with no terminal, which is why the terminal branch asks for one
 //     beside it; a step that reached past it would be a managed project's
-//     plan applied by a pipe or a --json run.
+//     plan applied by a pipe or a --json run. The pipe IS answered — by the
+//     run's own confirmation, whose other half is NobodyIsAtTheSession
+//     (internal/cli's runCovers, and check 292's own case) — and that is a
+//     second question about the same run rather than this one widened.
 
 // allConditions is the whole product of the six fields a run says about who
 // is there: 64 rows, each reachable from the CLI. --ask is one of them because
@@ -264,6 +267,37 @@ func TestPersonAtTheTerminalIsTheOwnerAndNothingElse(t *testing.T) {
 			if got, want := GateStandsIn(c, m), PersonAtTheTerminal(c) && m.Removes(); got != want {
 				t.Errorf("GateStandsIn(%s, %s) = %v, want %v", conditionsName(c), managedName(m), got, want)
 			}
+		}
+	}
+}
+
+// TestNobodyIsAtTheSessionIsThePipeAndNothingElse: the third session a managed
+// project's run answers a step's confirmation in is the one no person is at and
+// no flag speaks for — no coding agent's marker, no terminal, neither --json
+// nor --non-interactive, and no --ask. It is the pipe with its input closed a
+// script, a cron or a live check drives `fugaro update` in, and the case check
+// 292 (the owner's, 2026-11-26) found answered with a confirmation there was
+// nobody to give: the run's own confirmation (internal/cli's runCovers) is the
+// marks' read there, exactly as it is at the owner's own terminal, and it is
+// what covers the ordinary steps the gate judges no document for.
+//
+// The two flags and the flag of the owner are the mutations caught: read as
+// this session, each of them would have the run answer a session whose own
+// reader asked for something else — a document, a run that puts nothing to
+// anybody, or the question back. It is asked BESIDE GateStandsIn and never
+// instead of it: the two are different questions about the same run, and a
+// caller that answered a step from this one alone would be applying a document
+// no verdict admitted.
+func TestNobodyIsAtTheSessionIsThePipeAndNothingElse(t *testing.T) {
+	for _, c := range allConditions() {
+		want := c.Agent == "" && !c.Terminal && !c.NonInteractive && !c.JSON && !c.Ask
+		if got := NobodyIsAtTheSession(c); got != want {
+			t.Errorf("NobodyIsAtTheSession(%s) = %v, want %v", conditionsName(c), got, want)
+		}
+		// The owner's own session and this one are the two halves of who is
+		// there, so no row is both and no row is neither.
+		if PersonAtTheTerminal(c) && NobodyIsAtTheSession(c) {
+			t.Errorf("%s is both the owner's session and a session nobody is at", conditionsName(c))
 		}
 	}
 }

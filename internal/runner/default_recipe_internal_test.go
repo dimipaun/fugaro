@@ -52,14 +52,38 @@ func planKinds(plan []planStep) []recipe.StepKind {
 // really has produce.
 func levelsOf(t *testing.T, rcp *recipe.Recipe, derived bool, mode rigor.Rigor, a config.Agent, providers map[string]config.ModelProvider, floor []policy.Level, task *config.ReviewLevels) config.Levels {
 	t.Helper()
+	return levelsOfIn(t, nil, rcp, derived, mode, a, providers, floor, task)
+}
+
+// levelsOfIn is levelsOf over a project layer, nil for the silent project the
+// other cases are: a tighten-only switch the mode's row runs is really off
+// only where the project layer states it, since a repository's own off stands
+// down in favour of the baseline the run would have taken without it (spec
+// §5.2, R3, R20, RT2).
+func levelsOfIn(t *testing.T, layer *config.ProjectLayer, rcp *recipe.Recipe, derived bool, mode rigor.Rigor, a config.Agent, providers map[string]config.ModelProvider, floor []policy.Level, task *config.ReviewLevels) config.Levels {
+	t.Helper()
 	levels, _, err := config.ResolveLevels(config.LevelInputs{
-		Config: &config.Config{Agent: a}, Mode: mode, Floor: floor, Task: task,
+		Config: &config.Config{Agent: a, Layer: layer}, Mode: mode, Floor: floor, Task: task,
 		Recipe: rcp, CatalogDefault: derived, Providers: providers,
 	})
 	if err != nil {
 		t.Fatalf("resolving the levels of a %s run: %v", mode, err)
 	}
 	return levels
+}
+
+// firstLineOffLayer is a project layer that turns the first-line review off,
+// the only switch that does it: agent.first_line_review is tighten-only, so a
+// repository's off where the project says nothing reads as applyDefaults' auto
+// (spec §5.2, R3, R20, RT2).
+func firstLineOffLayer(t *testing.T) *config.ProjectLayer {
+	t.Helper()
+	l, ps := config.ParseProjectLayer([]byte("version: 1\nproject: acme\ngcp_project: acme-fugaro\n"+
+		"defaults: { agent: { first_line_review: off } }\n"), config.LayerAnchor{Project: "acme", GCPProject: "acme-fugaro"})
+	if len(ps) > 0 {
+		t.Fatalf("layer problems: %v", ps)
+	}
+	return l
 }
 
 // TestDefaultRecipeRunsThreeLevelsWhenEachIsOn: the catalog `default` is the
@@ -102,7 +126,7 @@ func TestDefaultRecipeSkipsALevelWhoseConditionIsOff(t *testing.T) {
 	t.Run("level 1: first_line_review off", func(t *testing.T) {
 		a, providers := providerCoderAgent()
 		a.FirstLineReview = config.FirstLineOff
-		got := planOf(def, levelsOf(t, def, true, rigor.Critical, a, providers, nil, nil), a, nil, rigor.Critical)
+		got := planOf(def, levelsOfIn(t, firstLineOffLayer(t), def, true, rigor.Critical, a, providers, nil, nil), a, nil, rigor.Critical)
 		want := []recipe.StepKind{recipe.StepReview, recipe.StepAdversarial}
 		if kinds := planKinds(got); !slices.Equal(kinds, want) {
 			t.Fatalf("plan = %v, want %v", kinds, want)

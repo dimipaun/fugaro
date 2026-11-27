@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // tightenLayer is a project layer whose defaults block is defaults, with the
@@ -39,7 +40,11 @@ func TestTightenOnly(t *testing.T) {
 		projText  string // the project's value, as the record renders it
 		looseText string // the repository's looser value, as the record renders it
 		tightText string // the repository's tighter value, and the one that stands
-		get       func(*Config) string
+		// silentText is what a silent project resolves to, where the default
+		// the key supplies is not the text the file wrote — `max_budget_usd`
+		// written 0 is the built-in 25 (empty: the repository's own text).
+		silentText string
+		get        func(*Config) string
 	}{
 		{
 			name:      "review_rounds",
@@ -62,6 +67,22 @@ func TestTightenOnly(t *testing.T) {
 			looseText: "25",
 			tightText: "5",
 			get:       func(c *Config) string { return ftoa(c.Agent.MaxBudgetUSD) },
+		},
+		{
+			// 0 is not a cap: it is the key's "unset" spelling, which the
+			// defaults turn into the built-in 25, so a repository writing it
+			// against a project's cap asks for a larger one rather than a
+			// smaller, and it is dropped like any other looser value.
+			name:       "max_budget_usd_zero",
+			project:    "{ git: { provider: github }, agent: { max_budget_usd: 5 } }",
+			loose:      "agent:\n  max_budget_usd: 0\n",
+			tight:      "agent:\n  max_budget_usd: 1\n",
+			path:       "agent.max_budget_usd",
+			projText:   "5",
+			looseText:  "0",
+			tightText:  "1",
+			silentText: "25",
+			get:        func(c *Config) string { return ftoa(c.Agent.MaxBudgetUSD) },
 		},
 		{
 			name:      "first_line_review",
@@ -161,8 +182,12 @@ func TestTightenOnly(t *testing.T) {
 			if len(ps) > 0 {
 				t.Fatalf("a silent project: %s", problemsText(ps))
 			}
-			if got := tc.get(c); got != tc.looseText {
-				t.Errorf("a silent project: %s = %q, want the repository's %q", tc.path, got, tc.looseText)
+			silentText := tc.silentText
+			if silentText == "" {
+				silentText = tc.looseText
+			}
+			if got := tc.get(c); got != silentText {
+				t.Errorf("a silent project: %s = %q, want the repository's %q", tc.path, got, silentText)
 			}
 			if !slices.Contains(res.Unchecked, tc.path) {
 				t.Errorf("a silent project: unchecked = %v, want it to name %s", res.Unchecked, tc.path)
@@ -322,5 +347,43 @@ func TestProjectRaiseKeepsRepoFileValid(t *testing.T) {
 	}
 	if !slices.Equal(res.Ignored, want) {
 		t.Errorf("ignored = %+v, want %+v", res.Ignored, want)
+	}
+}
+
+// TestSilentProjectCriticalRunKeepsL3 is R20 (RT2): where RT1 kept a
+// repository's value because the project layer says nothing about the key, the
+// baseline is where the defaults are applied — for a review level's own
+// switch, the mode's row (rigor.DefaultLevels). A critical run's row turns
+// level 3 on, so a silent project does not let the repository turn it off, and
+// the level runs; a mode whose row leaves the level off has no baseline for
+// the key, and the repository's off is the only answer there is.
+func TestSilentProjectCriticalRunKeepsL3(t *testing.T) {
+	silent := tightenLayer(t, "{ git: { provider: github } }")
+	c, res, ps := Resolve([]byte(minimalRepo+"agent:\n  levels:\n    l3: { none: true }\n"), silent)
+	if len(ps) > 0 {
+		t.Fatalf("a silent project: %s", problemsText(ps))
+	}
+	if l3 := c.Agent.Levels.L3; l3 == nil || !l3.Off {
+		t.Fatalf("a silent project: l3 = %+v, want the repository's own off in the resolved config", l3)
+	}
+	if !slices.Contains(res.Unchecked, "agent.levels.l3.none") {
+		t.Fatalf("a silent project: unchecked = %v, want it to name agent.levels.l3.none", res.Unchecked)
+	}
+
+	recipe := levelRecipe(t, "default")
+	got, _, err := ResolveLevels(LevelInputs{Config: c, Mode: rigor.Critical, Recipe: recipe, CatalogDefault: true})
+	if err != nil {
+		t.Fatalf("a critical run under a silent project: %v", err)
+	}
+	if !got.L3.On {
+		t.Errorf("l3 = %+v at critical under a silent project; want it on: the mode's own row is the baseline the repository's off is judged against (R20)", got.L3)
+	}
+
+	got, _, err = ResolveLevels(LevelInputs{Config: c, Mode: rigor.Pro, Recipe: recipe, CatalogDefault: true})
+	if err != nil {
+		t.Fatalf("a pro run under a silent project: %v", err)
+	}
+	if got.L3.On {
+		t.Errorf("l3 = %+v at pro under a silent project; want it off: the mode's row sets no level 3", got.L3)
 	}
 }

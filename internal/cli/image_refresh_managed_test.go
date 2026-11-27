@@ -806,6 +806,10 @@ func TestImageRefreshRefusesUnmanaged(t *testing.T) {
 	fugaroAtItsOwnName(t)
 	useSelf(t)
 	r := newImagesRig(t, "1.2.3")
+	// The rig's own default is a managed installation (newInitRig), and this
+	// test is the other side of the boundary: the project's own half of the
+	// fact is taken back out, so what refuses the refresh is the project.
+	r.removeManagedInstallation(t)
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
 	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
 	records = map[string]string{}

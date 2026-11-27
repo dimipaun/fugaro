@@ -12,7 +12,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // updateDefaultProfileTests is where S5's own tests live: `fugaro update` writes
@@ -178,7 +177,7 @@ func TestUpdateDefaultProfileIsIdempotent(t *testing.T) {
 	// default branch's, and a second run that stopped there would not reach the
 	// stages this test is about — the whole door has to exit clean, write
 	// nothing and still converge.
-	testutil.Git(t, r.root, "commit", "-qam", "the first run's own change to the checkout")
+	commit(t, r.root, "the first run's own change to the checkout")
 	fetched(t, r.root)
 	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
@@ -248,7 +247,7 @@ func TestUpdatePreviousVersionConverges(t *testing.T) {
 func TestUpdateKeepsTheDefaultProfilesJobWhenTheConfigCannotComposeIt(t *testing.T) {
 	r := credentialsRig(t)
 	credentialsGitHubRepo(t, r)
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("create", r.credentialsRef())...)
 	credentialsOutputs(t, r)
 	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("the run that wrote the default profile and deployed its job failed: %v\n%s", err, errOut)
@@ -326,7 +325,7 @@ func TestUpdateKeepsTheDefaultProfilesJobThroughTheRepositoryStage(t *testing.T)
 			projectpolicy.DefaultProfileName, name, slices.Sorted(maps.Keys(deployed)))
 	}
 
-	testutil.Git(t, r.root, "commit", "-qam", "the run's own change to the checkout")
+	commit(t, r.root, "the run's own change to the checkout")
 	fetched(t, r.root)
 	secondAppRepo(t)
 
@@ -398,7 +397,7 @@ func secondAppRepo(t *testing.T) {
 func TestUpdatePlanOnlyConvergesWhereTheUpdateDoes(t *testing.T) {
 	r := newConvergeRig(t, currentNode()) // doctor appends policy-vs-jobs only for a node it reads, and that check is this fixture's staleness
 	convergeOn(t, r, []string{"policy-vs-jobs"})
-	testutil.Git(t, r.root, "commit", "-qam", "the run's own change to the checkout")
+	commit(t, r.root, "the run's own change to the checkout")
 	fetched(t, r.root)
 	secondAppRepo(t)
 

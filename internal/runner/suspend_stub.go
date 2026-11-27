@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"time"
 )
 
 // This file is C3's half of the pause contract for the runner: the seam a run
@@ -25,12 +24,11 @@ import (
 // suspend the run so the service can resume it later as a new run in the same
 // chain.
 //
-// stage is the stage that was running, and until is the instant the service
-// said it would resume the run at. The instant is the service's own figure and
-// is passed for the run's log line alone: pause.json carries no time, the node
-// the service writes is the only record of it, and the job never chooses one
-// (R8, D3189).
-var Suspend func(ctx context.Context, r *run, stage string, until time.Time) error
+// stage is the stage that was running, session the session it ran in, and ex
+// the answer of the service that decided the pause — whose instants are its
+// own figures, read by the run's log line, its record and its refusal and never
+// chosen by the job (R8, D3189).
+var Suspend func(ctx context.Context, r *run, stage, session string, ex exhaustedError) error
 
 // suspendInJob is today's answer to an exhausted credential: the run waits for
 // the reset inside the job, on the session it had started (D138, F28). That is
@@ -38,8 +36,8 @@ var Suspend func(ctx context.Context, r *run, stage string, until time.Time) err
 // the reason PR2's TestSuspendFollowsTheAnswer/pause fails while this body
 // stands: a pause answered by a wait is a container billing for the whole
 // reset.
-func suspendInJob(ctx context.Context, r *run, stage string, until time.Time) error {
-	return r.waitForCredential(ctx, stage, until)
+func suspendInJob(ctx context.Context, r *run, stage, session string, ex exhaustedError) error {
+	return r.waitForCredential(ctx, stage, ex.Until)
 }
 
 // The assignment stands only while nothing else has made one.

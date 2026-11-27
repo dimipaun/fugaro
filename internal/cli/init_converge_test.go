@@ -358,8 +358,7 @@ func TestForgetAndConfigOnlyDoNotEnterTheLoop(t *testing.T) {
 		{"--forget", "update"},
 	} {
 		flag := tc.flag
-		r := newInitRig(t)
-		r.stateBucket()
+		r := forgetRig(t)
 		r.setPlan(t, forgetPlan()...)
 		fakeTerminal(t)
 		out, _, err := executeStdin(t, "", tc.door, flag)
@@ -376,8 +375,7 @@ func TestForgetAndConfigOnlyDoNotEnterTheLoop(t *testing.T) {
 // rollback applies and the state entry is removed with nothing typed, and
 // no line of stdin is read.
 func TestForgetTakesItsConfirmationsFromTheTerminal(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	r.setPlan(t, forgetPlan()...)
 	fakeTerminal(t)
 	spy := &readSpy{Reader: strings.NewReader(initProjectName + "\n")}

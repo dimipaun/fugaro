@@ -7,8 +7,7 @@ func init() {
 		PlannerRigor:   PlanRigor,
 		PlannerRecipes: PlanRecipes,
 		PlannerCaps:    PlanCaps,
-		// RT3 is not merged: config.Resolve names B4's drops until it is.
-		PlannerTighten: func(Project, []Repo) (Change, error) { return Change{}, nil },
+		PlannerTighten: PlanTighten,
 	} {
 		if err := Register(name, p); err != nil {
 			panic("internal/lift: " + err.Error())

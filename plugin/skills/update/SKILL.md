@@ -32,7 +32,7 @@ Run `fugaro version`. An update brings a checkout to that version; it never upgr
 
 ## 2. Check
 
-Run `fugaro update --check`. It writes nothing, runs no `claude` command, makes no cloud call and needs no credentials. Exit 1 means something is stale, not that the check failed. For each `plugin:`, `cloud:`, `rules:` and `policy:` line, tell the user in plain words what it says and why it matters, one sentence per stale step ([reference/states.md](reference/states.md) explains every state and reason).
+Run `fugaro update --check`. It writes nothing, runs no `claude` command, and reads each repository through the installation's credentials service. Exit 1 means something is stale, not that the check failed. For each `plugin:`, `cloud:`, `rules:` and `policy:` line, tell the user in plain words what it says and why it matters, one sentence per stale step ([reference/states.md](reference/states.md) explains every state and reason).
 
 The `rules:` and `policy:` lines are `skipped` under `--check`, each with a `note:` saying so: which generation of the security rules the project's database has deployed, and whether its published policy node is current, are facts of the user's project, and reading either needs credentials `--check` does not use. Say it cannot tell, and that the command step 4 hands over deploys the rules generation and migrates the node in place when it is an older Fugaro's, in that order.
 
@@ -55,6 +55,8 @@ fugaro update
 ```
 
 Before they run it, say what it does. It is the whole upgrade in one run: it prints the state of every step first, then brings the installation and this checkout onto this binary — the job images, the deployed security rules generation the policy is read under, the published policy node an earlier Fugaro wrote, and the local step above — and installs the orchestrator daemon's login unit on this machine when it has none, re-rendering the one already there. It asks for nothing to be typed at those steps, managed or not: a person at their own terminal reads what each step prints and it goes on.
+
+A pin an earlier release committed to a checkout is named by `doctor` and `update`, with the line to delete: nothing writes a pin any more, so the edit is the user's to make and never yours.
 
 On a **managed** project, at the owner's own terminal, the steps the run's one confirmation would have covered carry the gate's own note instead of a confirmation (the marks were read, the cover the gate judges a step's plan by is the same one that confirmation asks, and what each step does is printed). A plan that cover does not admit — one that deletes, replaces or grants to someone the review did not list — is not applied at all: the gate refuses it and the run stops, naming the rules that refused. Every billable image build, every secret's value and every step that loses data (a `--forget` rollback, a policy `--delete`) is behind its own confirmation either way, and nothing has to be published again. It also redoes the local half, which is then current.
 

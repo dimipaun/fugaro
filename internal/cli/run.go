@@ -1927,8 +1927,8 @@ func chainLimitGate(ctx context.Context, env *cloudEnv, o *runOptions, spec *tas
 	}
 	if r := o.limits.rounds; r != nil {
 		if *r < 1 {
-			return userErr("--max-review-rounds %d: a chain's review rounds must be at least 1. A %s run's own review loop starts from %d rounds per run (the mode's default, held inside the recipe's %d), so a limit below that bounds a chain that could never spend it",
-				*r, c.mode, chainRoundCeiling(c.mode), recipe.MaxReviewRounds)
+			return userErr("--max-review-rounds %d: a chain's review rounds must be at least 1. A %s run's own review loop starts from %d rounds per run (the file's own number where it tightens the mode's, the mode's default where it does not, held inside the recipe's %d), so a limit below that bounds a chain that could never spend it",
+				*r, c.mode, chainRoundCeiling(c.cfg, c.mode), recipe.MaxReviewRounds)
 		}
 		n := int(e.MaxReviewRounds)
 		spec.Overrides.MaxReviewRounds = &n
@@ -2263,8 +2263,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 			return config.Inputs{}, err
 		}
 		// The model_grades: block, the same shape and the same reason
-		// again: see checkModelGradesImage. The repository's half is
-		// judged even though the merge drops and records what it writes.
+		// again: see checkModelGradesImage.
 		if err := checkCloneModelGradesImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
@@ -2785,6 +2784,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// be one that knows the fetch. Judged beside the model credential's gate and
 	// likewise not at all for a launch the flip does not touch.
 	if err := env.vaultGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
+	// And the same run's second half (IS6): the fetch that job depends on is
+	// version 2's, by name, from the project record — a runner that knows the
+	// version-1 way asks for the project copy this release stops deriving. Read
+	// after the gate above and on its own condition, so an image below vaultSince
+	// meets that sentence and one between the two meets this.
+	if err := env.vaultNameGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
 	if err := checkMaxParallel(ctx, env); err != nil {

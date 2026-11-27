@@ -559,8 +559,16 @@ func TestComputeStageGuardsDeletes(t *testing.T) {
 			r.setPlanAt(t, "compute", change("module.compute.google_compute_router_nat.this", "delete", "create"))
 			fakeTerminal(t)
 			out, _, err := executeStdin(t, initProjectName+"\n", tc.args...)
-			if err == nil || !strings.Contains(err.Error(), "--allow-delete") {
-				t.Fatalf("err = %v, want the compute stage's guard refusal:\n%s", err, out)
+			// The rig's installation is a managed project's (newInitRig's
+			// marks), so the refusal is the owner's own sentence and not the
+			// flag-and-hints text a project nothing flags gets: the address is
+			// what says this refusal is that stage's guard, and the unmanaged
+			// text is pinned by TestManagedInitRefusalNamesNoFlag.
+			if err == nil || !strings.Contains(err.Error(), "module.compute.google_compute_router_nat.this") {
+				t.Fatalf("err = %v, want the compute stage's guard refusal naming the address:\n%s", err, out)
+			}
+			if !strings.Contains(err.Error(), initManagedDeleteAdvice) {
+				t.Errorf("the refusal is not the guard's managed text:\n%s", err)
 			}
 			if calls := subcommands(computeCalls(t, r)); slices.Contains(calls, "apply") {
 				t.Fatalf("a plan that deletes was applied: %q", calls)
@@ -663,7 +671,7 @@ func TestComputeStageIsBehindItsFlag(t *testing.T) {
 
 // The flag is refused where it could only mislead: with --repo (another
 // root's run) and with every flag that only reads or only stops
-// (--forget, --print-vars, --config-only, --publish-config, --anchor), so a
+// (--forget, --print-vars, --config-only, --publish-config), so a
 // run that named --provision-batch always means the apply it names. The
 // check is asked
 // directly: a --repo run resolves the checkout before it validates anything,
@@ -671,7 +679,7 @@ func TestComputeStageIsBehindItsFlag(t *testing.T) {
 func TestProvisionBatchFlagIsRefusedWhereItCannotApply(t *testing.T) {
 	for _, o := range []*initOptions{{provisionBatch: true, repo: true}, {provisionBatch: true, forget: true},
 		{provisionBatch: true, printVars: true}, {provisionBatch: true, configOnly: true},
-		{provisionBatch: true, publishConfig: true}, {provisionBatch: true, anchor: true}} {
+		{provisionBatch: true, publishConfig: true}} {
 		err := o.check()
 		if err == nil || !strings.Contains(err.Error(), "--provision-batch") {
 			t.Errorf("%+v: err = %v, want it refused", o, err)

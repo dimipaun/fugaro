@@ -195,6 +195,89 @@ func FixturePins(cfg string, lifted []string) (file, layer string) {
 	return AnchorFile(file), layer
 }
 
+// sanctionAgentKeys is the tighten-only set under agent: (spec §5.2, RT1's
+// list): the keys a repository's file may write but may not decide alone,
+// because the merge measures each against the project's word and, where the
+// project says nothing, against the mode's own rows (R20, RT2).
+var sanctionAgentKeys = []string{
+	"levels", "first_line_review", "first_line_rounds", "review_rounds",
+	"adversarial_rounds", "review_stop_fraction", "max_budget_usd", "recipe", "workspace_beat",
+}
+
+// SanctionAgent is the harness's word for a fixture's own: the tighten-only
+// agent keys the file writes are written into the layer too, wherever that
+// layer says nothing about them, and the layer's text is returned (unchanged
+// when the file writes none, or already leaves none to state).
+//
+// Without it a fixture would be a repository silently weakening the mode: its
+// `first_line_rounds: 1` under a project that says nothing is the looser
+// number, so the run takes the mode's row instead (Pro's three, R20, RT2), and
+// every case about what a number does — one cheap round, a loop that stops, a
+// stage budget — would read a number it never wrote. The rule itself is pinned
+// where it is read: config's merge and ResolveLevels, the runner's plan
+// (plan_tighten_test.go, on a configuration built by hand) and the launcher's
+// own tests. A fixture that means to exercise it writes the layer itself.
+//
+// file is the fixture's file after TakeFilePins (the lifted keys are already
+// out of it), and a leaf the layer names is left exactly as the test wrote it:
+// the layer's own word wins, as it does in the merge.
+func SanctionAgent(file, layer string) string {
+	fileDoc, ok := parseDoc(file)
+	if !ok {
+		return layer
+	}
+	root := fileDoc.Content[0]
+	if root.Kind != yaml.MappingNode || mapGet(root, "defaults") != nil {
+		return layer
+	}
+	agent := mapGet(root, "agent")
+	if agent == nil || agent.Kind != yaml.MappingNode {
+		return layer
+	}
+	stated := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, k := range sanctionAgentKeys {
+		if v := mapGet(agent, k); v != nil {
+			mapSet(stated, k, v)
+		}
+	}
+	if len(stated.Content) == 0 {
+		return layer
+	}
+	layerDoc, ok := parseDoc(layer)
+	if !ok || len(layerDoc.Content) != 1 || layerDoc.Content[0].Kind != yaml.MappingNode {
+		return layer
+	}
+	defaults := mapGet(layerDoc.Content[0], "defaults")
+	if defaults == nil {
+		defaults = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		mapSet(layerDoc.Content[0], "defaults", defaults)
+	}
+	layerAgent := mapGet(defaults, "agent")
+	if layerAgent == nil || layerAgent.Kind != yaml.MappingNode {
+		layerAgent = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		mapSet(defaults, "agent", layerAgent)
+	}
+	fillMissing(layerAgent, stated)
+	return encodeNode(layerDoc)
+}
+
+// fillMissing writes every leaf of src dst does not name into dst, recursing
+// where both carry a mapping of the same name: the sanction is per leaf, not
+// per block, so a layer that turns one level off still has another level's
+// effort stated from the file.
+func fillMissing(dst, src *yaml.Node) {
+	for i := 0; i+1 < len(src.Content); i += 2 {
+		k, v := src.Content[i], src.Content[i+1]
+		if have := mapGet(dst, k.Value); have != nil {
+			if have.Kind == yaml.MappingNode && v.Kind == yaml.MappingNode {
+				fillMissing(have, v)
+			}
+			continue
+		}
+		mapSet(dst, k.Value, v)
+	}
+}
+
 // MergePins merges the pins a fixture's file named into the project layer a test
 // handed the run, and returns the layer's text: every key of the layer's own
 // stays, the pins decide the models, and a layer that already names a model or

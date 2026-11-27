@@ -498,6 +498,12 @@ type chainLimitPolicy struct {
 	// (H1, internal/runner's policySources says the same at bootstrap).
 	fromNode map[string]bool
 	mode     rigor.Rigor
+	// cfg is the file the run will read, kept for the one figure the
+	// launcher quotes back at a launcher (chainRoundCeiling): the rounds the
+	// run starts from are the file's own where they tighten the mode's row
+	// (R20, RT2), and a refusal that named the row alone would name a number
+	// the run may not start from.
+	cfg *config.Config
 }
 
 // chainLimitPolicyOf resolves the layers above for a launch. cfg is the file
@@ -509,6 +515,7 @@ func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg
 		ceiling: modeScaledCeiling(ceilingLayer(env.lc), mode),
 		under:   []policy.Layer{defaultBranchPolicyLayer(ctx, spec.Repo), runner.FileLayer(cfg)},
 		mode:    mode,
+		cfg:     cfg,
 	}
 	// The node is what the owner says now, where the ceiling is the copy the
 	// job was deployed with, and the runner reads it that way at bootstrap
@@ -619,8 +626,11 @@ func layerWord(src string) string {
 	return "the " + src + " layer"
 }
 
-// chainRoundCeiling is the rounds one run of mode m spends on its review loop
-// with nothing else set: the mode's own senior row, held inside the recipe's
+// chainRoundCeiling is the rounds one run of mode m starts its review loop
+// from, as the run itself reads them (internal/runner's planAgent): the file's
+// own number where it stands — the project layer states it, or it tightens the
+// mode's senior row — and that row where it does not stand, which is a silent
+// project and a number below the row (R3, R20, RT2), held inside the recipe's
 // bound (internal/runner's setRounds, recipe.MaxReviewRounds).
 //
 // It is the figure a refusal about the review-round dimension quotes, and it
@@ -629,12 +639,15 @@ func layerWord(src string) string {
 // (DefaultRounds and AdversarialDefault replaced it, #1483) and whose output
 // the mode's row was never equal to anyway — POC's and Hotfix's rows sit below
 // the floor that function used to apply and Pro's and Critical's above it
-// (docs/run-limit-carry-over F15). Quoting the mode's own row through this
-// function is the narrower, true claim: the number a run of this mode starts
-// from is this one, and it is a default rather than a cap — the recipe's bound
-// is the only ceiling either number is held under.
-func chainRoundCeiling(m rigor.Rigor) int {
-	return min(rigor.DefaultRounds(m).Senior, recipe.MaxReviewRounds)
+// (docs/run-limit-carry-over F15). Quoting the number a run of this mode
+// starts from is the narrow, true claim: it is a default rather than a cap —
+// the recipe's bound is the only ceiling it is held under.
+func chainRoundCeiling(cfg *config.Config, m rigor.Rigor) int {
+	row := rigor.DefaultRounds(m).Senior
+	if n := config.TightenRounds(cfg, "agent.review_rounds", cfg.Agent.ReviewRounds, row); n > 0 {
+		row = n
+	}
+	return min(row, recipe.MaxReviewRounds)
 }
 
 // budgetPrecheck refuses a launch the budget would refuse anyway (see
@@ -988,6 +1001,31 @@ func (e *cloudEnv) vaultGate(ctx context.Context, slug string, spec *task.Spec, 
 		return checkCloneImageSince(e.lc, spec, vaultSince, subject, knows, "", warn)
 	}
 	return checkImageSince(ctx, e, slug, spec, kind, vaultSince, subject, knows, "", warn)
+}
+
+// vaultNameGate refuses a launch of a repository whose workflow secrets the
+// credentials service fetches (B3.8's flip, and IS6's drop) on a job image
+// whose runner predates the BY-NAME fetch (vaultNameSince, IS2): the job such a
+// root deploys mounts none of the workflow's own `secrets:`, and the container
+// a version-1 fetch reads — the project copy a per-repository record maps the
+// variable to — is one this release no longer derives, so a runner that only
+// knows the version-1 way asks for a container that is gone or on its way out
+// and stops at bootstrap over a declared secret.
+//
+// The condition is vaultGate's own (switchedVaultSecrets), read from the same
+// documents and the same functions, and the two gates stand together in that
+// order: an image below vaultSince is refused there, with the sentence that
+// names the fetch itself, and every image the first gate admits — 0.26.0 up to
+// this release — is judged here, so a runner that knows the fetch but not the
+// name meets this sentence and no other.
+func (e *cloudEnv) vaultNameGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
+	if !e.switchedVaultSecrets(ctx, spec) {
+		return nil
+	}
+	if clone {
+		return checkCloneImageSince(e.lc, spec, vaultNameSince, vaultNameSubject, vaultNameKnows, "", warn)
+	}
+	return checkImageSince(ctx, e, slug, spec, kind, vaultNameSince, vaultNameSubject, vaultNameKnows, "", warn)
 }
 
 // switchedVaultSecrets is whether this launch starts a run whose job holds no

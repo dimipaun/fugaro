@@ -8,6 +8,16 @@
 # every correctly-labelled container that already exists live: a config edit
 # can therefore only ever add a key, never drop one, since prevent_destroy
 # turns a dropped key into a hard terraform plan failure (N3).
+#
+# One class of key leaves the computed half since IS6: a `workflow_secrets`
+# entry whose value the installation holds in the fugaro_p_ grammar — the
+# project record marks it copied (D3325/IS5) — is no longer derived here, so
+# the installation stops creating a copy per workflow secret. A name the record
+# does NOT mark keeps its key, and with it this container, its grants and the
+# job's mount (IS5's "skipped" name), until a later update copies it: the union
+# above is what holds that container in the plan either way, and the copy a
+# marked name leaves behind is IS13's retirement, not a key disappearing from
+# this variable.
 resource "google_secret_manager_secret" "project" {
   for_each = var.project_secrets
 

@@ -11,11 +11,14 @@ import (
 
 // liftPins moves the models a fixture's file names into the project layer a
 // run reads: a repository's file may no longer decide them (S1, D3237), and
-// config.Resolve drops them from it before the merge.
+// config.Resolve drops them from it before the merge. The file's own
+// tighten-only agent keys are stated there too (testutil.SanctionAgent): a
+// number the project says nothing about is judged against the mode's row
+// (RT1, R20, RT2), and a fixture is not a repository weakening the mode.
 func liftPins(files map[string]string) (map[string]string, string) {
 	file, layer := testutil.FixturePins(files["fugaro.yaml"], config.LiftedKeyPaths())
 	files["fugaro.yaml"] = file
-	return files, layer
+	return files, testutil.SanctionAgent(file, layer)
 }
 
 // projectLayer is layer as a task carries it, nil when there is none.

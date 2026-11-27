@@ -715,11 +715,11 @@ func newImageRmCmd() *cobra.Command {
 		Long: "Remove a named image from the project's image catalog, in this machine's\n" +
 			"project config. The removal is refused while a repository's job still runs\n" +
 			"the entry — because a workflow names it (image_name:), because the\n" +
-			"project's image_map gives it to the repository, or because the tag-cover\n" +
-			"rule picks it for the tags the workflow needs — since that job would then\n" +
-			"be on an image no catalog describes. Point the repository at another entry\n" +
-			"first (image_name: in its fugaro.yaml, or fugaro image map set), then\n" +
-			"remove the entry.\n\n" +
+			"project's repository-to-image map (`repo_images`) gives it to the\n" +
+			"repository, or because the tag-cover rule picks it for the tags the\n" +
+			"workflow needs — since that job would then be on an image no catalog\n" +
+			"describes. Point the repository at another entry first (image_name: in its\n" +
+			"fugaro.yaml, or fugaro image map set), then remove the entry.\n\n" +
 			"The removal is made live by this one command: the repository whose job ran\n" +
 			"the entry is redeployed and the catalog is published without it, so no\n" +
 			"further command is needed. --no-apply saves the removal and leaves those\n" +

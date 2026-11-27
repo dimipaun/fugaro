@@ -658,7 +658,6 @@ func TestUpdateDoesNotAdvanceRecordInExcludedModes(t *testing.T) {
 		{"--forget", func(o *initOptions) { o.forget = true }},
 		{"--config-only", func(o *initOptions) { o.configOnly = true }},
 		{"--publish-config", func(o *initOptions) { o.publishConfig = true }},
-		{"--anchor", func(o *initOptions) { o.anchor = true }},
 		{"--repo", func(o *initOptions) { o.repo = true }},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {

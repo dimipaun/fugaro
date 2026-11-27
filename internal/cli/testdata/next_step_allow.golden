@@ -93,9 +93,7 @@ init.go	run fugaro image build
 init.go	run fugaro setup --provision-batch for the installation, then fugaro update
 init.go	run fugaro setup with it, then fugaro update
 init.go	run fugaro update
-init_anchor.go	rerun fugaro update
 init_anchor.go	run fugaro update
-init_anchor.go	then rerun fugaro update
 init_firebase.go	next fugaro update
 init_firebase.go	then run fugaro update
 init_images.go	then fugaro update
@@ -197,7 +195,6 @@ update_check.go	run fugaro update
 update_marker_version.go	next fugaro update
 update_repos_read.go	run fugaro update
 update_selfflag.go	Run fugaro update
-update_selfflag.go	run was given the budget once — a fugaro update
 upgrade_cloud.go	re-run fugaro update
 upgrade_cloud.go	run fugaro update
 upgrade_cloud.go	run picks a mount change up on the next fugaro update
