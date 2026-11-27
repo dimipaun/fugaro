@@ -1505,10 +1505,18 @@ func TestUpdateAskWithNoTerminalFailsAtOnce(t *testing.T) {
 type stubStage struct {
 	name    string
 	applied bool
+	// onCheck, when set, runs from Check -- the pass every run makes, applying
+	// or not. A test that needs the stage to do something while the loop is
+	// running it (reporting its per-repository lines) hooks here, as the real
+	// stage does (secretsStage.reportList).
+	onCheck func()
 }
 
 func (s *stubStage) Name() string { return s.name }
 func (s *stubStage) Check(context.Context) (initflow.Status, error) {
+	if s.onCheck != nil {
+		s.onCheck()
+	}
 	return initflow.Status{State: initflow.Todo}, nil
 }
 func (s *stubStage) Plan(context.Context, initflow.Env) (initflow.Plan, error) {
