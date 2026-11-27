@@ -317,6 +317,12 @@ test_happy_path() {
   expect_contains "$out" "FACT source-tree: PASS" "happy path: the tree"
   expect_contains "$out" "FACT diagnosis: PASS" "happy path: the whole command ran"
   expect_contains "$out" "CHECK 411 RESULT END (exit 0)" "happy path: the end line"
+  # The probe's argv, whole: the logged line has to END at the region, so a flag
+  # appended to it — `--yes` above all, which the CLI no longer knows — is a
+  # failure rather than a command this check silently keeps passing.
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" \
+    "fugaro update --name chk411-test --gcp-project ${project} --region us-east5"$'\n' \
+    "happy path: the probe's own command line, whole"
   # The diagnosis really ran on the PATH the check built — no git in it — and
   # with the token variables gone.
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "troubleshoot ${probe_id}" "happy path: the diagnosis command"

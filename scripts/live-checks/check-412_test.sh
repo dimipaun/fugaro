@@ -327,6 +327,12 @@ test_happy_path() {
   expect_contains "$out" "FACT no-secret-in-the-output: PASS" "happy path: the token"
   expect_contains "$out" "FACT diagnosis: PASS" "happy path: the whole command ran"
   expect_contains "$out" "CHECK 412 RESULT END (exit 0)" "happy path: the end line"
+  # The probe's argv, whole: the logged line has to END at the region, so a flag
+  # appended to it — `--yes` above all, which the CLI no longer knows — is a
+  # failure rather than a command this check silently keeps passing.
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" \
+    "fugaro update --name chk412-test --gcp-project ${project} --region us-east5"$'\n' \
+    "happy path: the probe's own command line, whole"
   # The client really was started — through the wrapper, which is the only thing
   # that writes the argv the agent-tools row reads.
   expect_contains "$(cat "$dir/logs/claude.calls")" "--tools Read,Grep,Glob" "happy path: the client was started with the read-only list"

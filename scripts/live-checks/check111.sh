@@ -988,24 +988,6 @@ assert_line() {
   fi
 }
 
-# line_info MODE FILE...: the same read for a rerun the check's Passes-when does
-# not name (mode 1(a) under --yes, mode 5 under --yes): recorded, not a criterion.
-line_info() {
-  local m=$1
-  shift
-  local f found=""
-  for f in "$@"; do
-    [ -s "$f" ] || continue
-    found=$(first_line "$f" 'gcloud billing projects link')
-    [ -z "$found" ] || break
-  done
-  if [ -n "$found" ]; then
-    fact "line-$m" INFO "the guided line also came here: $found"
-  else
-    fact "line-$m" INFO "no guided line here (this rerun is not one of the seven runs the check's Passes-when names: what it records is the offer's absence, or the needs-you line)"
-  fi
-}
-
 # assert_api MODE: criterion 2 — no API's state changed. P is read in every mode:
 # no mode here enables an API in it, and where mode 1(a) disabled it itself (its
 # own premise) the Restore enables it again, so the expected count is the one this
@@ -1286,12 +1268,6 @@ step_1a() {
   mode_exit 1a "the wizard at a real terminal, answered with one Enter (the offer declined)" "$SCRATCH/mode-1a.log"
   assert_offer 1a
   assert_mode 1a
-  say "mode 1(a) again under --yes: the picker never runs there, so no offer may come"
-  run_pty 1a-yes -- fugaro "${SETUP_ARGS[@]}" --yes
-  mode_exit 1a-yes "the same line with --yes at a terminal" "$SCRATCH/mode-1a-yes.log"
-  assert_offer_absent 1a-yes
-  assert_no_picker 1a-yes
-  line_info 1a-yes "$SCRATCH/mode-1a-yes.log"
   unmaim
 }
 
@@ -1305,16 +1281,6 @@ assert_offer() { # assert_offer MODE — D3(a)'s typed offer, and the decline
     fact "offer-$m" FAIL "the offer came but the capture says nothing about where it left you (no 'Nothing was enabled. Run:' line): the run has to hand you the enable line when the offer is declined: $offer"
   else
     fact "offer-$m" FAIL "no 'CONFIRM: ENABLE the Cloud Billing API' offer in the capture. Mode 1(a)'s premise is the API off on the quota project that IS the project being set up, and the typed offer is what D3(a) is — without it this mode proves nothing"
-  fi
-}
-
-assert_offer_absent() { # assert_offer_absent MODE
-  local m=$1 offer
-  offer=$(first_line "$SCRATCH/mode-$m.log" 'CONFIRM: ENABLE the Cloud Billing API')
-  if [ -z "$offer" ]; then
-    fact "offer-$m" PASS "no offer at all: --yes is a run that asked for no question, so the picker never runs and nothing is offered — and --yes must never stand in for the typed answer anyway"
-  else
-    fact "offer-$m" FAIL "an offer appeared under --yes: the picker must not run at all there, and --yes never covers the typed enable: $offer"
   fi
 }
 
@@ -1474,7 +1440,7 @@ assert_unlisted() {
 step_3() {
   say "mode 3: NO TTY at all — the picker must never run, and the run must not wait for input"
   run_plain 3 "$SCRATCH/mode-3.log" "" -- env -u CLAUDE_CODE_SSE_PORT fugaro "${SETUP_ARGS[@]}"
-  mode_exit 3 "the same line with standard input at /dev/null and no pty — the same case as a pipe, a redirect or --non-interactive" "$SCRATCH/mode-3.log"
+  mode_exit 3 "the same line with standard input at /dev/null and no pty — the same case as a pipe or a redirect" "$SCRATCH/mode-3.log"
   assert_no_picker 3
   assert_line 3 "$SCRATCH/mode-3.log"
   assert_api 3
@@ -1512,11 +1478,6 @@ step_5() {
   assert_line 5 "$SCRATCH/mode-5.log"
   assert_api 5
   assert_leak 5
-  say "mode 5 again under --yes: an agent's session applies nothing, --yes or not"
-  run_plain 5-yes "$SCRATCH/mode-5-yes.log" "" -- env AI_AGENT=1 fugaro "${SETUP_ARGS[@]}" --yes
-  mode_exit 5-yes "the same line with --yes: it must still apply nothing and still leave the step for you" "$SCRATCH/mode-5-yes.log"
-  assert_needsyou 5-yes
-  line_info 5-yes "$SCRATCH/mode-5-yes.log"
 }
 
 assert_needsyou() { # assert_needsyou MODE
@@ -1525,7 +1486,7 @@ assert_needsyou() { # assert_needsyou MODE
   if [ -n "$line" ]; then
     fact "needsyou-$m" PASS "the needs-you line: $line"
   else
-    fact "needsyou-$m" FAIL "no 'run this in your own terminal window' line in the capture: an applying stage in a coding agent's session must be left for you, --yes included, with the needs-you wording internal/initflow prints (AgentAdvice)"
+    fact "needsyou-$m" FAIL "no 'run this in your own terminal window' line in the capture: an applying stage in a coding agent's session must be left for you, with the needs-you wording internal/initflow prints (AgentAdvice)"
   fi
 }
 
@@ -1682,14 +1643,12 @@ finish() {
 BLOCK_KEYS=(fugaro-version project api-off-project api-on-project account-names account-ids
   agent-session xtrace modes config-root adc-quota second-adc precondition
   run-1a offer-1a line-1a api-1a leak-1a
-  run-1a-yes offer-1a-yes picker-1a-yes line-1a-yes
   run-1b refusal-1b offer-absent-1b line-1b api-1b leak-1b
   run-2a premise-2a source-2a list-2a line-2a api-2a leak-2a
   run-2b premise-2b unlisted-2b line-2b api-2b leak-2b
   run-3 picker-3 line-3 api-3 leak-3
   run-4 picker-4 document-4 line-4 api-4 leak-4
   run-5 picker-5 needsyou-5 line-5 api-5 leak-5
-  run-5-yes needsyou-5-yes line-5-yes
   restore scratch-removed manual)
 
 print_block() { # print_block FACTS STATUS [recorded] — always on the owner's own
@@ -1733,7 +1692,7 @@ print_block() { # print_block FACTS STATUS [recorded] — always on the owner's 
 # owner's own IAM (removing a billing role from their account) — neither is
 # something this check may do, and the route that removes a role is theirs to undo.
 record_manual() {
-  fact manual INFO "the ONE step no script runs for you, and what to paste back: mode 2 needs a caller that LACKS billing.accounts.list, which takes a browser or your own IAM — do it by hand, BEFORE this run, and pass what it made: (a) for mode 2(a), make your SECOND account's login a file and leave your machine on your own account — gcloud auth application-default login (choose the SECOND account); f=\$(mktemp \"\${TMPDIR:-/tmp}/chk111-second.XXXXXXXX\") && cp $(adc_file) \"\$f\" && echo \"\$f\" (mktemp picks the name and makes the file 0600 before anything is written, so no path in a shared directory can be prepared in advance — pass the path it prints); gcloud auth application-default login (choose YOUR OWN account again, so nothing of this is left behind); then grant that second account only the rank that lets the call be MADE on ${S:-<S>} (gcloud projects add-iam-policy-binding ${S:-<S>} --member=user:<SECOND> --role=roles/serviceusage.serviceUsageConsumer), and pass --second-adc \"\$f\" --second-account <SECOND>: this check copies that login over $(adc_file) for mode 2's runs alone, puts your own file back byte for byte afterwards and again from its exit trap whatever ends the run, and removes that copy in the same trap whenever the run put your own file back — so make it a throwaway: never point --second-adc at a login you mean to keep, and no copy of the second login outlives a run that used one (a run that could not put your file back, or that stopped before mode 2, leaves the copy and the restore row names the rm for you); (b) for mode 2(b) either the same --second-adc and --second-account, or remove the billing role from your own account (gcloud projects remove-iam-policy-binding ${S:-<S>} --member=user:<YOU> --role=<YOUR-BILLING-ROLE>) and pass --role-removed, then put the role back when you are done; if a run ever ends with your ADC still logged in as the second account (a swap that could not be put back — the restore row says so), run gcloud auth application-default login and choose your own account; then paste back, for each of the seven runs, its result, the exact guided line, the exact refusal or offer text, the exit code, which source answered in mode 2 AND which route made the caller lack the permission, and the assertion block's counts (P's and Q's must read 0, and S's must read 1 in mode 2), plus the agent marker your shell carried and whether --yes ever took mode 1(a)'s offer"
+  fact manual INFO "the ONE step no script runs for you, and what to paste back: mode 2 needs a caller that LACKS billing.accounts.list, which takes a browser or your own IAM — do it by hand, BEFORE this run, and pass what it made: (a) for mode 2(a), make your SECOND account's login a file and leave your machine on your own account — gcloud auth application-default login (choose the SECOND account); f=\$(mktemp \"\${TMPDIR:-/tmp}/chk111-second.XXXXXXXX\") && cp $(adc_file) \"\$f\" && echo \"\$f\" (mktemp picks the name and makes the file 0600 before anything is written, so no path in a shared directory can be prepared in advance — pass the path it prints); gcloud auth application-default login (choose YOUR OWN account again, so nothing of this is left behind); then grant that second account only the rank that lets the call be MADE on ${S:-<S>} (gcloud projects add-iam-policy-binding ${S:-<S>} --member=user:<SECOND> --role=roles/serviceusage.serviceUsageConsumer), and pass --second-adc \"\$f\" --second-account <SECOND>: this check copies that login over $(adc_file) for mode 2's runs alone, puts your own file back byte for byte afterwards and again from its exit trap whatever ends the run, and removes that copy in the same trap whenever the run put your own file back — so make it a throwaway: never point --second-adc at a login you mean to keep, and no copy of the second login outlives a run that used one (a run that could not put your file back, or that stopped before mode 2, leaves the copy and the restore row names the rm for you); (b) for mode 2(b) either the same --second-adc and --second-account, or remove the billing role from your own account (gcloud projects remove-iam-policy-binding ${S:-<S>} --member=user:<YOU> --role=<YOUR-BILLING-ROLE>) and pass --role-removed, then put the role back when you are done; if a run ever ends with your ADC still logged in as the second account (a swap that could not be put back — the restore row says so), run gcloud auth application-default login and choose your own account; then paste back, for each of the seven runs, its result, the exact guided line, the exact refusal or offer text, the exit code, which source answered in mode 2 AND which route made the caller lack the permission, and the assertion block's counts (P's and Q's must read 0, and S's must read 1 in mode 2), plus the agent marker your shell carried"
 }
 
 # -------------------------------------------------------------------- the plan
@@ -1746,7 +1705,6 @@ print_plan() {
   say "  [network, reads] fugaro version; uname; gcloud projects describe $P --format=value(projectId,lifecycleState,labels.fugaro_created); gcloud billing projects describe $P --format=value(billingEnabled) — it must read false, or every mode's guided line prints nowhere"
   say "  [network, reads] the baselines: gcloud services list --enabled --project=<P|Q|S> --filter=config.name:cloudbilling.googleapis.com --format=value(config.name)"
   say "  [network, writes] mode 1(a): gcloud services disable cloudbilling.googleapis.com --project=$P --force; gcloud auth application-default set-quota-project $P; then at a REAL TERMINAL, answered with one Enter (the offer declined): fugaro ${SETUP_ARGS[*]}"
-  say "  [network, writes] mode 1(a) again with --yes: fugaro ${SETUP_ARGS[*]} --yes (the picker never runs there, so no offer may come)"
   say "  [network, writes] mode 1(b): the same two gcloud calls on ${Q:-<--api-off-project, required>}, then at a real terminal: fugaro ${SETUP_ARGS[*]} with the gcloud fallback maimed — the run must REFUSE and name the enable line"
   if [ -n "$SECOND_ADC" ]; then
     say "  [local, writes] before mode 2: cp -p $(adc_file) to the scratch directory, then cp $SECOND_ADC over $(adc_file) — a plain copy, so your file keeps the permissions it had — mode 2's runs alone use the second account's login, and your own file is copied back byte for byte as soon as each of them is done, so the modes after mode 2 run as you, and again from the exit trap whatever ends the run. That copy is removed with the scratch directory, never kept"
@@ -1757,7 +1715,7 @@ print_plan() {
   say "  [network] mode 2(b): the fallback maimed, then fugaro ${SETUP_ARGS[*]} — the API refuses and nothing can answer it"
   say "  [network] mode 3: env -u CLAUDE_CODE_SSE_PORT fugaro ${SETUP_ARGS[*]} with standard input at /dev/null and no pty (the marker is taken out of this one child: with no terminal it is what internal/agentenv.Session reads as an agent's session, which is mode 5's case and not this one)"
   say "  [network] mode 4: env -u CLAUDE_CODE_SSE_PORT fugaro ${SETUP_ARGS[*]} --json, its stdout and stderr kept apart, and the check's own jq line on the document — unset for the same reason as mode 3"
-  say "  [network] mode 5: env AI_AGENT=1 fugaro ${SETUP_ARGS[*]} (the marker in that one child's environment, never in this shell), then the same line with --yes"
+  say "  [network] mode 5: env AI_AGENT=1 fugaro ${SETUP_ARGS[*]} (the marker in that one child's environment, never in this shell)"
   say "and its Restore (also from the exit trap) would run:"
   if [ -n "$SECOND_ADC" ]; then
     say "  [local, writes] cp -p your own ADC file back over $(adc_file) — only if mode 2 swapped the second login in and could not put it back at the end of mode 2"
@@ -1779,13 +1737,13 @@ SETUP_ARGS=()
 # not run, rather than a verdict about a picker nothing asked.
 mode_keys() {
   case "$1" in
-  1a) printf 'offer-1a line-1a api-1a leak-1a offer-1a-yes picker-1a-yes line-1a-yes' ;;
+  1a) printf 'offer-1a line-1a api-1a leak-1a' ;;
   1b) printf 'refusal-1b offer-absent-1b line-1b api-1b leak-1b' ;;
   2a) printf 'premise-2a source-2a list-2a line-2a api-2a leak-2a' ;;
   2b) printf 'premise-2b unlisted-2b line-2b api-2b leak-2b' ;;
   3) printf 'picker-3 line-3 api-3 leak-3' ;;
   4) printf 'picker-4 document-4 line-4 api-4 leak-4' ;;
-  5) printf 'picker-5 needsyou-5 line-5 api-5 leak-5 needsyou-5-yes line-5-yes' ;;
+  5) printf 'picker-5 needsyou-5 line-5 api-5 leak-5' ;;
   esac
 }
 

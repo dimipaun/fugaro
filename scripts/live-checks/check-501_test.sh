@@ -15,8 +15,9 @@
 #
 # The check runs `fugaro update` in the FOREGROUND with this shell's stdin, so
 # the fake is asked nothing here and reads nothing: what a case measures is the
-# row, not the answer — that the update asks YOU is asserted from the fake's
-# transcript and from the absence of --yes.
+# row, not the answer — that the update is run at the owner's terminal, with no
+# flag standing in for them, is asserted from the fake's transcript and from the
+# check's own argv, which passes nothing.
 #
 # Usage: bash scripts/live-checks/check-501_test.sh
 set -euo pipefail
@@ -270,7 +271,7 @@ test_help() {
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "update" "--help: no update is run"
   # The header is what a person reads before running it: it has to say, where
   # they will see it, that the update is theirs to answer.
-  expect_contains "$out" "it is launched with no \`--yes\`" "--help: who answers the update"
+  expect_contains "$out" "it is launched at your own terminal" "--help: who answers the update"
   expect_contains "$out" "by YOU. No agent runs any step of it" "--help: who runs it"
 }
 
@@ -285,7 +286,7 @@ test_dry_run() {
   expect_contains "$out" "FACT dry-run: PASS" "dry run: the marker row"
   expect_contains "$out" "FACT restore: PASS" "dry run: the restore row"
   expect_contains "$out" "CHECK 501 RESULT END (exit 0)" "dry run: the end line"
-  expect_contains "$err" "no --yes at your own terminal" "dry run: the plan says who answers the update"
+  expect_contains "$err" "run at your own terminal" "dry run: the plan says who answers the update"
   expect_contains "$err" "the base pin after the update" "dry run: the plan names the second read"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "update" "dry run: no update is run"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "dry run: no run is launched"
@@ -303,7 +304,7 @@ test_happy_path() {
   expect_contains "$out" "FACT base-pin: PASS" "happy path: the pin before the update"
   expect_contains "$out" "before the update the installation's base pin is ${before_ref}" "happy path: the ref it read"
   expect_contains "$out" "FACT update: PASS" "happy path: the update"
-  expect_contains "$out" "with no --yes" "happy path: the update was not answered by the check"
+  expect_contains "$out" "at your own terminal, so its review" "happy path: the update was not answered by the check"
   expect_contains "$out" "and it named a build" "happy path: the rebuild the update asks for is read from its own transcript"
   expect_contains "$out" "FACT pin-after: PASS" "happy path: the pin after the update"
   expect_contains "$out" "moved from ${before_ref}" "happy path: that the pin moved"
@@ -329,9 +330,9 @@ test_happy_path() {
 }
 
 test_the_update_is_run_without_yes() {
-  # The whole point of the row: the upgrade asks its questions of the person in
-  # front of it, so the check must never answer one for them. Nothing here reads
-  # the fake's stdin either — the check has no answer to give.
+  # The whole point of the row: the upgrade's steps belong to the person in front
+  # of it, so the check must never stand in for them with a flag. Nothing here
+  # reads the fake's stdin either — the check has nothing to answer with.
   local dir=$work/noyes
   prepare "$dir"
   run_check "$dir"

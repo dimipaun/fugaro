@@ -209,6 +209,38 @@ update)
     # check that ran it.
     if [ -t 0 ]; then render_unit; fi
     ;;
+  refuse-no-tty)
+    # A run nobody is at, on a machine whose update has a step to confirm: the
+    # CLI is left at that step and exits 1 rather than carrying it through, and
+    # no flag stands in for the person. The fence is the same one read from a
+    # refused run instead of from a converged one. The marker file is the
+    # mutation: a refused run that wrote the unit anyway.
+    if [ -f "$D/refuse-writes-unit" ]; then render_unit; fi
+    if [ ! -t 0 ]; then
+      printf 'the confirmation of this step needs a real terminal: run it in your own terminal window, not through a coding agent or a pipe\n' >&2
+      exit 1
+    fi
+    ;;
+  cloud-fails-no-tty)
+    # The other exit a run nobody is at can make, and the one the fence is NOT:
+    # 2 is a cloud failure, so a run that wrote no unit has still failed, and
+    # the row must not read that as the fence holding.
+    if [ ! -t 0 ]; then
+      printf 'fugaro: the Terraform apply failed\n' >&2
+      exit 2
+    fi
+    ;;
+  refuse-elsewhere-no-tty)
+    # Exit 1 is what a run left at a step makes, and it is also what an
+    # unrelated refusal makes: this one refuses over a repository this machine
+    # does not have, names no step and leaves the person nothing to answer. A
+    # run nobody is at writes no unit for it too, so the unit alone cannot tell
+    # the fence from this, and the row must read the sentence.
+    if [ ! -t 0 ]; then
+      printf 'fugaro: no fugaro.yaml in this directory: run this in your repository\n' >&2
+      exit 1
+    fi
+    ;;
   *)
     printf 'fake fugaro: unknown update mode\n' >&2
     exit 64
@@ -861,6 +893,74 @@ case_upgrade_boundary_no_terminal() {
   expect_fact human-install INFO "boundary without a terminal: the command to run"
 }
 
+# case_upgrade_boundary_refused_no_terminal: the same fence read from a run the
+# CLI REFUSED. A run nobody is at is left at the step that needs a person and
+# exits nonzero, so the row has to read that exit as the fence rather than as a
+# run that did not finish — and it still has to be true of the unit that
+# nothing was written.
+case_upgrade_boundary_refused_no_terminal() {
+  setup_case upgrade-boundary-refused
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'refuse-no-tty\n' >"$dir/state/update.mode"
+  run301 upgrade
+  expect_status "$status" 2 "boundary refused without a terminal: the exit"
+  expect_fact terminal INFO "boundary refused without a terminal: the row"
+  expect_fact boundary PASS "boundary refused without a terminal: the fence"
+  expect_contains "$out" "left at the step that needs a person" "boundary refused without a terminal: what the row read"
+  expect_fact human-install INFO "boundary refused without a terminal: the command to run"
+}
+
+# case_upgrade_boundary_refused_writes_a_unit: the mutation of that fence. A
+# refused run that still left a unit behind is the write this check exists to
+# rule out, whatever the exit said.
+case_upgrade_boundary_refused_writes_a_unit() {
+  setup_case upgrade-boundary-refused-writes
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'refuse-no-tty\n' >"$dir/state/update.mode"
+  : >"$dir/state/refuse-writes-unit"
+  run301 upgrade
+  expect_status "$status" 2 "refused run wrote a unit: the exit"
+  expect_fact boundary FAIL "refused run wrote a unit: the row"
+  expect_contains "$out" "a login unit is now at" "refused run wrote a unit: what happened"
+}
+
+# case_upgrade_boundary_cloud_failure: exit 2 is not the fence. A run nobody is
+# at that failed in the cloud wrote no unit either, and the row has to say the
+# run failed rather than read its silence about the unit as the fence holding.
+case_upgrade_boundary_cloud_failure() {
+  setup_case upgrade-boundary-cloud
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'cloud-fails-no-tty\n' >"$dir/state/update.mode"
+  run301 upgrade
+  expect_status "$status" 2 "boundary cloud failure: the exit"
+  expect_fact boundary FAIL "boundary cloud failure: the row"
+  expect_contains "$out" "1 is the only exit a run left at a step makes" "boundary cloud failure: the exit is not the fence"
+}
+
+# case_upgrade_boundary_refused_elsewhere: exit 1 with no unit written is the
+# fence only when the run was left at the step that needs a person. An
+# unrelated refusal — a missing project config, say — writes no unit either, so
+# reading the unit alone would pass this row for the wrong reason; the row has
+# to read the sentence the step prints.
+case_upgrade_boundary_refused_elsewhere() {
+  setup_case upgrade-boundary-refused-elsewhere
+  write_status "$dir" none
+  rm -f "$dir/unit/fugaro-orchestrator.service"
+  printf 'absent\n' >"$dir/state/manager.state"
+  printf 'refuse-elsewhere-no-tty\n' >"$dir/state/update.mode"
+  run301 upgrade
+  expect_status "$status" 2 "boundary refused elsewhere: the exit"
+  expect_fact boundary FAIL "boundary refused elsewhere: the row"
+  expect_contains "$out" "not for the step that needs a person" "boundary refused elsewhere: the reason"
+  expect_contains "$out" "no fugaro.yaml in this directory" "boundary refused elsewhere: what the run printed instead"
+}
+
 # case_upgrade_boundary_agent_writes_unit: the marker rule broken. An
 # agent-marked run that installs a login unit on a machine that had none is the
 # fence D2700 keeps and the one internal/agentenv's G2 rules on.
@@ -1191,6 +1291,10 @@ t case_second_instance_other_holder
 t case_upgrade_boundary
 t case_upgrade_boundary_no_install
 t case_upgrade_boundary_no_terminal
+t case_upgrade_boundary_refused_no_terminal
+t case_upgrade_boundary_refused_writes_a_unit
+t case_upgrade_boundary_cloud_failure
+t case_upgrade_boundary_refused_elsewhere
 t case_upgrade_boundary_agent_writes_unit
 t case_upgrade_waits_for_the_human
 t case_upgrade_handover

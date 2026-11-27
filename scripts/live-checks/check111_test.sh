@@ -79,14 +79,12 @@ DISPLAY_NAME='Sandbox Billing'
 BLOCK_KEYS=(fugaro-version project api-off-project api-on-project account-names account-ids
   agent-session xtrace modes config-root adc-quota second-adc precondition
   run-1a offer-1a line-1a api-1a leak-1a
-  run-1a-yes offer-1a-yes picker-1a-yes line-1a-yes
   run-1b refusal-1b offer-absent-1b line-1b api-1b leak-1b
   run-2a premise-2a source-2a list-2a line-2a api-2a leak-2a
   run-2b premise-2b unlisted-2b line-2b api-2b leak-2b
   run-3 picker-3 line-3 api-3 leak-3
   run-4 picker-4 document-4 line-4 api-4 leak-4
   run-5 picker-5 needsyou-5 line-5 api-5 leak-5
-  run-5-yes needsyou-5-yes line-5-yes
   restore scratch-removed manual)
 
 # --------------------------------------------------------------------- fakes
@@ -213,12 +211,10 @@ esac
 if [ -n "${FAKE111_SILENT:-}" ]; then exit 0; fi
 
 proj=""
-yes=no
 json=no
 while [ $# -gt 0 ]; do
   case "$1" in
   --gcp-project) proj=${2:-} ;;
-  --yes) yes=yes ;;
   --json) json=yes ;;
   esac
   shift
@@ -264,9 +260,9 @@ if [ ! -t 1 ] && [ "$json" = no ] && [ -z "$agent_marker" ]; then
 fi
 
 # FAKE111_ASK: the picker running in a run that cannot answer it — the reversal
-# mode 1(a) under --yes and modes 3, 4 and 5 exist to rule out, and the one
-# failure the check's own "nothing may be asked where nothing can answer" row
-# has to catch. Mode 3 alone carries it here.
+# modes 3, 4 and 5 exist to rule out, and the one failure the check's own
+# "nothing may be asked where nothing can answer" row has to catch. Mode 3 alone
+# carries it here.
 if [ -n "${FAKE111_ASK:-}" ] && [ ! -t 1 ] && [ "$json" = no ] && [ -z "$agent_marker" ]; then
   echo "Billing accounts you can link to $proj (from gcloud billing accounts list):"
   printf 'Billing account (a number, or none to link none now): '
@@ -345,11 +341,6 @@ if [ "$quota" = "$FAKE111_P" ]; then
     echo "CONFIRM: ENABLE the Cloud Billing API (cloudbilling.googleapis.com) in GCP project $proj, which will incur charges on your account."
     printf 'Type yes to enable it, or press Enter to link an account by hand instead: '
     sleep 600
-    exit 0
-  fi
-  if [ "$yes" = yes ]; then
-    # The picker never runs without a terminal that can answer it, --yes or not.
-    echo "$link"
     exit 0
   fi
   # FAKE111_NO_OFFER: the picker does not offer at all — the reversal that makes
@@ -517,7 +508,6 @@ test_all_seven_runs_pass() {
   expect_contains "$out" "CHECK 111 RESULT END (exit 0)" "all seven: the end line"
   expect_contains "$out" "CHECK 111 RESULT: PASS" "all seven: the verdict"
   expect_contains "$out" "FACT offer-1a: PASS — " "all seven: the typed offer came and was declined"
-  expect_contains "$out" "FACT offer-1a-yes: PASS — " "all seven: --yes printed no offer"
   expect_contains "$out" "FACT refusal-1b: PASS — " "all seven: mode 1(b) refused and named the line"
   expect_contains "$out" "FACT source-2a: PASS — " "all seven: the fallback answered mode 2(a)"
   expect_contains "$out" "gcloud billing accounts list" "all seven: the source that answered is named"
@@ -525,15 +515,15 @@ test_all_seven_runs_pass() {
   expect_contains "$out" "FACT picker-3: PASS — " "all seven: no picker without a terminal"
   expect_contains "$out" "FACT document-4: PASS — " "all seven: no account id in --json's document"
   expect_contains "$out" "FACT needsyou-5: PASS — " "all seven: an agent's session is left for you"
-  expect_contains "$out" "FACT needsyou-5-yes: PASS — " "all seven: and --yes does not change that"
   expect_contains "$out" "FACT restore: PASS — " "all seven: the Restore"
   expect_contains "$out" "FACT manual: INFO — " "all seven: the one manual step is recorded"
   expect_fugaro_ran "all seven"
-  # The check's seven runs, plus the two reruns its section records (mode 1(a)
-  # under --yes and mode 5 under --yes): nine wizard runs, every one of them the
-  # release build.
-  [ "$(grep -c '^fugaro setup ' "$dir/calls")" = 9 ] \
-    || fail "all seven: expected 9 wizard runs, got $(grep -c '^fugaro setup ' "$dir/calls")"
+  # The check's seven runs, one per failure mode, every one of them the release
+  # build. No run carries a flag that could stand in for the person at the
+  # terminal: the no-prompt policy removed --yes from setup and update, so a
+  # wizard run with it is refused by name before any step.
+  [ "$(grep -c '^fugaro setup ' "$dir/calls")" = 7 ] \
+    || fail "all seven: expected 7 wizard runs, got $(grep -c '^fugaro setup ' "$dir/calls")"
   expect_changed "enable $P" "all seven: the Restore re-enables the API mode 1(a) disabled"
   expect_changed "enable $Q" "all seven: and the one mode 1(b) disabled on Q"
   expect_unchanged "enable $S" "all seven: S's API was never disabled, so the Restore must not touch it"
@@ -591,13 +581,13 @@ test_only_mode_2_runs_under_the_second_login() {
   expect_block_keys "$out" "the swap"
   expect_contains "$out" "FACT second-adc: PASS — " "the swap: the second login is recorded"
   # Mode 2's two runs are the only ones the second login was in place for; the
-  # other seven wizard runs — and the `fugaro version` the check reads before the
+  # other five wizard runs — and the `fugaro version` the check reads before the
   # modes — ran under your own login, which is the premise every one of them is
   # written for.
   [ "$(grep -c '^login second$' "$dir/calls")" = 2 ] \
     || fail "the swap: expected mode 2's two runs under the second login, got $(grep -c '^login second$' "$dir/calls"): $(grep '^login ' "$dir/calls" | tr '\n' ' ')"
-  [ "$(grep -c '^login own$' "$dir/calls")" = 8 ] \
-    || fail "the swap: expected the other seven wizard runs and the version read under your own login, got $(grep -c '^login own$' "$dir/calls")"
+  [ "$(grep -c '^login own$' "$dir/calls")" = 6 ] \
+    || fail "the swap: expected the other five wizard runs and the version read under your own login, got $(grep -c '^login own$' "$dir/calls")"
   cmp -s "$dir/cloudsdk/application_default_credentials.json" "$dir/adc-pristine.json" \
     || fail "the swap: your own ADC file did not come back byte for byte: $(cat "$dir/cloudsdk/application_default_credentials.json")"
   # The copy the manual row has the owner make for --second-adc was made for
@@ -663,8 +653,8 @@ test_the_second_login_is_put_back_when_a_mode_stops() {
   # The stop is at the step that sets mode 2's premise, before mode 2(a)'s run
   # and long before mode 2(b)'s: a run that got as far as reading 2(a)'s criteria
   # reads nothing here, and the mode that never started is not concluded about.
-  [ "$(grep -c '^fugaro setup ' "$dir/calls")" = 3 ] \
-    || fail "the swap after a stop: mode 2(a) never ran, so the only runs are 1(a) twice and 1(b) — got $(grep -c '^fugaro setup ' "$dir/calls")"
+  [ "$(grep -c '^fugaro setup ' "$dir/calls")" = 2 ] \
+    || fail "the swap after a stop: mode 2(a) never ran, so the only runs are 1(a) and 1(b) — got $(grep -c '^fugaro setup ' "$dir/calls")"
   expect_absent "$(cat "$dir/err")" "mode 2(b):" "the swap after a stop: and mode 2(b) never started"
   expect_contains "$out" "FACT restore: PASS — " "the swap after a stop: the Restore still ran"
   expect_contains "$out" "your own login again, byte for byte" "the swap after a stop: and says the file is yours again"
@@ -910,10 +900,10 @@ test_s_disabled_by_the_run_is_a_fail() {
   expect_scratch_gone "$dir" "S's API disabled by the run"
 }
 
-# The picker's own prompt in a run that cannot answer it: mode 1(a) under --yes
-# and modes 3, 4 and 5 are the runs whose whole point is that nothing is asked
-# where nothing can answer, and an ask is not a leak — so this is the one case
-# that reads that row as a FAIL, and it leaves the leak rows alone.
+# The picker's own prompt in a run that cannot answer it: modes 3, 4 and 5 are
+# the runs whose whole point is that nothing is asked where nothing can answer,
+# and an ask is not a leak — so this is the one case that reads that row as a
+# FAIL, and it leaves the leak rows alone.
 test_a_picker_where_none_may_run_is_a_fail() {
   setup_case asked
   sandbox_args
@@ -1168,7 +1158,6 @@ test_a_blocking_run_is_a_fail() {
   expect_status "$status" 1 "blocking run"
   expect_contains "$out" "FACT run-1a: FAIL — " "blocking run: the mode that blocked is not a pass"
   expect_contains "$out" "was killed" "blocking run: and the row says the cap is what ended it"
-  expect_contains "$out" "FACT run-1a-yes: FAIL — " "blocking run: the rerun under --yes hit the same cap"
   expect_contains "$out" "CHECK 111 RESULT: FAIL" "blocking run: the verdict"
   expect_contains "$out" "FACT restore: PASS — " "blocking run: the Restore still ran"
   expect_changed "enable $P" "blocking run: the API mode 1(a) disabled is enabled again"

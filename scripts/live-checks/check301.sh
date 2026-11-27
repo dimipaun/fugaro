@@ -70,7 +70,7 @@
 #             it. The upgrade half belongs on a throwaway machine — it replaces
 #             the fugaro at the path your unit names — so run it there, not on
 #             the Mac you care about.
-# Costs:      `upgrade` runs `fugaro update --yes` once, and twice on a machine
+# Costs:      `upgrade` runs `fugaro update` once, and twice on a machine
 #             with no unit — the agent-marked run and the person's own, which is
 #             the boundary D2700 moved and the install D2700 puts there. `update`
 #             runs it three times: an agent-marked run, the run itself, and a
@@ -797,7 +797,7 @@ plan_upgrade() {
 check301 upgrade — the plan, and nothing of it is run in a dry run:
   1. read the platform, the release and the login unit; record the version at the
      path the unit names, the unit's hash and the daemon's pid
-  2. on a machine whose unit is not installed yet: run 'fugaro update --yes' with an
+  2. on a machine whose unit is not installed yet: run 'fugaro update' with an
      agent's marker and read that it wrote no unit, then run it again here where
      you are at the terminal and read D2700's rule — the first unit installed and
      loaded — so step 3 finds a machine with a unit either way
@@ -816,12 +816,12 @@ plan_update() {
 check301 update — the plan, and nothing of it is run in a dry run:
   1. read the login unit ('fugaro orchestrator status') and record its hash, the
      daemon's pid and whether this release's template differs from the file
-  2. run 'fugaro update --yes' with a coding agent's marker set (CLAUDECODE=1):
+  2. run 'fugaro update' with a coding agent's marker set (CLAUDECODE=1):
      it must write no unit and reload nothing (the G2 marker rule)
-  3. run 'fugaro update --yes' — the one command T7's half is about — and read
+  3. run 'fugaro update' — the one command T7's half is about — and read
      whether it re-rendered the unit, reloaded the service and named the unit's
      file in its plan
-  4. run 'fugaro update --yes' a second time: it writes nothing and reloads
+  4. run 'fugaro update' a second time: it writes nothing and reloads
      nothing
   5. read the lease and refuse a second instance by hand
   6. remove the state file
@@ -1079,36 +1079,59 @@ phase_upgrade() {
     # The fence first, because it is the reading that needs the machine left as
     # it is: a run a coding agent's session starts writes no unit, whatever the
     # door would otherwise do.
-    if ! bounded_ok_here 600 boundary-agent env CLAUDECODE=1 fugaro update --yes; then
-      fact boundary-agent FAIL "fugaro update --yes exited $BOUNDED_STATUS with CLAUDECODE=1 set on a machine with no login unit: the agent-marked run did not finish, so what it wrote cannot be read. Its last lines: $(tail -n 5 "$SCRATCH/boundary-agent.out" "$SCRATCH/boundary-agent.err" 2>/dev/null | tr '\n' ' ')"
+    if ! bounded_ok_here 600 boundary-agent env CLAUDECODE=1 fugaro update; then
+      fact boundary-agent FAIL "fugaro update exited $BOUNDED_STATUS with CLAUDECODE=1 set on a machine with no login unit: the agent-marked run did not finish, so what it wrote cannot be read. Its last lines: $(tail -n 5 "$SCRATCH/boundary-agent.out" "$SCRATCH/boundary-agent.err" 2>/dev/null | tr '\n' ' ')"
     else
       read_unit unit-status-2
       if [ "$UNIT_STATE" != none ]; then
-        fact boundary-agent FAIL "an agent-marked run of 'fugaro update --yes' installed a login unit at $UNIT_PATH on a machine that had none: a coding agent's session must write no unit, and this is the marker rule internal/agentenv's G2 is"
+        fact boundary-agent FAIL "an agent-marked run of 'fugaro update' installed a login unit at $UNIT_PATH on a machine that had none: a coding agent's session must write no unit, and this is the marker rule internal/agentenv's G2 is"
       elif [ -t 0 ]; then
-        fact boundary-agent PASS "an agent-marked run of 'fugaro update --yes' (CLAUDECODE=1, exit 0) at this terminal wrote no login unit at $UNIT_PATH and left the machine with none: a session a person cannot answer at installs nothing, which is the fence D2700 keeps"
+        fact boundary-agent PASS "an agent-marked run of 'fugaro update' (CLAUDECODE=1, exit 0) at this terminal wrote no login unit at $UNIT_PATH and left the machine with none: a session a person cannot answer at installs nothing, which is the fence D2700 keeps"
       else
-        fact boundary-agent PASS "an agent-marked run of 'fugaro update --yes' (CLAUDECODE=1, exit 0) wrote no login unit at $UNIT_PATH, and this check's own terminal is not a person's either, so this reading cannot tell the marker rule from the hole every unattended run has: run this phase from your own terminal window to read the marker itself"
+        fact boundary-agent PASS "an agent-marked run of 'fugaro update' (CLAUDECODE=1, exit 0) wrote no login unit at $UNIT_PATH, and this check's own terminal is not a person's either, so this reading cannot tell the marker rule from the hole every unattended run has: run this phase from your own terminal window to read the marker itself"
       fi
     fi
-    if ! bounded_ok_here 900 boundary fugaro update --yes; then
-      fact boundary FAIL "fugaro update --yes exited $BOUNDED_STATUS on a machine with no login unit: D2700's rule is read from a run that converges (or that reports a settled installation), and this run did neither. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+    if ! bounded_ok_here 900 boundary fugaro update; then
+      if [ -t 0 ]; then
+        fact boundary FAIL "fugaro update exited $BOUNDED_STATUS on a machine with no login unit: D2700's rule is read from a run that converges (or that reports a settled installation), and this run did neither. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+      else
+        # A run nobody is at meets a step that needs a person and is left there
+        # rather than carried through it: no flag stands in for the person any
+        # more, so exit 1 here is the fence itself and not a failure of the run.
+        # Exit 2 is a cloud failure and stays a failure whatever it wrote.
+        # What the fence is read for is the unit — nothing was written — and the
+        # sentence the step prints: exit 1 is also what an unrelated refusal
+        # makes, and such a run writes no unit either. The exit is kept before
+        # the unit is read, because reading it runs the CLI and that run's own
+        # exit would stand in for this one's.
+        local update_exit=$BOUNDED_STATUS
+        read_unit unit-status-3
+        if [ "$update_exit" -ne 1 ]; then
+          fact boundary FAIL "fugaro update exited $update_exit with no terminal at it, and 1 is the only exit a run left at a step makes (0 done, 1 a refusal or a step left for you, 2 a cloud failure): this is the run failing rather than the fence holding. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+        elif [ "$UNIT_STATE" != none ]; then
+          fact boundary FAIL "fugaro update exited $update_exit with no terminal at it, and a login unit is now at $UNIT_PATH: a run nobody is at writes none — the step that writes it needs a person at the terminal, and no flag stands in for one"
+        elif ! grep -q 'needs a real terminal' "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null; then
+          fact boundary FAIL "fugaro update exited 1 with no terminal at it and wrote no login unit at $UNIT_PATH, but not for the step that needs a person: the fence is read from a run left at the step that needs one, and a refusal over anything else says nothing about it. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+        else
+          fact boundary PASS "fugaro update exited 1 with no terminal at it and wrote no login unit at $UNIT_PATH: a run nobody is at is left at the step that needs a person, so the write happens only where one is — the fence F48 kept. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+        fi
+      fi
     else
       read_unit unit-status-3
       if [ "$UNIT_STATE" = none ]; then
         if [ -t 0 ]; then
-          fact boundary FAIL "'fugaro update --yes' (exit 0) wrote no login unit at $UNIT_PATH on a machine that had none, and a person was at this run: D2700 makes this the run that installs the first unit and loads it, so 'fugaro orchestrator install' is not a step you owe — this release carries T7's boundary, which D2700 supersedes"
+          fact boundary FAIL "'fugaro update' (exit 0) wrote no login unit at $UNIT_PATH on a machine that had none, and a person was at this run: D2700 makes this the run that installs the first unit and loads it, so 'fugaro orchestrator install' is not a step you owe — this release carries T7's boundary, which D2700 supersedes"
         else
-          fact boundary PASS "'fugaro update --yes' (exit 0) with no terminal at it wrote no login unit at $UNIT_PATH and loaded nothing: the write happens only where a person is, which is the fence F48 kept"
+          fact boundary PASS "'fugaro update' (exit 0) with no terminal at it wrote no login unit at $UNIT_PATH and loaded nothing: the write happens only where a person is, which is the fence F48 kept"
         fi
       else
         read_manager manager-after-boundary
         if [ -t 0 ] && [ "$MANAGER_STATE" = running ]; then
-          fact boundary PASS "'fugaro update --yes' at this terminal installed the login unit at $UNIT_PATH and loaded it: $(manager_words) — one command with nothing typed at it, which is D2700"
+          fact boundary PASS "'fugaro update' at this terminal installed the login unit at $UNIT_PATH and loaded it: $(manager_words) — one command with nothing typed at it, which is D2700"
         elif [ -t 0 ]; then
-          fact boundary FAIL "'fugaro update --yes' installed the login unit at $UNIT_PATH and $(manager_words): the install loads the unit it writes, so the service has to be running under it. Read the manager's own report and the daemon's log"
+          fact boundary FAIL "'fugaro update' installed the login unit at $UNIT_PATH and $(manager_words): the install loads the unit it writes, so the service has to be running under it. Read the manager's own report and the daemon's log"
         else
-          fact boundary FAIL "'fugaro update --yes' installed a login unit at $UNIT_PATH with no terminal at it: the write happens only where a person is at the terminal, and this run was not one"
+          fact boundary FAIL "'fugaro update' installed a login unit at $UNIT_PATH with no terminal at it: the write happens only where a person is at the terminal, and this run was not one"
         fi
       fi
     fi
@@ -1238,7 +1261,7 @@ phase_update() {
   fi
 
   if [ -t 0 ]; then
-    fact terminal PASS "this check's standard input is a real terminal, so the 'fugaro update' it runs reaches the re-render with a person at it — which is the condition that step needs (T7: --yes never covers it, and an agent-marked or terminal-less run writes no unit)"
+    fact terminal PASS "this check's standard input is a real terminal, so the 'fugaro update' it runs reaches the re-render with a person at it — which is the condition that step needs (T7: a coding agent's marker or no terminal at all writes no unit, and no flag stands in for the person)"
   else
     fact terminal FAIL "this check's standard input is not a terminal (it is redirected), and 'fugaro update' re-renders an out-of-date unit only where a person is at the terminal: run this phase from your own terminal window, or the boundary row below reads what a terminal-less run writes rather than what a person's run does"
   fi
@@ -1274,41 +1297,45 @@ phase_update() {
 
   # The agent-marked run comes first: it is the reading that only exists while
   # something is still there to re-render, and it must not be the run that
-  # re-renders it. Every 'fugaro update --yes' in this phase keeps this shell's
+  # re-renders it. Every 'fugaro update' in this phase keeps this shell's
   # own standard input (bounded_ok_here): the door asks whether a person is at
   # the run's own standard input, and a script's background job gets /dev/null
   # before any redirection, so a run started that way would read the hole
   # instead of the person the row above names.
-  if ! bounded_ok_here 900 boundary env CLAUDECODE=1 fugaro update --yes; then
-    fact boundary FAIL "fugaro update --yes exited $BOUNDED_STATUS with CLAUDECODE=1 set: the agent-marked run did not finish, so what it wrote cannot be read. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
+  if ! bounded_ok_here 900 boundary env CLAUDECODE=1 fugaro update; then
+    fact boundary FAIL "fugaro update exited $BOUNDED_STATUS with CLAUDECODE=1 set: the agent-marked run did not finish, so what it wrote cannot be read. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
   else
     local after_sha after_pid
     after_sha=$(unit_hash "$UNIT_PATH")
     read_manager manager-after-boundary
     after_pid=$MANAGER_PID
     if [ "$after_sha" != "$hash" ]; then
-      fact boundary FAIL "an agent-marked run of 'fugaro update --yes' rewrote the login unit at $UNIT_PATH ($hash -> $after_sha): a coding agent's session must write no unit, and this is the marker rule internal/agentenv's G2 is"
+      fact boundary FAIL "an agent-marked run of 'fugaro update' rewrote the login unit at $UNIT_PATH ($hash -> $after_sha): a coding agent's session must write no unit, and this is the marker rule internal/agentenv's G2 is"
     elif [ "$after_pid" != "$before_pid" ]; then
-      fact boundary FAIL "an agent-marked run of 'fugaro update --yes' reloaded the service (pid $before_pid -> $after_pid) without writing the unit: the step must touch nothing at all in an agent's session"
+      fact boundary FAIL "an agent-marked run of 'fugaro update' reloaded the service (pid $before_pid -> $after_pid) without writing the unit: the step must touch nothing at all in an agent's session"
     elif [ "$UNIT_STATE" = stale ]; then
-      fact boundary PASS "an agent-marked run of 'fugaro update --yes' (CLAUDECODE=1, exit 0) wrote no unit and reloaded nothing: the file still carries the previous template, so the re-render is left for the person — which is T7's open item and what doctor reports as a drift until someone runs 'fugaro update' where they can answer"
+      fact boundary PASS "an agent-marked run of 'fugaro update' (CLAUDECODE=1, exit 0) wrote no unit and reloaded nothing: the file still carries the previous template, so the re-render is left for the person — which is T7's open item and what doctor reports as a drift until someone runs 'fugaro update' where they can answer"
     else
-      fact boundary PASS "an agent-marked run of 'fugaro update --yes' (CLAUDECODE=1, exit 0) wrote no unit and reloaded nothing; the unit was already this release's template here, so this reading cannot tell the marker rule from a unit with nothing to write — the machine for that is one whose template differs"
+      fact boundary PASS "an agent-marked run of 'fugaro update' (CLAUDECODE=1, exit 0) wrote no unit and reloaded nothing; the unit was already this release's template here, so this reading cannot tell the marker rule from a unit with nothing to write — the machine for that is one whose template differs"
     fi
   fi
 
-  if ! bounded_ok_here 3600 update fugaro update --yes; then
-    fact update FAIL "fugaro update --yes exited $BOUNDED_STATUS: the one command T7's half is about did not finish. Its last lines: $(tail -n 8 "$SCRATCH/update.out" "$SCRATCH/update.err" 2>/dev/null | tr '\n' ' ')"
+  if ! bounded_ok_here 3600 update fugaro update; then
+    if [ -t 0 ]; then
+      fact update FAIL "fugaro update exited $BOUNDED_STATUS: the one command T7's half is about did not finish. Its last lines: $(tail -n 8 "$SCRATCH/update.out" "$SCRATCH/update.err" 2>/dev/null | tr '\n' ' ')"
+    else
+      fact update FAIL "fugaro update exited $BOUNDED_STATUS with no terminal at it: a run nobody is at is left at the step that needs a person, so the re-render T7's half is about cannot be measured from here — run this phase at your own terminal window. Its last lines: $(tail -n 8 "$SCRATCH/update.out" "$SCRATCH/update.err" 2>/dev/null | tr '\n' ' ')"
+    fi
     fact re-render FAIL "not measured: the update above did not exit 0"
   else
     local planned=no
     if grep -qF "$UNIT_PATH" "$SCRATCH/update.out" 2>/dev/null; then planned=yes; fi
-    fact update PASS "fugaro update --yes exited 0, and its plan $([ "$planned" = yes ] && echo "named the login unit's own path ($UNIT_PATH)" || echo "named no line for the login unit, which is what a run with nothing to re-render prints")"
+    fact update PASS "fugaro update exited 0, and its plan $([ "$planned" = yes ] && echo "named the login unit's own path ($UNIT_PATH)" || echo "named no line for the login unit, which is what a run with nothing to re-render prints")"
     local now_sha
     now_sha=$(unit_hash "$UNIT_PATH")
     read_unit unit-status-3
     if [ "$UNIT_STATE" != current ]; then
-      fact re-render FAIL "after 'fugaro update --yes' the login unit at $UNIT_PATH is still not this release's template ('$UNIT_NOTE'): one 'fugaro update' converges an installed unit — the HARD RULE's carve-out — and this one did not. Its file still hashes $now_sha"
+      fact re-render FAIL "after 'fugaro update' the login unit at $UNIT_PATH is still not this release's template ('$UNIT_NOTE'): one 'fugaro update' converges an installed unit — the HARD RULE's carve-out — and this one did not. Its file still hashes $now_sha"
     elif [ "$hash" = "$now_sha" ] && [ "$state_before" = current ]; then
       read_manager manager-after-current
       if [ "$MANAGER_PID" != "$before_pid" ]; then
@@ -1332,15 +1359,19 @@ phase_update() {
   quiet_before_sha=$(unit_hash "$UNIT_PATH")
   read_manager manager-before-quiet
   quiet_before_pid=$MANAGER_PID
-  if ! bounded_ok_here 3600 quiet fugaro update --yes; then
-    fact quiet FAIL "the second 'fugaro update --yes' exited $BOUNDED_STATUS: a repeated update must finish and must write nothing. Its last lines: $(tail -n 5 "$SCRATCH/quiet.out" "$SCRATCH/quiet.err" 2>/dev/null | tr '\n' ' ')"
+  if ! bounded_ok_here 3600 quiet fugaro update; then
+    if [ -t 0 ]; then
+      fact quiet FAIL "the second 'fugaro update' exited $BOUNDED_STATUS: a repeated update must finish and must write nothing. Its last lines: $(tail -n 5 "$SCRATCH/quiet.out" "$SCRATCH/quiet.err" 2>/dev/null | tr '\n' ' ')"
+    else
+      fact quiet FAIL "the second 'fugaro update' exited $BOUNDED_STATUS with no terminal at it: run this phase at your own terminal window, where the run has the person the step needs. Its last lines: $(tail -n 5 "$SCRATCH/quiet.out" "$SCRATCH/quiet.err" 2>/dev/null | tr '\n' ' ')"
+    fi
   else
     quiet_sha=$(unit_hash "$UNIT_PATH")
     read_manager manager-after-quiet
     if [ "$quiet_sha" = "$quiet_before_sha" ] && [ "$MANAGER_PID" = "$quiet_before_pid" ]; then
-      fact quiet PASS "the second 'fugaro update --yes' (exit 0) wrote nothing to the login unit and reloaded nothing: its file still hashes $quiet_sha and the daemon is still pid $quiet_before_pid — a repeated update is quiet"
+      fact quiet PASS "the second 'fugaro update' (exit 0) wrote nothing to the login unit and reloaded nothing: its file still hashes $quiet_sha and the daemon is still pid $quiet_before_pid — a repeated update is quiet"
     else
-      fact quiet FAIL "the second 'fugaro update --yes' did not leave the unit alone (hash $quiet_before_sha -> $quiet_sha, pid $quiet_before_pid -> $MANAGER_PID): a repeated update must write nothing and reload nothing"
+      fact quiet FAIL "the second 'fugaro update' did not leave the unit alone (hash $quiet_before_sha -> $quiet_sha, pid $quiet_before_pid -> $MANAGER_PID): a repeated update must write nothing and reload nothing"
     fi
   fi
 

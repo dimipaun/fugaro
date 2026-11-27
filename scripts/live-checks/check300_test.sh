@@ -426,7 +426,7 @@ case_healthy() {
   expect_fact restore PASS "healthy"
   expect_contains "$out" "the node this check wrote (/orchestrator/check300) is deleted and reads back as null" "healthy: the Restore row says what it deleted"
   [ "$(node_in_store orchestrator/check300/state)" = absent ] || fail "healthy: the state node this check wrote is still in the database"
-  expect_contains "$(cat "$dir/state/calls")" "fugaro update --yes" "healthy: the one command was run"
+  expect_contains "$(cat "$dir/state/calls")" "fugaro update" "healthy: the one command was run"
   expect_contains "$(cat "$dir/state/calls")" "gcloud auth print-access-token" "healthy: the person's own credential was read"
 }
 
