@@ -3263,10 +3263,9 @@ func credentialsText(c *projectpolicy.Credentials) string {
 // only the grades the block writes: a grade left out is not a grade at all
 // (config.ModelGrades), and the rung that needs one refuses and asks rather
 // than falling back to anything this line could name, so there is no default
-// spelling to print for the absent one. Each grade renders as
-// internal/policy's gradeText renders it — the model, and the credential or
-// pool its calls go out on when it names one — so an operator reads one
-// wording for a grade wherever one is printed.
+// spelling to print for the absent one. A grade prints as the two halves it is
+// — the model, and the credential or pool its calls go out on when it names
+// one — because a grade is one choice and not a model with an optional extra.
 //
 // A block with no grade in it reached here from a value a caller built rather
 // than from a node: decodeModelGrades answers an absent member for a block that

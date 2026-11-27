@@ -580,9 +580,9 @@ type Layer struct {
 	// credential or pool its calls go out on. The zero value sets none, which
 	// leaves the earlier layers' own alone (see Grades).
 	//
-	// A grade is the project's own, and only the merge's first layer may set
-	// one: a later layer's entry is dropped and recorded, which is stricter
-	// than the craft block beside it, where a layer may select a credential the
+	// A grade is the project's own, and only the merge's first layer carries
+	// one: a later layer's grades are not read at all, which is stricter than
+	// the craft block beside it, where a layer may select a credential the
 	// project named (G3, tightenGrades).
 	//
 	// Nothing builds a layer with it yet — the builders are the runner's and
