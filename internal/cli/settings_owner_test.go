@@ -226,8 +226,18 @@ func TestGenericPathRefusesTheCascadeRows(t *testing.T) {
 			t.Errorf("%s: no registry row, and the cascade block's leaves each have one (R1)", key)
 			continue
 		}
-		if row.Owner != "accounts" {
-			t.Errorf("%s: Owner = %q, and the cascade rows name the accounts family, whose command K1 registers (D2613)", key, row.Owner)
+		// The two members R4 retires name the routing token instead (MG4):
+		// `fugaro accounts cascade set` refuses their flags, so the family whose
+		// command K1 registers is no longer the answer for them. What the token
+		// is read for is the same in both cases — a family the write's map
+		// carries, so the refusals below are the writer's line and never the
+		// allowlist's.
+		want := "accounts"
+		if accountsCascadeRetiredLeaf(strings.TrimPrefix(key, "credentials.")) {
+			want = "routing"
+		}
+		if row.Owner != want {
+			t.Errorf("%s: Owner = %q, and the cascade rows name the family whose command writes them: %q (D2613, MG4)", key, row.Owner, want)
 		}
 		if len(row.Layers) != 1 || row.Layers[0] != settings.LayerPolicy {
 			t.Errorf("%s: Layers = %v, and the block is stated in the policy node alone (the carrier N1 adds is what the command edits, not a settings layer)", key, row.Layers)
