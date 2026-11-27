@@ -726,13 +726,13 @@ func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 	if _, err := readConfirmLine(run.in); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); strings.HasSuffix(got, "installation") {
+	if got := out.String(); !strings.HasSuffix(got, "Type aurora: ") {
 		t.Errorf("the answer drew the line in flight back: %q", got)
 	}
 	if _, err := fmt.Fprintln(run.w, "nothing was changed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); !strings.HasSuffix(got, "installation") {
+	if got := out.String(); !strings.Contains(drawnLine(got), "installation") {
 		t.Errorf("the next whole line did not put the line in flight back: %q", got)
 	}
 	step.Done("")
@@ -775,7 +775,7 @@ func TestTheLineStaysDownThroughAWholeQuestion(t *testing.T) {
 	if !strings.HasPrefix(got[at:], want) {
 		t.Errorf("the question is not one block with its prompt under it:\n got %q\nwant %q", got[at:], want)
 	}
-	if !strings.HasSuffix(got, "policy") {
+	if !strings.Contains(drawnLine(got), "policy") {
 		t.Errorf("the answer did not put the step's line back: %q", got)
 	}
 	step.Done("")
@@ -904,6 +904,17 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// drawnLine is the last line the reporter drew on the terminal's own line:
+// everything after the last carriage return, which is where a redraw returns
+// to. The line in flight carries its step's name and how long it has run, so a
+// test asking whether it is up asks this rather than the whole screen's tail.
+func drawnLine(s string) string {
+	if i := strings.LastIndex(s, "\r"); i >= 0 {
+		return s[i:]
+	}
+	return s
 }
 
 // spinWatch is three of the reporter's redraw intervals (spinInterval is
