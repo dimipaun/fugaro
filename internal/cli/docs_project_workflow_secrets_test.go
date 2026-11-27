@@ -856,7 +856,7 @@ func TestDocsProjectWorkflowSecretsReachIsSaidWhereAPersonMeetsIt(t *testing.T) 
 			// served nothing.
 			"`fugaro update` writes that list into the project's own record, which is the list the credentials service admits a fetch by",
 			"`fugaro secrets allow NAME PATTERN...` writes the record directly, and `--all-repos` admits every repository the project admits, whatever its owner",
-			"With no entry, or with an entry that lists nothing, no repository may read the name, and a run whose workflow declares it stops at its start naming the entry to write.",
+			"With no entry, or with an entry that lists nothing, no repository may read the name's project copy, and a run left with no value stops at its start rather than starting without one.",
 			"A wildcard inside a segment (`myworkspace/*`) means every repository it matches **now and later**",
 			"**The value is whatever the repository's build and tests read**",
 			// A repository's own copy of one is ignored, as every other

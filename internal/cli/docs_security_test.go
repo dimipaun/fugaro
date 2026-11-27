@@ -567,7 +567,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// one a reader acts on: the mount that is gone, the container the
 		// value now lives in, what admits a fetch, the marker that keeps the
 		// two `fugaro_p_` classes apart, and the class the fetch refuses.
-		"**No job mounts one any more: the value is the project's own container (IS6, D3324).**",
+		"**No job mounts one any more: the value is the project's own container (IS6, D3324), and a name `fugaro update` has not copied yet keeps its mount until the update that copies it.**",
 		"`fugaro_p_<name>`",
 		"serves it only to a repository the project's own record admits",
 		"`fugaro secrets allow` and `deny` write it, and `fugaro update` seeds it from the operator's `workflow_secrets` block, and never from a repository's own `fugaro.yaml`",
