@@ -197,23 +197,24 @@ func openProjectBudget(ctx context.Context, o cloudOptions, declined string) (*l
 
 func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
-	// SD8: this command writes the node every run of the project is admitted by
-	// — and, beside it, the per-repository admissions — so it is a person's write
-	// and not a coding agent's, the same refusal `fugaro config publish`,
-	// `fugaro recipes publish` and the credential commands carry. It holds for
-	// --delete too: taking the policy away changes what every run is admitted by
-	// exactly as much as publishing one does, and it is not an agent's to do on
-	// its own.
+	// D3425: publishing the policy is an edit and not an update (D3424) — it
+	// writes the node the project's own repositories are admitted by, from this
+	// machine's own config — so a coding agent makes it as it makes any other
+	// edit. What stays a person's is the removal: --delete takes away the node
+	// every run of the project is admitted by, an irreplaceable delete is
+	// refused to a session (D3430), and the refusal names what it would have
+	// removed.
 	//
-	// A MANAGED project is the one exception the design makes (M3, D1012): there
-	// a coding agent's session reaches the deterministic gate instead, and the
-	// rules of project_policy_managed.go decide. That gate refuses a widening of
-	// any allow list, a raised cap, this command's three flags whatever the
-	// session's arguments are — and, because those rules judge a handful of the
-	// node's members and the node carries many, any change at all to a member no
-	// rule of them reads (policyUnjudgedRule). So what the exception admits is a
-	// publish whose every changed member is one a rule read and judged not to be
-	// a widening: a node that narrows, or one that does not move.
+	// A MANAGED project is where the deterministic gate of
+	// project_policy_managed.go decides instead (M3, D1012): it refuses a
+	// widening of any allow list, a raised cap, this command's three flags
+	// whatever the session's arguments are — and, because those rules judge a
+	// handful of the node's members and the node carries many, any change at all
+	// to a member no rule of them reads (policyUnjudgedRule). So what a managed
+	// project admits is a publish whose every changed member is one a rule read
+	// and judged not to be a widening: a node that narrows, or one that does not
+	// move. A project the read does not prove is managed is published as it
+	// always was, by the session and by a person alike.
 	agent := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	lc, db, configPath, err := openProjectBudget(ctx, o.cloud, "nothing was published")
 	if err != nil {
@@ -233,14 +234,11 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	// The gate is read here, before the node is, and only in a coding agent's
 	// session: a person's own publish reads no mark and pays for no call
 	// (project_policy_managed.go says why). A project the read does not prove is
-	// managed keeps today's refusal, byte for byte, and reaches nothing else in
-	// this function.
+	// managed keeps the gate's zero value, which admits the publish and refuses
+	// the removal (D3427).
 	gate, err := policyPublishGate(ctx, lc, db, agent)
 	if err != nil {
 		return err
-	}
-	if agent != "" && !gate.managed {
-		return publishAgentRefusal(agent)
 	}
 	out := cmd.OutOrStdout()
 	// narrowedSoFar is what the tightening phase has already written when a
@@ -269,14 +267,15 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			//
 			// And the gate, before a single child is touched: a removal is never
 			// admitted (spec §4.2), so the verdict is built refused over the node
-			// as it was read, and a coding agent's session reads why with the
+			// as it was read, and a managed project's session reads why with the
 			// record of that refusal behind it. In every other session the zero
-			// gate answers here and the deletion proceeds exactly as it did.
+			// gate answers here, and the removal's own refusal — a person's, not
+			// the gate's (D3425) — is what a coding agent's session meets next.
 			m, gerr := gate.admit(ctx, policyDeleteVerdict(raw))
 			if gerr != nil {
 				return gerr
 			}
-			if err := policyPublishProceed(agent, out, m); err != nil {
+			if err := policyPublishProceed(agent, out, m, true); err != nil {
 				return err
 			}
 			if err := deleteProjectPolicy(cmd, lc, db, out, exists, etag, o); err != nil {
@@ -368,7 +367,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return err
 		}
-		if err := policyPublishProceed(agent, out, m); err != nil {
+		if err := policyPublishProceed(agent, out, m, false); err != nil {
 			return err
 		}
 		// The per-repository admissions (O4) and the shared node are two writes,

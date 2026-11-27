@@ -897,20 +897,23 @@ func TestReposAddHasNoYesFlag(t *testing.T) {
 	}
 }
 
-// TestReposAddRefusesAnAgentSession is SD8 kept: this command writes the
-// published node, this machine's config, the job set and an IAM grant, so it is
-// a person's step and never a coding agent's — and the refusal comes before
-// anything is read or written.
-func TestReposAddRefusesAnAgentSession(t *testing.T) {
+// TestReposAddStopsAtItsConfirmationInAnAgentSession is D3425: the coding
+// agent's refusal SD8 carried here is gone, and what stands in front of the
+// converge now is its own step — the typed confirmation, which no session
+// without a terminal can answer. The plan is printed and nothing is written.
+func TestReposAddStopsAtItsConfirmationInAnAgentSession(t *testing.T) {
 	r := enrolRig(t)
 	before := readFileString(t, r.cfg)
 	t.Setenv(agentMarkers[0], "1")
 	out, _, err := r.enrolOwnerAt(t, enrolRepo)
-	if err == nil || !strings.Contains(err.Error(), "nothing was written") {
-		t.Fatalf("in an agent session: err = %v, want the SD8 refusal\nstdout:\n%s", err, out)
+	if err == nil {
+		t.Fatalf("with no terminal the converge was not stopped at its confirmation:\n%s", out)
 	}
-	if strings.Contains(out, "⚠ CONFIRM") || strings.Contains(out, "the repository's own fugaro.yaml:") {
-		t.Errorf("the refusal came after the plan or the question:\n%s", out)
+	if strings.Contains(err.Error(), "nothing was written: fugaro project repos add") {
+		t.Fatalf("the SD8 refusal is still in front of the converge: %v", err)
+	}
+	if !strings.Contains(err.Error(), "needs a real terminal") {
+		t.Errorf("the refusal is not the confirmation's own: %v", err)
 	}
 	if got := readFileString(t, r.cfg); got != before {
 		t.Errorf("the refused run wrote the local config:\n%s", got)

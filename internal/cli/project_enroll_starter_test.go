@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -204,6 +205,65 @@ func TestReposAddPushesABitbucketStarterWithTheInstallationsToken(t *testing.T) 
 	if strings.Contains(out+errOut, bitbucketStarterToken) {
 		t.Errorf("the token reached the output:\nstdout:\n%s\nstderr:\n%s", out, errOut)
 	}
+}
+
+// The starter is a person's step and not a coding agent's, on either provider:
+// it opens a pull request in the operator's own repository, under their own
+// credentials, and the one confirmation every other write of `project repos
+// add` takes is never reached on this path — the enrolment stops until that
+// pull request is merged, so the confirmation is not what a session meets here.
+// The refusal comes before the token is read and before a host is opened, which
+// is what the two subtests pin.
+func TestReposAddStarterRefusedInAnAgentSession(t *testing.T) {
+	t.Run("github", func(t *testing.T) {
+		r := enrolRig(t)
+		publishedLayerAt(t, r, testProjectLayer)
+		host := useStarterHost(t, &starterHost{})
+		if err := os.Remove(enrolCheckoutFile(t)); err != nil {
+			t.Fatal(err)
+		}
+		before := readFileString(t, r.cfg)
+		t.Setenv(agentMarkers[0], "1")
+
+		out, errOut, err := r.enrolOwnerAt(t, enrolRepo)
+		if err == nil {
+			t.Fatalf("a coding agent's session opened the starter pull request:\n%s%s", out, errOut)
+		}
+		if !strings.Contains(err.Error(), initflow.AgentRefusal(agentMarkers[0])) {
+			t.Errorf("the refusal is not the session's own: %v", err)
+		}
+		if len(host.got) != 0 || len(host.asked) != 0 {
+			t.Errorf("a refused session reached the host: publishes %+v, asked %v", host.got, host.asked)
+		}
+		if got := readFileString(t, r.cfg); got != before {
+			t.Errorf("the refused run wrote the local config:\n%s", got)
+		}
+	})
+
+	t.Run("bitbucket", func(t *testing.T) {
+		r := enrolRigOver(t, enrolRigLocalBitbucket)
+		publishedLayerAt(t, r, testProjectLayer)
+		host := useStarterHost(t, &starterHost{})
+		asked := stubStarterSecrets(t, nil)
+		if err := os.Remove(enrolCheckoutFile(t)); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(agentMarkers[0], "1")
+
+		out, errOut, err := r.enrolOwnerAt(t, enrolRepo)
+		if err == nil {
+			t.Fatalf("a coding agent's session read the token and opened the starter:\n%s%s", out, errOut)
+		}
+		if !strings.Contains(err.Error(), initflow.AgentRefusal(agentMarkers[0])) {
+			t.Errorf("the refusal is not the session's own: %v", err)
+		}
+		if len(*asked) != 0 {
+			t.Errorf("a refused session read the secrets %v", *asked)
+		}
+		if len(host.got) != 0 || len(host.asked) != 0 {
+			t.Errorf("a refused session reached the host: publishes %+v, asked %v", host.got, host.asked)
+		}
+	})
 }
 
 // stubStarterSecrets replaces the secret read and answers by ID, recording the
