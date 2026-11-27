@@ -996,38 +996,35 @@ func TestPolicyPublishOneMarkIsNotManaged(t *testing.T) {
 // A project whose cloud half this installation cannot even build the clients
 // of — the config names no endpoint for GCS or Resource Manager, which is what
 // an installation that predates them reads as — is a project the gate cannot
-// ask about, and one it has therefore not proved is managed. The session keeps
-// today's refusal exactly, and nothing is written or recorded: the fail-closed
-// direction twice over, since the zero gate admits nothing. Failing the command
-// instead would answer a session with a sentence about endpoints it has no
-// business reading, and would be the one shape this design must not have — a
-// step that does not proceed for a reason other than the refusal.
-func TestPolicyPublishUnbuildableGateKeepsTheAgentRefusal(t *testing.T) {
+// ask about, and one it has therefore not proved is managed. The read that
+// cannot be made is not a permission and it is not a refusal either (D2218): a
+// person's own publish goes on as an unmanaged project's, and so does a coding
+// agent's, whose refusal D3425 lifted. Nothing is recorded — the record family
+// is a managed project's (D1025) — and no sentence about the installation's
+// endpoints reaches the session.
+func TestPolicyPublishUnbuildableGateAdmitsTheAgent(t *testing.T) {
 	f := newManagedPolicyFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
-	base := projectConfigText(f.dir, f.db.URL, projectProvidersYAML, "")
-	base = strings.Replace(base, "runs_bucket: unused-bucket", "runs_bucket: "+initRunsBucket, 1)
-	if err := os.WriteFile(f.cfg, []byte(base), 0o600); err != nil {
+	// The storage and Resource Manager endpoints go, so the gate's own client
+	// set cannot be built while every other endpoint — the budget database's
+	// and Firestore's — is the fixture's own.
+	cfg := f.configText(t, "")
+	cfg = strings.Replace(cfg, "storage: "+f.gcs.URL+"/storage/v1/, ", "", 1)
+	cfg = strings.Replace(cfg, "resource_manager: "+f.crm.URL+"/, ", "", 1)
+	if err := os.WriteFile(f.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before := nodeOf(t, f.db)
 	t.Setenv("CLAUDECODE", "1")
 
-	out, _, err := execute(t, "project", "policy", "publish")
-	if err == nil {
-		t.Fatalf("a coding agent's session published through a gate no client could be built for:\n%s", out)
+	out, errOut, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("a coding agent's session was refused a publish through a gate no client could be built for: %v\n%s%s", err, out, errOut)
 	}
-	if !strings.Contains(err.Error(), "nothing was written") || !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the refusal is not today's: %v", err)
+	if strings.Contains(out, "endpoint") {
+		t.Errorf("the session was answered with the installation's endpoints:\n%s", out)
 	}
-	if got := ExitCode(err); got != ExitUserError {
-		t.Errorf("exit %d, want %d", got, ExitUserError)
-	}
-	if strings.Contains(err.Error(), "endpoint") {
-		t.Errorf("the session was answered with the installation's endpoints: %v", err)
-	}
-	if after := nodeOf(t, f.db); after != before {
-		t.Errorf("the refused publish wrote something:\nbefore %s\nafter  %s", before, after)
+	if got := f.policyOf(t).Budget.PerRunUSD; got != 5 {
+		t.Errorf("the published per-run ceiling is %v, want the config's", got)
 	}
 	if got := f.audits(t); len(got) != 0 {
 		t.Errorf("a gate that could not be built left %d audit records, want none", len(got))

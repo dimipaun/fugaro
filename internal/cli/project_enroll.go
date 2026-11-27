@@ -41,7 +41,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -492,16 +491,11 @@ func seenNote(r seenRepo, admitted bool) string {
 // would refuse to touch.
 func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
 	ctx := cmd.Context()
-	// SD8: this command writes the published node's allow_repos, which is what
-	// admits a repository to the project at all, so it is a person's write and
-	// not a coding agent's — an agent that enrolled a repository would have
-	// widened what every run of the project is admitted by on its own. It is
-	// the same refusal `policy publish` carries, and it comes before the read
-	// and before the ETag, so nothing is written and no cloud write is even
-	// reached.
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written: fugaro project repos add and repos rm edit the published allow-list, which is what admits a repository to the project: %s", initflow.AgentRefusal(m))
-	}
+	// D3425 lifted the refusal this command used to carry: editing the published
+	// allow-list is an edit and not an update (D3424), so a coding agent makes it
+	// as it makes any other. A removal still meets the confirmation below, which
+	// a session with no terminal cannot answer (docs/no-prompt-policy).
+	//
 	// openProjectBudget, not openBudget: this writes the published policy node,
 	// so it is a writer like `policy publish` and takes the same two refusals —
 	// the shared config is not an operator's own installation (and its repos:
@@ -951,17 +945,11 @@ func newProjectSyncCmd() *cobra.Command {
 // which owns every flag that registers them.
 func runProjectSync(cmd *cobra.Command, o *projectSyncOptions) error {
 	ctx := cmd.Context()
-	// SD8: sync writes the same allow_repos `repos add` writes, so it carries
-	// the same refusal and it carries it first — before the App key's own
-	// refusal (refuseAppKeyReadInAgent, which guards the secret read and not
-	// the write) and before the flag's own complaint, so an agent session is told
-	// the one thing that is true of every way of running this command: the
-	// write is not its to make. And it comes before the GitHub or Bitbucket
-	// call, so nothing of the project leaves the machine either — and before a
-	// Bitbucket token is read, which a session's prompt refuses anyway.
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written: fugaro project sync adds to the published allow-list, which is what admits a repository to the project, and it reads a credential with your own: the GitHub App's private key behind %s to ask GitHub which repositories the App is installed on, or the Bitbucket access token %s reads from stdin or a hidden prompt: %s", syncAppKeyFlag, syncBitbucketFlag, initflow.AgentRefusal(m))
-	}
+	// D3425 lifted the refusal this command used to carry: sync writes the same
+	// allow_repos `repos add` writes, and an agent may make that edit (D3424).
+	// What a session still cannot do is the credential read the write is built
+	// from — the GitHub App's private key is refused at its own door
+	// (refuseAppKeyReadInAgent, which guards the secret and not the write).
 	declined := "nothing was added to the allow-list"
 	if o.check {
 		declined = "nothing was written"
@@ -1098,6 +1086,13 @@ func syncSourceRepos(ctx context.Context, cmd *cobra.Command, o *projectSyncOpti
 // allow-list entries, and an entry the publisher would refuse is a repository
 // an operator would believe enrolled (infra.InstalledRepos' own rule).
 func syncBitbucketSource(ctx context.Context, cmd *cobra.Command, o *projectSyncOptions) (syncSource, error) {
+	// The write this command makes is an agent's (D3425), and the credential it
+	// is built from is not: a workspace token is a secret value, which the same
+	// decision keeps a person's — the refusal the App key's read carries, at the
+	// read where the value would otherwise reach the session's process.
+	if err := refuseKeyReadInAgent(os.Getenv, syncBitbucketFlag, "the Bitbucket access token"); err != nil {
+		return syncSource{}, err
+	}
 	// GODEBUG=http2debug makes Go print every HTTP/2 request with its headers,
 	// this token's Authorization header among them, and GODEBUG is read before
 	// main runs, so it cannot be unset in time: the same one line the App key's
