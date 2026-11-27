@@ -120,15 +120,21 @@ func TestSecurityMdStatesTheProjectScopeDefault(t *testing.T) {
 		"**The data-policy gate is unchanged.**",
 		"`workflows.<n>.secrets` **can** be shared this way, through the operator's own `workflow_secrets.<name>` entry",
 		"A **shared project job** never mounts one at all",
+		// IS11, D2313: a workflow's own `secrets:` entry is a project secret
+		// like any other name now, and a repository-level copy of one is
+		// refused. The section said the opposite — a name with no project-wide
+		// meaning "keeps the repository scope it had" — which is the pre-flip
+		// wording.
+		"A workflow's own `secrets:` entry is a project secret too",
 	} {
 		if !strings.Contains(doc, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("SECURITY.md does not say %q", want)
 		}
 	}
-	// The default is not a claim that every name is shared: a name with no
-	// project-wide meaning keeps the repository scope it had.
-	if !strings.Contains(doc, "A name that has no project-wide meaning") {
-		t.Error("SECURITY.md does not say which names the default leaves alone")
+	// The sentence that read a workflow's own secret out of the default may not
+	// come back: the store it describes is the one the flip refuses.
+	if strings.Contains(doc, "A name that has no project-wide meaning") {
+		t.Error("SECURITY.md says a workflow's own secret keeps the repository scope it had: the flip makes it a project secret, and `fugaro secrets set --repo` refuses one")
 	}
 	// And it is no longer a claim that a workflow's own secret is never
 	// shared: the block that shares one exists, so the sentence that denied it

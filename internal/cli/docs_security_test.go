@@ -535,7 +535,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// does not.
 		"**The service reads the workflow's own `secrets:` too",
 		"the reach does not change",
-		"the same value in the same variable a mount put there",
+		"the same value in the same variable the job's environment carries",
 		"`creds/workflowsecrets/<slug>`",
 		"variable names and container IDs, never a value",
 		// The runner's fetch, and what it is bound to: the verified job
@@ -571,7 +571,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"`fugaro_p_<name>`",
 		"serves it only to a repository the project's own record admits",
 		"`fugaro secrets allow` and `deny` write it, and `fugaro update` seeds it from the operator's `workflow_secrets` block, and never from a repository's own `fugaro.yaml`",
-		"a container that does not carry the intake's workflow-secret marker is refused rather than read",
+		"A container that does not carry the intake's workflow-secret marker is refused rather than read",
 		"conditioned on the `fugaro_u_` and `fugaro_p_` prefixes",
 		"a shared project job's run, a review job, a launcher and a person are each refused",
 		"a shared job's run carries none at all",
@@ -788,13 +788,14 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		"the class's own table (`FUGARO_SHARED_JOB_ACCOUNTS`) is rendered by the installation module",
 		"a service not re-applied since that release still carries an empty shared set and refuses the class whole",
 		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
-		// S3's own limit (B3.5): the fetch is wired, and the mount the flip
-		// takes away has NOT been taken away — a mounted value wins, so the
-		// workflow's `secrets:` stay in the job until B3.8 lands the flip.
-		// Stated here rather than only beside the fetch, because a reader who
-		// takes "the runner fetches them" as the whole story would conclude a
-		// switched job no longer holds one.
-		"the read leaves the job only when the flip lands",
+		// S3's limit (B3.5) as IS6 leaves it: the flip has landed, so the
+		// read has left the job for a name `fugaro update` has copied — and
+		// only for those. A name the update skipped keeps its mount, and a
+		// root not re-applied with the switch on keeps every one. Stated here
+		// rather than only beside the fetch, because a reader who takes "the
+		// runner fetches them" as the whole story would conclude a switched
+		// job no longer holds one.
+		"the read leaves the job only for a name `fugaro update` has copied",
 		// S4's own limit (B4.6): the build's fetch is wired and reached by no
 		// repository's build or check job, so the read is still the mount's;
 		// and the copy the flip ends is still there — the build account keeps
