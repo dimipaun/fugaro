@@ -24,11 +24,13 @@
 //      directly would bypass the port, the `Secret` check and the
 //      accessibility.
 //   2. `reveal(` -- the only way to the material (`secret.js`). In production
-//      code it appears in exactly two files: `secret.js`, which defines it,
-//      and `secure-store.js`, which is the one place material is handed to a
-//      store. Everywhere else -- a screen, a hook, a reader -- it is an
-//      offence, because a screen that reveals a token is a screen one refactor
-//      away from rendering or logging it.
+//      code it appears in exactly three files: `secret.js`, which defines it;
+//      `secure-store.js`, which is the one place material is handed to a store;
+//      and `src/session/devicekey.js`, which reveals the device key's seed at
+//      the moment it is handed to Ed25519 and nowhere else (M3, O6). Everywhere
+//      else -- a screen, a hook, a reader -- it is an offence, because a screen
+//      that reveals a token is a screen one refactor away from rendering or
+//      logging it. A fourth file is a decision, and it is written here.
 //   3. `fugaro.account.` -- the Keychain namespace. It may be composed in
 //      `secure-store.js` and reserved against in `settings.js`, and nowhere
 //      else. A second module that knows the namespace is a second module that
@@ -48,8 +50,9 @@
 //   6. the network -- `fetch(`, `WebSocket`, `XMLHttpRequest` and
 //      `EventSource`, the four doors this platform opens one through, and the
 //      same four the module scans in `src/audio/index.test.js` and
-//      `src/voice/index.test.js` name (P5.3.7). It may be opened from
-//      `src/voice-switch/hop.js` and nowhere else, so the one file that can put
+//      `src/voice/index.test.js` name (P5.3.7). It may be opened from the files
+//      the allow-list below names -- the hop, the spike's sign-in, M1's provider
+//      exchange and M3's refresh -- and nowhere else, so every file that can put
 //      a byte in front of a third party is a file a reviewer reads whole, and a
 //      second call site is a failing test rather than a new egress path. **In
 //      any spelling**: `fetch(`, `globalThis.fetch(`, `window.fetch(` and
@@ -116,9 +119,9 @@ const RULES = [
     why: 'a direct SDK call bypasses the port, the Secret check and the accessibility',
   },
   {
-    name: 'the material is revealed in two files and nowhere else',
+    name: 'the material is revealed in three files and nowhere else',
     pattern: /\breveal\s*\(/,
-    allow: ['src/accounts/secret.js', 'src/accounts/secure-store.js'],
+    allow: ['src/accounts/secret.js', 'src/accounts/secure-store.js', 'src/session/devicekey.js'],
     why: 'a caller that reveals a token is one refactor from printing it',
   },
   {
@@ -165,7 +168,13 @@ const RULES = [
     // deliberately rather than through a spelling the pattern does not read --
     // one reviewed file per egress, and this is where the phone's provider
     // token leaves from.
-    allow: ['src/voice-switch/hop.js', 'spike/src/firebase/idp.js', 'src/identity/providers.js'],
+    //
+    // `src/session/refresh.js` is M3's: the project session's two routes, where
+    // a device-bound refresh token is presented and its successor comes back
+    // (D2783, D2794). It is a second egress on purpose and named here for the
+    // same reason as the other two -- it is the file where a token that reaches
+    // a project leaves the phone, so it is a file a reviewer reads whole.
+    allow: ['src/voice-switch/hop.js', 'spike/src/firebase/idp.js', 'src/identity/providers.js', 'src/session/refresh.js'],
     why: 'P5.3.7: the egress path is the only thing in the app that talks to a third party, and a second file that could open the network is a second place a byte could leave from',
   },
 ];
