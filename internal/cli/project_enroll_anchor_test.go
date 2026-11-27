@@ -122,8 +122,8 @@ func TestReposAddOffersTheAnchorThroughTheGate(t *testing.T) {
 // door depends on the gate for: the anchor step is reached in an agent's session
 // only through the gate, and the gate refuses it — the same refusal every other
 // step of a run answers an agent with, before the file is touched. The command's
-// own door refuses an agent earlier still (SD8), which is why this asserts the
-// anchor's arm rather than the command's.
+// own door carries no refusal of its own any more (D3425 lifted it), which is
+// why this asserts the anchor's arm and nothing else.
 func TestReposAddAnchorRefusedForAnAgent(t *testing.T) {
 	r := enrolRig(t)
 	ownerAtTheTerminal(t)

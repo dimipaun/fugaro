@@ -42,7 +42,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -158,16 +157,11 @@ func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) e
 	if strings.Contains(arg, "*") {
 		return runProjectReposEdit(cmd, o, arg, true)
 	}
-	// SD8: this writes the published node's allow_repos, which is what admits
-	// a repository to the project at all, and then deletes the repository's
-	// jobs and its state: a person's step and never a coding agent's, before
-	// every read and before any cloud write is reached. The opener is the
-	// group's own — the doors' test pins "nothing was written" for all three
-	// commands that write the list — with the removal's own verb beside it and
-	// the list of what would have gone.
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written or removed: fugaro project repos rm removes the published allow-list entry, this machine's config entry, the repository's published admission and its Cloud Run jobs, which are what admit a repository to the project and what run it: %s", initflow.AgentRefusal(m))
-	}
+	// D3425 lifted the refusal this command used to carry: removing an entry is
+	// an edit to the published allow-list and not an update (D3424), so a coding
+	// agent makes it as it makes any other. What still stands in its way is the
+	// confirmation below, which a session with no terminal cannot answer
+	// (docs/no-prompt-policy).
 	// openProjectBudget, not openBudget: this writes the published policy node
 	// and is a writer like `policy publish`, so it takes the same two refusals
 	// — the shared config is not an operator's own installation, and the

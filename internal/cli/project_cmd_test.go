@@ -11,9 +11,8 @@ import (
 )
 
 // project_cmd_test.go holds the tests of the two things this release adds to
-// `fugaro project policy publish` itself: the refusal of a coding agent's
-// session (SD8: the node this command writes is what every run of the project
-// is admitted by, so it is a person's write and not an agent's) and the flags
+// `fugaro project policy publish` itself: the one removal a coding agent's
+// session may not make (--delete, an irreplaceable delete, D3425) and the flags
 // that are this door's own — --delete and --seed-repos — which the shared build
 // the door now takes (policyNodeForPublish) must not swallow. Everything else
 // about the command is project_policy_test.go's.
@@ -23,45 +22,34 @@ import (
 // the refusal an older CLI makes of a node that carries the key, and the gate
 // that is this catalog's and not the price catalog's.
 
-// TestProjectPolicyPublishIsRefusedInAnAgentSession: every form of the door is
-// refused before anything is read, --delete included — taking the policy away
-// changes what every run is admitted by exactly as much as publishing one does,
-// and it is not an agent's to do on its own. The refusal is a user error and
-// not a crash, and it names the write it stopped.
-func TestProjectPolicyPublishIsRefusedInAnAgentSession(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{"publish", []string{"project", "policy", "publish"}},
-		{"--seed-repos", []string{"project", "policy", "publish", "--seed-repos"}},
-		{"--delete", []string{"project", "policy", "publish", "--delete"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newProjectFixture(t, "")
-			f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
-			t.Setenv("CLAUDECODE", "1")
-			before := nodeOf(t, f.db)
+// TestAgentPolicyDeleteRefused is D3425's keep on this door: --delete removes
+// the node every run of the project is admitted by, which is an irreplaceable
+// delete, so it stays a person's. The publish itself is a coding agent's now
+// (TestAgentMayEnrol); the removal is not, and it is refused before anything is
+// written.
+func TestAgentPolicyDeleteRefused(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), staleBudgetNode())
+	t.Setenv("CLAUDECODE", "1")
+	before := nodeOf(t, f.db)
 
-			out, errOut, err := executeStdin(t, "", tc.args...)
-			if err == nil {
-				t.Fatalf("a coding agent's session wrote the policy:\n%s%s", out, errOut)
-			}
-			if got := ExitCode(err); got != ExitUserError {
-				t.Errorf("exit %d, want %d", got, ExitUserError)
-			}
-			for _, want := range []string{"nothing was written", "coding agent", "fugaro project policy publish"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal does not say %q: %v", want, err)
-				}
-			}
-			if after := nodeOf(t, f.db); after != before {
-				t.Errorf("the database changed in a coding agent's session:\nbefore %s\nafter  %s", before, after)
-			}
-			if gen := recordedGeneration(t, f); gen != "" {
-				t.Errorf("a coding agent's session recorded policy_generation = %q", gen)
-			}
-		})
+	out, errOut, err := executeStdin(t, "", "project", "policy", "publish", "--delete")
+	if err == nil {
+		t.Fatalf("a coding agent's session deleted the policy:\n%s%s", out, errOut)
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit %d, want %d", got, ExitUserError)
+	}
+	for _, want := range []string{"nothing was removed", "coding agent"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if after := nodeOf(t, f.db); after != before {
+		t.Errorf("the database changed in a coding agent's session:\nbefore %s\nafter  %s", before, after)
+	}
+	if gen := recordedGeneration(t, f); gen != "" {
+		t.Errorf("a coding agent's session recorded policy_generation = %q", gen)
 	}
 }
 
