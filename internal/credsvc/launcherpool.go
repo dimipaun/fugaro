@@ -109,15 +109,37 @@ func (l launcherPools) LauncherPool(ctx context.Context, principal routing.Princ
 	// pool of the caller's own alone (R9, R26).
 	//
 	// The two reasons poolForLauncher answers false are told apart here, and it
-	// is what keeps a personal pool from shadowing a name the block owns: a pool
-	// the block HOLDS and this launcher is not served by is a refusal (D3176),
+	// is what keeps a personal pool from shadowing a name the node owns: a pool
+	// the node HOLDS and this launcher is not served by is a refusal (D3176),
 	// and falling through to the store for it would answer a pool the chain then
-	// re-reads out of the published block by NAME — serving that pool's members
+	// re-reads out of a published block by NAME — serving that block's members
 	// and not the person's own (chain.go's planSource).
-	if _, held := namedLauncherPool(poolName, shared); held {
+	if poolHeldByNode(poolName, shared) {
 		return none, false, nil
 	}
 	return personalPoolRef(ctx, l.s, poolName, principal, project)
+}
+
+// poolHeldByNode reports whether the published node holds a pool of this name in
+// EITHER of its two blocks (PL9, R26).
+//
+// The two blocks are not one list, and this is the whole of why both are asked:
+// this lookup resolves a launcher's pool against `model_routing.pools` (C2's
+// shape, launcherPoolsOf), and the CHAIN resolves a named pool against
+// `craft_pools` (chain.go's planSource, namedPool) — so a name the key does not
+// hold may still be one the chain would resolve, and a person declaring a pool of
+// that name would then be served the published pool's members instead of their
+// own container. A name either block holds is the node's, and a personal pool of
+// it is refused rather than read.
+func poolHeldByNode(name string, shared *projectpolicy.Policy) bool {
+	if name == "" || shared == nil {
+		return false
+	}
+	if _, held := namedLauncherPool(name, shared); held {
+		return true
+	}
+	_, held := namedPool(name, shared)
+	return held
 }
 
 // personalPoolRef resolves one PERSON's own pool out of the service's store

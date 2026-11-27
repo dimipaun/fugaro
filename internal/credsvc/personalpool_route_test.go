@@ -16,6 +16,7 @@ package credsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -154,12 +155,19 @@ func TestAPersonalPoolServesItsOwnersRun(t *testing.T) {
 // pool's members instead of the person's own container.
 func TestAPersonalPoolCannotShadowAPublishedName(t *testing.T) {
 	s := newLauncherPools(t, true, lpPools()...)
-	// lpOtherPool is the other person's published pool, and this launcher
-	// declares a pool of their own under the same name.
-	resp, body := personalPost(t, s, PersonalPoolPath,
-		mustBody(t, PersonalPoolRequest{Pool: lpOtherPool, Members: []string{testPoolCredential}}))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("the honest declare is %d, want it written: %s", resp.StatusCode, body)
+	// lpOtherPool is the other person's published pool, and the store holds a
+	// pool of this launcher's under the same name — a record a service of the
+	// release behind could have written, because the declare route refuses the
+	// name today (TestAPersonalPoolCannotShadowACraftPool pins that refusal).
+	rec := PersonalPoolRecord{
+		Principal: lpLauncher(),
+		Project:   testProject,
+		Pool:      lpOtherPool,
+		Rule:      routing.RuleFailover,
+		Members:   []string{testPoolCredential},
+	}
+	if err := writePersonalPool(context.Background(), s.dbs, rec); err != nil {
+		t.Fatalf("writing the fixture's own record: %v", err)
 	}
 	lookup := launcherPools{s: s.server}
 	ref, found, err := lookup.LauncherPool(context.Background(), lpLauncher(), lpOtherPool)
@@ -174,6 +182,104 @@ func TestAPersonalPoolCannotShadowAPublishedName(t *testing.T) {
 	// The run that names it with --pool falls back rather than being served that
 	// pool's member.
 	wantFallback(t, s.walk(t, callBody("pool-shadow"), lpBinding(lpLauncher(), lpCoverage(), lpOtherPool)))
+}
+
+// TestAPersonalPoolMemberIsNotABundleEntryOfItsName is the boundary between a
+// member and the bundle. A personal pool's member is a container of its owner's
+// own, and the name it holds may be the bare name of a credential the PROJECT's
+// bundle carries — the fixture's own `team-token` is one. R6's fall would serve
+// that entry for a member whose container is not there, which is another
+// credential entirely, so the candidate says it is a container
+// (creds.Credential.Container) and the read refuses instead.
+func TestAPersonalPoolMemberIsNotABundleEntryOfItsName(t *testing.T) {
+	ctx := context.Background()
+	container, err := secretname.User(lpLauncher().ID, testPoolCredential)
+	if err != nil {
+		t.Fatalf("the fixture's own container name: %v", err)
+	}
+	absent, err := secretname.User(lpLauncher().ID, testSecondPoolCredential)
+	if err != nil {
+		t.Fatalf("the fixture's second container name: %v", err)
+	}
+	value := fakeCred(t, "member")
+	s := newLauncherPools(t, true, lpPools()...).withContainers(t, map[string]string{container: value})
+	b, err := s.server.cfg.Bundles.Load(ctx)
+	if err != nil {
+		t.Fatalf("loading the fixture's bundle: %v", err)
+	}
+	// Both bare names really are bundle credentials: without them this test
+	// could pass on a document that had nothing to fall back to.
+	for _, name := range []string{testPoolCredential, testSecondPoolCredential} {
+		if _, ok := entryFor(b, creds.Credential{Name: name, Tier: creds.TierA}); !ok {
+			t.Fatalf("the fixture's bundle holds no %q, so the fall this test is about is not reachable", name)
+		}
+	}
+
+	// A member whose container is there is served from it, at the tier the
+	// person's own token is served at.
+	e, ok, err := s.server.resolveEntry(ctx, b, creds.Credential{Name: container, Tier: creds.TierA, Container: true})
+	if err != nil || !ok {
+		t.Fatalf("the member's read answered (%v, %v), want the container's own value", ok, err)
+	}
+	if e.Value() != value || e.Tier != creds.TierA {
+		t.Errorf("the member was served by %+v, want %q at tier a", e, value)
+	}
+
+	// A member whose container is NOT there is refused, and it is not the
+	// bundle's entry of that name: the same name WITHOUT the mark is exactly
+	// what falls to it (R6, unchanged), which is what makes the difference a
+	// fact rather than the absence of a fall.
+	if _, ok, err := s.server.resolveEntry(ctx, b, creds.Credential{Name: absent, Tier: creds.TierA, Container: true}); !errors.Is(err, ErrPersonalTokenAbsent) {
+		t.Errorf("a member whose container is not there answered (%v, %v), want ErrPersonalTokenAbsent: the bundle holds a credential of that bare name", ok, err)
+	}
+	if _, ok, err := s.server.resolveEntry(ctx, b, creds.Credential{Name: absent, Tier: creds.TierA}); err != nil || !ok {
+		t.Errorf("the same name without the mark answered (%v, %v), want R6's fall to the bundle's entry — that fall is what the mark refuses", ok, err)
+	}
+}
+
+// TestAPersonalPoolCannotShadowACraftPool pins the other half of the boundary
+// the lookup keeps: a name the node holds in `craft_pools` ALONE. The lookup
+// resolves a launcher's pool against `model_routing.pools`, and the CHAIN
+// resolves a named pool against `craft_pools` (planSource's namedPool) — so a
+// guard that asked only the first block would let a personal pool of that name
+// through, and the chain would then serve the published pool's members to a
+// person who is not its principal. A record written by a service of the release
+// behind is what the store holds here; the declare route refuses the name today
+// as well.
+func TestAPersonalPoolCannotShadowACraftPool(t *testing.T) {
+	s := newLauncherPools(t, true, lpPools()...)
+	s.withCraftPool(t, lpPool(lpCraftOnlyPool, testOtherLauncherAccount,
+		lpPoolPrincipal(routing.PrincipalPerson, testOtherLauncherSub), testPoolCredential, testSecondPoolCredential))
+	rec := PersonalPoolRecord{
+		Principal: lpLauncher(),
+		Project:   testProject,
+		Pool:      lpCraftOnlyPool,
+		Rule:      routing.RuleFailover,
+		Members:   []string{testPoolCredential},
+	}
+	if err := writePersonalPool(context.Background(), s.dbs, rec); err != nil {
+		t.Fatalf("writing the fixture's own record: %v", err)
+	}
+
+	lookup := launcherPools{s: s.server}
+	ref, found, err := lookup.LauncherPool(context.Background(), lpLauncher(), lpCraftOnlyPool)
+	if err != nil || found {
+		t.Fatalf("the lookup answered (%+v, %v, %v), want none: the node's craft pool of that name is not this launcher's", ref, found, err)
+	}
+	// The run that names it falls back rather than being served that pool's
+	// members, which is what the chain's own read of `craft_pools` would do.
+	wantFallback(t, s.walk(t, callBody("pool-craft"), lpBinding(lpLauncher(), lpCoverage(), lpCraftOnlyPool)))
+
+	before := len(lpAudit(t, s))
+	resp, body := personalPost(t, s, PersonalPoolPath,
+		mustBody(t, PersonalPoolRequest{Pool: lpCraftOnlyPool, Members: []string{testPoolCredential}}))
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("declaring a pool under a name the node publishes was served: %s", body)
+	}
+	if e := refusal(t, resp.StatusCode, body); !strings.Contains(e.Message, personalPoolPublishedName) {
+		t.Errorf("the refusal %q does not say %q", e.Message, personalPoolPublishedName)
+	}
+	wantDesignationLine(t, s, before, ErrorRequestRefused)
 }
 
 // TestAPersonalPoolIsKeyedOnTheVerifiedSubject is PL9's service half: the pool a

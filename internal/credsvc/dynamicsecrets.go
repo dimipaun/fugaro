@@ -140,6 +140,12 @@ const perSecretRefusal = "the per-secret credential could not be read"
 // Its sentence names the command that sets a token and carries no container, no
 // credential name and no value: a run reads what to do, and nothing about where
 // the service looked.
+//
+// A PERSONAL POOL's member is the same class for the same reason (PL9): its name
+// is a container of one person's own, with no bundle entry behind it, so a
+// container that is not there is an absent member and not the project's entry
+// that happens to share the bare name. The candidate says which it is
+// (creds.Credential.Container), because the grammar cannot.
 var ErrPersonalTokenAbsent = errors.New(personalTokenAbsent)
 
 // personalTokenAbsent is the sentence a run is answered with, on the wire and on
@@ -464,7 +470,7 @@ func (d *DynamicSecrets) read(ctx context.Context, c creds.Credential) (Entry, b
 		// exception, and it is refused here rather than fallen from for the same
 		// reason it is refused below: a service with no per-secret reader holds
 		// no container of the person's either.
-		if personalTokenName(parsed) {
+		if personalTokenName(parsed) || c.Container {
 			return Entry{}, false, "", ErrPersonalTokenAbsent
 		}
 		return Entry{}, false, parsed.Name, nil
@@ -497,7 +503,7 @@ func (d *DynamicSecrets) read(ctx context.Context, c creds.Credential) (Entry, b
 		return Entry{}, false, "", err
 	}
 	if !found {
-		if personalTokenName(parsed) {
+		if personalTokenName(parsed) || c.Container {
 			return Entry{}, false, "", ErrPersonalTokenAbsent
 		}
 		return Entry{}, false, parsed.Name, nil

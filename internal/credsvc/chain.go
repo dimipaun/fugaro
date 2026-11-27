@@ -208,6 +208,11 @@ type chainSource struct {
 // held every name to (personalPoolRecord, R9) — so nothing here is a name a
 // caller could have chosen, and a node carrying one this cannot build is an
 // error rather than a silent drop.
+//
+// Every entry is marked a container (creds.Credential.Container), which is what
+// keeps a member whose container is not there from being served the project's
+// bundle credential of the same bare name: the member is the person's own and
+// the bundle entry is the project's, and R6's fall would serve the wrong one.
 func personalPoolOffering(rec PersonalPoolRecord, principal routing.Principal) ([]creds.Credential, error) {
 	out := make([]creds.Credential, 0, len(rec.Members))
 	for _, m := range rec.Members {
@@ -215,7 +220,7 @@ func personalPoolOffering(rec PersonalPoolRecord, principal routing.Principal) (
 		if err != nil {
 			return nil, fmt.Errorf("credsvc: a personal pool's member is not a container of its owner's: %w", err)
 		}
-		out = append(out, creds.Credential{Name: name, Tier: creds.TierA})
+		out = append(out, creds.Credential{Name: name, Tier: creds.TierA, Container: true})
 	}
 	return out, nil
 }

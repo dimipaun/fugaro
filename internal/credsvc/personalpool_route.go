@@ -168,6 +168,7 @@ const (
 	personalPoolStoreUnread   = "your personal pool could not be read"
 	personalPoolStoreUnwritt  = "your personal pool could not be written"
 	personalPoolNoSuchPool    = "you have no personal pool of that name in this project"
+	personalPoolPublishedName = "a personal pool cannot carry the name of a pool this project publishes: a run naming it would be served that pool's members"
 )
 
 // PersonalPoolNoSuchPoolRefusal is the refusal of a read of a pool the caller has
@@ -330,10 +331,26 @@ func (s *Server) personalPoolReady(ctx context.Context, w http.ResponseWriter, a
 // side (R9): the container a member names is built from the caller's OWN subject
 // (secretname.User), so a name that would build somebody else's container — or
 // that no container could carry at all — is refused before anything is written.
+//
+// A name the published node already holds is refused beside it, and it is the
+// other half of that rule: the node's pool of that name is resolved by its own
+// principal, so a personal pool that took the name could only ever shadow it —
+// and a run naming it would be served whichever of the two the path that
+// resolves the name reaches first (launcherpool.go's poolHeldByNode, chain.go's
+// namedPool).
 func (s *Server) personalPoolRecord(ctx context.Context, w http.ResponseWriter, caller personalPoolCaller, req PersonalPoolRequest) (PersonalPoolRecord, bool) {
 	project, ok := installationProject(s)
 	if !ok {
 		s.refusePersonal(ctx, w, caller.account, StatusUnavailable, ErrorStateUnavailable, "the installation's own project could not be read")
+		return PersonalPoolRecord{}, false
+	}
+	shared, _, err := sharedPolicy(ctx, s)
+	if err != nil {
+		s.refusePersonal(ctx, w, caller.account, StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
+		return PersonalPoolRecord{}, false
+	}
+	if poolHeldByNode(req.Pool, shared) {
+		s.refusePersonal(ctx, w, caller.account, StatusRequestRefused, ErrorRequestRefused, requestRefused+personalPoolPublishedName)
 		return PersonalPoolRecord{}, false
 	}
 	members := make([]string, 0, len(req.Members))
