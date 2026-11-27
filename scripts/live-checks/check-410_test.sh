@@ -297,7 +297,12 @@ test_happy_path() {
   expect_contains "$out" "no fugaro setup, no flag, no credential exported" "happy path: what no setup means"
   expect_contains "$out" "CHECK 410 RESULT END (exit 0)" "happy path: the end line"
   # The commands really ran, in the scratch state directory and nowhere else.
-  expect_contains "$(cat "$dir/logs/fugaro.calls")" "update --name chk410-test --gcp-project ${project} --region us-east5" "happy path: the probe's own command line"
+  # The probe's argv, whole: the logged line has to END at the region, so a flag
+  # appended to it — `--yes` above all, which the CLI no longer knows — is a
+  # failure rather than a command this check silently keeps passing.
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" \
+    "fugaro update --name chk410-test --gcp-project ${project} --region us-east5"$'\n' \
+    "happy path: the probe's own command line, whole"
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "troubleshoot ${probe_id}" "happy path: the diagnosis is the one command the line named"
   assert_ran_in_the_scratch "$dir" "happy path"
   assert_scratch_removed "$dir" "happy path"
