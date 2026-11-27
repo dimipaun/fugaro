@@ -162,9 +162,8 @@ func TestDocsCheck111ScriptKeepsItsPromises(t *testing.T) {
 	}
 
 	// Every mode's own row is in the block, so a pasted block answers for all
-	// seven runs (and their two `--yes` reruns) rather than for the ones that
-	// happened to pass. An unrun mode reads FAIL, which the block would not do
-	// if its key were missing.
+	// seven runs rather than for the ones that happened to pass. An unrun mode
+	// reads FAIL, which the block would not do if its key were missing.
 	keys := blockKeys(t, script)
 	if len(keys) == 0 {
 		t.Fatalf("%s: BLOCK_KEYS parsed empty", check111Script)
