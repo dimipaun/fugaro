@@ -1141,6 +1141,16 @@ var goMountFields = []string{"SecretEnv", "AvailableSecrets", "SecretVariables",
 // below is the one that carries the defect D3324 fixed.
 var goMountClassRefs = []string{"w.Secrets", "s.WorkflowSecrets"}
 
+// goVaultDropFile is the builder that mounts the class by a route no statement
+// names: spec.go builds its mounts in SecretMounts and appends the workflow's
+// own secrets to them, and dropVaultMounts under the address gate is what takes
+// them off again. A gate turned into `if false`, or the call deleted, is the
+// flip undone in the one place the statement-level half reads nothing.
+const (
+	goVaultDropFile = "internal/infra/spec.go"
+	goVaultDropCall = "dropVaultMounts("
+)
+
 // goServeGateWords are the words the flip's gates are written with in these
 // builders: `served` (buildMountsServed, s.served(), projectJobMounts' served),
 // `serves` (CredentialsServiceServes, projectJobServesTheCredentialsService)
@@ -1210,10 +1220,42 @@ func TestRunJobsMountNoWorkflowSecret(t *testing.T) {
 // would hand a build the container the flip took away.
 func TestCatalogIdentityHoldsNoSecretAccessor(t *testing.T) {
 	files := moduleFiles(t, "deploy/terraform/gcp/modules/installation")
+	for _, hit := range catalogIdentitySecretHits(files) {
+		t.Errorf("%s", hit)
+	}
+}
+
+// catalogIdentitySecretGrant reports whether a block whose member is the build
+// identity hands it a secret: a secretmanager grant of any shape, or a
+// project-level role whose role string is a secretmanager one. The role is read
+// as written — a quoted literal — and unquoted before it is judged: judged
+// quoted, the prefix test matches nothing and every project-level accessor on
+// this identity passes.
+func catalogIdentitySecretGrant(b tfBlock) bool {
+	switch b.typ {
+	case "google_secret_manager_secret_iam_member", "google_secret_manager_secret_iam_binding", "google_secret_manager_secret_iam_policy":
+		return true
+	case "google_project_iam_member", "google_project_iam_binding":
+		return projectRoleReadsSecrets(unquotedRole(terraformAttrExpr(b.body, "role")))
+	}
+	return false
+}
+
+func unquotedRole(expr string) string {
+	if s, err := strconv.Unquote(expr); err == nil {
+		return s
+	}
+	return expr
+}
+
+// catalogIdentitySecretHits is the installation half's scan: the retired grant
+// by name, and every block that hands the catalog build identity a secret.
+func catalogIdentitySecretHits(files []tfFile) []string {
+	var hits []string
 	mod := newTFModule(files)
 	for _, f := range files {
 		if strings.Contains(f.src, "build_identity_git_secret") {
-			t.Errorf("%s names google_secret_manager_secret_iam_member.build_identity_git_secret: IS8 removed that grant, and the build identity reads the git credential at the credentials service's /v1/build/token (D3330)", f.rel)
+			hits = append(hits, fmt.Sprintf("%s names google_secret_manager_secret_iam_member.build_identity_git_secret: IS8 removed that grant, and the build identity reads the git credential at the credentials service's /v1/build/token (D3330)", f.rel))
 		}
 	}
 	for _, b := range mod.blocks {
@@ -1221,22 +1263,11 @@ func TestCatalogIdentityHoldsNoSecretAccessor(t *testing.T) {
 			continue
 		}
 		if catalogIdentitySecretGrant(b) {
-			t.Errorf("%s %s.%s grants the catalog build identity a secret: the identity reads every credential it needs from the credentials service (D3330, IS8), and a secretmanager accessor here is one no run asks for", b.file, b.typ, b.name)
+			hits = append(hits, fmt.Sprintf("%s %s.%s grants the catalog build identity a secret: the identity reads every credential it needs from the credentials service (D3330, IS8), and a secretmanager accessor here is one no run asks for", b.file, b.typ, b.name))
 		}
 	}
-}
-
-// catalogIdentitySecretGrant reports whether a block whose member is the build
-// identity hands it a secret: a secretmanager grant of any shape, or a
-// project-level role whose role string is a secretmanager one.
-func catalogIdentitySecretGrant(b tfBlock) bool {
-	switch b.typ {
-	case "google_secret_manager_secret_iam_member", "google_secret_manager_secret_iam_binding", "google_secret_manager_secret_iam_policy":
-		return true
-	case "google_project_iam_member", "google_project_iam_binding":
-		return projectRoleReadsSecrets(terraformAttrExpr(b.body, "role"))
-	}
-	return false
+	sort.Strings(hits)
+	return hits
 }
 
 // TestMountRuleCatchesAFixture is the rule's own red step (spec §6): the
@@ -1307,6 +1338,44 @@ func TestMountRuleCatchesAFixture(t *testing.T) {
 	}
 	if hits := goMountHits(t, "the gated shape", fixtureGoServeGatedMount); len(hits) > 0 {
 		t.Errorf("the mount rule fails the gated shape IS6 leaves:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	// spec.go mounts the class through SecretMounts' return rather than writing
+	// a mount field in the statement that names it, so the file is held to the
+	// drop as well as to the shape.
+	if hits := goMountHits(t, goVaultDropFile, fixtureGoMountsAndNeverDrops); len(hits) == 0 {
+		t.Errorf("the mount rule passes a spec that mounts the workflow's own secrets and never drops them: the drop is what makes the mount IS6 takes away, and a gate turned into `if false` has to fail the rule")
+	}
+	if hits := goMountHits(t, goVaultDropFile, fixtureGoDropsUnderTheAddress); len(hits) > 0 {
+		t.Errorf("the mount rule fails the shape IS6 leaves in spec.go:\n\t%s", strings.Join(hits, "\n\t"))
+	}
+
+	catalogFixtures := []struct {
+		name  string
+		why   string
+		files []tfFile
+	}{
+		{
+			name:  "the build identity handed a project-level secretmanager role",
+			why:   "read as written the role keeps its quotes, the prefix test matches nothing, and the accessor IS8 removed comes back unnoticed (D3330, IS8)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/installation/build_identity.tf", src: fixtureCatalogIdentityGrantedASecret}},
+		},
+		{
+			name:  "the build identity's git-secret grant put back",
+			why:   "the grant IS8 deleted by name is one no test of its own name should pass (D3330, IS8)",
+			files: []tfFile{{rel: "deploy/terraform/gcp/modules/installation/build_identity.tf", src: fixtureCatalogIdentityGrantedTheGitSecret}},
+		},
+	}
+	for _, f := range catalogFixtures {
+		if hits := catalogIdentitySecretHits(f.files); len(hits) == 0 {
+			t.Errorf("the catalog rule passes the fixture %q, and it must fail it: %s", f.name, f.why)
+		}
+	}
+	catalogGood := []tfFile{
+		{rel: "deploy/terraform/gcp/modules/installation/catalog.tf", src: fixtureCatalogIdentityWithoutASecret},
+	}
+	if hits := catalogIdentitySecretHits(catalogGood); len(hits) > 0 {
+		t.Errorf("the catalog rule fails the shape IS8 leaves:\n\t%s", strings.Join(hits, "\n\t"))
 	}
 }
 
@@ -1689,8 +1758,16 @@ func goMountHits(t *testing.T, rel, src string) []string {
 	walk := &goMountWalk{fset: fset, rel: rel, seen: map[*ast.FuncLit]bool{}}
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-			walk.stmts(fn.Body.List, false, false)
+			walk.stmts(fn.Body.List, goGate{})
 		}
+	}
+	// A mount the statement-level half cannot see is the one spec.go makes: the
+	// class reaches SecretEnv through SecretMounts' return, so nothing in the
+	// statement that writes the field names it. The drop is the other half of
+	// that mount — a mount and an accessor are one answer — and the file is held
+	// to it under the same address gate.
+	if rel == goVaultDropFile && !walk.vaultDropped {
+		hits = append(hits, fmt.Sprintf("%s mounts the workflow's own secrets and never drops them: the drop under the address gate is the other half of the mount IS6 takes away (D3326, D3331)", rel))
 	}
 	hits = append(hits, walk.hits...)
 	return hits
@@ -1702,26 +1779,56 @@ func goMountHits(t *testing.T, rel, src string) []string {
 // flags are inherited, because the gate is an enclosing `if !served()` and the
 // class is an enclosing `for _, s := range w.Secrets`.
 type goMountWalk struct {
-	fset *token.FileSet
-	rel  string
-	hits []string
-	seen map[*ast.FuncLit]bool
+	fset         *token.FileSet
+	rel          string
+	hits         []string
+	seen         map[*ast.FuncLit]bool
+	vaultDropped bool
 }
 
-func (w *goMountWalk) stmts(list []ast.Stmt, gated, class bool) {
+// goGate is what a statement inherits from the statements around it: whether a
+// serve gate encloses it, whether the workflow's own secrets are in scope, and
+// whether a live address gate encloses it. The first two answer the mount half
+// and are simply ORed down the walk — the gate is an enclosing `if !served()`
+// and the class an enclosing `for _, s := range w.Secrets` — while the third is
+// the drop's own: only an `if` whose CONDITION names the address counts, so a
+// condition carrying a `false` is a gate somebody turned off and holds nothing.
+type goGate struct {
+	served    bool
+	class     bool
+	addressed bool
+}
+
+func (g goGate) under(text string) goGate {
+	g.served = g.served || mentionsAnyFold(text, goServeGateWords)
+	g.class = g.class || mentionsAny(text, goMountClassRefs)
+	return g
+}
+
+// gatedBy folds an if statement's condition into the gate its body inherits.
+func (g goGate) gatedBy(cond string) goGate {
+	if !strings.Contains(cond, "false") {
+		g.addressed = g.addressed || mentionsAnyFold(cond, goServeGateWords)
+	}
+	return g
+}
+
+func (w *goMountWalk) stmts(list []ast.Stmt, g goGate) {
 	for _, st := range list {
-		w.stmt(st, gated, class)
+		w.stmt(st, g)
 	}
 }
 
-func (w *goMountWalk) stmt(st ast.Stmt, gated, class bool) {
+func (w *goMountWalk) stmt(st ast.Stmt, g goGate) {
 	if st == nil {
 		return
 	}
 	text := w.text(st)
-	gated = gated || mentionsAnyFold(text, goServeGateWords)
-	class = class || mentionsAny(text, goMountClassRefs)
-	if writesMountField(st) && class && !gated {
+	if strings.Contains(text, goVaultDropCall) && g.addressed {
+		w.vaultDropped = true
+	}
+	g = g.under(text)
+	if writesMountField(st) && g.class && !g.served {
 		w.hits = append(w.hits, fmt.Sprintf("%s:%d mounts the workflow's own secrets with no serve gate: the mount and its accessor are one answer (D3331, C2.3)", w.rel, w.fset.Position(st.Pos()).Line))
 	}
 	ast.Inspect(st, func(n ast.Node) bool {
@@ -1730,40 +1837,41 @@ func (w *goMountWalk) stmt(st ast.Stmt, gated, class bool) {
 			return true
 		}
 		w.seen[lit] = true
-		w.stmts(lit.Body.List, gated, class)
+		w.stmts(lit.Body.List, g)
 		return true
 	})
 	switch x := st.(type) {
 	case *ast.BlockStmt:
-		w.stmts(x.List, gated, class)
+		w.stmts(x.List, g)
 	case *ast.IfStmt:
-		w.stmt(x.Init, gated, class)
-		w.stmts(x.Body.List, gated, class)
+		w.stmt(x.Init, g)
+		inner := g.gatedBy(w.text(x.Cond))
+		w.stmts(x.Body.List, inner)
 		if x.Else != nil {
-			w.stmt(x.Else, gated, class)
+			w.stmt(x.Else, inner)
 		}
 	case *ast.ForStmt:
-		w.stmts(x.Body.List, gated, class)
+		w.stmts(x.Body.List, g)
 	case *ast.RangeStmt:
-		w.stmts(x.Body.List, gated, class)
+		w.stmts(x.Body.List, g)
 	case *ast.SwitchStmt:
 		for _, c := range x.Body.List {
-			w.stmt(c, gated, class)
+			w.stmt(c, g)
 		}
 	case *ast.TypeSwitchStmt:
 		for _, c := range x.Body.List {
-			w.stmt(c, gated, class)
+			w.stmt(c, g)
 		}
 	case *ast.SelectStmt:
 		for _, c := range x.Body.List {
-			w.stmt(c, gated, class)
+			w.stmt(c, g)
 		}
 	case *ast.CaseClause:
-		w.stmts(x.Body, gated, class)
+		w.stmts(x.Body, g)
 	case *ast.CommClause:
-		w.stmts(x.Body, gated, class)
+		w.stmts(x.Body, g)
 	case *ast.LabeledStmt:
-		w.stmt(x.Stmt, gated, class)
+		w.stmt(x.Stmt, g)
 	}
 }
 
@@ -1958,6 +2066,71 @@ func request(b *cloudbuild.Build, s BuildSpec) {
 	for _, ws := range s.WorkflowSecrets {
 		b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager, &cloudbuild.SecretManagerSecret{Env: ws.Env})
 	}
+}
+`
+
+// fixtureGoMountsAndNeverDrops is spec.go's mount route with the drop taken
+// out: the class reaches the spec's mount field through a helper's return, so
+// no statement names it and nothing but the missing drop says the flip is gone.
+const fixtureGoMountsAndNeverDrops = `
+package infra
+
+func fill(c *ctx, ws *WorkflowSpec, w config.Workflow) {
+	mounts, err := SecretMounts(c.gitSecret, w)
+	if err != nil {
+		return
+	}
+	for _, m := range mounts {
+		ws.SecretEnv[m.Env] = m.Logical
+	}
+}
+`
+
+// fixtureGoDropsUnderTheAddress is the shape IS6 leaves in spec.go.
+const fixtureGoDropsUnderTheAddress = `
+package infra
+
+func fill(c *ctx, ws *WorkflowSpec, w config.Workflow) {
+	mounts, err := SecretMounts(c.gitSecret, w)
+	if err != nil {
+		return
+	}
+	for _, m := range mounts {
+		ws.SecretEnv[m.Env] = m.Logical
+	}
+	if c.credentialsServiceAddressed {
+		dropVaultMounts(&ws, w)
+	}
+}
+`
+
+// fixtureCatalogIdentityGrantedASecret is the project-level accessor IS8
+// removed, written the way the tree writes a role: a quoted literal.
+const fixtureCatalogIdentityGrantedASecret = `
+resource "google_project_iam_member" "catalog_build_secrets" {
+  project = var.project
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.build_identity[0].member}"
+}
+`
+
+// fixtureCatalogIdentityGrantedTheGitSecret is the retired per-container grant
+// under the name IS8 deleted.
+const fixtureCatalogIdentityGrantedTheGitSecret = `
+resource "google_secret_manager_secret_iam_member" "build_identity_git_secret" {
+  secret_id = var.git_secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.build_identity[0].member}"
+}
+`
+
+// fixtureCatalogIdentityWithoutASecret is the shape IS8 leaves: the identity
+// holds a project role that reads no secret.
+const fixtureCatalogIdentityWithoutASecret = `
+resource "google_project_iam_member" "catalog_build" {
+  project = var.project
+  role    = "roles/run.developer"
+  member  = "serviceAccount:${google_service_account.build_identity[0].member}"
 }
 `
 
