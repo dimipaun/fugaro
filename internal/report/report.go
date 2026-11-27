@@ -224,13 +224,14 @@ func (r *Reporter) Summary() Outcome {
 // Pause takes the line in flight down and stops drawing it, without ending
 // the step: a command about to write something a person has to read on a line
 // of its own — a prompt it then reads stdin on — pauses first, so no frame is
-// ever drawn over it (G1). Resume draws the line again; ending the step ends
-// it whether it was paused or not, and a run with nothing in flight pauses
-// nothing.
+// ever drawn over it (G1). Off a terminal there is no frame, but the step's
+// heartbeat is still something written, so it goes quiet for the same reason.
+// Resume draws the line again; ending the step ends it whether it was paused
+// or not, and a run with nothing in flight pauses nothing.
 func (r *Reporter) Pause() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.spin || r.spinName == "" {
+	if r.spinName == "" {
 		return
 	}
 	r.stopSpinner()
