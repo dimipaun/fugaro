@@ -658,13 +658,15 @@ const PolicyRulesVersion = 1
 // verb, or on a kind that cannot carry one, is refused as the shared schema
 // refuses it (shared/mailbox-schema, which the rules are held to field for field
 // by TestMailboxRulesAgreeWithTheSharedSchema). It takes no generation of its
-// own: generation 11 is in no release, so no shipped binary deploys a
-// generation-11 document without the field, and the next generation is the front
-// agent's own turn (mobile plan task P5.4.3, which states the number it took).
-// An installation that already carries a generation-11 document converges the
-// same way any document difference does — `fugaro update`'s rules stage
-// redeploys when the marker is this generation and the document is not this
-// binary's (rulesSkewDocument).
+// own. Generation 11 is in release 0.29.0, so a generation-11 document without
+// the field is deployed — and it refuses a `brief` no client writes yet: the
+// field's only writer is the front agent's own screen (mobile plan task P5.4.7,
+// not built). An installation carrying that document is told and repaired the
+// way a bump's remedy would name anyway: the marker is already this generation,
+// so doctor compares the deployed document with this binary's and reports
+// policy-rules-skew until `fugaro update`'s rules stage redeploys it
+// (rulesSkewDocument). The next generation is the front agent's own turn
+// (mobile plan task P5.4.3, which states the number it took).
 //
 // What the bump does to an existing installation is what every bump does, and
 // it is met the same way: `fugaro doctor` reports policy-rules-skew until the

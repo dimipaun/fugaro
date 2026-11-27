@@ -3204,13 +3204,15 @@ func isNewCredsPath(p string) bool {
 //     has. P5.4.2 (the mobile plan's front agent, the owner's ruling of
 //     2026-11-27 that the brief is optional) adds the `brief` to that same
 //     generation instead of taking one of its own: it is a **field a client
-//     writes**, which is J5r's own reason, but generation 11 is in no release —
-//     no shipped binary deploys a generation-11 document without the field — so
-//     nothing on an installation is refused by the addition, and the next
-//     generation is the front agent's own turn (P5.4.3). An installation that
-//     already carries a generation-11 document converges the way any document
-//     difference does: `fugaro update`'s rules stage redeploys when the marker
-//     is this generation and the document is not this binary's.
+//     writes**, which is J5r's own reason, but no released client writes one
+//     yet — generation 11 is in release 0.29.0, and the field's only writer is
+//     the front agent's own screen (P5.4.7, not built) — so nothing on an
+//     installation is refused by the addition, and the next generation is the
+//     front agent's own turn (P5.4.3). An installation that already carries a
+//     generation-11 document converges the way any document difference does:
+//     the marker is already this generation, so doctor compares the deployed
+//     document with this binary's and `fugaro update`'s rules stage redeploys
+//     it (`rulesSkewDocument`).
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
