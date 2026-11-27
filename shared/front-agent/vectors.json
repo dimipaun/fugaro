@@ -1,0 +1,1377 @@
+{
+  "format": "fugaro front-agent turn vectors",
+  "what": "one call of the spec-shaping turn (mobile plan, Task P5.4.4): the conversation, the clock it is judged at, and the exact answer -- the action record the go authorises, the phase, the read-back, or the refusal code and the field at fault",
+  "reader": "the Go consumer reimplements `turn` (P5.4.5) and holds itself to these cases; `vectors.test.js` holds them to the JavaScript module and to the plan’s claims",
+  "generated_by": "node shared/front-agent/vectors.generate.mjs",
+  "roles": [
+    "person",
+    "agent"
+  ],
+  "constants": {
+    "ttl_ms": 259200000,
+    "min_ttl_ms": 1000,
+    "max_ttl_ms": 2592000000,
+    "max_turns": 64,
+    "max_brief": 4096,
+    "id_max": 100,
+    "text_max": 4096,
+    "repo_max": 200,
+    "mode_max": 64,
+    "time_max": 4102444800000,
+    "costly_modes": [
+      "pro",
+      "critical"
+    ],
+    "biometric_on_costly": false
+  },
+  "cases": [
+    {
+      "name": "a shaping turn",
+      "why": "an utterance that is not an app command is agent text, and the reply becomes the next turn, stamped with the clock the call was judged at",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        }
+      ],
+      "reply": {
+        "id": "rep_1",
+        "text": "what must it not touch?",
+        "brief": null
+      },
+      "now": 1700000060000,
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "shaping",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": null,
+        "mode": null,
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": false,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "a brief makes it ready",
+      "why": "a brief and a repository are both held, so the go is live and the read-back names the repository, the title and the mode",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "ready",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: docs refactor\nMove the guide.",
+        "mode": "pro",
+        "readBack": "Start \"docs refactor\" in dimipaun/fugaro (pro mode). Say \"Fugaro, confirm\" to confirm.",
+        "deadline": 1700259200000,
+        "costly": true,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "a target that is already resolved is sticky",
+      "why": "a later turn that names no repository keeps the one the conversation holds",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "make it shorter",
+          "at": 1700000120000
+        }
+      ],
+      "reply": {
+        "id": "rep_2",
+        "text": "shorter",
+        "brief": "# Task: docs refactor\nShorter."
+      },
+      "now": 1700000180000,
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "ready",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: docs refactor\nShorter.",
+        "mode": null,
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": false,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "a target may be cleared",
+      "why": "a turn that resolved no repository clears the one before it, and the conversation is shaping again",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "use the other repo",
+          "at": 1700000120000,
+          "target": null
+        }
+      ],
+      "reply": {
+        "id": "rep_2",
+        "text": "which one?",
+        "brief": "# Task: docs refactor\nMove the guide."
+      },
+      "now": 1700000180000,
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "shaping",
+        "target": null,
+        "brief": "# Task: docs refactor\nMove the guide.",
+        "mode": null,
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": false,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "a reply that holds no brief withdraws one",
+      "why": "the brief is the agent’s latest answer, so an answer that holds none is a reply",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "hold on",
+          "at": 1700000120000
+        }
+      ],
+      "reply": {
+        "id": "rep_2",
+        "text": "sure",
+        "brief": null
+      },
+      "now": 1700000180000,
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "shaping",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": null,
+        "mode": null,
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": false,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "the go",
+      "why": "P6.2’s phrase as its own utterance authorises exactly one launch, with the mode the session gave, the repository that was read back and the confirmation that carries it",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": true,
+        "outcome": "go",
+        "phase": "spent",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: docs refactor\nMove the guide.",
+        "mode": "pro",
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": true,
+        "biometric": false,
+        "action": {
+          "id": "act_1",
+          "verb": "launch",
+          "mode": "pro",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "cnf_1",
+            "at": 1700000120000
+          }
+        }
+      }
+    },
+    {
+      "name": "a go in a mode the session does not call costly",
+      "why": "D2786 reads back a costly start and lets a plain one through, so what the go costs is the session policy’s answer",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "poc"
+      },
+      "expect": {
+        "ok": true,
+        "outcome": "go",
+        "phase": "spent",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: docs refactor\nMove the guide.",
+        "mode": "poc",
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": false,
+        "biometric": false,
+        "action": {
+          "id": "act_1",
+          "verb": "launch",
+          "mode": "poc",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "cnf_1",
+            "at": 1700000120000
+          }
+        }
+      }
+    },
+    {
+      "name": "a costly start with the biometric switch on",
+      "why": "the switch is the session’s, and it is asked for only on a costly start",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "critical",
+        "biometricOnCostly": true
+      },
+      "expect": {
+        "ok": true,
+        "outcome": "go",
+        "phase": "spent",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: docs refactor\nMove the guide.",
+        "mode": "critical",
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": true,
+        "biometric": true,
+        "action": {
+          "id": "act_1",
+          "verb": "launch",
+          "mode": "critical",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "cnf_1",
+            "at": 1700000120000
+          }
+        }
+      }
+    },
+    {
+      "name": "the session’s own costly modes",
+      "why": "a session that calls another mode costly is read back for it, and the default list is not consulted",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "poc",
+        "costlyModes": [
+          "poc"
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "outcome": "go",
+        "phase": "spent",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: docs refactor\nMove the guide.",
+        "mode": "poc",
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": true,
+        "biometric": false,
+        "action": {
+          "id": "act_1",
+          "verb": "launch",
+          "mode": "poc",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "cnf_1",
+            "at": 1700000120000
+          }
+        }
+      }
+    },
+    {
+      "name": "the go at the deadline is still live",
+      "why": "the timeout is inclusive at its own edge: at `startedAt + ttlMs` the go is taken, one millisecond later it is refused",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000600000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000600000,
+      "options": {
+        "mode": "pro",
+        "ttlMs": 600000
+      },
+      "expect": {
+        "ok": true,
+        "outcome": "go",
+        "phase": "spent",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: docs refactor\nMove the guide.",
+        "mode": "pro",
+        "readBack": null,
+        "deadline": 1700000600000,
+        "costly": true,
+        "biometric": false,
+        "action": {
+          "id": "act_1",
+          "verb": "launch",
+          "mode": "pro",
+          "target": {
+            "repo": "dimipaun/fugaro"
+          },
+          "confirmation": {
+            "id": "cnf_1",
+            "at": 1700000600000
+          }
+        }
+      }
+    },
+    {
+      "name": "a go past the deadline",
+      "why": "a brief that has sat longer than the TTL is stale, and the conversation must be shaped again",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000600001,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000600001,
+      "options": {
+        "mode": "pro",
+        "ttlMs": 600000
+      },
+      "expect": {
+        "ok": false,
+        "code": "go-expired",
+        "field": null
+      }
+    },
+    {
+      "name": "a replayed go",
+      "why": "one go authorises one launch: the conversation is spent and a second go is refused, whatever ids it carries",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        },
+        {
+          "id": "utt_go2",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000180000,
+          "actionId": "act_2",
+          "confirmationId": "cnf_2"
+        }
+      ],
+      "reply": null,
+      "now": 1700000180000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": false,
+        "code": "replayed-go",
+        "field": null
+      }
+    },
+    {
+      "name": "a go binding a target it asserted itself",
+      "why": "the go binds the repository that was read back, so a go carrying a target is refused rather than believed",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1",
+          "target": {
+            "repo": "someone/else"
+          }
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": false,
+        "code": "unexpected-field",
+        "field": "target"
+      }
+    },
+    {
+      "name": "a go with no resolved repository",
+      "why": "D128’s amendment: nothing is read back without a resolved target, so nothing can be confirmed",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": false,
+        "code": "unresolved-target",
+        "field": "target"
+      }
+    },
+    {
+      "name": "a go with no brief",
+      "why": "the brief is the thing the go authorises, so a conversation that shaped none has nothing to launch",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "what must it not touch?",
+          "at": 1700000060000,
+          "brief": null
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": false,
+        "code": "no-brief",
+        "field": "brief"
+      }
+    },
+    {
+      "name": "a go the session gave no mode for",
+      "why": "a launch runs in a mode, and this module does not mint one: the field is named rather than guessed",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "expect": {
+        "ok": false,
+        "code": "missing-field",
+        "field": "mode"
+      }
+    },
+    {
+      "name": "a bare \"confirm\"",
+      "why": "P6.1 forwards \"confirm\" to the agent, so it is agent text: a machine that also read it as a go would act on words the agent received",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "confirm",
+          "at": 1700000120000
+        }
+      ],
+      "reply": {
+        "id": "rep_2",
+        "text": "did you mean to go?",
+        "brief": null
+      },
+      "now": 1700000180000,
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "shaping",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": null,
+        "mode": null,
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": false,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "a misrecognised go",
+      "why": "the near misses are agent text and never a confirmation: \"go ahead\", \"yes\", \"confirmed it\" and \"conform\"",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "go ahead",
+          "at": 1700000120000
+        }
+      ],
+      "reply": {
+        "id": "rep_2",
+        "text": "ok",
+        "brief": null
+      },
+      "now": 1700000180000,
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "shaping",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": null,
+        "mode": null,
+        "readBack": null,
+        "deadline": 1700259200000,
+        "costly": false,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "a wake word the grammar does not know",
+      "why": "P6.1 never forwards a wake-word utterance it cannot route, so neither does this: \"Fugaro, conform\" is not agent text",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "Fugaro, conform",
+          "at": 1700000120000
+        }
+      ],
+      "reply": null,
+      "now": 1700000180000,
+      "expect": {
+        "ok": false,
+        "code": "not-understood",
+        "field": "transcript[2].text"
+      }
+    },
+    {
+      "name": "an app command",
+      "why": "an app command is another screen’s, not the front agent’s, and the transcript that holds one is not this conversation",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "Fugaro, list projects",
+          "at": 1700000120000
+        }
+      ],
+      "reply": null,
+      "now": 1700000180000,
+      "expect": {
+        "ok": false,
+        "code": "not-agent-text",
+        "field": "transcript[2].text"
+      }
+    },
+    {
+      "name": "an utterance carrying a command beside the go",
+      "why": "P6.2’s command-and-confirm rule: one misrecognition must not satisfy both halves of D47’s Rule",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "Fugaro, confirm it",
+          "at": 1700000120000
+        }
+      ],
+      "reply": null,
+      "now": 1700000180000,
+      "expect": {
+        "ok": false,
+        "code": "command-and-go",
+        "field": "transcript[2].text"
+      }
+    },
+    {
+      "name": "a reply beside the go",
+      "why": "nothing is answered once the person said go",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        }
+      ],
+      "reply": {
+        "id": "rep_2",
+        "text": "too late",
+        "brief": null
+      },
+      "now": 1700000120000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": false,
+        "code": "unexpected-reply",
+        "field": "reply"
+      }
+    },
+    {
+      "name": "a turn after the go",
+      "why": "the go spends the conversation, and a later turn is refused rather than shaped into a second launch",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        },
+        {
+          "id": "utt_go",
+          "role": "person",
+          "text": "Fugaro, confirm",
+          "at": 1700000120000,
+          "actionId": "act_1",
+          "confirmationId": "cnf_1"
+        },
+        {
+          "id": "utt_3",
+          "role": "person",
+          "text": "one more thing",
+          "at": 1700000180000
+        }
+      ],
+      "reply": {
+        "id": "rep_3",
+        "text": "too late",
+        "brief": null
+      },
+      "now": 1700000240000,
+      "options": {
+        "mode": "pro"
+      },
+      "expect": {
+        "ok": false,
+        "code": "conversation-closed",
+        "field": null
+      }
+    },
+    {
+      "name": "a person turn with no reply yet",
+      "why": "the agent answers every turn, so a turn with no reply is not a finished step",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000
+        }
+      ],
+      "reply": null,
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "missing-reply",
+        "field": "reply"
+      }
+    },
+    {
+      "name": "the same turn twice",
+      "why": "one utterance is one turn: a repeated turn id is refused while the transcript is read",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "x",
+          "at": 1700000000000
+        },
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "y",
+          "at": 1700000000001
+        }
+      ],
+      "reply": null,
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "replayed-turn",
+        "field": "transcript[1].id"
+      }
+    },
+    {
+      "name": "a turn stamped after the clock judging it",
+      "why": "a time that has not happened yet is a clock disagreement, refused rather than clamped",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        }
+      ],
+      "reply": null,
+      "now": 1700000000000,
+      "expect": {
+        "ok": false,
+        "code": "invalid-now",
+        "field": "transcript[1].at"
+      }
+    },
+    {
+      "name": "a brief with no task line",
+      "why": "the brief’s first line is the run’s title, and a run with no title is refused where it would be launched",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "x",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        }
+      ],
+      "reply": {
+        "id": "rep_1",
+        "text": "draft",
+        "brief": "Move the guide.\n# Task: too late"
+      },
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "bad-brief",
+        "field": "reply.brief"
+      }
+    },
+    {
+      "name": "a repository that is not owner/name",
+      "why": "the repository is passed to `gh` as an argument, so a shape that could be read as a flag is refused",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "x",
+          "at": 1700000000000,
+          "target": {
+            "repo": "-o/name"
+          }
+        }
+      ],
+      "reply": null,
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "bad-repo",
+        "field": "target.repo"
+      }
+    },
+    {
+      "name": "a transcript out of order",
+      "why": "a turn stamped before the turn before it is refused rather than sorted: the order is the conversation",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "x",
+          "at": 1700000000010
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "y",
+          "at": 1700000000000
+        }
+      ],
+      "reply": null,
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "unsorted-transcript",
+        "field": "transcript[1].at"
+      }
+    },
+    {
+      "name": "a transcript over its bound",
+      "why": "a conversation longer than maxTurns is refused, and the bound is the caller’s",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "x",
+          "at": 1700000000000
+        },
+        {
+          "id": "utt_2",
+          "role": "person",
+          "text": "y",
+          "at": 1700000000001
+        },
+        {
+          "id": "utt_3",
+          "role": "person",
+          "text": "z",
+          "at": 1700000000002
+        }
+      ],
+      "reply": {
+        "id": "rep_9",
+        "text": "ok",
+        "brief": null
+      },
+      "now": 1700000060000,
+      "options": {
+        "maxTurns": 2
+      },
+      "expect": {
+        "ok": false,
+        "code": "too-many-turns",
+        "field": "transcript"
+      }
+    },
+    {
+      "name": "a transcript of no turns",
+      "why": "there is nothing to judge",
+      "transcript": [],
+      "reply": {
+        "id": "rep_1",
+        "text": "x",
+        "brief": null
+      },
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "empty-transcript",
+        "field": "transcript"
+      }
+    },
+    {
+      "name": "an agent turn with nothing to reply to",
+      "why": "the brief would be an answer to nobody",
+      "transcript": [
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "x",
+          "at": 1700000000000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        }
+      ],
+      "reply": null,
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "invalid-transcript",
+        "field": "transcript[0].role"
+      }
+    },
+    {
+      "name": "an utterance with no words in it",
+      "why": "a transcript the recogniser heard as noise is refused, never forwarded",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "  ...  ",
+          "at": 1700000000000
+        }
+      ],
+      "reply": null,
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "not-understood",
+        "field": "transcript[0].text"
+      }
+    },
+    {
+      "name": "a timeout outside its bounds",
+      "why": "a timeout the caller may move is a timeout the caller can set wrong, and a phantom one is refused",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: docs refactor\nMove the guide."
+        }
+      ],
+      "reply": null,
+      "now": 1700000060000,
+      "options": {
+        "ttlMs": 999
+      },
+      "expect": {
+        "ok": false,
+        "code": "invalid-timeout",
+        "field": "options.ttlMs"
+      }
+    }
+  ]
+}
