@@ -5902,7 +5902,6 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
 		names, err := infra.NeedsBuild(ctx, c, ready, versions)
-		fmt.Fprintf(os.Stderr, "PROBE-NEEDSBUILD names=%v versions=%v\n", names, versions)
 		if err != nil {
 			return r.retireLeftover(spec, initErr(err))
 		}
