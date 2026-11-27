@@ -91,6 +91,13 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	// every write it makes afterwards.
 	operatorIdentity(t)
 	r.appendConfig(t, "workflow_secrets:\n  deploy-token: { allow_data_to: [acme/*] }\n")
+	// The map the release behind serves, in the member that release spelled: the
+	// policy stage migrates it while both runs are in flight, which is the write
+	// the owner's requirement names — no step of an update refuses a policy write
+	// over a run, and the node this run publishes carries the map in its new form.
+	// The file is registered below, so the member is one `fugaro update` finds in
+	// the local config the way an installation of the release behind has it.
+	r.appendConfig(t, "image_map:\n  acme/app: app\n")
 	registerInstallation(t, r.initRig)
 	r.seedProjectKey(t, "deploy-token")
 	// The deployed rules are the release behind's document and not a stand-in:
@@ -177,6 +184,26 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	}
 	if !found || p.Version != projectpolicy.Version {
 		t.Errorf("the policy reads as found=%v version=%d after the update, want version %d", found, p.Version, projectpolicy.Version)
+	}
+
+	// The map's migration landed in the same run, over the runs in flight: the
+	// node carries repo_images and no legacy member (U1b's publish, U1c's
+	// removal), so a run of the release behind that re-reads the policy mid-run
+	// — a cascade call does, through the credentials service — reads a map in
+	// the form this release's readers answer. The migration is a policy write,
+	// and the requirement's own case is that it needs no run to finish first
+	// (docs/design/update-in-flight.md): the runs' writes below are what says the
+	// write was made beside them and not before them.
+	node := convergeNode(t, r)
+	if got := node.RepoImages["github/acme/app"]; got != "app" || len(node.RepoImages) != 1 {
+		t.Errorf("the published node's repo_images reads %v after the update, want the one key of acme/app at github on the entry its legacy map named: the migration did not land over the runs in flight",
+			node.RepoImages)
+	}
+	if node.ImageMap != nil {
+		t.Errorf("the published node still carries image_map = %v after the update: the step after the credentials service takes the legacy member away in the same run (U1c)", node.ImageMap)
+	}
+	if !strings.Contains(out, "the repository-to-image map in ") {
+		t.Errorf("the run does not say the map it migrated, so the migration the run is read over is one the operator never saw:\n%s", out)
 	}
 
 	// The required CLI moved to this release in the same run, over the runs in
