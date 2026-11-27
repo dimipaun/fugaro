@@ -22,16 +22,16 @@ package cli
 // THE RECORD IS A SIBLING NODE OF THE ROSTER. It sits at PathRemoved, beside
 // access.PathNode and access.PathMigrated, under the same fence config/admin
 // carries (read and write denied to every client token, reached over IAM), and
-// it holds the `user:<address>` members that have been removed, in the spelling
-// the command that removed each took (a command keeps the case its argument was
-// written with, because the list it also edits holds that spelling and an exact
-// match against it is what removes the member). The READERS are what make one
-// address one person — every one of them folds the case (RemovalRecorded,
-// dropMemberFromBindings) — so the record needs no canonicalisation of its own,
-// and none is done to it. It is the one thing DG0's classifier reads as
-// `people []string`: an IAM removal of a person's grant is admitted only when
-// the record names that person, and refused in one line naming the command to
-// re-run otherwise.
+// it holds the `user:<address>` members that have been removed, each in the
+// spelling the command that removed it held — offboarding and a grant fold the
+// address through access.Member, `fugaro user rm` keeps the case its argument
+// carried, because the lists it edits hold that spelling and an exact match
+// against it is what removes the member. No canonicalisation is done to the
+// record, and none is needed: the READERS are what make one address one person,
+// and every one of them folds the case (RemovalRecorded, dropMemberFromBindings).
+// It is the one thing DG0's classifier reads as `people []string`: an IAM removal
+// of a person's grant is admitted only when the record names that person, and
+// refused in one line naming the command to re-run otherwise.
 //
 // WHAT IS REACHED, AND WHAT IS NOT. A command revokes a person's grants on the
 // project ITS OWN CONFIG names — the installation for `fugaro user …`, the
