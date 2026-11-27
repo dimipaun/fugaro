@@ -2735,7 +2735,14 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 	if err != nil {
 		return nil, err
 	}
-	if kind, ok := r.checkoutKind(); ok {
+	// The push binding holds a clone the run made for itself too (CF1, F39):
+	// what it protects is where the run's branch lands, and a clone carries a
+	// rewrite from the environment's own git configuration as readily as a
+	// baked tree carries one (TestPushBindingOnFreshClone). A local invocation
+	// is not held to it here, though its baked tree is: this clone is of the
+	// remote the caller's own invocation named (F24), while a tree already in
+	// the caller's work directory is one the run did not make.
+	if kind, ok := r.checkoutKind(); ok && !r.d.Local {
 		if err := r.checkBakedCheckoutOrigin(ctx, kind, repo); err != nil {
 			return nil, err
 		}
