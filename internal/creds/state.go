@@ -30,10 +30,14 @@
 //
 // # What is stored
 //
-// Six small nodes, all under creds/:
+// Seven small nodes, all under creds/:
 //
 //   - creds/marks/<name> — one credential's Mark (available, exhausted until T,
 //     backed off, broken);
+//   - creds/usage/<name> — one member's Usage: the calls and tokens it served in
+//     the window the service counts, and the fraction of its limit a provider
+//     reported as used. It is a subtree of its own for the observation's reason,
+//     and it is display data (PL10);
 //   - creds/observed/<name> — one credential's Observation: the names of the
 //     rate-limit headers ITS last answer carried, and never one of their values.
 //     It is a subtree of its own rather than a member of Mark because the marks

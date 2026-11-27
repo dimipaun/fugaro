@@ -3,14 +3,17 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -341,41 +344,17 @@ func TestPoolLsJSONHasNoValue(t *testing.T) {
 		t.Fatalf("accounts pool add --rule: %v", err)
 	}
 
-	out, _, err := execute(t, "accounts", "pool", "ls", "--json")
+	out, errOut, err := execute(t, "accounts", "pool", "ls", "--json")
 	if err != nil {
 		t.Fatalf("accounts pool ls --json: %v", err)
 	}
-	// The bytes are held to schemas/accounts-pool-ls.schema.json as well as to
-	// C2's Go: the schema is what a consumer reads the document by, and a member
-	// the command writes that it does not know is a contract the two sides do
-	// not share.
-	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "accounts-pool-ls.schema.json"))
-	if err != nil {
-		t.Fatal(err)
+	// The fixture has no budget backend, so no figure could be read, and the
+	// command says so rather than printing every member as one the service
+	// counts nothing for — which would be a claim about figures it did not read.
+	if !strings.Contains(errOut, "no Firebase budget backend") {
+		t.Errorf("a project with no database printed the figures as absent without saying why: %q", errOut)
 	}
-	schema, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := schema.(map[string]any)["$id"].(string)
-	if id == "" {
-		t.Fatal("schemas/accounts-pool-ls.schema.json has no $id")
-	}
-	c := jsonschema.NewCompiler()
-	if err := c.AddResource(id, schema); err != nil {
-		t.Fatal(err)
-	}
-	sch, err := c.Compile(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(out))
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if err := sch.Validate(inst); err != nil {
-		t.Fatalf("the document does not match schemas/accounts-pool-ls.schema.json: %v\n%s", err, out)
-	}
+	poolLsMatchesTheSchema(t, out)
 
 	var doc routing.PoolListDoc
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
@@ -461,6 +440,132 @@ func TestPoolLsJSONHasNoValue(t *testing.T) {
 	}
 }
 
+// TestPoolLsPrintsUsageAndNoValue is PL10's read: the document carries what the
+// service counted — the usage of the window, the instant a held member becomes
+// usable again, and what a provider's own figure leaves of its limit — and it
+// still carries no value (F19). Headroom is there only where a figure was
+// reported and is never guessed, a member held by a mark and a member held by a
+// run's lease are told apart by what holds them, and a member nothing was
+// counted for keeps the absent figures the other test pins.
+func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, accountsPoolCredentials+accountsPoolLsPools)
+
+	now := time.Now().UTC()
+	until := now.Add(90 * time.Minute).Truncate(time.Second)
+	// oauth-one is exhausted until then, and its window holds three calls a
+	// provider reported at 0.8 of its limit.
+	f.db.Set(credsMarkPath("oauth-one"), map[string]any{
+		"state": "exhausted", "until": until.Format(time.RFC3339Nano)})
+	f.db.Set(credsUsagePath("oauth-one"), map[string]any{
+		"calls": 3, "tokens": 1200, "window": now.Add(-time.Hour).Format(time.RFC3339Nano),
+		"utilisation": 0.8})
+	// oauth-two served one call, and no provider reported a figure for it.
+	f.db.Set(credsUsagePath("oauth-two"), map[string]any{
+		"calls": 1, "tokens": 40, "window": now.Add(-time.Minute).Format(time.RFC3339Nano)})
+	// router-one is held by a run's own lease, and nothing was counted for it:
+	// the reset is the lease's lapse and the usage stays absent.
+	f.db.Set("creds/leases/gh-acme-app/r1", map[string]any{
+		"credential": "router-one", "until": until.Format(time.RFC3339Nano)})
+
+	out, errOut, err := execute(t, "accounts", "pool", "ls", "--json")
+	if err != nil {
+		t.Fatalf("accounts pool ls --json: %v", err)
+	}
+	if strings.Contains(errOut, "no usage could be read") || strings.Contains(errOut, "no Firebase budget backend") {
+		t.Errorf("a read that answered said it could not read the figures: %q", errOut)
+	}
+	poolLsMatchesTheSchema(t, out)
+
+	var doc routing.PoolListDoc
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document is not C2's shape: %v\n%s", err, out)
+	}
+	if len(doc.Pools) != 2 {
+		t.Fatalf("the document carries %d pools, want the two the config defines:\n%s", len(doc.Pools), out)
+	}
+	subs, routes := doc.Pools[0], doc.Pools[1]
+
+	one := subs.Members[0]
+	if one.State != string(creds.StateExhausted) {
+		t.Errorf("a member held by its mark reads %q; want the state the mark is in", one.State)
+	}
+	if one.NextReset == nil || !one.NextReset.Equal(until) {
+		t.Errorf("the exhausted member's reset reads %v; want the instant its mark names, %v", one.NextReset, until)
+	}
+	if one.Usage == nil || one.Usage.Calls != 3 || one.Usage.Tokens != 1200 {
+		t.Errorf("the member's usage reads %+v; want the three calls and 1200 tokens the service counted", one.Usage)
+	}
+	if one.Headroom == nil {
+		t.Error("a member a provider reported at 0.8 of its limit carries no headroom; want 0.2")
+	} else if math.Abs(*one.Headroom-0.2) > 1e-9 {
+		t.Errorf("a member reported at 0.8 of its limit reads %v of headroom; want 0.2", *one.Headroom)
+	}
+
+	two := subs.Members[1]
+	if two.State != string(creds.StateAvailable) {
+		t.Errorf("a member nothing holds reads %q; want the word that means nothing holds it", two.State)
+	}
+	if two.NextReset != nil {
+		t.Errorf("a member nothing holds carries the reset %v; want none", two.NextReset)
+	}
+	if two.Usage == nil || two.Usage.Calls != 1 || two.Usage.Tokens != 40 {
+		t.Errorf("the member's usage reads %+v; want its own one call and 40 tokens", two.Usage)
+	}
+	if two.Headroom != nil {
+		t.Errorf("a member no provider reported a figure for carries %v of headroom; want none — it is never guessed", *two.Headroom)
+	}
+
+	held := routes.Members[0]
+	if held.State != string(creds.StateAvailable) || held.NextReset == nil || !held.NextReset.Equal(until) {
+		t.Errorf("a member held by a run's lease reads %q until %v; want the available state and the instant its lease lapses", held.State, held.NextReset)
+	}
+	if held.Usage != nil || held.Headroom != nil {
+		t.Errorf("a member nothing was counted for carries usage %+v and headroom %v; want both absent", held.Usage, held.Headroom)
+	}
+	if free := routes.Members[1]; free.NextReset != nil || free.Usage != nil || free.Headroom != nil {
+		t.Errorf("a member nothing holds and nothing counted carries a figure: %+v", free)
+	}
+
+	// No value, for anyone: a member is the five names of the contract and a
+	// usage is the two counts, and a value would have to arrive under a name
+	// outside them (F19).
+	for _, p := range doc.Pools {
+		for _, m := range p.Members {
+			b, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(b, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if !onlyFields(fields, []string{"name", "state", "next_reset", "usage", "headroom"}) {
+				t.Errorf("member %s carries fields outside the contract, which is where a value would hide: %v", m.Name, fieldNames(fields))
+			}
+			if m.Usage == nil {
+				continue
+			}
+			b, err = json.Marshal(m.Usage)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var counts map[string]json.RawMessage
+			if err := json.Unmarshal(b, &counts); err != nil {
+				t.Fatal(err)
+			}
+			if !onlyFields(counts, []string{"calls", "tokens"}) {
+				t.Errorf("member %s's usage carries fields outside the contract: %v", m.Name, fieldNames(counts))
+			}
+		}
+	}
+}
+
+// credsUsagePath is where the service counts one member's usage
+// (creds.PathUsage), escaped as the service escapes it: the same hand-seeded
+// node the marks' own helper writes, for the same reason (credsMarkPath).
+func credsUsagePath(name string) string { return "creds/usage/" + budget.Key(name) }
+
 // TestPoolLsJSONAnEmptyProjectPrintsAnEmptyList: a project with no pool says so
 // with an empty list and never a null, which is what makes a reader's "the
 // project has no pool" a fact rather than a guess (routing.PoolListDoc).
@@ -499,6 +604,41 @@ func fieldNames(m map[string]json.RawMessage) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// poolLsMatchesTheSchema holds the document's bytes to
+// schemas/accounts-pool-ls.schema.json as well as to C2's Go: the schema is what
+// a consumer reads the document by, and a member the command writes that it
+// does not know is a contract the two sides do not share.
+func poolLsMatchesTheSchema(t *testing.T, out string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "accounts-pool-ls.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := schema.(map[string]any)["$id"].(string)
+	if id == "" {
+		t.Fatal("schemas/accounts-pool-ls.schema.json has no $id")
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource(id, schema); err != nil {
+		t.Fatal(err)
+	}
+	sch, err := c.Compile(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(out))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the document does not match schemas/accounts-pool-ls.schema.json: %v\n%s", err, out)
+	}
 }
 
 // TestAccountsAddReplacingATokenLeavesPoolsAlone: the default pool of one is

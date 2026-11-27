@@ -1055,17 +1055,20 @@ selects by tier, so neither can walk an order that spans them, and a pool that
 names both is refused when it is declared. Name two pools, one per half, and let
 each craft's access name the one its stages need.
 
-The read is offline: it reads the selected project's config file and reaches no
+The table is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.
 
 --json prints the document the console's pools screen reads
 (docs/model-credentials-routing/contract-pools.md): the project, its pools and
 each pool's members, with the state, the next reset, the usage and the headroom
-of each member. This command prints the shape with the figures absent — the
-state is what nothing-holding-a-member means, "available", and the reset, the
-usage and the headroom are null — because the usage is a service's to count and
-that half does not ship yet. No token, no key and no secret appears in the
-document, for anyone: it carries names and figures and never a value (F19).
+of each member. The figures are the credentials service's own — the calls and
+tokens each member has served in the window it counts, the instant a held member
+becomes usable again, and what is left of its limit — so this half reads the
+project's database as the person running it, and a project with no database, or
+one whose read fails, prints the pools with the figures absent and says why.
+Headroom is there only where a provider reported a utilisation figure: it is
+never guessed. No token, no key and no secret appears in the document, for
+anyone: it carries names and figures and never a value (F19).
 
 Usage: `fugaro accounts pool ls`
 

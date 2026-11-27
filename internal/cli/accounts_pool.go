@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -125,17 +127,20 @@ selects by tier, so neither can walk an order that spans them, and a pool that
 names both is refused when it is declared. Name two pools, one per half, and let
 each craft's access name the one its stages need.
 
-The read is offline: it reads the selected project's config file and reaches no
+The table is offline: it reads the selected project's config file and reaches no
 bucket, no database and no host.
 
 --json prints the document the console's pools screen reads
 (docs/model-credentials-routing/contract-pools.md): the project, its pools and
 each pool's members, with the state, the next reset, the usage and the headroom
-of each member. This command prints the shape with the figures absent — the
-state is what nothing-holding-a-member means, "available", and the reset, the
-usage and the headroom are null — because the usage is a service's to count and
-that half does not ship yet. No token, no key and no secret appears in the
-document, for anyone: it carries names and figures and never a value (F19).`,
+of each member. The figures are the credentials service's own — the calls and
+tokens each member has served in the window it counts, the instant a held member
+becomes usable again, and what is left of its limit — so this half reads the
+project's database as the person running it, and a project with no database, or
+one whose read fails, prints the pools with the figures absent and says why.
+Headroom is there only where a provider reported a utilisation figure: it is
+never guessed. No token, no key and no secret appears in the document, for
+anyone: it carries names and figures and never a value (F19).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runAccountsPoolLs(cmd, o) },
 	}
@@ -154,25 +159,154 @@ func runAccountsPoolLs(cmd *cobra.Command, o accountsPoolReadOptions) error {
 		return err
 	}
 	var pools []config.Pool
-	var creds []config.Credential
+	var credentials []config.Credential
 	if lc != nil {
-		pools, creds = lc.Pools, lc.Credentials
+		pools, credentials = lc.Pools, lc.Credentials
 	}
-	if o.json {
-		return writeAccountsPoolLsJSON(cmd.OutOrStdout(), lc, pools)
+	if !o.json {
+		return writeAccountsPoolLs(cmd.OutOrStdout(), lc, pools, credentials)
 	}
-	return writeAccountsPoolLs(cmd.OutOrStdout(), lc, pools, creds)
+	figures, note, err := accountsPoolFiguresOf(cmd.Context(), lc, pools)
+	if err != nil {
+		return err
+	}
+	if note != "" {
+		// The note goes to stderr and never into the document: the document is
+		// C2's shape, which has no member for it, and a note inside it would be
+		// a member every reader of the contract refuses (its schema).
+		fmt.Fprintln(cmd.ErrOrStderr(), note)
+	}
+	return writeAccountsPoolLsJSON(cmd.OutOrStdout(), lc, pools, figures)
+}
+
+// accountsPoolFigures is what the service holds about one member: the state its
+// mark is in, the instant it becomes usable again, and the usage of the window
+// the service counts.
+type accountsPoolFigures struct {
+	state     creds.State
+	nextReset time.Time
+	usage     creds.Usage
+	// counted is whether the service has counted anything for this member at
+	// all, which is what tells a member with no figures from one whose figures
+	// are zero — the same distinction the node's own absence carries (creds.Usage).
+	counted bool
+}
+
+// accountsPoolFiguresOf reads the figures of every member of these pools, and
+// it is the read `fugaro accounts ls` makes: the same subtree (creds/), the same
+// operator's identity (the person's ADC), and the same bound (accountsStateBudget).
+//
+// The note it answers is never a failure, for the reason accountsStates' is
+// never one: the pools and their members are a local read and stay right whether
+// or not a figure could be read, so a project with no budget database, a
+// database that is down and a read the person's rules refuse all answer with the
+// pools and a note. The one error is the refusal to open the cloud at all
+// (refuseHTTP2Debug).
+//
+// The figures are display data and this is a read of it (F19): nothing here
+// decides anything about a run, and nothing here is a value.
+func accountsPoolFiguresOf(ctx context.Context, lc *localcfg.Config, pools []config.Pool) (map[string]accountsPoolFigures, string, error) {
+	members := accountsPoolMembers(pools)
+	if lc == nil || len(members) == 0 {
+		return nil, "", nil
+	}
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return nil, fmt.Sprintf("project %s has no Firebase budget backend, so no usage could be read (the figures live in its database; fugaro update --firebase-project %s adds it)", lc.Name, firebaseProjectIDWord(lc.GCPProject)), nil
+	}
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, accountsStateBudget)
+	defer cancel()
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return nil, figuresUnread(err), nil
+	}
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return nil, figuresUnread(err), nil
+	}
+	store := &creds.RTDBStore{DB: db}
+	marks, err := store.Marks(ctx)
+	if err != nil {
+		return nil, figuresUnread(err), nil
+	}
+	usage, err := store.Usages(ctx)
+	if err != nil {
+		return nil, figuresUnread(err), nil
+	}
+	// The leases are read for the reset alone, and reading them sweeps the ones
+	// that have lapsed (creds.RTDBStore.Leases): a member whose holds have run
+	// out is not held by them, and the operator's own read is where the service
+	// reads them too.
+	at := time.Now()
+	leases, err := store.Leases(ctx, at)
+	if err != nil {
+		return nil, figuresUnread(err), nil
+	}
+	held := make(map[string]time.Time, len(leases))
+	for _, l := range leases {
+		if l.Credential == "" || !l.Live(at) {
+			continue
+		}
+		// The EARLIEST lapse is the member's reset, because a member is held by
+		// the holds on it together: the first to lapse is the first slot to free.
+		// What a cap does with the rest is the service's arithmetic and not this
+		// listing's (creds.Lease).
+		if earliest, ok := held[l.Credential]; !ok || l.Until.Before(earliest) {
+			held[l.Credential] = l.Until
+		}
+	}
+	out := make(map[string]accountsPoolFigures, len(members))
+	for _, name := range members {
+		f := accountsPoolFigures{state: creds.StateAvailable}
+		if m, ok := marks[name]; ok && m.State != "" {
+			f.state = m.State
+			if !m.Until.IsZero() {
+				f.nextReset = m.Until
+			}
+		}
+		if f.nextReset.IsZero() {
+			f.nextReset = held[name]
+		}
+		if u, ok := usage[name]; ok {
+			f.usage, f.counted = u, true
+		}
+		out[name] = f
+	}
+	return out, "", nil
+}
+
+// figuresUnread is the note a read that could not be made answers with: the
+// reason, and nothing about any member, because nothing was read.
+func figuresUnread(err error) string {
+	return fmt.Sprintf("no usage could be read within %s: %v", accountsStateBudget, err)
+}
+
+// accountsPoolMembers is every member of every pool, once each, in the order the
+// config lists them: the members whose figures the read asks for.
+func accountsPoolMembers(pools []config.Pool) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, p := range pools {
+		for _, m := range p.Members {
+			if seen[m] {
+				continue
+			}
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // writeAccountsPoolLsJSON is the document C2's contract declares
 // (routing.PoolListDoc): the project, its pools and each pool's members, so that
 // three sides print, fill and read one shape rather than three. The figures are
-// absent and not invented — a member's state is the word a member nothing holds
-// has (creds.StateAvailable), and its next reset, its usage and its headroom are
-// null, because the usage is a service's to count (PL10) and this command reaches
-// no store. A project with no pool prints an empty list and never a null
-// (PoolListDoc.MarshalJSON says why).
-func writeAccountsPoolLsJSON(w io.Writer, lc *localcfg.Config, pools []config.Pool) error {
+// what the service counted (PL10), and a member nothing was counted for is the
+// word a member nothing holds has (creds.StateAvailable) with its reset, its
+// usage and its headroom null — absent, and never invented. A project with no
+// pool prints an empty list and never a null (PoolListDoc.MarshalJSON says why).
+func writeAccountsPoolLsJSON(w io.Writer, lc *localcfg.Config, pools []config.Pool, figures map[string]accountsPoolFigures) error {
 	doc := routing.PoolListDoc{Project: "", Pools: []routing.PoolEntry{}}
 	if lc != nil {
 		doc.Project = lc.Name
@@ -192,7 +326,19 @@ func writeAccountsPoolLsJSON(w io.Writer, lc *localcfg.Config, pools []config.Po
 			entry.Threshold = &t
 		}
 		for _, m := range p.Members {
-			entry.Members = append(entry.Members, routing.PoolMember{Name: m, State: string(creds.StateAvailable)})
+			member := routing.PoolMember{Name: m, State: string(creds.StateAvailable)}
+			if f, ok := figures[m]; ok {
+				member.State = string(f.state)
+				if !f.nextReset.IsZero() {
+					at := f.nextReset.UTC()
+					member.NextReset = &at
+				}
+				if f.counted {
+					member.Usage = &routing.PoolUsage{Calls: f.usage.Calls, Tokens: f.usage.Tokens}
+					member.Headroom = f.usage.Headroom()
+				}
+			}
+			entry.Members = append(entry.Members, member)
 		}
 		doc.Pools = append(doc.Pools, entry)
 	}

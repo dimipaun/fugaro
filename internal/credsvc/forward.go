@@ -144,6 +144,12 @@ type call struct {
 	// cannot carry, and it is cleared by nothing: the call is over when it is
 	// set.
 	fail *meterFail
+	// usage is where this call's figures are counted (PL10), and nil where the
+	// scope's store cannot count them. It is the scope's own store — the one
+	// the selection reads its state from — and it is read from the store here
+	// rather than per answer, because the capability is a property of the
+	// deployment and not of a call.
+	usage creds.UsageCounter
 }
 
 // readCall reads the call the service was handed, and refuses a body larger
@@ -2014,6 +2020,57 @@ func (s *Server) recordRateLimitHeaders(ctx context.Context, sel *creds.Selector
 		return creds.Observed(names), nil
 	}); err != nil {
 		s.log.Warn("credsvc: the rate-limit header names of an answer could not be recorded", "error_class", errorClass(err))
+	}
+}
+
+// counted is the number of tokens one answer reported having spent: every count
+// it named, the cache's two included, because what the figures are for is what
+// the member has spent in the window and a cache read is spend. A count the
+// answer did not name is not a zero and is not added.
+//
+// An answer whose usage was not readable — a body past the meter's bound, a
+// stream that never reported one — answers zero, which is a call counted with
+// no tokens rather than a call counted as none at all: the member did serve the
+// call, and the figure says what is known about it (creds.Usage).
+func (u *callUsage) counted() int64 {
+	if u == nil {
+		return 0
+	}
+	var n int64
+	for _, c := range []meterCount{u.acc.in, u.acc.out, u.acc.cc, u.acc.cr} {
+		if c.set {
+			n += c.v
+		}
+	}
+	return n
+}
+
+// recordUsage counts one served call against the member that served it
+// (creds/usage/<name>, PL10), where the operator's listing and the console's
+// pools screen read the figures (VS2).
+//
+// It is written on the answer path and only there, which is the whole of what a
+// "call the member served" is: the 401 and the 429 arms of forward are calls
+// that were NOT served — this service reads them as about the credential and
+// retries — so they count nothing, and a relayed 4xx or 5xx that reached answer
+// counts as the call it was, because the member did answer it.
+//
+// A record that cannot be written is a line on the service's log and never a
+// refusal, exactly as recordRateLimitHeaders': the figures are display data
+// (F19), the run has its answer either way, and a member whose count is lost is
+// a wrong figure in a listing rather than a call wrongly served. The context is
+// stripped of its cancellation for the reason the observation's write is: the
+// call happened whether or not the client stayed to read the answer.
+//
+// A store that cannot count — recording is a capability a store has or has not
+// (creds.UsageCounter), and the state a scope answers is a creds.CascadeState —
+// leaves the call uncounted, and the figures for that member are then absent.
+func (s *Server) recordUsage(ctx context.Context, cl *call, name string, use *callUsage) {
+	if cl == nil || cl.usage == nil || name == "" {
+		return
+	}
+	if err := creds.CountUsage(context.WithoutCancel(ctx), cl.usage, name, s.now(), 1, use.counted()); err != nil {
+		s.log.Warn("credsvc: the usage of an answer could not be counted", "error_class", errorClass(err))
 	}
 }
 
