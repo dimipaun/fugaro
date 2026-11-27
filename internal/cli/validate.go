@@ -159,6 +159,43 @@ func clampWarning(ig policy.Ignored) config.Problem {
 	return config.Problem{Path: runner.PolicyKeyPath(ig.Key), Message: msg}
 }
 
+// resolutionNotes are the notes the resolution itself carries (S2, spec §4):
+// every lifted key the file writes, with C1's sentence naming its new home and
+// its fix, then every ignored key, with the sentence naming what decides its
+// value instead (D3421), then every tighten-only value RT1's merge dropped,
+// with the project's value that stands in its place. All three are the file's
+// own lines that a run no longer honours, and none is a refusal — release A
+// reads a lifted key and does not honour it, an ignored key is read and decides
+// nothing, and a value that does not tighten is one the merge is right to drop
+// — so validate and doctor print them as notes and never as problems.
+//
+// A nil resolution (a file that did not resolve) answers none: the file's own
+// problem is what the reader fixes first, and the notes are about keys a drop
+// that never happened would have named.
+func resolutionNotes(res *config.Resolution) []config.Problem {
+	if res == nil {
+		return nil
+	}
+	var notes []config.Problem
+	for _, n := range res.Lifted {
+		// C1's Why names the key itself and begins with its path, so it stands
+		// alone and takes no Path of its own: the line reads "note: <the key>
+		// is the project's choice…", not the key twice (LiftedKey.Why).
+		notes = append(notes, config.Problem{Message: n.Why})
+	}
+	for _, ig := range res.IgnoredKeys {
+		// The same shape as C1's, for the same reason (IgnoredKeyNote.Why).
+		notes = append(notes, config.Problem{Message: ig.Why})
+	}
+	for _, ig := range res.Ignored {
+		// The path is the key in the file the reader edits, which is why this
+		// note carries one and C1's does not.
+		notes = append(notes, config.Problem{Path: ig.Key, Message: fmt.Sprintf(
+			"the repository wrote %s; the project's %s stands: review depth and spend only tighten", ig.Value, ig.Effective)})
+	}
+	return notes
+}
+
 // ceilingText is the ceiling in one line, for update --repo.
 func ceilingText(l policy.Layer) string {
 	var parts []string
@@ -2140,7 +2177,9 @@ type validateOutput struct {
 	Warnings []config.Problem `json:"warnings"`
 	// Notes are neither: things the run will need in a case validate can
 	// only see offline, reported so they are not a surprise (a stored
-	// Anthropic key, for a pin that goes direct).
+	// Anthropic key, for a pin that goes direct), and the resolution's own
+	// notes — the keys the project now owns, the values the merge dropped
+	// (S2's resolutionNotes).
 	Notes        []config.Problem `json:"notes,omitempty"`
 	ProjectLayer *validateLayer   `json:"project_layer,omitempty"`
 }
@@ -2269,6 +2308,10 @@ func newValidateCmd() *cobra.Command {
 			layer, layerWarnings := validateLayerLines(rf)
 			var warnings, notes []config.Problem
 			if cfg != nil {
+				// The keys the project now owns and the values the merge
+				// dropped, before the file's own checks: they are about the
+				// file in hand, and a reader meets them first (S2).
+				notes = append(notes, resolutionNotes(rf.Res)...)
 				// Every offline check this file has on this installation's
 				// backend: the file's own, the compute limits, and the Batch
 				// backend's offline checks (plan 2026-10-19-compute-backend.md

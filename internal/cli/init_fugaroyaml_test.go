@@ -107,27 +107,6 @@ func TestWorkflowBasesSeesTheImplicitBaseKind(t *testing.T) {
 	}
 }
 
-// anchorRig is a checkout whose fugaro.yaml the repository stage edits, with
-// a fake runs bucket holding build records.
-func anchorRig(t *testing.T, lc *localcfg.Config, yaml, stdin string) (*repositoryStage, *syncBuf, string) {
-	t.Helper()
-	dir := repoCheckout(t, githubOrigin, yaml)
-	t.Chdir(dir)
-	e, out := stageEngine(t, stdin, &initOptions{githubAppID: "12345"})
-	e.lc = lc
-	s := newRepositoryStage(e)
-	s.engineStage.run = func(context.Context) error { return nil }
-	s.resolve(t.Context())
-	if s.tg == nil {
-		t.Fatalf("no target: %+v", s.st)
-	}
-	records = map[string]string{}
-	prev := openRecordBucket
-	openRecordBucket = openFakeRecords
-	t.Cleanup(func() { openRecordBucket = prev })
-	return s, out, dir
-}
-
 // records are the fake runs bucket's build records, key to content; the stage
 // closes each bucket it opens, so every open is a fresh one holding them.
 var records map[string]string
@@ -150,22 +129,11 @@ func putRecordData(t *testing.T, data string) {
 	slug, _ := task.Slug("github", "acme/app")
 	records[imagecheck.RecordKey(slug, "app")] = data
 }
-
-func putRecord(t *testing.T, version string) {
-	t.Helper()
-	putRecordData(t, `{"version":1,"fugaro_version":"`+version+`","base_ref":"`+releaseBase+`"}`)
-}
-
 func anchorLC() *localcfg.Config {
 	return &localcfg.Config{Name: "aurora", GCPProject: "fugaro-aurora", RunsBucket: "fugaro-runs-fugaro-aurora", Repos: map[string]localcfg.Repo{"acme/app": {Provider: "github"}}}
 }
 
 func anchorYAML() string { return checkoutYAML("github", "oauth", "aurora", "") }
-
-func withAnchor(yaml string) string {
-	return strings.Replace(yaml, "project: aurora\n", "project: aurora\ngcp_project: fugaro-aurora\n", 1)
-}
-
 func readYAML(t *testing.T, dir string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, "fugaro.yaml"))
@@ -175,302 +143,46 @@ func readYAML(t *testing.T, dir string) string {
 	return string(b)
 }
 
-// Exact texts of what the stage prints.
-func diffText(path string) string { return path + "\n  + gcp_project: fugaro-aurora\n" }
-func addLineText(path string) string {
-	return "to let teammates use this installation without setup, add this line to " + path + ": gcp_project: fugaro-aurora (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n"
-}
-func updatedText(path string) string {
-	return "Updated " + path + " with gcp_project. Review it with git diff and commit it like any change. " + cliCaution + "\n"
-}
-
-const cliCaution = "Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown."
-
-func warnedLine(msg string) string { return "Warning: " + msg + "\n" }
-
-// stageWarn is the stage's one warning about acme/app's workflow app (the
-// base kind): the same text as fugaro update --anchor's FAIL line.
-func stageWarn(lcPath string, customBase bool, reasons ...string) string {
-	return warnedLine(anchorProblemText("acme/app", "app", "base", lcPath, reasons, customBase))
-}
-
-// A run that carries its own answer (initflow.Env.Yes, what a nested converge
-// passes) writes the line and says so in one line. The flag a person used to
-// pass for that is gone (T11, docs/no-prompt-policy), and the write and its
-// sentence are what remains of it.
-func TestRepoStageAnchorAnsweredRunWrites(t *testing.T) {
-	yaml := anchorYAML()
-	s, out, dir := anchorRig(t, anchorLC(), yaml, "")
-	putRecord(t, "0.3.1")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.tg.root, "fugaro.yaml")
-	if got := readYAML(t, dir); got != withAnchor(yaml) {
-		t.Errorf("file:\n%s", got)
-	}
-	want := diffText(path) + "  confirmed by this run's own answer\n" + updatedText(path) + stageWarn("", false, reasonRecordVersionOld("0.3.1"))
-	if out.String() != want {
-		t.Errorf("output:\n%s\nwant:\n%s", out, want)
-	}
-}
-
-// A person at the terminal reads the diff and the line is written: nothing is
-// typed for it (T7, docs/no-prompt-policy), so the y/N the step used to ask for
-// is gone and the stdin below answers nothing.
-func TestRepoStageAnchorInteractiveAtTheTerminal(t *testing.T) {
-	yaml := anchorYAML()
-	s, out, dir := anchorRig(t, anchorLC(), yaml, "y\n")
-	fakeTerminal(t)
-	putRecord(t, "0.4.0")
-	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.tg.root, "fugaro.yaml")
-	if got := readYAML(t, dir); got != withAnchor(yaml) {
-		t.Errorf("file:\n%s", got)
-	}
-	want := diffText(path) + updatedText(path)
-	if out.String() != want {
-		t.Errorf("output:\n%s\nwant:\n%s", out, want)
-	}
-}
-
-// An interactive run with no terminal is nobody a confirmation can come from:
-// the file is left as it is and the line to add is printed.
-func TestRepoStageAnchorInteractiveWithNoTerminalLeavesTheFile(t *testing.T) {
-	yaml := anchorYAML()
-	s, out, dir := anchorRig(t, anchorLC(), yaml, "n\n")
-	noTerminal(t)
-	putRecord(t, "0.4.0")
-	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.tg.root, "fugaro.yaml")
-	want := diffText(path) + addLineText(path)
-	if got := readYAML(t, dir); got != yaml || out.String() != want {
-		t.Errorf("file:\n%s\noutput:\n%s\nwant:\n%s", got, out, want)
-	}
-}
-
-// No --yes and no terminal: nothing is written, the run does not fail, and
-// the line to add is printed.
-func TestRepoStageAnchorNonInteractiveWithoutYes(t *testing.T) {
-	yaml := anchorYAML()
-	s, out, dir := anchorRig(t, anchorLC(), yaml, "")
-	putRecord(t, "0.3.1")
-	if _, err := s.Apply(t.Context(), initflow.Env{}); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.tg.root, "fugaro.yaml")
-	want := diffText(path) + addLineText(path) + stageWarn("", false, reasonRecordVersionOld("0.3.1"))
-	if got := readYAML(t, dir); got != yaml || out.String() != want {
-		t.Errorf("file:\n%s\noutput:\n%s\nwant:\n%s", got, out, want)
-	}
-}
-
-func TestRepoStageAnchorPlanWritesNothing(t *testing.T) {
-	yaml := anchorYAML()
-	s, out, dir := anchorRig(t, anchorLC(), yaml, "")
-	putRecord(t, "0.4.0")
-	if _, err := s.Plan(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.tg.root, "fugaro.yaml")
-	want := diffText(path) + "  (plan only: fugaro.yaml is not written)\n"
-	if got := readYAML(t, dir); got != yaml || out.String() != want {
-		t.Errorf("file:\n%s\noutput:\n%s\nwant:\n%s", got, out, want)
-	}
-	// --plan-only through Apply is the same.
-	s.e.r.o.planOnly = true
-	out2 := out.String()
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if got := readYAML(t, dir); got != yaml || strings.TrimPrefix(out.String(), out2) != want {
-		t.Errorf("apply under --plan-only:\n%s\n%s", got, out)
-	}
-}
-
-// A repository the project does not list yet: its own authorization comes
-// first, and the line is written under it with nothing typed at either step
-// (T7: the [y/N] the line kept for itself is gone too).
-func TestRepoStageAnchorNewRepoWritesTheLineWithNothingTyped(t *testing.T) {
-	yaml := anchorYAML()
-	lc := anchorLC()
-	lc.Repos = nil
+// repoStageRig is a checkout the repository stage is run over: the init rig's
+// engine with lc set and the stage's own engine run stubbed, so what the stage
+// itself does is the whole of the output.
+func repoStageRig(t *testing.T, lc *localcfg.Config, yaml, stdin string) (*repositoryStage, *syncBuf, string) {
+	t.Helper()
 	dir := repoCheckout(t, githubOrigin, yaml)
 	t.Chdir(dir)
-	fakeTerminal(t)
-	e, out := stageEngine(t, "acme/app\ny\n", &initOptions{githubAppID: "12345"})
+	e, out := stageEngine(t, stdin, &initOptions{githubAppID: "12345"})
 	e.lc = lc
 	s := newRepositoryStage(e)
 	s.engineStage.run = func(context.Context) error { return nil }
-	records = map[string]string{}
-	prev := openRecordBucket
-	openRecordBucket = openFakeRecords
-	t.Cleanup(func() { openRecordBucket = prev })
-	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
+	s.resolve(t.Context())
+	if s.tg == nil {
+		t.Fatalf("no target: %+v", s.st)
+	}
+	return s, out, dir
+}
+
+// TestRepositoryStageWritesNoAnchor is U9b's third red step: the repository
+// stage no longer writes the checkout's gcp_project line (R14), so
+// `fugaro update` converges the cloud and leaves every file of the checkout
+// alone — the line is `fugaro project repos add`'s to write now.
+func TestRepositoryStageWritesNoAnchor(t *testing.T) {
+	yaml := anchorYAML()
+	s, out, dir := repoStageRig(t, anchorLC(), yaml, "")
+	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if got := readYAML(t, dir); got != withAnchor(yaml) {
-		t.Errorf("file:\n%s\noutput:\n%s", got, out)
+	if got := readYAML(t, dir); got != yaml {
+		t.Errorf("the repository stage wrote the checkout's fugaro.yaml:\n%s", got)
 	}
-	if !strings.Contains(out.String(), "this checkout's repository is not one of the project's yet") {
-		t.Errorf("the line was written without the repository's own authorization:\n%s", out)
+	if out.String() != "" {
+		t.Errorf("the repository stage printed about the anchor:\n%s", out.String())
 	}
-	if n := strings.Count(out.String(), "[y/N]"); n != 0 {
-		t.Errorf("%d typed prompts, and nothing is typed at a confirmation any more:\n%s", n, out)
+	// Plan prints nothing either: no diff of a line it will not write.
+	s, out, dir = repoStageRig(t, anchorLC(), yaml, "")
+	if _, err := s.Plan(t.Context(), initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-}
-
-func TestRepoStageAnchorCustomBucketSkips(t *testing.T) {
-	lc := anchorLC()
-	lc.RunsBucket = "my-own-bucket"
-	yaml := anchorYAML()
-	s, out, dir := anchorRig(t, lc, yaml, "")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	want := "note: gcp_project is not written to fugaro.yaml: shared config needs the default runs-bucket name fugaro-runs-fugaro-aurora (this installation's is \"my-own-bucket\")\n"
-	if got := readYAML(t, dir); got != yaml || out.String() != want {
-		t.Errorf("file:\n%s\noutput:\n%s", got, out)
-	}
-}
-
-// A differing value stops the stage after the engine: the message says the
-// onboarding is done and rerunning is safe.
-func TestRepoStageAnchorDiffersRefused(t *testing.T) {
-	yaml := strings.Replace(anchorYAML(), "project: aurora\n", "project: aurora\ngcp_project: fugaro-other\n", 1)
-	s, _, dir := anchorRig(t, anchorLC(), yaml, "")
-	_, err := s.Apply(t.Context(), initflow.Env{Yes: true})
-	if err == nil || !strings.Contains(err.Error(), "the repository is onboarded; only the gcp_project line of fugaro.yaml was not written") ||
-		!strings.Contains(err.Error(), "gcp_project: fugaro-other, not fugaro-aurora") || !strings.Contains(err.Error(), "rerunning fugaro setup is safe") {
-		t.Fatalf("err = %v", err)
-	}
-	if ExitCode(err) != ExitUserError || readYAML(t, dir) != yaml {
-		t.Errorf("exit %d, file changed: %v", ExitCode(err), readYAML(t, dir) != yaml)
-	}
-}
-
-// A file shape the edit refuses is told to the user, never guessed at, and
-// does not fail the run.
-func TestRepoStageAnchorUnsafeShapeIsByHand(t *testing.T) {
-	yaml := strings.Replace(anchorYAML(), "project: aurora\n", "\"project\": aurora\n", 1)
-	s, out, dir := anchorRig(t, anchorLC(), yaml, "")
-	putRecord(t, "0.4.0")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	want := "note: the project: line is not a simple one-line value; fugaro.yaml is not edited: add this line to it by hand, at the top level: gcp_project: fugaro-aurora\n"
-	if readYAML(t, dir) != yaml || out.String() != want {
-		t.Errorf("output:\n%s", out)
-	}
-}
-
-// Already set: no edit, and the old-image warning still comes on a second
-// run before the change is merged.
-func TestRepoStageAnchorAlreadySetStillWarns(t *testing.T) {
-	yaml := withAnchor(anchorYAML())
-	s, out, dir := anchorRig(t, anchorLC(), yaml, "")
-	putRecord(t, "0.3.1")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if readYAML(t, dir) != yaml || out.String() != stageWarn("", false, reasonRecordVersionOld("0.3.1")) {
-		t.Errorf("output:\n%s", out)
-	}
-	// A current image: silent.
-	s, out, _ = anchorRig(t, anchorLC(), yaml, "")
-	putRecord(t, "0.4.0")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil || out.String() != "" {
-		t.Errorf("err %v, output:\n%s", err, out)
-	}
-}
-
-// The stage's warning is --anchor's FAIL text: a development CLI's image and
-// a base image the local config pins to a dev tag are warned about too.
-func TestRepoStageAnchorWarnsDevImageAndCustomBase(t *testing.T) {
-	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
-	putRecord(t, "dev")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if want := stageWarn("", false, reasonDevCLI("dev")); out.String() != want {
-		t.Errorf("output:\n%s\nwant:\n%s", out, want)
-	}
-	lc := anchorLC()
-	const ref = "us-east5-docker.pkg.dev/fugaro-aurora/fugaro-base/fugaro-base:dev-8fe2647"
-	lc.Region = "us-east5"
-	lc.BaseImages = map[string]string{"base": ref}
-	s, out, _ = anchorRig(t, lc, withAnchor(anchorYAML()), "")
-	s.e.path = "/home/me/.config/fugaro/projects/aurora.yaml"
-	putRecord(t, "0.4.0")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if want := stageWarn(s.e.path, true, reasonConfigBaseCustom(ref, "base")); out.String() != want {
-		t.Errorf("output:\n%s\nwant:\n%s", out, want)
-	}
-}
-
-func TestRepoStageAnchorNoRecordWarnsOld(t *testing.T) {
-	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if out.String() != stageWarn("", false, reasonNoRecord()) {
-		t.Errorf("output:\n%s", out)
-	}
-}
-
-// A record that cannot be read or parsed is not "old": the warning says the
-// image's age is unknown, and the run does not fail.
-func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
-	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
-	putRecordData(t, "not json")
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	got := out.String()
-	if !strings.Contains(got, "its build record could not be read (") || !strings.Contains(got, "so its age is unknown") ||
-		!strings.HasSuffix(got, "(1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro project repos add acme/app in the repository's checkout, before you merge a change that adds gcp_project\n") {
-		t.Errorf("output:\n%s", got)
-	}
-}
-
-// The bucket itself failing to open: a warning per workflow, never a failure.
-func TestRepoStageAnchorBucketFailure(t *testing.T) {
-	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
-	prev := openRecordBucket
-	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) { return nil, errors.New("boom") }
-	t.Cleanup(func() { openRecordBucket = prev })
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if want := stageWarn("", false, reasonUnreadable("boom")); out.String() != want {
-		t.Errorf("output:\n%s\nwant:\n%s", out, want)
-	}
-}
-
-// With fake endpoints in the local config the record read never opens the
-// real gs:// bucket: the warning says the image age is unknown.
-func TestRepoStageAnchorFakeEndpointsSkipTheRecordRead(t *testing.T) {
-	lc := anchorLC()
-	lc.Endpoints.NoAuth = true
-	s, out, _ := anchorRig(t, lc, withAnchor(anchorYAML()), "")
-	old := skipGSOnFakeEndpoints
-	prevRecord := openRecordBucket
-	t.Cleanup(func() { skipGSOnFakeEndpoints, openRecordBucket = old, prevRecord })
-	skipGSOnFakeEndpoints = true
-	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) {
-		t.Error("the record bucket was opened against fake endpoints")
-		return nil, errors.New("opened")
-	}
-	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "so its age is unknown") {
-		t.Errorf("output:\n%s", out)
+	if got := readYAML(t, dir); got != yaml || out.String() != "" {
+		t.Errorf("plan wrote or printed about the anchor:\n%s\n%s", got, out.String())
 	}
 }

@@ -31,6 +31,15 @@ func levelAgent() Agent {
 	return Agent{Models: ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: "claude-opus-5-5"}}
 }
 
+// levelOffLayer is a project layer whose text turns one review level off: the
+// only way a level the mode's row runs is really off, since a switch a
+// repository writes stands down in favour of that row where the project itself
+// says nothing about the level (spec §5.2, R20, RT2).
+func levelOffLayer(t *testing.T, level string) *ProjectLayer {
+	t.Helper()
+	return tightenLayer(t, "{ git: { provider: github }, agent: { levels: { "+level+": { none: true } } } }")
+}
+
 func mustWarn(t *testing.T, warns []Warning, level policy.Level, substr string) {
 	t.Helper()
 	for _, w := range warns {
@@ -101,10 +110,14 @@ func TestResolveLevelsPrecedence(t *testing.T) {
 	}
 
 	// A layer's `none` is the level's switch, and it removes the level the
-	// layers below it set.
+	// layers below it set. The switch is the project layer's own text: a
+	// repository's the project says nothing about stands down in favour of
+	// the mode's row where that row runs the level (spec §5.2, R20, RT2), so
+	// a level that really is off is one the project turned off.
 	agent.Levels.L3 = &LevelSetting{Off: true}
 	got, _, err = ResolveLevels(LevelInputs{
-		Config: &Config{Agent: agent}, Mode: rigor.Critical, Recipe: recipe, CatalogDefault: true,
+		Config: &Config{Agent: agent, Layer: levelOffLayer(t, "l3")},
+		Mode:   rigor.Critical, Recipe: recipe, CatalogDefault: true,
 	})
 	if err != nil {
 		t.Fatalf("ResolveLevels with l3 none: %v", err)
@@ -123,7 +136,8 @@ func TestResolveLevelsPrecedence(t *testing.T) {
 	// document's copy — so this is the reading that covers both.
 	agent.Levels.L3 = &LevelSetting{Model: NoneModel}
 	got, _, err = ResolveLevels(LevelInputs{
-		Config: &Config{Agent: agent}, Mode: rigor.Critical, Recipe: recipe, CatalogDefault: true,
+		Config: &Config{Agent: agent, Layer: levelOffLayer(t, "l3")},
+		Mode:   rigor.Critical, Recipe: recipe, CatalogDefault: true,
 	})
 	if err != nil {
 		t.Fatalf("ResolveLevels with l3 model: none: %v", err)
@@ -169,9 +183,14 @@ func TestResolveLevelsPrecedence(t *testing.T) {
 // on, because the floor is a requirement and the mode's row is not a layer
 // saying no.
 func TestResolveLevelsFloorRefusesNone(t *testing.T) {
+	// The configuration's l2 is off because the project layer's own text
+	// turns it off: a repository may not turn a level the mode's row runs off
+	// where the project says nothing about it (spec §5.2, R20, RT2), so the
+	// switch the floor has to refuse is the layer's, and it is refused in the
+	// merged block either way.
 	inputs := func(levels ReviewLevels, task *ReviewLevels) LevelInputs {
 		return LevelInputs{
-			Config: &Config{Agent: Agent{Models: levelAgent().Models, Levels: levels}},
+			Config: &Config{Agent: Agent{Models: levelAgent().Models, Levels: levels}, Layer: levelOffLayer(t, "l2")},
 			Mode:   rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
 			Floor: []policy.Level{policy.LevelL2},
 			Task:  task,

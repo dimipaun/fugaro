@@ -135,6 +135,62 @@ type LevelInputs struct {
 	CraftModels map[string]string
 }
 
+// ProjectSilent reports whether the project layer this configuration resolved
+// over says nothing about a tighten-only key (spec §5.2): the question RT1's
+// merge marks in Resolution.Unchecked, asked by the readers that hold a
+// resolved configuration rather than the resolution it came from — the
+// resolver below, the runner's plan, the launcher and the preview. A
+// configuration that resolved over no layer at all is silent about every key,
+// which is the layerless arm's own mark (uncheckedIn).
+func (c *Config) ProjectSilent(path string) bool {
+	if c == nil || c.Layer == nil {
+		return true
+	}
+	return !c.Layer.SetsDefault(path)
+}
+
+// TightenRounds is one tighten-only round key as the run really reads it (R3,
+// R20, RT2): the number a layer set, where it is the tighter of that and the
+// mode's own row, and 0 — the layers' "unset" — where the project layer says
+// nothing about the key and the mode's row is the higher of the two, so every
+// reader takes that row instead and the plan records the mode as the one that
+// decided (planStep.Precedence). Reading the mode's row rather than its number
+// is what lets a mode a run raises between rounds supply the ones remaining
+// (D22).
+func TightenRounds(c *Config, key string, set, modeDefault int) int {
+	if set > 0 && set <= modeDefault && c.ProjectSilent(key) {
+		return 0
+	}
+	return set
+}
+
+// TightenUSD is agent.max_budget_usd as the run really reads it (R3, R20,
+// RT2): the figure a layer set where it tightens Fugaro's own per-stage cap
+// (DefaultMaxBudgetUSD, the key no mode row holds), and that cap where the
+// project layer says nothing about the key and the figure is larger — so a
+// repository that wrote more has its runs stop at the baseline. The preview
+// (internal/cli's budget preview) and the runner's stage budget both read it
+// through here, so the figure quoted and the figure a stage runs under agree.
+func TightenUSD(c *Config, set float64) float64 {
+	if set > DefaultMaxBudgetUSD && c.ProjectSilent("agent.max_budget_usd") {
+		return DefaultMaxBudgetUSD
+	}
+	return set
+}
+
+// TightenStopFraction is agent.review_stop_fraction as the run really reads it
+// (R3, R20, RT2): the share a layer set where it tightens the baseline the run
+// would have taken without it — DefaultReviewStopFraction, the key no mode row
+// holds — and 0, the layers' "unset", where the project layer says nothing
+// about the key and the share is smaller, so the reader takes the baseline
+// exactly as for a key no layer wrote (runner's Budget.stopAt).
+func TightenStopFraction(c *Config, set float64) float64 {
+	if set > 0 && set < DefaultReviewStopFraction && c.ProjectSilent("agent.review_stop_fraction") {
+		return 0
+	}
+	return set
+}
+
 // ResolveLevels decides the three review levels of one run.
 //
 // It returns the levels, the warnings a caller shows, and the refusal that
@@ -311,6 +367,14 @@ func (r *resolver) layerAnswer(s levelSpec, fallback bool) (on, wroteNone bool) 
 	case writesLevel(s.task):
 		return !levelOff(s.task), levelOff(s.task)
 	case writesLevel(s.cfg):
+		// A level the mode's own row runs is a level a repository may turn
+		// on and never off (spec §5.2), and where the project layer says
+		// nothing about the level the merge kept the repository's switch
+		// unjudged, for this to judge (R3, R20, RT2): the row is the
+		// baseline, so the repository's off stands down and the level runs.
+		if levelOff(s.cfg) && s.row == rigor.LevelOn && r.in.Config.ProjectSilent("agent.levels."+string(s.name)) {
+			return true, false
+		}
 		return !levelOff(s.cfg), levelOff(s.cfg)
 	}
 	switch s.row {
@@ -414,7 +478,14 @@ func (r *resolver) firstLineDefault() bool {
 	if r.loop && hasStep(r.in.Recipe, recipe.StepFirstLine) && !r.in.CatalogDefault {
 		return true
 	}
-	return r.agent.FirstLineOn(r.in.Providers)
+	a := r.agent
+	if a.FirstLineReview == FirstLineOff && r.in.Config.ProjectSilent("agent.first_line_review") {
+		// applyDefaults' auto is this key's baseline where no mode row holds
+		// it (R20, RT2): the repository's off is the looser answer, so the
+		// key reads as the run would have read it unwritten.
+		a.FirstLineReview = FirstLineAuto
+	}
+	return a.FirstLineOn(r.in.Providers)
 }
 
 // inserts is O7: a level that is on and whose recipe lacks its step is

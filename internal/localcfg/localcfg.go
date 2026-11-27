@@ -159,6 +159,16 @@ type Config struct {
 	// would make the check vacuous. Empty means no pin has been recorded on
 	// this installation, and a remote-shaped entry then refuses.
 	ImageSource string `yaml:"image_source,omitempty"`
+	// Images is the project layer's shared-image policy (design
+	// docs/forge-authorship-images/shared-images.md §9): how long an image
+	// nothing points at is kept before `fugaro image prune` removes it.
+	//
+	// It belongs to the project layer and not to a repository's fugaro.yaml:
+	// one shared image serves several repositories, and its removal takes a
+	// registry image another repository may still point at, so the retention
+	// is project policy. It is published like base_images, so every
+	// operator's machine prunes on the retention the owner wrote.
+	Images *Images `yaml:"images,omitempty"`
 	// BackendName is the compute backend by name (backend.Open's registry
 	// key); empty means backend.CloudRun (design m11-setup-and-skills.md
 	// §7). Both cloud-run and cloud-batch are known names; the Batch one is
@@ -2140,6 +2150,30 @@ func validateBatch(bad func(string, ...any), c *Config) {
 	}
 }
 
+// Images is the project layer's shared-image policy
+// (docs/forge-authorship-images/shared-images.md §9).
+type Images struct {
+	// RetentionDays is how many days an image nothing points at is kept
+	// after the last refresh placed a repository on it. A pointer so that
+	// a written value can be held to §9's rule — a positive count of days
+	// and nothing else — while the key's absence is the default.
+	RetentionDays *int `yaml:"retention_days,omitempty"`
+}
+
+// DefaultImageRetentionDays is §9's ruled default: what
+// Config.ImageRetentionDays answers for a project layer that names none.
+const DefaultImageRetentionDays = 30
+
+// ImageRetentionDays is the retention in force for this project
+// (docs/forge-authorship-images/shared-images.md §9): the project layer's
+// value, or the 30-day default when it names none.
+func (c *Config) ImageRetentionDays() int {
+	if c == nil || c.Images == nil || c.Images.RetentionDays == nil {
+		return DefaultImageRetentionDays
+	}
+	return *c.Images.RetentionDays
+}
+
 // Build configures Cloud Build submissions.
 type Build struct {
 	// ServiceAccount is deprecated: each repository's builds run as its
@@ -3453,6 +3487,9 @@ func (c *Config) validate() error {
 		}
 	}
 	c.validateBudget(bad)
+	if v := c.Images; v != nil && v.RetentionDays != nil && *v.RetentionDays < 1 {
+		bad("images.retention_days %d is not a positive number of days", *v.RetentionDays)
+	}
 	c.validateEscalation(bad)
 	c.validateMobileAllow(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {

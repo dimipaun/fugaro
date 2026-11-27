@@ -1104,9 +1104,10 @@ func waitingState(s State) bool {
 
 // flushWaits prints the buffered waiting stages as one line per run of them
 // that waits for the same thing: the stage names and what they wait for. The
-// loop's own detail names it ("waits for installation"), and the line reads
-// "… wait for installation"; billing, which the loop records as its own
-// state, is the one wait that is not a stage.
+// loop's own detail names it ("waits for installation"), the line a person
+// reads says "… wait for Applying infrastructure changes" (D3435) and the log
+// keeps the ID; billing, which the loop records as its own state, is the one
+// wait that is not a stage.
 func (l *loop) flushWaits() {
 	if len(l.waits) == 0 {
 		return
@@ -1123,13 +1124,14 @@ func (l *loop) flushWaits() {
 		for _, r := range waits[:n] {
 			names = append(names, r.Name)
 		}
-		l.o.Report.Waits(names, target)
+		l.o.Report.WaitsShown(names, target, DisplayName(target))
 		waits = waits[n:]
 	}
 }
 
-// waitTarget is what a waiting stage says it waits for, in the words the
-// account's waiting line uses.
+// waitTarget is what a waiting stage says it waits for, as the log and the run
+// record name it: a stage by its own name, which DisplayName is what a person
+// reads it as.
 func waitTarget(r StageResult) string {
 	if t, ok := strings.CutPrefix(r.Detail, "waits for "); ok {
 		return t
@@ -1143,11 +1145,21 @@ func waitTarget(r StageResult) string {
 // openStep starts the stage's line in flight, before the stage is even looked
 // at: its checks and its plan are seconds and what follows them is minutes,
 // and a stage somebody is watching is a stage nobody interrupts.
+//
+// The line carries the stage's plain-words name and not its ID (newStep): what a
+// person watches is the work, and the ID is what the log and --json record.
 func (l *loop) openStep(name string) {
 	if l.o.Report == nil || !l.executing {
 		return
 	}
-	l.step, l.stepStage = l.o.Report.Step(name), name
+	l.step, l.stepStage = l.newStep(name), name
+}
+
+// newStep opens one stage's step on the reporter: the ID is the name the log
+// and the result carry, and DisplayName is what every line a person reads
+// says (D3435).
+func (l *loop) newStep(name string) *report.Step {
+	return l.o.Report.StepShown(name, DisplayName(name))
 }
 
 // closeStep takes down a line in flight that no result ended: a refusal stops
@@ -1289,7 +1301,7 @@ func (l *loop) endStep(r StageResult, shown string) {
 	if s == nil || l.stepStage != r.Name {
 		// A stage nothing was opened for: one that waits for a stage before
 		// it. Its whole line prints at once, the moment the loop reaches it.
-		s = l.o.Report.Step(r.Name)
+		s = l.newStep(r.Name)
 	}
 	l.step, l.stepStage = nil, ""
 	switch r.State {
@@ -1424,7 +1436,7 @@ func (l *loop) finish() {
 			// once, and its fix is in the error the caller prints (res.Failed,
 			// --json) rather than on a line of its own. The error block above
 			// already says what went wrong and where the whole of it is.
-			l.o.Report.RerunFrom(l.program(), f.Stage)
+			l.o.Report.RerunFromShown(l.program(), f.Stage, DisplayName(f.Stage))
 		}
 		// Last, so the closing line is the last thing the run says: the
 		// reporter counts the steps it was given and names the outcome.

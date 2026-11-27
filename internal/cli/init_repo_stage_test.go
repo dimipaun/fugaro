@@ -41,8 +41,15 @@ func stageEngine(t *testing.T, stdin string, o *initOptions) (*initEngine, *sync
 	return &initEngine{r: &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader(stdin)), cmd: cmd}, lc: &localcfg.Config{Name: "aurora", Repos: map[string]localcfg.Repo{"acme/app": {Provider: "github"}}}}, out
 }
 
+// commit lands the checkout's own file, and does nothing when there is nothing
+// to land: `fugaro update` writes no file in a checkout any more (U9b, the
+// anchor is `fugaro project repos add`'s), so a converge leaves the tree the
+// default branch's already and `git commit` would fail on an empty index.
 func commit(t *testing.T, dir, msg string) {
 	t.Helper()
+	if dirty := testutil.Git(t, dir, "status", "--porcelain"); strings.TrimSpace(dirty) == "" {
+		return
+	}
 	testutil.Git(t, dir, "add", ".")
 	testutil.Git(t, dir, "commit", "-q", "-m", msg)
 }

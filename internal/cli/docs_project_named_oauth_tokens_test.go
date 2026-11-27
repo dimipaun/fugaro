@@ -737,7 +737,7 @@ func TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue(t *testing.T) {
 			"no live check has proved one end to end on a shared",
 			"the check that would (the plan's own, `docs/project-centric/implementation-plan.md` Task 3.7)\n  has not been run",
 			// The other half: what the job does not carry.
-			"no `FUGARO_CHECKOUT` (a full clone rather than a blobless one, and no `mise install`)",
+			"no `FUGARO_CHECKOUT` (which no run reads any more",
 			"only the profile's project-wide ones",
 		}},
 		{"docs/project-layer.md", layer, []string{
@@ -772,12 +772,12 @@ func TestDocsProjectClaudeAccountsSharedJobLimitsAreTrue(t *testing.T) {
 		t.Errorf("the pages say the github provider is built from the App's ID (providers.EnvGitHubAppID), and internal/gitprov/providers/providers.go no longer refuses without it")
 	}
 	// The other half of the same sentence: the pages say a shared job carries
-	// no FUGARO_CHECKOUT, so the run clones in full and installs no mise tools
-	// (internal/runner's cloneJob, which is false without it). If a project job
-	// ever sets it, that is a real change to what a shared job does and both
-	// pages have to be rewritten with it.
+	// no FUGARO_CHECKOUT, and that no run reads it (D3440) — whether a run
+	// clones is the absence of a usable baked checkout, which the runner
+	// settles from the tree itself (internal/runner's clones). If a project job
+	// ever sets the mark, both pages have to say what still writes one.
 	if strings.Contains(jobs, "runner.CheckoutEnv") {
-		t.Errorf("docs/project-claude-accounts.md and docs/project-layer.md say a shared job carries no FUGARO_CHECKOUT, and internal/infra/projectjobs.go now sets runner.CheckoutEnv on one: what the run does at bootstrap changed with it")
+		t.Errorf("docs/project-claude-accounts.md and docs/project-layer.md say a shared job carries no FUGARO_CHECKOUT, and internal/infra/projectjobs.go now sets runner.CheckoutEnv on one: the pages have to be rewritten with it")
 	}
 	// And `checkout: clone` really is shipped in this release, which is what
 	// makes the pages' "reaches a shared job" a statement about this tree.

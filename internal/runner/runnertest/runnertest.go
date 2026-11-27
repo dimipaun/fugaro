@@ -261,11 +261,11 @@ func Layer(text string) *task.ProjectLayer {
 // own file may no longer name one (S1, D3237) — config.Resolve drops
 // agent.model and agent.models from it before the merge. So the pins a test
 // wrote in the file move to the layer this stores (testutil.FixturePins), a
-// file that names none gets the harness's own three roles, and the spec's own
-// layer, when it has one, is left as the test wrote it.
-// New seeds a remote with the fixture repository — cfg replaces its
-// fugaro.yaml when non-empty — and stores spec, which is the harness's own
-// default when nil.
+// file that names none gets the harness's own three roles, the fixture's own
+// tighten-only agent keys are stated there too (testutil.SanctionAgent: a
+// number the project says nothing about is judged against the mode's row,
+// R20, RT2), and the spec's own layer, when it has one, is left as the test
+// wrote it.
 func New(t *testing.T, cfg string, spec *task.Spec) *Harness {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -286,12 +286,16 @@ func New(t *testing.T, cfg string, spec *task.Spec) *Harness {
 		spec = Task()
 	}
 	if pins != "" {
-		if spec.ProjectLayer == nil {
-			spec.ProjectLayer = Layer(pins)
-		} else {
-			merged := testutil.MergePins(spec.ProjectLayer.YAML, pins)
-			spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(merged)), Generation: spec.ProjectLayer.Generation, YAML: merged}
+		text, gen := pins, int64(3)
+		if spec.ProjectLayer != nil {
+			text, gen = testutil.MergePins(spec.ProjectLayer.YAML, pins), spec.ProjectLayer.Generation
 		}
+		// The fixture's tighten-only agent keys are the layer's too
+		// (testutil.SanctionAgent): a repository's number the project says
+		// nothing about is judged against the mode's own row (RT1, R20, RT2),
+		// and a case about what a number does reads the number it wrote.
+		text = testutil.SanctionAgent(file, text)
+		spec.ProjectLayer = &task.ProjectLayer{SHA256: config.LayerSum([]byte(text)), Generation: gen, YAML: text}
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {

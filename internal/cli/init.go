@@ -122,7 +122,6 @@ type initOptions struct {
 	planning bool
 
 	publishConfig       bool // --publish-config: publish the shared config to the runs bucket and stop
-	anchor              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
 	forget, yes, asJSON bool
 	nonInteractive      bool
 	// ask is --ask (the owner's rule of 2026-11-04): the symmetric half of
@@ -642,10 +641,9 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.publishConfig, "publish-config", false, "publish the shared config to the runs bucket and stop ("+d.name+" does it after it writes the local config)")
-	f.BoolVar(&o.anchor, "anchor", false, "in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro "+gcpProjectFieldSince+" or later and built FROM a release base image of "+gcpProjectFieldSince+" or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/managed-projects/spec.md §10.2, \"Rolling back\")")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
-	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/compute-backend/spec.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
+	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/compute-backend/spec.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config)")
 	// The agent clause is about what leaves this machine, and about how far
 	// such a session actually gets: the writes on this machine's own files are
 	// the only ones an apply there may make, and the stage that has them is the
@@ -665,7 +663,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// The help has to say that rather than promise a session a write it may not
 	// get to.
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
-	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
+	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config)")
 	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed. `fugaro update --ask` turns on one thing more, on any project: it asks for each repository's missing secret values by name with a hidden prompt, where without the flag the stage prints the `fugaro secrets set` line for each and asks nothing — a coding agent's session and --json ask for none there either, and with no terminal it fails at once with that line rather than waiting for a value. It also asks which agent.auth the project takes when the repositories it migrates write different ones (the default is the most common value)")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -785,12 +783,11 @@ type initRun struct {
 	// that did not ask for one — which is what keeps a run without the flag
 	// byte for byte the run it was: no line is written, and the loop's three
 	// hooks (initEngine.options) stay nil.
-	events      *setupEvents
-	anchorNoted bool // update --repo's pointer at --anchor has been said
-	ideNoted    bool // the IDE-terminal notice has been said, once per run
+	events   *setupEvents
+	ideNoted bool // the IDE-terminal notice has been said, once per run
 	// repoNotices is the lines the run's steps after the stage loop reported
 	// (update_repos.go's reportRepos, read off the engine's memo), and nil on a
-	// run that has no engine — a refusal, --check, an anchor run — which
+	// run that has no engine — a refusal, --check — which
 	// reported none. collectNotices is what reads it.
 	repoNotices func() []initflow.Notice
 	// enrolmentNote is what the repo engine did for a repository a deployed
@@ -1121,8 +1118,6 @@ type initResult struct {
 	// Firebase and RTDBURL are set by update --firebase-project.
 	Firebase string `json:"firebase_project,omitempty"`
 	RTDBURL  string `json:"rtdb_url,omitempty"`
-	// Anchor is set by update --anchor.
-	Anchor *anchorResult `json:"anchor,omitempty"`
 	// Adopted is the existing project this run adopted (the owner's ruling of
 	// 2026-11-22): it was there, held nothing of Fugaro's, and the run used it
 	// as if it had created it. Created and Adopted are never both set — a run
@@ -1337,11 +1332,6 @@ func runInit(r *initRun) error {
 			return err
 		}
 	}
-	if o.anchor {
-		// A local file's edit behind its own checks: no inputs to gather,
-		// no Terraform, no publish.
-		return r.runAnchor(cmd.Context())
-	}
 	if err := r.gatherInputs(cmd.Context()); err != nil {
 		return err
 	}
@@ -1404,6 +1394,17 @@ func runInit(r *initRun) error {
 		return err
 	}
 	if o.printVars {
+		// The run's own lines go through the reporter like every other shape's
+		// (D3438), so what it says beside the document is in its log too. It is
+		// the log alone that is asked for here and not the reporter's stream: a
+		// warning is a warning whether or not --verbose was passed, and stdout
+		// is the document — loggedOut is the writer these lines went to before
+		// there was a reporter, with the run's log beside it.
+		_, sink := convergeReporter(cmd, o.doorName(), nil)
+		if sink != nil {
+			defer func() { _ = sink.Close() }()
+		}
+		said := loggedOut(cmd.ErrOrStderr(), sink)
 		data, err := infra.InstallationVars(spec)
 		if err != nil {
 			return err
@@ -1459,20 +1460,20 @@ func runInit(r *initRun) error {
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
 		// the tfvars alone.
-		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedInstallation)
+		fmt.Fprintln(said, "warning: "+printVarsUngatedInstallation)
 		if spec.Budget == nil {
-			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsNoBudget)
+			fmt.Fprintln(said, "warning: "+printVarsNoBudget)
 		}
 		if o.firebase != "" {
 			if data, err = r.firebaseVars(data, spec, lc); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedFirebase)
+			fmt.Fprintln(said, "warning: "+printVarsUngatedFirebase)
 			// The database's row of the mapping, and the one thing this
 			// document cannot answer: an instance that is already there keeps
 			// the location it was created in (LP2, D3091). Discovery, which
 			// would find it, is exactly what --print-vars does not run.
-			fmt.Fprintln(cmd.ErrOrStderr(), "note: "+databaseRegionNote(spec.Region))
+			fmt.Fprintln(said, "note: "+databaseRegionNote(spec.Region))
 		}
 		_, err = cmd.OutOrStdout().Write(data)
 		return err
@@ -1483,6 +1484,16 @@ func runInit(r *initRun) error {
 	// (update_repos.go), and the result reads them where it is printed
 	// (collectNotices): this is where the run is handed the way to.
 	r.repoNotices = e.notices
+	// This run's account and log are one reporter's (CL5b), and every shape
+	// that reaches a stage has it (D3438): the converge prints the steps the
+	// loop hands it, and --forget and --config-only plan and apply the
+	// installation root themselves, so their Terraform progress needs the log
+	// for the same reason — there is nowhere else it may go. The log is closed
+	// here, on the run's way out, so its last partial line is written.
+	r.rep, r.repLog = convergeReporter(cmd, o.doorName(), e.redaction())
+	if r.repLog != nil {
+		defer func() { _ = r.repLog.Close() }()
+	}
 	if !o.forget && !o.configOnly {
 		// The default and --firebase-project modes: the converge loop over the
 		// engines (init_stages.go), whose own outcome records the creation
@@ -1490,15 +1501,6 @@ func runInit(r *initRun) error {
 		// outcome), whatever the loop's outcome — which the run still
 		// returns.
 		//
-		// This run's account and log are the converge's (CL5b): the reporter
-		// prints the steps the loop hands it, and every stage's Terraform
-		// progress goes to its Stream — the log always, the terminal under
-		// --verbose. The log is closed here, on the run's way out, so its last
-		// partial line is written.
-		r.rep, r.repLog = convergeReporter(cmd, o.doorName(), e.redaction())
-		if r.repLog != nil {
-			defer func() { _ = r.repLog.Close() }()
-		}
 		// The run's stderr is the reporter's too, from here on: a stage that
 		// selects the project config for its own checkout prints the header and
 		// the selection's notes while a step is in flight, and a frame and a
@@ -1943,32 +1945,21 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 	return wd, t, nil
 }
 
-// progress is where a stage's own output goes: Terraform's progress, and the
-// children that print like it. Under the converge it is the reporter's stream —
-// the log always, the terminal under --verbose — so the default view stays one
-// line per stage and the full output is kept (D1352). A run with no reporter
-// (--forget, --config-only, --print-vars) writes to stderr, which is what every
-// run did before CL5b — and so does a converge whose log could not be opened at
-// all (a state directory that is a link, foreign-owned or read-only, G5): the
-// stream goes nowhere else, and the output that explains a failure is the last
-// thing a run may swallow (G8).
-//
-// --plan-only keeps stderr besides the log, which is the path it took before the
-// converge had a reporter: the plan the run prints IS what the command is for,
-// and a plan-only run that succeeds names no log path the way a failure does, so
-// the stream alone would put the one thing somebody asked for out of reach
-// (CL5b: --plan-only takes the path it takes today). The log is written all the
-// same, so a plan-only run that fails still points at a log that holds what it
-// printed.
+// progress is where a stage's own raw output goes: Terraform's progress, and
+// the children that print like it. It is the run's log and nothing else
+// (D3438): the screen carries one line per step and the plan in plain words,
+// and a raw stream on it is what the owner ruled out in every state it used to
+// reach one — under --verbose, under --plan-only, for a run with no reporter
+// and for one whose log could not be opened. A run with no log has nowhere to
+// keep it, so it is dropped: what explains a failure on the screen is the
+// failure block, which names the log when there is one (G5, G8). --plan-only
+// prints the plan in plain words and the path of the log the rest of it is in,
+// which is what replaced the stream it used to take.
 func (r *initRun) progress() io.Writer {
-	verbose := boolFlag(r.cmd, verboseFlag)
-	if r.rep != nil && (r.repLog != nil || verbose) {
-		if r.o.planOnly && !verbose {
-			return io.MultiWriter(r.cmd.ErrOrStderr(), r.rep.Stream())
-		}
-		return r.rep.Stream()
+	if r.rep == nil {
+		return io.Discard
 	}
-	return r.cmd.ErrOrStderr()
+	return r.rep.Log()
 }
 
 // stageDetail is where a refresh stage's own lines go: the lines reporting what
@@ -2029,8 +2020,7 @@ func (r *initRun) accountWriter() io.Writer {
 // whole of it for the run's own record: the counts and the changes they must
 // look at first, in Fugaro's words, on the terminal (tf.Brief), and Terraform's
 // own account of every change — its addresses and the attribute paths an
-// update moves — in the log and on the terminal under --verbose, which is the
-// reporter's Stream exactly (D1352).
+// update moves — in the log alone (D3438).
 //
 // So no `module.` address, no attribute path and no resource type reaches the
 // terminal from a plan, in any state and refused or not: what a person reads
@@ -2038,16 +2028,15 @@ func (r *initRun) accountWriter() io.Writer {
 // the address they may need — --allow-delete takes one — is in the log beside
 // what refused it (the owner's feedback of 2026-11-09).
 //
-// A run with no log is a run with nowhere to keep Terraform's own account: it
-// could not open one (CL3's OpenLog: a state directory that is a link,
-// foreign-owned or read-only, G5), or it never had a reporter at all (an engine
-// a test drove by hand). There the whole plan goes to the terminal exactly as
-// it always did: it is the person's own plan, --allow-delete and
-// --allow-job-delete take the addresses it names, and a screen with nowhere
-// else to send them must not swallow them.
+// A run with no log has nowhere to keep Terraform's own account: it could not
+// open one (CL3's OpenLog: a state directory that is a link, foreign-owned or
+// read-only, G5), or it never had a reporter at all (an engine a test drove by
+// hand). There only the brief plan prints — the counts and the changes to look
+// at first, which is what the person is confirming (D3438) — and the addresses
+// go with the stream, which no state puts on a screen any more.
 func (r *initRun) planBlock(plan *tf.Plan) {
 	if r.rep == nil || r.repLog == nil {
-		fmt.Fprint(r.w, tf.Summary(plan))
+		fmt.Fprint(r.w, tf.Brief(plan))
 		return
 	}
 	if r.repoDoor {
@@ -2060,11 +2049,25 @@ func (r *initRun) planBlock(plan *tf.Plan) {
 		// (guard), and a plan that is not refused is confirmed by the counts
 		// this line carries.
 		r.rep.Step("repository " + r.res.Repo).DoneWhole(tf.Counts(plan) + " (log: " + r.repLog.Path() + ")")
-		fmt.Fprint(r.rep.Stream(), tf.Brief(plan)+tf.Summary(plan))
+		fmt.Fprint(r.rep.Log(), tf.Brief(plan)+tf.Summary(plan))
 		return
 	}
 	fmt.Fprint(r.w, tf.Brief(plan))
-	fmt.Fprint(r.rep.Stream(), tf.Summary(plan))
+	fmt.Fprint(r.rep.Log(), tf.Summary(plan))
+}
+
+// planOnlyLine is the line a --plan-only run stops on: that it applied
+// nothing, where the plan Terraform saved is, and — when the run kept one —
+// the path of its log. The log is named because the plan's own account, every
+// `module.` address and attribute path, is in it and on no screen any more
+// (D3438): the person who wants to read the plan whole is sent to the file
+// that holds it, and --allow-delete takes the address it names from there.
+func (r *initRun) planOnlyLine(plan string) string {
+	line := "--plan-only: nothing applied; the plan is " + plan
+	if r.repLog != nil {
+		line += "; the log is " + r.repLog.Path()
+	}
+	return line
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
@@ -2234,28 +2237,13 @@ func (o *initOptions) check() error {
 		return updateRigorRefusal(o.rigor)
 	}
 	n := 0
-	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
+	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig} {
 		if b {
 			n++
 		}
 	}
 	if n > 1 {
-		return userErr("--plan-only, --print-vars, --config-only, --forget, --publish-config and --anchor exclude one another")
-	}
-	if o.anchor {
-		set := slices.DeleteFunc(o.installationFlags(), func(f string) bool { return f == "--anchor" })
-		for _, f := range []struct {
-			name string
-			on   bool
-		}{{"--onboard-repo", o.onboardRepo != ""}, {"--github-app-id", o.githubAppID != ""}, {"--allow-delete", len(o.allowDelete) > 0},
-			{"--check-github-app", o.checkApp}} {
-			if f.on {
-				set = append(set, f.name)
-			}
-		}
-		if len(set) > 0 {
-			return userErr("--anchor only writes the gcp_project line of an onboarded repository's checkout; it excludes %s", strings.Join(set, ", "))
-		}
+		return userErr("--plan-only, --print-vars, --config-only, --forget and --publish-config exclude one another")
 	}
 	if o.provisionBatch {
 		// It is an apply of the installation's own root, confirmed by typing
@@ -2267,7 +2255,7 @@ func (o *initOptions) check() error {
 			name string
 			on   bool
 		}{{"--repo", o.repo}, {"--forget", o.forget}, {"--print-vars", o.printVars},
-			{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}, {"--anchor", o.anchor}} {
+			{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}} {
 			if f.on {
 				set = append(set, f.name)
 			}
@@ -4040,7 +4028,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 			r.res.Changes = &counts
 			if r.o.planOnly {
-				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				fmt.Fprintln(r.w, r.planOnlyLine(filepath.Join(wd.Root, infra.PlanFile)))
 				stop = true
 				return plan, nil
 			}
@@ -5240,7 +5228,7 @@ func (o *initOptions) checkCoordinator() error {
 		name string
 		on   bool
 	}{{"--repo", o.repo}, {"--forget", o.forget}, {"--print-vars", o.printVars},
-		{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}, {"--anchor", o.anchor}} {
+		{"--config-only", o.configOnly}, {"--publish-config", o.publishConfig}} {
 		if f.on {
 			set = append(set, f.name)
 		}
@@ -5276,9 +5264,6 @@ func (o *initOptions) checkRepo() error {
 		// is why the flag's help says it excludes --repo. Accepted, it would
 		// onboard the repository and drop the provisioning the user named.
 		return userErr("--provision-batch provisions the installation's Batch compute backend, which is an apply of the installation's own root: it excludes --repo (run fugaro setup --provision-batch for the installation, then fugaro update --repo for the repository)")
-	}
-	if o.anchor {
-		return userErr("--anchor and --repo exclude one another: --anchor writes the gcp_project line of an onboarded repository's checkout (run %s --anchor there), and %s --repo does not write it", o.doorProgram(), o.doorProgram())
 	}
 	if err := o.checkAppID(); err != nil {
 		return err
@@ -5319,7 +5304,7 @@ func (o *initOptions) checkRepo() error {
 // installation, sorted.
 func (o *initOptions) installationFlags() []string {
 	installationOnly := map[string]bool{
-		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--anchor": o.anchor, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
+		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--operator": o.operatorsChanged,
 		"--admin": o.adminsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
@@ -5331,10 +5316,10 @@ func (o *initOptions) installationFlags() []string {
 		// handed. It is refused by name instead, like the flags above it.
 		"--bake-repos": o.bakeReposChanged,
 		// --rigor is the project's mode, written by the Layer stage of the run
-		// that creates the installation: --anchor returns before that stage,
-		// and a --repo run has none of the installation's stages at all, so
-		// both would drop the answer. Refused by name instead, in the sentence
-		// each of those two walks already has for a flag it cannot act on.
+		// that creates the installation: a --repo run has none of the
+		// installation's stages at all, so it would drop the answer. Refused by
+		// name instead, in the sentence that run's walk already has for a flag
+		// it cannot act on.
 		"--rigor": o.rigor != "",
 		// --location is the place a first run of `fugaro setup` chooses, and a
 		// --repo run creates no installation: it would drop the answer the
@@ -5894,7 +5879,6 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
 		names, err := infra.NeedsBuild(ctx, c, ready, versions)
-		fmt.Fprintf(os.Stderr, "PROBE-NEEDSBUILD names=%v versions=%v\n", names, versions)
 		if err != nil {
 			return r.retireLeftover(spec, initErr(err))
 		}
@@ -5975,10 +5959,6 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	if deleteErr != nil {
 		return deleteErr
-	}
-	if !embedded {
-		// The converge's repository stage writes the line itself.
-		r.noteAnchor(ctx, root, lc)
 	}
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
@@ -6387,9 +6367,9 @@ func (r *initRun) gatePlanning(o *initOptions, repo string, lc *localcfg.Config,
 
 // gateModelGrades is fugaro update --repo's gate for modelGradesSince:
 // refuseModelGradesSkew, with gateRigor's escapes and for its reason, and
-// gatePlanning's shape: the key has two homes — the repository's own file and
-// the project layer's defaults.model_grades — so both halves are judged, each
-// by the key being written rather than the grade it holds.
+// gateWorkflowAB's one-file shape: the key is the project layer's
+// defaults.model_grades, since a repository's own grade models left its file
+// (config.LiftedKeys).
 func (r *initRun) gateModelGrades(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
@@ -6398,7 +6378,7 @@ func (r *initRun) gateModelGrades(o *initOptions, repo string, lc *localcfg.Conf
 	if o.printVars {
 		w = r.cmd.ErrOrStderr()
 	}
-	return refuseModelGradesSkew(repo, cfg.RepoModelGradesSet, cfg.Layer.SetsModelGrades(), lc.BaseImage(config.BaseKind), w)
+	return refuseModelGradesSkew(repo, cfg.Layer.SetsModelGrades(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateWorkflowAB is fugaro update --repo's gate for workflowABSince:
@@ -6806,7 +6786,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			}
 			r.res.Changes = &counts
 			if r.o.planOnly {
-				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				fmt.Fprintln(r.w, r.planOnlyLine(filepath.Join(wd.Root, infra.PlanFile)))
 				stop = true
 				return plan, nil
 			}

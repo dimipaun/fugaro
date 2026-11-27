@@ -58,7 +58,7 @@ Or ask your agent: the plugin's `working` skill launches, watches and diagnoses 
 
 ## Upgrading
 
-`brew upgrade dimipaun/tap/fugaro && fugaro update`, once, in your own terminal; there is no other step. `fugaro update` brings the installation to the new release, installs or updates the plugin in your own Claude Code through the `claude` CLI (restart running sessions), and moves the repository's job images onto the release's base image. A plugin pin an earlier release committed to a checkout is offered its removal as a diff: commit it or not. Each cloud step asks at your own real terminal; a non-terminal session is refused with a sentence naming what to do. `--check` only reports (exit 1 when something is stale); in Claude Code `/fugaro:update` does the local half and hands you the rest ([docs/upgrade/spec.md](docs/upgrade/spec.md)). If the project config (providers, model_prices, budget settings, the compute price override, the GitHub App ID) changed since the job was last deployed by `fugaro update --repo`, it also tells you to run `fugaro update --repo .` ([multi-model.md](docs/multi-model.md)); it never runs that itself.
+`brew upgrade dimipaun/tap/fugaro && fugaro update`, once, in your own terminal; there is no other step. `fugaro update` brings the installation to the new release, installs or updates the plugin in your own Claude Code through the `claude` CLI (restart running sessions), and moves the repository's job images onto the release's base image. A plugin pin an earlier release committed to a checkout is named by `fugaro doctor` and `fugaro update`, with the line to delete. Each cloud step asks at your own real terminal; a non-terminal session is refused with a sentence naming what to do. `--check` only reports (exit 1 when something is stale); in Claude Code `/fugaro:update` does the local half and hands you the rest ([docs/upgrade/spec.md](docs/upgrade/spec.md)). If the project config (providers, model_prices, budget settings, the compute price override, the GitHub App ID) changed since the job was last deployed by `fugaro update --repo`, it also tells you to run `fugaro update --repo .` ([multi-model.md](docs/multi-model.md)); it never runs that itself.
 
 ## How it works
 
@@ -117,7 +117,7 @@ Each repository carries a `fugaro.yaml`. `/fugaro:setup` writes it with you; `fu
 ```yaml
 version: 1
 project: aurora               # the Fugaro project this repository belongs to
-gcp_project: my-gcp-project   # written by fugaro update --anchor, run in the checkout
+gcp_project: my-gcp-project   # written by fugaro project repos add, run in the checkout
 git:
   provider: github            # github | bitbucket
   base_branch: main
@@ -131,10 +131,13 @@ workflows:
     commands:
       build: npm run build
       test: npm test
-    # secrets:                # logical names; disabled for now and ignored: a shared job
-    #                         # mounts only the project's secrets, so store the value for the
-    #                         # project instead (`fugaro secrets set NAME`, no `--repo`)
+    # secrets:                # a workflow's own secret is stored once for the project
+    #                         # (`fugaro secrets set NAME`), and the repositories that may read
+    #                         # it are the operator's own record (`fugaro secrets allow NAME
+    #                         # PATTERN...`); a repository-level copy is ignored
     #   - { name: npm-token, env: NPM_TOKEN }
+    #   - { name: npmrc, env: NPM_CONFIG_USERCONFIG, file: true }   # file: writes the value to a
+    #                         # 0400 file and sets the variable to its path; absent in a review run
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 60m, verify: 30m, finalize_reserve: 5m }
 ```

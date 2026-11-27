@@ -39,6 +39,13 @@ func TestUpdateSkill(t *testing.T) {
 		"never look for a flag or another command that would let this session apply those writes",
 		"Never edit `.claude/settings.json`", "brew upgrade dimipaun/tap/fugaro", "restart",
 		"Exit 1 means something is stale", "you never change which marketplace this machine trusts",
+		// D3340/R11 (U7a of docs/update-from-anywhere): the leftover plugin pin
+		// is a notice `doctor` and `update` print, naming the line to delete —
+		// never a diff this session or the run writes — and `--check` reads
+		// each repository through the installation's credentials service
+		// (D3349 as amended, R17), not with no credentials at all.
+		"named by `doctor` and `update`, with the line to delete",
+		"reads each repository through the installation's credentials service",
 		// D2700: the unit is part of what the one command does, on a machine
 		// that has none as well as over an installed one, and the session that
 		// reads this skill is not where that write happens.
@@ -54,7 +61,7 @@ func TestUpdateSkill(t *testing.T) {
 	if n := strings.Count(skill, "```bash user-runs"); n != 1 {
 		t.Errorf("SKILL.md hands the user %d commands, want exactly one", n)
 	}
-	for _, bad := range []string{"claude plugin install", "claude plugin update", "claude plugin marketplace", "--dangerously", "allowed-tools"} {
+	for _, bad := range []string{"claude plugin install", "claude plugin update", "claude plugin marketplace", "--dangerously", "allowed-tools", "needs no credentials"} {
 		if strings.Contains(skill+states, bad) {
 			t.Errorf("the skill names %q", bad)
 		}

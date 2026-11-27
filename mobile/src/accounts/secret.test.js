@@ -19,6 +19,9 @@
 //
 //   * `SECRET_ITEMS` is D111's list and the WHOLE list: a third name is not
 //     storable, because `secure-store.js` refuses a name that is not on it;
+//   * the device key's seed (M3) is a `Secret` and is deliberately NOT on that
+//     list: `SECRET_KINDS` is what the wrapper accepts, and `isSecretItem`
+//     keeps meaning exactly what the account store's gate needs;
 //   * the value's rules are a boundary on both sides -- exactly
 //     `SECRET_VALUE_MAX` is accepted, one more is refused -- and the ceiling
 //     is the platform's own (2048 bytes, `expo-secure-store` on Android);
@@ -30,10 +33,24 @@ import assert from 'node:assert/strict';
 import { inspect } from 'node:util';
 import test from 'node:test';
 
-import { SECRET_CODES, SECRET_ITEMS, SECRET_VALUE_MAX, Secret, isSecret, isSecretItem, secret } from './secret.js';
+import {
+  DEVICE_KEY_ITEM,
+  SECRET_CODES,
+  SECRET_ITEMS,
+  SECRET_KINDS,
+  SECRET_VALUE_MAX,
+  Secret,
+  isSecret,
+  isSecretItem,
+  isSecretKind,
+  secret,
+} from './secret.js';
 
 const ID_TOKEN = 'synthetic-id-token';
 const MAC_KEY = 'synthetic-mac-key';
+// The device key's seed as the app stores it: 32 bytes of unpadded base64url,
+// shaped nothing like a credential and recorded from nothing.
+const SEED = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 test('SECRET_ITEMS is D111\'s list, and it is frozen', () => {
   assert.deepEqual([...SECRET_ITEMS], ['idToken', 'macKey']);
@@ -46,6 +63,25 @@ test('isSecretItem knows the list and nothing else', () => {
   assert.equal(isSecretItem('password'), false);
   assert.equal(isSecretItem(''), false);
   assert.equal(isSecretItem(undefined), false);
+});
+
+test('the device key’s seed is a Secret kind, and not a third D111 item', () => {
+  // The union is what `Secret` and `secret()` judge by; D111's list is what the
+  // account store is gated on, and it does not grow (M3; D2790).
+  assert.deepEqual([...SECRET_KINDS], ['idToken', 'macKey', DEVICE_KEY_ITEM]);
+  assert.equal(isSecretKind(DEVICE_KEY_ITEM), true);
+  assert.equal(isSecretItem(DEVICE_KEY_ITEM), false, 'D111’s list is the account store’s gate');
+  const wrapped = secret(DEVICE_KEY_ITEM, SEED);
+  assert.equal(wrapped.ok, true);
+  assert.equal(wrapped.secret.item, DEVICE_KEY_ITEM);
+  assert.equal(wrapped.secret.reveal(), SEED);
+  // ... and it prints the placeholder like the other two, which is the whole
+  // reason it is wrapped rather than kept as a bare string.
+  assert.equal(String(wrapped.secret), '[secret deviceKey]');
+  assert.equal(JSON.stringify({ seed: wrapped.secret }).includes(SEED), false);
+  // A name outside the union is still refused, so the factory did not become
+  // "any string at all" to let this one through.
+  assert.equal(secret('password', SEED).code, SECRET_CODES.BAD_ITEM);
 });
 
 test('a well-formed pair is accepted and carried verbatim', () => {

@@ -83,6 +83,7 @@ const SETUP_PLAN_LINES: readonly JSONObject[] = Object.freeze([
   {"type":"stage","name":"policy","state":"skipped","detail":"the project's config names no Firebase budget backend, so there is no published policy node to read","after":"","undone":true,"repos":[]},
   {"type":"stage","name":"credentials-service","state":"skipped","detail":"a development build resolves no released image","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"credentials-copy","state":"skipped","detail":"the project's config carries no credentials_service block, and its presence is what turns the credentials service on: this installation has no credentials service, so there is no bundle for the copy to write a model key into","after":"","undone":false,"repos":[]},
+  {"type":"stage","name":"image-map-retire","state":"skipped","detail":"the project config records no shared Firebase budget backend (budget.firebase_project): fugaro update --firebase-project proj-1234 adopts one, and the security rules are deployed with it","after":"","undone":true,"repos":[]},
   {"type":"stage","name":"version-stamp","state":"skipped","detail":"this is a development build, which names no release: the required CLI is left exactly as it is","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"workspace-project","state":"skipped","detail":"this installation declares no workspace of its own: aurora's project config carries neither workspace_members nor workspace_cap, so there is no workspace service account to create and no database grant to make here (a member's project holds no grant on the workspace's project, spec §5)","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"workspace","state":"skipped","detail":"the project aurora declares no workspace: it has no workspace_members table and no workspace_cap, so it publishes no workspace record — a member's config names the workspace it joined (workspace: and workspace_pin:) and never publishes one","after":"","undone":false,"repos":[]},
@@ -115,6 +116,7 @@ const SETUP_APPLY_LINES: readonly JSONObject[] = Object.freeze([
   {"type":"stage","name":"policy","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"credentials-service","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"credentials-copy","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]},
+  {"type":"stage","name":"image-map-retire","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"version-stamp","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"workspace-project","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]},
   {"type":"stage","name":"workspace","state":"blocked","detail":"waits for installation","after":"","undone":false,"repos":[]},
@@ -133,6 +135,15 @@ const SETUP_APPLY_LINES: readonly JSONObject[] = Object.freeze([
 export const SETUP_REFUSED_LINES: readonly JSONObject[] = Object.freeze([
   {"type":"error","stage":"","error":"fugaro setup does not take --check: that is fugaro update's (it reports what a converge that has already run would do, and a first run has nothing to report: fugaro setup --check has no installation to read)","fix":"","exit_code":1},
 ])
+
+/** SETUP_HEARTBEAT_LINE is the `heartbeat` line the feed will carry once a step
+ * has been running a while (D3436, D3453): liveness, not a stage of the run.
+ * The console accepts it and draws nothing for it, and CO2c is the CLI task that
+ * starts writing it -- so no recording carries one yet, and `type` is the only
+ * member the console may rely on. A fixture with members is the shape CO2c's own
+ * golden will fix, and `new-ops.test.ts` reads one with members the reader does
+ * not know to pin that they ride along. */
+export const SETUP_HEARTBEAT_LINE: JSONObject = Object.freeze({ type: 'heartbeat' })
 
 /** WHOAMI_DOCUMENT is `user ls --me --json`'s answer, as written: the caller's
  * role, the scope it reaches and the repositories that scope covers. */

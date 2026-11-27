@@ -46,19 +46,17 @@ followup:
 `
 
 // sharedYAML is the fixture workflow a shared job runs, and it is written as
-// checkout: clone: the runner decides whether it clones from the job's
-// FUGARO_CHECKOUT alone and never from the checkout's config — before the
-// clone there is no checkout to read one from — so what a shared job's clone
-// needs is that env value, which sharedJob sets. The file's own checkout:
-// cannot say shared until 0.15.0 builds a shared image: validation refuses
-// the kind outright (config/image.go's sharedCheckoutShipped), and the
-// runner reads this file after cloning, so a file that says shared would
-// fail bootstrap instead of provisioning.
+// checkout: clone: a shared job's image holds no checkout, so the run clones
+// its own repository (CF1, D3440) and reads this file afterwards — and the
+// file's own checkout: cannot say shared until 0.15.0 builds a shared image:
+// validation refuses the kind outright (config/image.go's
+// sharedCheckoutShipped), so a file that says shared would fail bootstrap
+// instead of provisioning.
 var sharedYAML = cloneYAML
 
 // cloneJob makes the run's job a checkout: clone one: no checkout in
-// WorkDir (the harness never creates it) and FUGARO_CHECKOUT=clone in the
-// job's environment, with a provider token for mise's rate limit. The
+// WorkDir (the harness never creates it), which is what makes the run clone
+// (CF1, D3440), with a provider token for mise's rate limit. The
 // provider is GitHub, so provision may hand mise the run's git token —
 // which is what the tests below are about.
 func (h *harness) cloneJob(t *testing.T) {
@@ -80,6 +78,9 @@ func (h *harness) cloneShapedJob(t *testing.T, kind string) {
 	if _, err := os.Stat(h.deps.WorkDir); !os.IsNotExist(err) {
 		t.Fatalf("the harness's checkout already exists: %v", err)
 	}
+	// The mark a deployed job still carries, and reads nothing: the run
+	// decides from the tree alone (CF1, D3440), which is the empty work
+	// directory asserted above. internal/infra stops writing it in CF2a.
 	h.deps.Env = append(h.deps.Env, runner.CheckoutEnv+"="+kind)
 	h.deps.ProviderKind = gitprovKindGitHub
 	h.provider.Auth = staticAuth(gitToken)
@@ -503,16 +504,19 @@ func TestCloneProvisionNoMiseConfig(t *testing.T) {
 	}
 }
 
-// TestCloneJobReusesAnExistingCheckout (review L6): a clone job is not
-// always a bare directory. A warm container that already ran a job, or one
-// an earlier run on a shared host left, holds a checkout: the run uses it
-// (OpenOrClone), never trying to clone over it — which git would refuse
-// outright, so the run succeeding is itself the assertion — and its own
-// branch is still checked out from it.
+// TestCloneJobReusesAnExistingCheckout (review L6, CF1): a job's work
+// directory is not always a bare one. A warm container that already ran a job,
+// or one an earlier run on a shared host left, holds a checkout, and a
+// checkout of this run's own repository is the tree the run works on whatever
+// put it there: it is used as it stands — never cloned over, which git would
+// refuse outright, so the run succeeding is itself the assertion — and its own
+// branch is still checked out from it. Nothing is provisioned for it either,
+// and for the same reason: the run's tree is what decides that (D3440), and a
+// tree that is already here is not one this run cloned.
 //
-// Mutation (run, restore): drop the `if _, err := gitops.Open(...); err ==
-// nil ||` arm of openCheckout so a clone job always calls CloneBlobless —
-// the run fails, "destination path ... already exists".
+// Mutation (run, restore): openCheckout clones for every run (drop the
+// `if !r.cloned` arm that opens the work directory as it stands) — the run
+// fails, "destination path ... already exists".
 func TestCloneJobReusesAnExistingCheckout(t *testing.T) {
 	h := newHarnessFiles(t, cloneYAML, nil, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
 	log := h.fakeMise(t, 0)
@@ -533,12 +537,8 @@ func TestCloneJobReusesAnExistingCheckout(t *testing.T) {
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("the checkout was replaced: %v", err)
 	}
-	work, err := filepath.EvalSymlinks(h.deps.WorkDir) // $PWD is resolved (review L2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := miseCalls(t, log); len(got) == 0 || got[0].Dir != work {
-		t.Fatalf("mise calls = %+v, want the provision stage in the existing checkout %s", got, work)
+	if got := miseCalls(t, log); len(got) != 0 {
+		t.Fatalf("mise calls = %+v, want none: the run works on a checkout that was already here, which is not a clone path", got)
 	}
 	// And the run's own branch is checked out from that same checkout.
 	if got := testutil.Git(t, h.deps.WorkDir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/"+runID {
@@ -549,15 +549,16 @@ func TestCloneJobReusesAnExistingCheckout(t *testing.T) {
 	}
 }
 
-// TestPrebuiltCatalogEntryJobClonesWhole (#1752): a job whose image is a
-// prebuilt catalog entry carries no checkout — the entry's image is shared by
-// every repository that names it, so it can bake none — and is no clone kind:
-// the entry's own build installed its tools, so FUGARO_CHECKOUT is unset (the
-// harness's ordinary baked job) while internal/infra writes FUGARO_REMOTE on
-// it. The run opens a checkout by cloning the job's own remote at bootstrap,
-// and the clone is a whole one — git records no partial-clone filter, and the
-// repository's branch is checked out — not the blobless one a clone job makes:
-// the history a follow-up and merge-base read is all there.
+// TestPrebuiltCatalogEntryJobClonesBlobless (#1752, CF1, D3440): a job whose
+// image is a prebuilt catalog entry carries no checkout — the entry's image is
+// shared by every repository that names it, so it can bake none — and the run
+// clones the job's own remote, which internal/infra writes on it as
+// FUGARO_REMOTE. The clone is the blobless one every run without a usable bake
+// makes, partial-clone filter and all: whether to clone, and how, is the
+// absence of a bake and nothing about the workflow's checkout kind (D3440),
+// and the history a follow-up and merge-base read is in a blobless clone all
+// the same — what it leaves behind is file contents, which the run fetches as
+// it checks them out.
 //
 // Mutation (run, restore): drop the `|| ws.CatalogPrebuilt` arm from
 // internal/infra/spec.go's remote condition — the job a cloud deploy gives
@@ -565,7 +566,7 @@ func TestCloneJobReusesAnExistingCheckout(t *testing.T) {
 // and no remote to clone", which is the failure this test's own half (the
 // runner clones from the job's remote when the work directory is empty)
 // carries the fix to.
-func TestPrebuiltCatalogEntryJobClonesWhole(t *testing.T) {
+func TestPrebuiltCatalogEntryJobClonesBlobless(t *testing.T) {
 	h := newHarnessFiles(t, "", nil, nil)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
@@ -580,18 +581,20 @@ func TestPrebuiltCatalogEntryJobClonesWhole(t *testing.T) {
 	if got := testutil.Git(t, h.deps.WorkDir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/"+runID {
 		t.Errorf("the checkout is on %q, want the run's own branch", got)
 	}
-	for line := range strings.Lines(testutil.Git(t, h.deps.WorkDir, "config", "--local", "--list")) {
-		if strings.HasPrefix(line, "remote.origin.partialclonefilter") {
-			t.Errorf("the checkout is a partial clone (%s), want a whole one: a prebuilt entry's job is no clone kind", strings.TrimSpace(line))
-		}
+	if got := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.partialclonefilter"); got != "blob:none" {
+		t.Errorf("the checkout's filter = %q, want blob:none: the run has no baked checkout, so it clones the way every such run does", got)
 	}
 }
 
-// TestBakedRunProvisionsNothing: a baked job's image installed the tools at
-// build time, so it runs no mise and records no provision stage.
+// TestBakedRunProvisionsNothing (CF1, D3440): a run whose image holds a usable
+// checkout of its own repository works on that tree, and the tree is what says
+// so — the image installed the repository's tools when it baked it, so the run
+// installs nothing and records no provision stage. Installing the tools is the
+// clone path's own cost, and the clone path is the absence of a bake.
 func TestBakedRunProvisionsNothing(t *testing.T) {
 	h := newHarnessFiles(t, "", nil, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
 	log := h.fakeMise(t, 0)
+	bakedCheckout(t, bakedDir(t, h, repoSlug), h.remote)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)

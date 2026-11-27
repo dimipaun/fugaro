@@ -100,8 +100,25 @@ func (f *budgetFixture) rewriteConfig(t *testing.T, old, new string) {
 
 // Checkout makes the working directory a checkout of acme/app whose
 // fugaro.yaml carries agentYAML under agent:, so the preview reads the
-// repository's knobs the way run does.
+// repository's knobs the way run does, and publishes the project layer that
+// states the file's own keys, which is what makes them the run's knobs at all
+// (checkout).
 func (f *budgetFixture) Checkout(t *testing.T, agentYAML string) {
+	t.Helper()
+	f.checkout(t, agentYAML, true)
+}
+
+// CheckoutWithoutLayer is Checkout with nothing published and the file left
+// unanchored: the fixture's config keeps reading its own bucket, so a test
+// about a skipped project layer (projectRecipesNote) still has one, and one
+// about a repository whose numbers the project says nothing about still has a
+// configuration that resolved over no layer at all.
+func (f *budgetFixture) CheckoutWithoutLayer(t *testing.T, agentYAML string) {
+	t.Helper()
+	f.checkout(t, agentYAML, false)
+}
+
+func (f *budgetFixture) checkout(t *testing.T, agentYAML string, publish bool) {
 	t.Helper()
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
@@ -110,15 +127,20 @@ func (f *budgetFixture) Checkout(t *testing.T, agentYAML string) {
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
 		"agent:\n  auth: api-key\n" + agentYAML +
 		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
-	// A model or a rigor default this file writes is a lifted key since S1
-	// (D3237): config.Resolve drops it, so the checkout would resolve to
-	// whatever the project layer holds. The fixture publishes the pins its own
-	// file wrote as that layer — where a run reads them now — and anchors the
-	// file to it, so a checkout prices what it always priced. A file that names
-	// none is untouched.
-	if pins := pinsLayer(yaml); pins != "" {
-		f.PublishLayer(t, testutil.MergePins(previewLayerNoMode, pins))
+	if publish {
+		// A model or a rigor default this file writes is a lifted key since S1
+		// (D3237): config.Resolve drops it, so the checkout would resolve to
+		// whatever the project layer holds. The fixture publishes the pins its
+		// own file wrote as that layer — where a run reads them now — and
+		// anchors the file to it, so a checkout prices what it always priced.
+		pins := pinsLayer(yaml)
 		yaml = anchoredText(yaml)
+		// The layer states the file's own tighten-only agent keys too
+		// (testutil.SanctionAgent): a number the project says nothing about
+		// is judged against the mode's row (R3, R20, RT2), so without it a
+		// fixture that wrote `review_rounds: 2` would be previewed at pro's
+		// three and stop being the repository it means to be.
+		f.PublishLayer(t, testutil.SanctionAgent(yaml, testutil.MergePins(previewLayerNoMode, pins)))
 	}
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -1281,7 +1303,8 @@ func TestBudgetPreviewStageShapes(t *testing.T) {
 			f.SetSpentToday(0)
 			f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
 			if tc.yaml != "" {
-				f.DefaultRunsBucket(t)
+				// Checkout already reads the fixture's bucket, which is where a
+				// project's own recipe has to sit.
 				testutil.WriteFiles(t, f.runsDir(), map[string]string{"fugaro/recipes/shapes.yaml": tc.yaml})
 			}
 			out, _, err := execute(t, "budget", "preview", "--recipe", tc.recipe, "--runs", "1")
@@ -1686,7 +1709,7 @@ func TestBudgetPreviewRecipeNote(t *testing.T) {
 	f := newBudgetFixture(t, "") // runs_bucket: unused-bucket, the project layer is skipped
 	f.SetCaps(100, 3, 20, 3)
 	f.SetSpentToday(0)
-	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.CheckoutWithoutLayer(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
 	const want = "project recipes need the default runs bucket name"
 	if _, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "1"); err != nil {
 		t.Fatal(err)
@@ -1791,13 +1814,20 @@ func TestBudgetPreviewSaysTheCeilingIsNotCapped(t *testing.T) {
 }
 
 // TestBudgetPreviewComputeCeilingFollowsTheWorkflowsResources: the figure is
-// the workflow's own requested machine over its own timeouts.total, so a
-// heavier workflow costs more and the preview prints one line for each.
+// the machine the workflow really runs with — the profile's, a repository's
+// workflows.*.resources being read and ignored (D3421) — over its own
+// timeouts.total, so a workflow starting from a heavier profile costs more and
+// the preview prints one line for each.
 func TestBudgetPreviewComputeCeilingFollowsTheWorkflowsResources(t *testing.T) {
-	newBudgetFixture(t, "")
+	f := newBudgetFixture(t, "")
+	f.PublishLayer(t, strings.Replace(previewLayerNoMode,
+		"  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n",
+		"  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n"+
+			"  sized:\n    commands: { build: sh build.sh, test: sh test.sh }\n    resources: { cpu: 8, memory: 32Gi }\n", 1))
 	checkoutWorkflows(t, "  max_budget_usd: 0.5\n",
 		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"+
-			"  render: { commands: { build: sh build.sh, test: sh test.sh }, resources: { cpu: 8, memory: 32Gi }, timeouts: { total: 2h } }\n")
+			"  render: { profile: sized, commands: { build: sh build.sh, test: sh test.sh }, timeouts: { total: 2h } }\n")
+	anchorCheckoutFile(t)
 	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
 	if err != nil {
 		t.Fatal(err)

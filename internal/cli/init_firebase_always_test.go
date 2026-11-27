@@ -392,7 +392,7 @@ func TestAKnownDatabaseSkipsTheStageAsToday(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	l := stepLineOf(reportLines(out), initflow.Firebase)
-	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Firebase)) || !strings.Contains(l, "already records the budget database") {
 		t.Errorf("the Firebase stage is %q, want the skip that says the database is known\n%s", l, out)
 	}
 	if got := r.applies(t); slices.Contains(got, "firebase") {
@@ -498,7 +498,7 @@ func TestAnOperatorsPlainUpdateSkipsTheStageAndConverges(t *testing.T) {
 		t.Fatalf("an operator's plain update did not converge: %v\n%s", err, out)
 	}
 	l := stepLineOf(reportLines(out), initflow.Firebase)
-	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Firebase)) || !strings.Contains(l, "already records the budget database") {
 		t.Errorf("the Firebase stage is %q, want the skip that says the database is known\n%s", l, out)
 	}
 	if !strings.Contains(l+newestLog(t, "update"), "may make project") {
@@ -540,7 +540,7 @@ func TestAConvergedInstallationWithTheIndexesSkipsTheStage(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	l := stepLineOf(reportLines(out), initflow.Firebase)
-	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Firebase)) || !strings.Contains(l, "already records the budget database") {
 		t.Errorf("the Firebase stage is %q, want the skip that says the state has the indexes\n%s", l, out)
 	}
 	if got := r.applies(t); slices.Contains(got, "firebase") {
@@ -666,7 +666,7 @@ func TestAConvergedMemberWithTheBindingSkipsTheStage(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	l := stepLineOf(reportLines(out), initflow.Firebase)
-	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Firebase)) || !strings.Contains(l, "already records the budget database") {
 		t.Errorf("the Firebase stage is %q, want the skip that says the state carries what the root declares\n%s", l, out)
 	}
 	if got := r.applies(t); slices.Contains(got, "firebase") {
@@ -704,7 +704,7 @@ func TestWithNothingToAnswerTheStageIsSkippedWithItsLine(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	l := stepLineOf(reportLines(out), initflow.Firebase)
-	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) {
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Firebase)) {
 		t.Errorf("the Firebase stage is %q, want the skip that says what nothing answers\n%s", l, out)
 	}
 	whole := out + newestLog(t, "setup")

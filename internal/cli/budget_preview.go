@@ -153,10 +153,11 @@ func newBudgetPreviewCmd() *cobra.Command {
 // when there was no checkout to read one from, and from is "defaults" then.
 //
 // The rounds are the knobs where the repository set them and the rigor mode's
-// own row where it set neither (rigor.DefaultRounds, the owner's ruling of
-// 2026-10-31): an unset knob is no longer filled in with one flat default at
-// config load, because the default depends on the mode. mode is what supplied
-// them, and the printed figures name it.
+// own row where it set neither, or set one looser than that row (rigor.DefaultRounds,
+// the owner's ruling of 2026-10-31, tightened by R20/RT2): an unset knob is no
+// longer filled in with one flat default at config load, because the default
+// depends on the mode. mode is what supplied them, and the printed figures
+// name it.
 type previewKnobs struct {
 	first, rounds int
 	maxStageUSD   float64
@@ -191,6 +192,7 @@ func previewKnobsOf(cfg *config.Config, project rigor.Config, asked rigor.Rigor)
 	if cfg != nil {
 		k = previewKnobs{from: "checkout", mode: rigor.Resolve(cfg.RigorConfig(), rigor.Request{Level: asked}).Level,
 			first: cfg.Agent.FirstLineRounds, rounds: cfg.Agent.ReviewRounds, maxStageUSD: cfg.Agent.MaxBudgetUSD}
+		k = tightenKnobs(cfg, k)
 	}
 	defaults := rigor.DefaultRounds(k.mode)
 	if k.first == 0 {
@@ -199,6 +201,21 @@ func previewKnobsOf(cfg *config.Config, project rigor.Config, asked rigor.Rigor)
 	if k.rounds == 0 {
 		k.rounds = defaults.Senior
 	}
+	return k
+}
+
+// tightenKnobs is a checkout's own numbers as the run really reads them (R3,
+// R20, RT2): a value the project layer says nothing about stands only where it
+// tightens the baseline the run would have taken without it — the mode's own
+// row for the two round knobs, and Fugaro's own per-stage cap
+// (config.DefaultMaxBudgetUSD) for the one key no mode row holds — and a
+// looser one reads as unwritten, so previewKnobsOf's fill-in below supplies
+// that baseline exactly as it does for a file that wrote nothing at all.
+func tightenKnobs(cfg *config.Config, k previewKnobs) previewKnobs {
+	defaults := rigor.DefaultRounds(k.mode)
+	k.first = config.TightenRounds(cfg, "agent.first_line_rounds", k.first, defaults.Inner)
+	k.rounds = config.TightenRounds(cfg, "agent.review_rounds", k.rounds, defaults.Senior)
+	k.maxStageUSD = config.TightenUSD(cfg, k.maxStageUSD)
 	return k
 }
 
@@ -240,8 +257,9 @@ func previewProjectRigor(ctx context.Context, lc *localcfg.Config) rigor.Config 
 
 // previewLevel3Rounds is the number the adversarial step takes where no step
 // of its own sets one, read the way the run reads it (planOf's setRounds):
-// agent.adversarial_rounds where a layer set it, else the mode's own row
-// (rigor.AdversarialDefault) — and 0 when the levels this run resolves leave
+// agent.adversarial_rounds where it tightens the mode's own row
+// (rigor.AdversarialDefault, the same judgement planAgent makes, R20/RT2),
+// the row where it does not, and 0 when the levels this run resolves leave
 // level 3 off, since then the step does not run at all.
 //
 // A preview that counted the mode's row unconditionally would price a level-3
@@ -249,7 +267,9 @@ func previewProjectRigor(ctx context.Context, lc *localcfg.Config) rigor.Config 
 // catalog default, which carries the step, runs two levels and would be quoted
 // three. A preview that read the row in place of the knob would go the other
 // way and quote a run less than it starts, which is the unsafe direction for a
-// spend estimate; the knob wins over the row wherever it is set, up or down.
+// spend estimate; the knob wins over the row wherever it raises it, and a
+// lower knob — a repository's, where the project layer says nothing about the
+// key — stands down in favour of the row.
 // The levels are resolved the way the run resolves them
 // (config.ResolveLevels, L3.1) over the two layers a preview reads — the
 // mode's own row, and the configuration the preview's figures come from (the
@@ -271,8 +291,8 @@ func previewLevel3Rounds(cfg *config.Config, root string, rcp *recipe.Recipe, mo
 	if err == nil && !levels.L3.On {
 		return 0
 	}
-	if cfg.Agent.AdversarialRounds > 0 {
-		return cfg.Agent.AdversarialRounds
+	if n := config.TightenRounds(cfg, "agent.adversarial_rounds", cfg.Agent.AdversarialRounds, rigor.AdversarialDefault(mode)); n > 0 {
+		return n
 	}
 	return rigor.AdversarialDefault(mode)
 }
@@ -321,6 +341,9 @@ func previewComputeCeilings(cfg *config.Config, p backend.Prices, region string)
 		return out
 	}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		// w.Resources is the profile's, not a repository's: a repository's
+		// workflows.*.resources is read and ignored (D3421), so the figure is
+		// the sizing a run of this workflow really gets.
 		w := cfg.Workflows[name]
 		c := previewCompute{Workflow: name, VCPU: w.Resources.CPU, Memory: w.Resources.Memory,
 			TotalS: w.Timeouts.Total.Duration.Seconds()}

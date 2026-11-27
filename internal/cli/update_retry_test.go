@@ -545,7 +545,6 @@ func TestUpdateRetryOffersNothingForARunThatAppliedNothing(t *testing.T) {
 		{"--config-only", func(o *initOptions) { o.configOnly = true }},
 		{"--forget", func(o *initOptions) { o.forget = true }},
 		{"--publish-config", func(o *initOptions) { o.publishConfig = true }},
-		{"--anchor", func(o *initOptions) { o.anchor = true }},
 		{"--non-interactive without --yes", func(o *initOptions) { o.nonInteractive = true }},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {

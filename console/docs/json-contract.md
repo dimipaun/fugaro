@@ -1095,9 +1095,17 @@ this one, **the only one outside the console's set** (§9.2).
 `checks` `[]doctorCheck`, `project`° (`doctorProject`), `fugaro_yaml`°
 (`doctorFugaroYAML`), `secrets`° (**`[]secretEntry` — names and metadata only,
 never a value**), `plugin` (`pluginwire.Report`), `release`° (`releaseInfo`:
-the binary's tag and commit), `error`° (**why doctor could not run its checks —
-`--json` prints an object on every outcome**, so the console always gets
-parseable JSON).
+the binary's tag and commit), `notes`° (`config.Problem`: `path`°,
+`line`° and `message` — what doctor read and did not refuse, one entry per
+line), `error`° (**why doctor
+could not run its checks — `--json` prints an object on every outcome**, so the
+console always gets parseable JSON).
+
+**`notes` is not a check** and never moves `ok` or a `severity`: it carries the
+lines doctor's human view prints as `note: `, and each one says the same thing
+about the checkout — a key the project now owns that its `fugaro.yaml` still
+writes, a value the merge dropped with the project's that stands instead, and
+the recipes cleanup diff. A renderer shows them as text, after the checks.
 
 `doctorCheck`: `id`, `ok` bool, `problem`°, `fix`°,
 `severity`°, **`skipped`°** (CLI 0.24.0, the plugin-user-scope plan's U3: the
@@ -4336,7 +4344,12 @@ a stage that reports lines says their summary as its `detail`) —
 carrying the step's own line to run, `{"type":"notice",…}` is one line the run
 reported outside its stages (a step after the stage loop, or an admit pattern the
 CLI could not expand into repository names: `step` is the step's own name, and
-`repo` and `state` are empty for a notice about no repository), and the last line
+`repo` and `state` are empty for a notice about no repository),
+`{"type":"heartbeat",…}` is the feed's own liveness — one a minute for a step
+still running — which the console accepts and draws nothing for, and which this
+schema does not yet name (CO2c is the CLI task that writes one): a console older
+than the release that carries the kind refuses the line, so a CLI that writes one
+needs that console updated (D3453), and the last line
 is `{"type":"done",
 "exit_code":N}` or `{"type":"error",…}`. **A run that ends with steps left for
 you ends `done` with exit code 1** — it did not fail, and the handed-back steps

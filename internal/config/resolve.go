@@ -65,6 +65,14 @@ type Resolution struct {
 	// tighter of it and the mode's own (R3, RT2). The arm with no project
 	// layer marks every one of them.
 	Unchecked []string
+	// IgnoredKeys is every key the repository's file wrote that the resolution
+	// drops rather than honours, in path order, each with the sentence a person
+	// reads: today a workflow's resources: block, whose sizing the profile it
+	// starts from decides (D3421). It is Lifted's sibling for the keys whose
+	// value the project's own document never states, and, as there, the drop is
+	// in every resolution, both arms and every ref, so a key here is in no
+	// Sources entry.
+	IgnoredKeys []IgnoredKeyNote
 }
 
 // listIndexRE is a list index in a path (cache[0].key).
@@ -131,9 +139,15 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	// one until release B (spec §4) — and both arms judge the problems below on
 	// the file as its author wrote it, while what they hand back comes from the
 	// file the drop left.
+	//
+	// The ignored keys go the same way, on the tree the lift left (D3421): a
+	// repository's workflows.*.resources decides nothing, and the profile the
+	// workflow starts from sizes it in both arms — so a file resolved with no
+	// layer is still the config Parse reads, byte for byte.
 	droppedTree, lifted := dropLiftedKeys(tree)
+	droppedTree, ignored := dropIgnoredKeys(droppedTree)
 	dropped := repo
-	if len(lifted) > 0 {
+	if len(lifted) > 0 || len(ignored) > 0 {
 		if dropped, ps = decodeTree(droppedTree); len(ps) > 0 {
 			return nil, nil, ps
 		}
@@ -149,7 +163,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		out := dropped
 		applyDefaults(out)
 		setRepoOwn(out, dropped, droppedTree, tree)
-		res := &Resolution{Sources: map[string]string{}, Lifted: lifted, Unchecked: uncheckedIn(droppedTree)}
+		res := &Resolution{Sources: map[string]string{}, Lifted: lifted, IgnoredKeys: ignored, Unchecked: uncheckedIn(droppedTree)}
 		markLeaves(droppedTree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = out.SHA256()
 		return out, res, nil
@@ -157,7 +171,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	if ps := anchorProblems(repo, l); len(ps) > 0 {
 		return nil, nil, ps
 	}
-	res := &Resolution{Sources: map[string]string{}, LayerSHA256: l.SHA256, Lifted: lifted}
+	res := &Resolution{Sources: map[string]string{}, LayerSHA256: l.SHA256, Lifted: lifted, IgnoredKeys: ignored}
 	m := &mergeState{sources: res.Sources}
 	merged, profileOf, ps := layerMerge(tree, repo, l, m)
 	if len(ps) > 0 {
@@ -181,12 +195,13 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	}
 	res.Ignored, res.Unchecked = m.record()
 	out := c
-	if len(lifted) > 0 {
+	if len(lifted) > 0 || len(ignored) > 0 {
 		// The config a run carries: the same merge over the file the drop
 		// left, whose sources are this config's — a dropped key is in no
-		// Sources entry, and no reader downstream sees a lifted value. Its
-		// tighten record is this merge's too, since a lifted key is one the
-		// repository's file wrote and the carried config does not honour.
+		// Sources entry, and no reader downstream sees a lifted or an ignored
+		// value. Its tighten record is this merge's too, since a lifted key is
+		// one the repository's file wrote and the carried config does not
+		// honour.
 		m = &mergeState{sources: map[string]string{}}
 		droppedMerged, _, ps := layerMerge(droppedTree, dropped, l, m)
 		if len(ps) > 0 {
@@ -261,7 +276,6 @@ func setRepoOwn(c *Config, own *Config, dropped, written map[string]any) {
 	c.RepoWorkspaceBeatSet = setsWorkspaceBeat(written)
 	c.RepoTriageSet = setsTriage(written)
 	c.RepoReviewAgainstTaskSet = setsReviewAgainstTask(written)
-	c.RepoModelGradesSet = setsModelGrades(written)
 	c.RepoVisionSet = setsVision(written)
 	c.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(written)
 	c.RepoWorkflowABSet = setsWorkflowAB(written)
@@ -829,15 +843,6 @@ func levelsNoneModel(agent any) bool {
 // answer becomes Config.RepoPlanningSet.
 func setsPlanning(tree map[string]any) bool {
 	_, ok := tree["planning"]
-	return ok
-}
-
-// setsModelGrades is ProjectLayer.SetsModelGrades for a repository file's own
-// tree: whether the text writes the model_grades key, at any value, which is
-// the same question setsPlanning answers for planning:, for the same reason.
-// Its answer becomes Config.RepoModelGradesSet.
-func setsModelGrades(tree map[string]any) bool {
-	_, ok := tree["model_grades"]
 	return ok
 }
 

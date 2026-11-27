@@ -1012,6 +1012,12 @@ var localRows = []Row{
 	loc("policy_generation", "none: no generation is recorded; the next update adopts the published one", "update", docSetup),
 	loc("layer_generation", "none: no generation is recorded; the next update adopts the published one", "update", docSetup),
 	loc("base_images", "the installation's own base image per kind", "setup", docSetup),
+	// The shared images' retention (design shared-images.md §9): the project
+	// layer's, beside base_images and published with it, and read by
+	// `fugaro image prune`. A file that sets it nowhere gets the loader's own
+	// answer through the accessor, so the row carries a value rather than an
+	// "unset means" sentence (from defaultValues below).
+	{Key: "images.retention_days", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "setup", Doc: docSetup},
 	loc("image_source", "none: no base pin has been recorded", "setup", docSetup),
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
 	loc("log_view", "the project's default logs", "setup", docSetup),
@@ -2074,6 +2080,10 @@ var defaultValues = map[string]Default{
 	// ready a stalled draft itself (on, D2046).
 	"escalation.critical_path_factor": value("0.5", "localcfg.DefaultEscalationCriticalPathFactor"),
 	"escalation.ready_drafts":         value("true", "localcfg.DefaultEscalationReadyDrafts"),
+	// The shared images' retention (C8c): the local loader answers 30 for a
+	// file that sets it nowhere (localcfg.ImageRetentionDays), so the reader
+	// reads the value a run gets back out through the accessor.
+	"images.retention_days": value("30", "localcfg.DefaultImageRetentionDays"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

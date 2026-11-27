@@ -18,8 +18,8 @@ brings plan task L4.1 forward with a draft rather than an approved text.
 **Amended 2026-10-27: counsel's text replaces the draft.** `ee/LICENSE`, `console/LICENSE.md` and
 `mobile/LICENSE.md` now carry counsel's revised text, one wording in all three, with no draft banner. It
 named two documents as bracketed placeholders that a later change fills: the Subscription Terms,
-still a placeholder today, and the contributor licence agreement, whose placeholder was filled on
-2026-10-29 (see below). Counsel's other items are
+whose placeholder was filled on 2026-11-11, and the contributor licence agreement, whose
+placeholder was filled on 2026-10-29 (see below). Counsel's other items are
 handled so: the root `LICENSE` stays pure MIT and `README.md` and `LICENSING.md` state the three
 directories (the owner's ruling of 2026-10-27, keeping O2); `README.md`, `LICENSE` and `LICENSING.md`
 state no client-side MIT exception (counsel's 2.1, checked: none found); SPDX notices on every file in
@@ -31,7 +31,7 @@ at a time. Questions
 for counsel: the covered coordinator and orchestrator code lives outside the three directories and stays
 MIT until it moves; the note that the licence "applies only to code added or changed after it is adopted"
 sits beside a clause covering "every file" under the directories; and the Licensor is defined only
-through Subscription Terms that do not exist yet, while the copyright line names the owner personally.
+through Subscription Terms that did not then exist, while the copyright line names the owner personally.
 
 **Amended 2026-10-29: the CLA's URL is published, and the placeholder is gone.** The owner published
 the contributor licence agreement as a Gist -- one Markdown file, `fugaro-cla.md`, renamed from
@@ -47,12 +47,13 @@ files stay the same Markdown),
 and the docs test's pin moved with them. **The URL is revision-pinned, so editing the Gist later does
 not change it**: a new revision needs a new URL in the licence files, a change counsel should see.
 That is plan task L0.2's last item; CLA Assistant is still to be installed (the CONTRIBUTING gate),
-and the Subscription Terms page is still not published (L4.3).
+and the Subscription Terms page was then not published (L4.3; published since 2026-11-11).
 
 **Amended 2026-10-27: the Subscription Terms draft.** [subscription-terms.md](subscription-terms.md)
-drafts the Fugaro Subscription Terms the licence names, for counsel to review; it is **not in
-force**, and the licence files keep their placeholder URL until counsel approves the text and the
-owner publishes it (plan tasks L4.3 and L4.4,
+drafts the Fugaro Subscription Terms the licence names, for counsel to review; it was then **not in
+force**, and the licence files kept their placeholder URL until counsel approved the text and the
+owner published it (counsel approved it on 2026-10-28 and the page has been published since
+2026-11-11; plan tasks L4.3 and L4.4,
 [reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-draft)).
 
 **Amended 2026-10-27: the Subscription Terms follow the owner's answers.** The draft now carries the
@@ -61,8 +62,9 @@ entity as Licensor, a merchant of record for self-serve sales, one free seat per
 other free plans, a seat as anyone who launches jobs (a pricing rule, the command-line tool staying
 MIT), a read-only console and mobile app after a lapse with no perpetual fallback, and a signed
 offline key for every user issued by a hosted service (amended 2026-10-29: one key per Customer
-for its organisation, and one free seat per legal person, in counsel's text). Prices stay bracketed; it is still **not in
-force** and still awaits counsel (plan task L4.5,
+for its organisation, and one free seat per legal person, in counsel's text). Prices stay bracketed; it was then still **not in
+force** and awaited counsel (counsel approved it on 2026-10-28 and the page has been published since
+2026-11-11; plan task L4.5,
 [reconciliation.md](reconciliation.md#amendment-2026-10-27-the-subscription-terms-follow-the-owners-answers)).
 
 **Amended 2026-10-28: CLA Assistant is installed.** The owner installed CLA Assistant on
@@ -102,7 +104,7 @@ items; the owner ruled on 2026-10-29 that they go in as counsel wrote them. The 
 and bracketed party details, so it was then still not in force (published since 2026-11-11); the page at `/legal/subscription-terms`
 is regenerated from it. Section map and open points:
 [reconciliation.md](reconciliation.md#amendment-2026-10-29-counsels-restructured-subscription-terms).
-(amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate must be released before the Terms go public).
+(amended 2026-10-29: the four owner rulings are applied, counsel approved: read-only use keeps cancel and the kill switch, section 9.1; one License Key per Customer for its organisation, stating its User Seats; no covered-versions date, sections 6.1 and 8.2; one free seat per legal person and its Affiliates, sections 6.3, 7.5 and 10.2(a). Sections 5.1(i), 5.3 and 5.5 are written in the present tense on the owner's word of 2026-10-29, and the roles and the seat estimate had to be released before the Terms went public).
 
 **Amended 2026-11-07: the licence-key design note exists.** [licence-key.md](licence-key.md) is
 D308 as the owner's rulings of 2026-10-27 leave it: one key per organisation with a seat count, one

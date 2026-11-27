@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -841,6 +842,14 @@ type WireError struct {
 	Message string  `json:"message,omitempty"`
 	ResetAt int64   `json:"reset_at,omitempty"`
 	Tried   []Tried `json:"tried,omitempty"`
+	// Action and ResumeAt are the pause's own two members (C3's
+	// PauseMemberAction and PauseMemberResumeAt): the action the credentials
+	// service decided, and the instant a pause ends at. They are written for a
+	// caller that sent the stage header and for no other — the rule C3's
+	// contract states, and the one chainAnswer already keeps — so a gateway of
+	// a release behind never meets a member it would refuse.
+	Action   string `json:"action,omitempty"`
+	ResumeAt int64  `json:"resume_at,omitempty"`
 }
 
 // WriteWireError writes the refusal: its type in the body, its status on the
@@ -952,6 +961,18 @@ func decodeStrict(raw []byte, out any) error {
 type ExhaustedUntil struct {
 	ResetAt time.Time
 	Tried   []Tried
+	// Action and ResumeAt are C3's two pause members, and they are carried
+	// ONLY to a caller that sent the stage header (runstore.PauseMemberAction):
+	// the gateway of a release behind decodes this answer strictly (F57), so a
+	// member it does not know would halt a run this release means to pause. An
+	// empty Action is therefore not "no action" but the release-behind answer,
+	// which is the in-job wait every release has always taken (D3184).
+	//
+	// Action is the credentials service's own decision (R19) and never the
+	// job's, and ResumeAt is the instant a pause ends at, computed by the
+	// service and never named by the run (R8).
+	Action   runstore.PauseAction
+	ResumeAt time.Time
 }
 
 // Error is the sentence a run's halt message is built from. It names the
@@ -1003,6 +1024,9 @@ func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body [
 	if e.ResetAt.UnixMilli() <= 0 {
 		return 0, nil, nil, errors.New("credsvc: the exhausted answer carries no reset instant")
 	}
+	if err := e.checkAction(); err != nil {
+		return 0, nil, nil, err
+	}
 	if err := validateTriedList(e.Tried); err != nil {
 		return 0, nil, nil, err
 	}
@@ -1011,11 +1035,25 @@ func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body [
 	if d := e.ResetAt.Sub(now); d > 0 {
 		hdr.Set("Retry-After", strconv.Itoa(int(math.Ceil(d.Seconds()))))
 	}
+	// The instant rides with a pause and with nothing else, and it is left at
+	// the zero value rather than rendered from a zero time: the zero time's
+	// milliseconds are a large negative number, which omitempty does not drop,
+	// so a wait, a halt and the actionless answer would each carry a resume_at
+	// member — one a gateway of a release behind refuses outright (it decodes
+	// the refusal strictly) and one this release's own gateway refuses as half
+	// of a pause. checkAction admits a pause and only a pause with an instant,
+	// so the guard and the writer say the same thing.
+	var resumeAt int64
+	if e.ResumeAt.UnixMilli() > 0 {
+		resumeAt = e.ResumeAt.UnixMilli()
+	}
 	body, err = json.Marshal(WireError{
-		Error:   ErrorExhaustedUntil,
-		Message: clipRefusalMessage(e.Error()),
-		ResetAt: e.ResetAt.UnixMilli(),
-		Tried:   e.Tried,
+		Error:    ErrorExhaustedUntil,
+		Message:  clipRefusalMessage(e.Error()),
+		ResetAt:  e.ResetAt.UnixMilli(),
+		Tried:    e.Tried,
+		Action:   string(e.Action),
+		ResumeAt: resumeAt,
 	})
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("credsvc: encoding the exhausted answer: %w", err)
@@ -1089,7 +1127,44 @@ func ReadExhaustedUntil(status int, body []byte) (ExhaustedUntil, bool, error) {
 	if err := validateTriedList(e.Tried); err != nil {
 		return ExhaustedUntil{}, false, err
 	}
-	return ExhaustedUntil{ResetAt: time.UnixMilli(e.ResetAt).UTC(), Tried: e.Tried}, true, nil
+	got := ExhaustedUntil{ResetAt: time.UnixMilli(e.ResetAt).UTC(), Tried: e.Tried,
+		Action: runstore.PauseAction(e.Action)}
+	if e.ResumeAt > 0 {
+		got.ResumeAt = time.UnixMilli(e.ResumeAt).UTC()
+	}
+	if err := got.checkAction(); err != nil {
+		return ExhaustedUntil{}, false, err
+	}
+	return got, true, nil
+}
+
+// checkAction holds the answer's two pause members to the rule the gateway
+// reads them by (internal/gateway's exhaustedAnswer), so that the two ends of
+// this contract cannot drift: an action this release does not know is a value
+// neither side wrote, a wait and a halt carry no resume instant (only a pause
+// has one), and a pause always carries one. It is asked by the writer before it
+// renders the body and by the reader after it decodes one.
+func (e ExhaustedUntil) checkAction() error {
+	if e.Action == "" {
+		// The release-behind answer: no member at all.
+		if e.ResumeAt.UnixMilli() > 0 {
+			return errors.New("credsvc: the exhausted answer carries a resume instant and no action")
+		}
+		return nil
+	}
+	if !e.Action.Known() {
+		return errors.New("credsvc: the exhausted answer names no action this service knows")
+	}
+	if e.Action == runstore.ActionPause {
+		if e.ResumeAt.UnixMilli() <= 0 {
+			return errors.New("credsvc: the pause answer carries no resume instant")
+		}
+		return nil
+	}
+	if e.ResumeAt.UnixMilli() > 0 {
+		return errors.New("credsvc: only a pause carries a resume instant")
+	}
+	return nil
 }
 
 // Switch is one credential change inside the service: what the call was on,

@@ -157,6 +157,16 @@ func TestCoverNotCovered(t *testing.T) {
 		"computed member from the same module's account": {[]ResourceChange{
 			{Address: "module.a.google_service_account.s", Type: "google_service_account", Change: Change{Actions: []string{"create"}, After: map[string]any{}, AfterUnknown: map[string]any{}}},
 			{Address: "module.a.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{"member": true}}}}, true},
+		// An incremental plan (0.29.5's credentials-service invoker grant on a
+		// job account that is a no-op) writes the member as a service account
+		// the module HOLDS and does not create, which is the module's own
+		// account just the same.
+		"computed member where the module holds its account": {[]ResourceChange{
+			{Address: "module.a.google_service_account.s", Type: "google_service_account", Change: Change{Actions: []string{"no-op"}, After: map[string]any{"account_id": "fugaro-p-acme-0123abcd"}}},
+			{Address: "module.a.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{"member": true}}}}, true},
+		"computed member where only another module holds one": {[]ResourceChange{
+			{Address: "module.b.google_service_account.s", Type: "google_service_account", Change: Change{Actions: []string{"no-op"}, After: map[string]any{"account_id": "fugaro-p-acme-0123abcd"}}},
+			{Address: "module.a.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{"member": true}}}}, false},
 		"computed role from another module's custom role": {[]ResourceChange{
 			{Address: "module.a.google_project_iam_custom_role.r", Type: "google_project_iam_custom_role", Change: Change{Actions: []string{"create"}, After: map[string]any{}, AfterUnknown: map[string]any{}}},
 			{Address: "module.b.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"member": "user:me@example.com"}, AfterUnknown: map[string]any{"role": true}}}}, false},
@@ -824,7 +834,7 @@ func TestRolePinsAreTheModules(t *testing.T) {
 	strRE := regexp.MustCompile(`"([^"]+)"`)
 	// resource name -> the role ID the modules give it (names.role_ids and the
 	// literals in history.tf and the Firebase module's names.minter_role_id).
-	ids := map[string]string{"launcher": "fugaroLauncher", "fugaro_viewer": ViewerRole, "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "credentials_vertex": CredentialsVertexRole, "workspace_read": WorkspaceReadRole, "intake_secrets": IntakeSecretsRole, "secret_lister": SecretListerRole, "catalog_lease": CatalogLeaseRole, "state_read": MCPStateReadRole, "licence_renewal": LicenceRenewalRole, "mailbox_signer": MailboxSignerRole}
+	ids := map[string]string{"launcher": "fugaroLauncher", "fugaro_viewer": ViewerRole, "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "credentials_vertex": CredentialsVertexRole, "workspace_read": WorkspaceReadRole, "intake_secrets": IntakeSecretsRole, "secret_lister": SecretListerRole, "catalog_lease": CatalogLeaseRole, "state_read": MCPStateReadRole, "licence_renewal": LicenceRenewalRole, "mailbox_signer": MailboxSignerRole, "push_signer": PushSignerRole}
 	for role, label := range deployerRoleLabel {
 		ids[label] = role
 	}

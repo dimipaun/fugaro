@@ -73,7 +73,7 @@ import (
 // credential — which the craft migration derived — is that pool of one already.
 
 // The migration's own lines, each a constant because a person reads them and
-// their length is pinned (TestUpdateMessagesAreLaconic, CLAUDE.md's bound on
+// their length is pinned (TestMessagesAreLaconic, CLAUDE.md's bound on
 // what a command tells someone): one per state this migration can be in and
 // cannot write, and the one D3192's change is announced with.
 const (

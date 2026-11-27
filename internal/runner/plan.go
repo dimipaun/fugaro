@@ -273,11 +273,27 @@ func (r *run) refreshPlanRounds() {
 // plan from levels it has not committed to yet: a plan that does not hold them
 // must leave the run's own plan untouched.
 func (r *run) planFor(levels config.Levels) ([]planStep, error) {
-	plan := planOf(r.rcp, levels, r.cfg.Agent, r.spec.Overrides.ReviewRounds, r.reachedRigor())
+	plan := planOf(r.rcp, levels, planAgent(r.cfg, r.reachedRigor()), r.spec.Overrides.ReviewRounds, r.reachedRigor())
 	if err := checkPlan(r.rcp, levels, plan); err != nil {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// planAgent is the run's agent block as the plan reads its round numbers off
+// it. A repository's round knob the project layer says nothing about is kept
+// unjudged by the merge (RT1), so its baseline is the mode's own row and the
+// tighter of the two stands (R3, R20, RT2): where the row is the higher number
+// the repository's value stands down, and the plan then takes the row exactly
+// as it takes it for a layer that wrote nothing — the step records the mode as
+// the one that decided (Precedence 0), so a mode a round raises supplies the
+// rounds remaining (reviewRounds, D22).
+func planAgent(cfg *config.Config, mode rigor.Rigor) config.Agent {
+	a := cfg.Agent
+	a.FirstLineRounds = config.TightenRounds(cfg, "agent.first_line_rounds", a.FirstLineRounds, rigor.DefaultRounds(mode).Inner)
+	a.ReviewRounds = config.TightenRounds(cfg, "agent.review_rounds", a.ReviewRounds, rigor.DefaultRounds(mode).Senior)
+	a.AdversarialRounds = config.TightenRounds(cfg, "agent.adversarial_rounds", a.AdversarialRounds, rigor.AdversarialDefault(mode))
+	return a
 }
 
 // stepLevel is which review level a step kind belongs to, false for a kind no
@@ -377,8 +393,10 @@ func planRecipe(rcp *recipe.Recipe, levels config.Levels) []recipe.Step {
 // (docs/recipes/spec.md §6). Rounds come from the task's override, else the
 // step's max_rounds, else agent.*, else the mode's own row (rigor.DefaultRounds,
 // and rigor.AdversarialDefault for level 3) — a default the four layers above
-// it set another number against, up or down, within the recipe's bounds (the
-// owner's ruling of 2026-10-31, which answers O3).
+// it set another number against, up or down, within the recipe's bounds, the
+// repository's own number excepted: the project layer saying nothing about it,
+// that one is judged against the row before it arrives (planAgent, R20, RT2)
+// (the owner's ruling of 2026-10-31, which answers O3).
 func planOf(rcp *recipe.Recipe, levels config.Levels, a config.Agent, reviewOverride *int, mode rigor.Rigor) []planStep {
 	defaults := rigor.DefaultRounds(mode)
 	var out []planStep
@@ -436,7 +454,9 @@ func planOf(rcp *recipe.Recipe, levels config.Levels, a config.Agent, reviewOver
 // layers' "unset" — config.Validate refuses 0 nowhere but reads it as "the mode
 // supplies this", and recipe.Step.MaxRounds uses 0 the same way — so a step
 // whose set is 0 takes the mode's number and never runs no rounds at all, which
-// checkPlan would refuse.
+// checkPlan would refuse. A repository's number the project layer says nothing
+// about arrives here already judged against the row (planAgent, R20, RT2), so 0
+// is also what a number the row outbid reads as.
 func setRounds(set, modeDefault, bound int) int {
 	if set == 0 {
 		set = modeDefault

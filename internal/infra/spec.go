@@ -67,16 +67,14 @@ const (
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv
 	// CheckoutEnv, set to the workflow's own config.Checkout value on a
-	// checkout: clone or checkout: shared workflow's job (never on a baked
-	// one, whose spec stays exactly what it was before clone existed), tells
-	// the runner's bootstrap to make a blobless clone at start instead of
-	// moving a baked-in one, and to install the checkout's mise tools
-	// (design generic-tool.md §2, G4; plan Task 17). A shared job needs it
-	// for the same reason a clone job does: its image holds the dependency
-	// layer alone, so the source can only come from the clone (design
-	// forge-authorship-images/shared-images.md §1, §6). The runner reads it,
-	// so the constant lives there (runner.CheckoutEnv), the same way the
-	// budget variables do.
+	// checkout: clone or checkout: shared workflow's job, never on a baked
+	// one. No runner reads it any more: whether a run makes a blobless clone
+	// at start, and whether it installs the checkout's mise tools, is the
+	// absence of a usable baked checkout in its image (design
+	// generic-tool.md §2, G4; plan Task 17; CF1, D3440). The constant stays
+	// until this file stops writing it (CF2a), and it lives in the runner
+	// (runner.CheckoutEnv) because the deployer sets it from there, the same
+	// way the budget variables do.
 	CheckoutEnv = runner.CheckoutEnv
 	// RemoteEnv, set to the repository's credential-free clone URL on a job
 	// whose image carries no checkout of this repository: a checkout: clone

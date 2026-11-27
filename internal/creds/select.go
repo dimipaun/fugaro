@@ -59,6 +59,20 @@ type Credential struct {
 	// project's own Anthropic key belong to no provider and run a Claude model
 	// alone.
 	Provider string
+	// Container is whether this credential IS a per-user secret container and
+	// nothing else: one person's own `fugaro_u_<id>_<name>`, whose value lives in
+	// that container and in no bundle entry of the service's.
+	//
+	// It carries no name of its own, because the name already says the rest:
+	// secretname.Parse tells a container's name from a bundle credential's and
+	// the read asks the container by exact name. What this flag adds is the one
+	// answer the grammar alone cannot give — that the name has NO bundle entry
+	// behind it, so a container that is not there is an absent credential and
+	// never R6's fall to the entry the bare name holds. A PERSONAL POOL's members
+	// are such containers (PL9): `fugaro_u_<id>_team-token` is a container of the
+	// person's own, and the bundle's `team-token` is a different credential the
+	// project holds, which that member must never be served.
+	Container bool
 }
 
 // Run is the run a selection is made for: the repository slug and the run id

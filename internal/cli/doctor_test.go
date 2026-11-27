@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -15,9 +16,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/basepin"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -146,6 +149,74 @@ func doctorCheckByID(checks []doctorCheck, id string) (doctorCheck, bool) {
 		}
 	}
 	return doctorCheck{}, false
+}
+
+// TestDoctorWarnsOverImageCap: the image-count cap's warning is doctor's too
+// (design docs/forge-authorship-images/shared-images.md §8) — over the cap,
+// one warning naming the count, the cap and the two remedies; under it,
+// nothing at all. It reads the lock and no registry.
+func TestDoctorWarnsOverImageCap(t *testing.T) {
+	r := newDoctorRig(t)
+	noProjectLayerBucket(t)
+	runs := rigSharedBucket(t, r)
+	images := map[string]imagecheck.LockedImage{}
+	for i := range imagecheck.ImageCap + 1 {
+		key := fmt.Sprintf("%064x", i)
+		images[key] = lockedImage(key, time.Date(2026, 11, 2, 1, 5, 0, 0, time.UTC), nil)
+	}
+	writeRigLock(t, runs, images)
+
+	o := doctorJSON(t)
+	c, ok := doctorCheckByID(o.Checks, "shared-image-cap")
+	if !ok {
+		t.Fatalf("no shared-image-cap check over the cap: %+v", o.Checks)
+	}
+	if c.OK || c.Severity != "warning" {
+		t.Errorf("the check = %+v, want a warning that fails --strict", c)
+	}
+	if !strings.Contains(c.Problem, fmt.Sprintf("cap of %d", imagecheck.ImageCap)) || !strings.Contains(c.Problem, fmt.Sprint(imagecheck.ImageCap+1)) {
+		t.Errorf("the problem does not name the count and the cap: %q", c.Problem)
+	}
+	for _, want := range []string{"fugaro image ls", "fugaro image prune"} {
+		if !strings.Contains(c.Fix, want) {
+			t.Errorf("the fix does not name %q: %q", want, c.Fix)
+		}
+	}
+
+	key := strings.Repeat("a", 64)
+	writeRigLock(t, runs, map[string]imagecheck.LockedImage{key: lockedImage(key, time.Date(2026, 11, 2, 1, 5, 0, 0, time.UTC), nil)})
+	if c, ok := doctorCheckByID(doctorJSON(t).Checks, "shared-image-cap"); ok {
+		t.Errorf("doctor warned under the cap: %+v", c)
+	}
+}
+
+// rigSharedBucket points the shared bucket opener at the rig's own runs
+// bucket on disk and returns it: the lock is the runs bucket's object, and
+// the rig's config computes a gs:// URL no test may open.
+func rigSharedBucket(t *testing.T, r *doctorRig) string {
+	t.Helper()
+	runs := filepath.Join(r.dir, "runs")
+	old := sharedBucketOpener
+	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+runs) }
+	t.Cleanup(func() { sharedBucketOpener = old })
+	return runs
+}
+
+// writeRigLock writes the shared-image lock into the runs bucket rigSharedBucket
+// returned.
+func writeRigLock(t *testing.T, runs string, images map[string]imagecheck.LockedImage) {
+	t.Helper()
+	path := filepath.Join(runs, filepath.FromSlash(imagecheck.LockKey))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(imagecheck.Lock{Version: imagecheck.LockVersion, Images: images})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // TestDoctorReadOnly: doctor's Google calls are reads only, whatever it

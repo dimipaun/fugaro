@@ -1789,7 +1789,7 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 		// be served by (the class rule and the provider tie — checkCandidates),
 		// Check 50's gate for a Claude model, a wait on an entry the owner's own
 		// marks hold, and an unreadable state.
-		s.refuseSelection(ctx, w, id, err, nil)
+		s.refuseSelection(ctx, w, id, err, nil, cl.stage)
 		return
 	}
 	ans, err := s.send(ctx, cl, e)

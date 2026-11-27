@@ -344,37 +344,6 @@ func updateLeavesTheRemoval(ctx context.Context) bool {
 	return on
 }
 
-// anchor puts the checkout's gcp_project: line (the trust anchor shared
-// config is found from) into fugaro.yaml (writeAnchor). The repository
-// stage's typed authorization (an unlisted repository) covers onboarding, not
-// an edit to a committed file, so the edit keeps its own single prompt.
-// planOnly prints what it would do and writes nothing. It also warns while
-// the line is not yet safe to merge (gcpProjectProblems).
-func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly bool) error {
-	e, tg := s.e, s.tg
-	if tg == nil || e.lc == nil || e.lc.GCPProject == "" {
-		return nil
-	}
-	if note := customBucketNote(e.lc); note != "" {
-		fmt.Fprintf(e.r.w, "note: %s\n", note)
-		return nil
-	}
-	a, err := prepareAnchor(e.lc, tg.root)
-	var bh *byHandError
-	switch {
-	case errors.As(err, &bh):
-		fmt.Fprintf(e.r.w, "note: %s\n", bh.Error())
-	case err != nil:
-		return err
-	default:
-		if _, err := e.r.writeAnchor(a, env, planOnly); err != nil {
-			return err
-		}
-	}
-	s.warnOldImages(ctx)
-	return nil
-}
-
 // The reasons of gcpProjectProblems, one clause each, about one workflow's
 // job image ("it") or the base image its next build would start from.
 
@@ -452,7 +421,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 
 // anchorProblem is one workflow's reasons the gcp_project line is not safe
 // to merge yet, as one text; remote is a cloud read that failed (exit 2 for
-// --anchor).
+// the write the caller is making).
 type anchorProblem struct {
 	text   string
 	remote bool
@@ -505,8 +474,9 @@ func baseRefReason(ref, kind string) string {
 }
 
 // gcpProjectProblems are the reasons repo's fugaro.yaml may not carry
-// gcp_project yet, one problem per workflow, the one source of the
-// repository stage's warnings and of fugaro update --anchor's checks. bases
+// gcp_project yet, one problem per workflow, the one source of the warnings
+// `fugaro project repos add` prints before it writes the line (the anchor the
+// repository stage used to write it through is gone, U9b). bases
 // are the repository's workflows, each with its base kind ("" for none
 // known). For every workflow, its build record in the runs bucket must exist
 // and be readable, name a release at or after gcpProjectFieldSince as the

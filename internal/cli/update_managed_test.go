@@ -137,7 +137,9 @@ func leftFor(got, stage string, kind initflow.LeftKind) string {
 // stepLineInLog is a step's own line as the log holds it, whole: the terminal
 // gets the brief account (report.Brief), one clause of a reason, and the log
 // the step points at holds the rest — so a test asserting what a refusal says
-// reads it there, on the same step's line.
+// reads it there, on the same step's line. The head names the stage by its ID
+// here: the log line carries the ID while the account's own carries the stage's
+// plain-words name (D3435), which is reachedLeftStep's other half.
 func stepLineInLog(t *testing.T, got, head string) string {
 	t.Helper()
 	log := namedLog(t, got)
@@ -148,6 +150,19 @@ func stepLineInLog(t *testing.T, got, head string) string {
 	}
 	t.Fatalf("the log holds no line starting %q, so the step's whole sentence is out of reach:\n%s", head, log)
 	return ""
+}
+
+// reachedLeftStep is the whole line of a step the gate left for the owner. The
+// account names the stage in plain words and the log the line is read from
+// carries its ID, so the two are spelled apart here (D3435) — and a run whose
+// account does not hold the line is failed on, because that is what says the
+// run reached the stage at all.
+func reachedLeftStep(t *testing.T, got, stage string) string {
+	t.Helper()
+	if !strings.Contains(got, markLeft+" "+initflow.DisplayName(stage)+":") {
+		t.Fatalf("the run did not reach the %s stage, so nothing here was judged:\n%s", stage, got)
+	}
+	return stepLineInLog(t, got, markLeft+" "+stage+":")
 }
 
 // T9's red step (D1545), and the one that says what this gate is now: a
@@ -1471,14 +1486,117 @@ func TestUpdateManagedDefaultViewShowsTheStepsOnly(t *testing.T) {
 	// The other half of the promise: the steps and the closing line are what is
 	// left on the screen.
 	lines := reportLines(out)
-	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" installation ") {
+	if l := stepLineOf(lines, initflow.Installation); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Installation)+" ") {
 		t.Errorf("the applied step is not on the screen: %q\n%s", l, got)
 	}
-	if l := stepLineOf(lines, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+	if l := stepLineOf(lines, initflow.Preflight); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Preflight)) {
 		t.Errorf("the run's first step is not on the screen: %q\n%s", l, got)
 	}
 	if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Done in ") && !strings.HasPrefix(last, "Failed in ") {
 		t.Errorf("the closing line is %q, want the reporter's summary\n%s", last, got)
+	}
+}
+
+// catalogEntryPlan is the plan an added catalog entry leaves on the
+// installation root, as check 292's log holds it (the owner's, 2026-11-26): the
+// catalog check job's configuration — the env the catalog is read out of, which
+// is what the entry moved — and a project child's job, the repository the
+// entry's own jobs run from. Both are the module's `google_cloud_run_v2_job`,
+// and both are in the cover's tables.
+func catalogEntryPlan() []planChange {
+	return []planChange{
+		jobUpdate("module.installation.google_cloud_run_v2_job.catalog_check[0]"),
+		jobUpdate(`module.project["fugaro-p-acme-0123456789ab"].google_cloud_run_v2_job.this`),
+	}
+}
+
+// jobUpdate is one Cloud Run job's in-place update with its configuration
+// moved: the before/after views the plan carries, shaped as the modules write
+// them (a one-element template list, the container's env among its fields), so
+// the changed path is the sensitive location the step's warning line names.
+func jobUpdate(addr string) planChange {
+	job := func(catalog string) map[string]any {
+		return map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{
+			"containers": []any{map[string]any{
+				"image": "us-east5-docker.pkg.dev/" + initProject + "/fugaro/fugaro@sha256:0000",
+				"env": []any{
+					map[string]any{"name": "FUGARO_PROJECT", "value": initProject},
+					map[string]any{"name": "FUGARO_IMAGE_CATALOG", "value": catalog},
+				},
+			}},
+		}}}}}
+	}
+	return planChange{"address": addr, "type": "google_cloud_run_v2_job",
+		"change": map[string]any{"actions": []string{"update"},
+			"before": job(`{"version":2,"catalog":{"entries":[{"name":"tools"}]}}`),
+			"after":  job(`{"version":2,"catalog":{"entries":[{"name":"tools"},{"name":"chk292"}]}}`)}}
+}
+
+// TestUpdateManagedAppliesInASessionNobodyIsAt is check 292's own case: a
+// managed project, a session nobody is at — no coding agent's marker, no
+// terminal, no --json and no --non-interactive, which is the pipe a script, a
+// cron or a sandbox check drives the command in — and the plan an added catalog
+// entry leaves (catalogEntryPlan).
+//
+// The step applies and nothing is confirmed. What answers for it is the run's
+// own confirmation — the read of the two marks, which is the same answer the
+// owner's own terminal gets on a managed project (D1016, the ruling of
+// 2026-11-01) — because there is no one to put a question to: a run that asked
+// here would be asking a person who is not there, which is the prompt the
+// managed case exists to remove. What check 292 read instead was "CONFIRM
+// (project …): applies 0 imports, 0 creates, 7 updates …" and then "the
+// confirmation of this step needs a real terminal": the session rule answered
+// for the marks at the terminal only, a pipe carries no marker and is no
+// terminal, and the step kept a confirmation it asked of nobody.
+//
+// The plan is one the run's own cover covers (tf.Cover, whose tables name the
+// job and the paths an entry moves), so the step is one the run may take
+// silently; a plan outside it — a delete, a replace, an IAM binding — asks its
+// own question and refuses in this session, which is the half that must not
+// move.
+//
+// The plugin stage is current in this rig — Claude Code's own record of the
+// installed plugin, at this release's version — which is the machine a by-hand
+// update leaves behind: a stage with work of its own still stops the run, and
+// that stop is the stage's own and not this plan's.
+func TestUpdateManagedAppliesInASessionNobodyIsAt(t *testing.T) {
+	r := updateManagedRig(t)
+	clearAgentMarkers(t)
+	noTerminal(t)
+	updating(t, r)
+	r.setPlan(t, catalogEntryPlan()...)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.2.0"}]}}`)
+
+	got, err := updateRun(t, r, "update")
+	if err != nil {
+		t.Fatalf("a managed project's update stopped in a session nobody is at: %v\n%s", err, got)
+	}
+	for _, asked := range []string{"CONFIRM", "needs a real terminal", "[y/N]"} {
+		if strings.Contains(got, asked) {
+			t.Errorf("the run put a confirmation to a session nobody is at (%q):\n%s", asked, got)
+		}
+	}
+	// The installation stage's own apply, and installation-2's behind it: the
+	// stage that re-applies the root once the images stage has moved the base
+	// image the scheduled jobs run FROM (R7). Both are the one document.
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Errorf("%d terraform apply(s) ran, want the two the run covered:\n%s", n, got)
+	}
+	// The sentence the covered step prints is the run's own account of it and
+	// goes where that account goes (initRun.stageDetail): the log, which is
+	// where a run that is not --verbose keeps it.
+	if log := newestLog(t, "update"); !strings.Contains(log, initflow.GateOrdinary()) {
+		t.Errorf("the applied step does not say what covered it, so nothing reads as the run's own account:\n%s", log)
+	}
+	recs := audits(t, r)
+	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("%d record(s) after an admitted plan, want two admitted: %+v", len(recs), recs)
+	}
+	if recs[0].AgentMarker != "" {
+		t.Errorf("the record names a coding agent's marker (%q), and this session carries none: %+v", recs[0].AgentMarker, recs[0])
 	}
 }
 
@@ -2057,11 +2175,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	// The step's own line is what is read here and not the whole account: this
 	// run also notes that the shared config was not published, which is another
 	// step's refusal in the session's words and has nothing to do with the node.
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Policy)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2127,11 +2241,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session set the accounts the review credential goes out on:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Policy)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2189,11 +2299,7 @@ func TestUpdateManagedPolicyStageRefusesTheCraftGrants(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session published the crafts' credentials and pools:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the policy stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Policy)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2238,8 +2344,7 @@ func TestUpdateManagedRefusesTheFirstPolicyPublish(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the first policy node:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Policy + ":"
-	if !strings.Contains(got, head) {
+	if !strings.Contains(got, markLeft+" "+initflow.DisplayName(initflow.Policy)+":") {
 		t.Fatalf("the run did not stop at the policy stage, so nothing here was judged:\n%s", got)
 	}
 	if v := db.Value(projectpolicy.PathShared()); v != nil {
@@ -2572,11 +2677,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session admitted a member to the workspace:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Workspace + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Workspace)
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the workspace step is the user's in a sentence that is not the gate's: %s", line)
 	}
@@ -2631,11 +2732,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a managed project's agent session wrote the workspace's first record:\n%s", got)
 	}
-	head := markLeft + " " + initflow.Workspace + ":"
-	if !strings.Contains(got, head) {
-		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
-	}
-	line := stepLineInLog(t, got, head)
+	line := reachedLeftStep(t, got, initflow.Workspace)
 	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the first record: %s", line)
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -154,6 +155,12 @@ func routeAct(path string) (purpose, credential string) {
 		// for a caller that is not a run of this installation at all
 		// (callerWithoutJobPurpose).
 		return PurposeSlipGrant, ""
+	case runstore.PausePath:
+		// The pause's line is a run's own report that it has saved, and it names
+		// no credential for the grant's reason: the act records the pause the
+		// service decided and issues nothing. Its line is written for a job of
+		// this installation (callerWithoutJobPurpose).
+		return PurposePause, ""
 	case SlipClaimPath:
 		// A claim's line is an ordinary job-class one and names no credential,
 		// for the grant's reason: the claim answers a claim secret and issues
@@ -166,6 +173,15 @@ func routeAct(path string) (purpose, credential string) {
 		// act, writing a record of names — the principal, the project and the
 		// pool — and issuing no credential at all, so there is no name of one
 		// for the line to carry (credentiallessPurpose, callerWithoutJobPurpose).
+		return PurposePoolDesignate, ""
+	case PersonalPoolPath, PersonalPoolGetPath:
+		// A personal pool's two routes are the designation's own shape one step
+		// further (PL9): the launcher's act, writing or reading a record of
+		// names — the person, the project, the pool and the member NAMES — and
+		// touching no credential at all, so there is no name of one for the line
+		// to carry. The two are answered under the designation's own purpose for
+		// the same reason: one class of caller, one shape of act, and a record of
+		// names either way.
 		return PurposePoolDesignate, ""
 	case WorkflowSecretsPath:
 		// The workflow-secrets route's credential is the CONTAINER the value
@@ -269,7 +285,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
+	case MessagesPath, CountTokensPath, ProviderRoutePath, ProviderCountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, PoolDesignatePath, PersonalPoolPath, PersonalPoolGetPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath, runstore.PausePath:
 		return true
 	// The six identity routes (C1, R2): a run's identity is issued here, with
 	// every one of them answered ahead of the shared parse below. The
@@ -965,6 +981,16 @@ type Server struct {
 	// ServeHTTP. It is built here and not read per call, because it is the
 	// deployment's shape and not the call's.
 	resolver ScopeResolver
+	// pauses is what this service last answered each run about its pause, and
+	// whether that run has since reported it had saved (pause.go). It is this
+	// service's own memory, like the slip cache, and it is the one half of the
+	// pause contract that is: what a RESUME reads is the record on disk
+	// (creds/pauses), which outlives the process, while the question this
+	// answers — did I just tell this run to pause, and has it already answered
+	// me — is a question about a call, and a service that has restarted answers
+	// it with a refusal, which is the direction that ends a run rather than
+	// suspending a chain nothing resumes.
+	pauses pauseBook
 }
 
 // NewServer validates cfg and returns the service.
@@ -1246,7 +1272,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+PoolDesignatePath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+ProviderRoutePath+", "+ProviderCountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+runstore.PausePath+", "+PoolDesignatePath+", "+PersonalPoolPath+", "+PersonalPoolGetPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+", "+BuildCredentialsPath+", "+identitywire.TicketPath+", "+identitywire.ClaimPath+", "+identitywire.PairingPath+", "+identitywire.DevicePath+", "+identitywire.ProbePath+" and "+identitywire.JobPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	// The scope this call is served under (R1, C1), asked once and before any
@@ -1439,6 +1465,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.poolDesignate(ctx, w, r)
 		return
 	}
+	if r.URL.Path == PersonalPoolPath {
+		// The personal-pool route, answered ahead of the shared parse for the
+		// designation route's reason exactly (PL9): its caller records or reads
+		// the pool of its OWN runs, holds no run identity, and would be refused
+		// by RequestFromHTTP for the identity headers it never had. The body is
+		// this route's own read (readPersonalPoolRequest). Like a designation,
+		// it is not a workspace's route: a personal pool lives in the project
+		// (D3179 as amended), so a workspace's service resolves it to the
+		// unserved scope.
+		s.poolPersonal(ctx, w, r)
+		return
+	}
+	if r.URL.Path == PersonalPoolGetPath {
+		s.poolPersonalGet(ctx, w, r)
+		return
+	}
 	if _, isIdentity := identitywire.RouteFor(r.URL.Path); isIdentity {
 		// The five identity routes (C1, R2), answered before the shared parse
 		// for the slip's grant reason and not a new one: their caller holds no
@@ -1573,6 +1615,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// a value the run pasted into its own body reaches no upstream log.
 			ctx = withCallSlip(ctx, binding)
 		}
+	}
+	if r.URL.Path == runstore.PausePath {
+		// The pause (R12, PR2's own call). It goes through the shared parse
+		// below like the claim and not through the slip route's own admission:
+		// the run presents the two identities every other run call does, and the
+		// slip it carries is the one the model path verified (verifySlipOfCall).
+		// Everything the service records about the pause is read from that slip
+		// and from the answer it last gave the run (pauseRoute), so nothing on
+		// this path is the job's word about who launched it.
+		s.pauseRoute(ctx, w, r, id)
+		return
 	}
 	if r.URL.Path == SlipClaimPath {
 		// The claim (DS1.3, D1941). Everything above it is its admission and
@@ -2153,6 +2206,7 @@ func (s *Server) forgetRun(ctx context.Context, slug, run string) {
 	}); err != nil {
 		s.log.Warn("credsvc: an ended run's placement could not be removed", "error", err)
 	}
+	s.pauses.forget(slug, run)
 }
 
 // slipBodyTTL is how long the body of a slip this service verified is held in

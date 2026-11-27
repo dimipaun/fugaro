@@ -26,6 +26,7 @@ type Registry struct {
 
 	mu        sync.Mutex
 	manifests map[string]string // <name>:<ref> → digest
+	deleted   []string
 	accepts   []string
 	tokens    int
 }
@@ -103,7 +104,28 @@ func (f *Registry) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 		w.Header().Set("Docker-Content-Digest", digest)
 		w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
 		w.WriteHeader(http.StatusOK)
+	case r.Method == http.MethodDelete && m != nil:
+		auth := r.Header.Get("Authorization")
+		if f.Bearer != "" && auth != "Bearer "+f.Bearer {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		key := m[1] + ":" + m[2]
+		if _, ok := f.manifests[key]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		delete(f.manifests, key)
+		f.deleted = append(f.deleted, key)
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		f.unhandled(w, r)
 	}
+}
+
+// Deleted are the manifests removed by a DELETE, as <name>:<digest>.
+func (f *Registry) Deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.deleted)
 }

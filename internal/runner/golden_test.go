@@ -120,6 +120,11 @@ func oldFlow(cfg string) string {
 // priced the run in project_layer, and config_sha256 is the hash of the file
 // with those keys dropped. The run itself is the same one: no policy, no budget
 // key, no policy env.
+//
+// And once more when a silent project's baseline became the run's own mode
+// (R20, RT2): the harness states the fixture's tighten-only agent keys in that
+// layer too (testutil.SanctionAgent), so the layer's hash moves and nothing
+// else does — the fixture's review_rounds of 2 stands, as it did before.
 func TestNoPolicyIsM9aBehaviour(t *testing.T) {
 	h := newHarness(t, oldFlowCfg(t), nil)
 	checkGolden(t, h, "nopolicy", false)

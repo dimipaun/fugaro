@@ -76,13 +76,13 @@ func TestConvergeFromNothing(t *testing.T) {
 	account := reportLines(out)
 	// Done and changed are the same tick to the reporter, so what says the
 	// installation changed is the tick over the one apply below.
-	if l := stepLineOf(account, "installation"); !strings.HasPrefix(l, markDone+" installation ") {
+	if l := stepLineOf(account, initflow.Installation); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Installation)+" ") {
 		t.Errorf("the installation is not a tick: %q\n%s", l, out)
 	}
-	if l := stepLineOf(account, "firebase"); !strings.HasPrefix(l, markDone+" firebase no budget database was created") {
+	if l := stepLineOf(account, initflow.Firebase); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Firebase)+" no budget database was created") {
 		t.Errorf("the Firebase stage is %q, want the one line of a no-flag run that may not create one\n%s", l, out)
 	}
-	if l := stepLineOf(account, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+	if l := stepLineOf(account, initflow.Preflight); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Preflight)) {
 		t.Errorf("the preflight is not a tick: %q\n%s", l, out)
 	}
 	if !slices.ContainsFunc(account, func(l string) bool { return strings.HasPrefix(l, "Done in ") }) {
@@ -332,13 +332,13 @@ func TestFirebaseRunsThroughTheLoop(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	account := reportLines(out)
-	if l := stepLineOf(account, "installation"); !strings.HasPrefix(l, markSkipped+" installation") {
+	if l := stepLineOf(account, initflow.Installation); !strings.HasPrefix(l, markSkipped+" "+initflow.DisplayName(initflow.Installation)) {
 		t.Errorf("installation is not skipped: %q\n%s", l, out)
 	}
-	if l := stepLineOf(account, "firebase"); !strings.HasPrefix(l, markDone+" firebase") {
+	if l := stepLineOf(account, initflow.Firebase); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Firebase)) {
 		t.Errorf("firebase is not a tick: %q\n%s", l, out)
 	}
-	if l := stepLineOf(account, "preflight"); !strings.HasPrefix(l, markDone+" preflight") {
+	if l := stepLineOf(account, initflow.Preflight); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Preflight)) {
 		t.Errorf("preflight is not a tick: %q\n%s", l, out)
 	}
 	if got := r.applies(t); !slices.Equal(got, []string{"installation", "firebase", "installation"}) {

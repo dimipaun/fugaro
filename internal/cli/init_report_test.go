@@ -88,7 +88,11 @@ func waitsFor(got, target string) bool {
 		strings.Contains(got, "step not run (it needs "+target+")")
 }
 
-// stepName is the stage a step line names, or "" for a line that is not one.
+// stepName is the ID of the stage a step line names, or "" for a line that is
+// not a step: a stage's own line carries the stage's plain-words name
+// (initflow.DisplayName, D3435) and is named back to its ID here, while a line
+// of another family — a step of `accounts add`, an image refresh's build —
+// carries the one word it was given.
 func stepName(line string) string {
 	for _, m := range []string{markDone, markFailed, markLeft, markSkipped} {
 		rest, ok := strings.CutPrefix(line, m+" ")
@@ -97,6 +101,9 @@ func stepName(line string) string {
 		}
 		if waitsRE.MatchString(rest) {
 			return ""
+		}
+		if name, ok := stageNameOf(rest); ok {
+			return name
 		}
 		name, _, _ := strings.Cut(rest, ":")
 		if i := strings.IndexByte(name, ' '); i >= 0 {
@@ -107,11 +114,39 @@ func stepName(line string) string {
 	return ""
 }
 
-// stepLineOf is the one line of account that is the named stage's step.
+// stageNameOf is the stage a step line opens with the name of, when it opens
+// with one's plain-words name: the line is the plain name and then a detail, a
+// colon or nothing.
+func stageNameOf(rest string) (string, bool) {
+	for _, name := range initflow.Names() {
+		if namesStage(rest, initflow.DisplayName(name)) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// namesStage is whether a step line's rest opens with the word w a stage is
+// named by, and then a detail, a colon or nothing: never a word that only
+// starts with it ("installation" and "installation-2" are two stages).
+func namesStage(rest, w string) bool {
+	r, ok := strings.CutPrefix(rest, w)
+	return ok && (r == "" || strings.HasPrefix(r, " ") || strings.HasPrefix(r, ":"))
+}
+
+// stepLineOf is the one line that is the named stage's step, read from either
+// the account, which names the stage in plain words (D3435), or from the log,
+// which carries its ID — a caller that reads both together gets either.
 func stepLineOf(account []string, name string) string {
 	for _, l := range account {
-		if stepName(l) == name {
-			return l
+		for _, m := range []string{markDone, markFailed, markLeft, markSkipped} {
+			rest, ok := strings.CutPrefix(l, m+" ")
+			if !ok {
+				continue
+			}
+			if namesStage(rest, initflow.DisplayName(name)) || namesStage(rest, name) {
+				return l
+			}
 		}
 	}
 	return ""
@@ -252,12 +287,12 @@ func TestUpdateDefaultOutputIsShort(t *testing.T) {
 		}
 		seen[name] = true
 	}
-	if !seen["installation"] || !seen["preflight"] {
+	if !seen[initflow.Installation] || !seen[initflow.Preflight] {
 		t.Errorf("the account does not name the stages the run ran: %v\n%s", seen, out)
 	}
 	// The rig has something to apply, so the installation's step is a tick
 	// carrying what it did, not a skip or a plan.
-	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" installation ") || !strings.Contains(l, "creates") {
+	if l := stepLineOf(lines, "installation"); !strings.HasPrefix(l, markDone+" "+initflow.DisplayName(initflow.Installation)+" ") || !strings.Contains(l, "creates") {
 		t.Errorf("the stage that applied does not say so: %q\n%s", l, out)
 	}
 	path, log := onlyLog(t, "update")
@@ -269,37 +304,44 @@ func TestUpdateDefaultOutputIsShort(t *testing.T) {
 	}
 }
 
-// TestUpdatePlanOnlyKeepsThePlanOnTheTerminal: --plan-only takes the path it
-// took before the converge's reporter (the spec's "the paths they take today").
-// The plan's own text is the one thing the command exists to show, and a
-// plan-only run that succeeds names no log path the way a failure does — a
-// failure names the log, and that log has to hold the plan — so the reporter's
-// stream alone would leave the plan's text out of reach.
+// TestUpdatePlanOnlyKeepsThePlanOnTheTerminal: --plan-only prints the plan in
+// plain words and the path of the log the rest of it is in (D3438). The plan's
+// own text is the one thing the command exists to show, and Terraform's account
+// of it — the addresses — is a raw stream no state puts on a screen any more,
+// so the log's path is what keeps it reachable for a run that succeeds and
+// names no log the way a failure does.
 func TestUpdatePlanOnlyKeepsThePlanOnTheTerminal(t *testing.T) {
 	applyingRig(t)
 	out, errOut, err := executeStdin(t, "", "update", "--plan-only")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
+	path, log := onlyLog(t, "update")
 	if !strings.Contains(out, "--plan-only: nothing applied") {
 		t.Errorf("the run did not stop on its plan-only line:\n%s%s", out, errOut)
 	}
-	if !strings.Contains(errOut, convergeNoise) {
-		t.Errorf("--plan-only swallowed the run's own output:\n%s%s", out, errOut)
+	if !strings.Contains(out, "; the log is "+path) {
+		t.Errorf("--plan-only does not name the log the plan's own account is in:\n%s", out)
+	}
+	if !strings.Contains(out, "Plan: 1 to create.") {
+		t.Errorf("--plan-only does not print the plan in plain words:\n%s", out)
 	}
 	// The plan view is the whole of what a plan-only run accounts for — the
-	// steps are the converge's, and this run never converges — and the run's
-	// own stream does not leak into it.
-	if strings.Contains(out, convergeNoise) {
-		t.Errorf("--plan-only put the run's own output in its account:\n%s", out)
+	// steps are the converge's, and this run never converges — and the raw
+	// stream is in the log alone, which is what the line above points at.
+	all := out + errOut
+	for _, raw := range []string{convergeNoise, "module.installation.google_storage_bucket.runs"} {
+		if strings.Contains(all, raw) {
+			t.Errorf("--plan-only put the raw stream on the screen: %q\n%s", raw, all)
+		}
 	}
 	if rows := planViewRows(out); rows < 6 {
 		t.Errorf("--plan-only printed %d plan-view rows, want update's own list:\n%s", rows, out)
 	}
-	// A failure names the log, and the log holds the output it names: the plan
-	// is in both places for a run that stopped on one.
-	if _, log := onlyLog(t, "update"); !strings.Contains(log, convergeNoise) {
-		t.Errorf("the log does not hold the output a failure would point at:\n%s", log)
+	for _, want := range []string{convergeNoise, "create module.installation.google_storage_bucket.runs"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log the run names does not hold %q:\n%s", want, log)
+		}
 	}
 }
 
@@ -374,9 +416,9 @@ func noLogStateDir(t *testing.T) string {
 // TestUpdateWithoutALogKeepsItsWholeAccount: the brief account is one clause on
 // the screen *because* the whole of the reason is in the log (report.Brief), so
 // a run that could not open one cuts nothing: the step's reason is the whole of
-// it, and the plan's own account — the addresses of what the person is about to
-// confirm — reaches the terminal, where it is the only place left for it
-// (D1352, G5, G8).
+// it (D1352, G5). What the log held instead — Terraform's own stream and the
+// addresses of the plan — is dropped rather than put on the screen, and the
+// brief plan is what the person confirming reads (D3438).
 func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
 	applyingRig(t)
 	noLogStateDir(t)
@@ -385,8 +427,13 @@ func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
 	all := out + errOut
-	if !strings.Contains(all, "create module.installation.google_storage_bucket.runs") {
-		t.Errorf("the run kept Terraform's own plan out of the only account it has:\n%s", all)
+	for _, raw := range []string{convergeNoise, "module.installation.google_storage_bucket.runs"} {
+		if strings.Contains(all, raw) {
+			t.Errorf("a run with no log put the raw stream on the screen: %q\n%s", raw, all)
+		}
+	}
+	if !strings.Contains(all, "Plan: 1 to create.") {
+		t.Errorf("a run with no log printed no plan at all:\n%s", all)
 	}
 	if strings.Contains(all, "…") {
 		t.Errorf("a run with no log cut a reason it had nowhere to keep whole:\n%s", all)
@@ -412,11 +459,11 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 	all := out + errOut
 	path, log := onlyLog(t, "update")
 	for _, want := range []string{
-		markFailed + " installation",
+		markFailed + " " + initflow.DisplayName(initflow.Installation),
 		"Error: quota exceeded",
 		"with google_project_service.quota",
 		"Log:  " + path,
-		"to resume at installation.",
+		"to resume at " + initflow.DisplayName(initflow.Installation) + ".",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the failure block does not print %q:\n%s", want, all)
@@ -430,13 +477,14 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 	}
 }
 
-// TestUpdateWithoutALogKeepsTheStreamOnScreen: a converge whose log could not
-// be opened at all — a state directory that is a link, foreign-owned or
-// read-only, which is G5's "a run with no log is still a run" — has nowhere to
-// keep the run's own output. It must not swallow it either: the stream goes to
-// stderr, where every run wrote before CL5b, because the output behind a
-// failure is the last thing a run may drop (G8).
-func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
+// TestUpdateWithoutALogKeepsItsAccount: a converge whose log could not be
+// opened at all — a state directory that is a link, foreign-owned or read-only,
+// which is G5's "a run with no log is still a run" — has nowhere to keep the
+// run's own output. The account it prints is what a person reads either way: the
+// steps, and the plan in plain words. The raw stream goes with the log it had no
+// room for (D3438): a screen is not a fallback for it, and the failure block is
+// what explains a failure there (G5, G8).
+func TestUpdateWithoutALogKeepsItsAccount(t *testing.T) {
 	applyingRig(t)
 	elsewhere := noLogStateDir(t)
 	out, errOut, err := executeStdin(t, "", "update")
@@ -444,10 +492,10 @@ func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
 	all := out + errOut
-	if !strings.Contains(all, convergeNoise) {
-		t.Errorf("the run opened no log and dropped its own output with it:\n%s", all)
+	if strings.Contains(all, convergeNoise) {
+		t.Errorf("the run opened no log and put the raw stream on the screen:\n%s", all)
 	}
-	if !strings.Contains(all, markDone+" installation") {
+	if !strings.Contains(all, markDone+" "+initflow.DisplayName(initflow.Installation)) {
 		t.Errorf("the run with no log lost its account too:\n%s", all)
 	}
 	if strings.Contains(all, "Log:  ") {
@@ -468,16 +516,19 @@ func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 	}
 }
 
-// TestUpdateVerboseStreamsTerraform: --verbose is the run's own output on the
-// screen as well as in the log, which is what it always was (G10).
-func TestUpdateVerboseStreamsTerraform(t *testing.T) {
+// TestUpdateVerboseKeepsTheLogOffTheScreen: --verbose is the run's own account
+// on the screen as well as in the log, and Terraform's stream is in neither
+// place but the log (D3438, G10). The verbose view is the reasons whole — a
+// stage's own lines — and not the child's raw output, which TestNoRawTerraformOnScreen
+// pins for the plan as well.
+func TestUpdateVerboseKeepsTheLogOffTheScreen(t *testing.T) {
 	applyingRig(t)
 	out, errOut, err := executeStdin(t, "", "update", "-v")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	if !strings.Contains(out+errOut, convergeNoise) {
-		t.Errorf("--verbose did not stream the run's own output:\n%s%s", out, errOut)
+	if strings.Contains(out+errOut, convergeNoise) {
+		t.Errorf("--verbose streamed the child's raw output:\n%s%s", out, errOut)
 	}
 	_, log := onlyLog(t, "update")
 	if !strings.Contains(log, convergeNoise) {
@@ -645,7 +696,7 @@ func TestUpdateJSONUnchanged(t *testing.T) {
 	if len(res.Stages) == 0 || res.state("installation") == "" {
 		t.Errorf("the document does not carry the run's stages: %+v", res.Stages)
 	}
-	if !strings.Contains(errOut, markDone+" installation") {
+	if !strings.Contains(errOut, markDone+" "+initflow.DisplayName(initflow.Installation)) {
 		t.Errorf("the account is not on stderr under --json:\n%s", errOut)
 	}
 	if log := newestLog(t, "update"); !strings.Contains(log, convergeNoise) {
@@ -726,13 +777,13 @@ func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 	if _, err := readConfirmLine(run.in); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); strings.HasSuffix(got, "installation") {
+	if got := out.String(); !strings.HasSuffix(got, "Type aurora: ") {
 		t.Errorf("the answer drew the line in flight back: %q", got)
 	}
 	if _, err := fmt.Fprintln(run.w, "nothing was changed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := out.String(); !strings.HasSuffix(got, "installation") {
+	if got := out.String(); !strings.Contains(drawnLine(got), "installation") {
 		t.Errorf("the next whole line did not put the line in flight back: %q", got)
 	}
 	step.Done("")
@@ -775,7 +826,7 @@ func TestTheLineStaysDownThroughAWholeQuestion(t *testing.T) {
 	if !strings.HasPrefix(got[at:], want) {
 		t.Errorf("the question is not one block with its prompt under it:\n got %q\nwant %q", got[at:], want)
 	}
-	if !strings.HasSuffix(got, "policy") {
+	if !strings.Contains(drawnLine(got), "policy") {
 		t.Errorf("the answer did not put the step's line back: %q", got)
 	}
 	step.Done("")
@@ -904,6 +955,17 @@ func tail(s string, n int) string {
 		return s
 	}
 	return s[len(s)-n:]
+}
+
+// drawnLine is the last line the reporter drew on the terminal's own line:
+// everything after the last carriage return, which is where a redraw returns
+// to. The line in flight carries its step's name and how long it has run, so a
+// test asking whether it is up asks this rather than the whole screen's tail.
+func drawnLine(s string) string {
+	if i := strings.LastIndex(s, "\r"); i >= 0 {
+		return s[i:]
+	}
+	return s
 }
 
 // spinWatch is three of the reporter's redraw intervals (spinInterval is

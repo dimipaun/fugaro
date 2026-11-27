@@ -89,6 +89,16 @@ func renderScript(body string) map[string]string {
 	return map[string]string{"render.sh": body}
 }
 
+// sizedLayer is a project layer whose profile sized states the workflow's
+// memory: a repository's workflows.*.resources is read and ignored (D3421),
+// so the sizing a gate judges is the profile's, and the fixture file starts
+// its workflow from that profile.
+func sizedLayer(memory string) string {
+	return "version: 1\nproject: aurora\ngcp_project: " + testutil.PinsGCPProject + "\n" +
+		"profiles:\n  sized:\n    commands: { build: sh build.sh, test: sh test.sh }\n" +
+		"    resources: { memory: " + memory + " }\n"
+}
+
 const sizzleScript = "#!/bin/sh\nmkdir -p out && echo sizzle > out/sizzle.mp4\n"
 
 // planStage is the artifact run's optional plan stage: it writes a plan file
@@ -2980,12 +2990,16 @@ func TestTheReportEscapesANameThatCouldBreakTheTable(t *testing.T) {
 // run reaches the render, ends failed with artifacts or not, and this test
 // fails on the status and the reason.
 func TestAnOverMemoryArtifactRecipeIsRefusedAtBootstrap(t *testing.T) {
-	cfg := strings.Replace(renderCfg(t, "", ""), "    timeouts: {",
-		"    resources: { memory: 3Gi }\n    timeouts: {", 1)
-	if !strings.Contains(cfg, "memory: 3Gi") {
-		t.Fatal("the fixture has no workflow block to add resources.memory to")
+	// The 3Gi is the profile's: a repository's workflows.*.resources is read
+	// and ignored (D3421), so the file starts its workflow from the layer's
+	// sized profile, which states it.
+	cfg := strings.Replace(renderCfg(t, "", ""), "  app:\n", "  app:\n    profile: sized\n", 1)
+	if !strings.Contains(cfg, "profile: sized") {
+		t.Fatal("the fixture has no workflow block to name a profile on")
 	}
-	h := newHarnessFiles(t, cfg, artifactSpec(sizzleRenderOnlyYAML), renderScript(sizzleScript))
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	spec.ProjectLayer = &task.ProjectLayer{YAML: sizedLayer("3Gi")}
+	h := newHarnessFiles(t, cfg, spec, renderScript(sizzleScript))
 	pushes := countPushes(t, h)
 	rec, err := h.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError {

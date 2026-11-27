@@ -212,14 +212,6 @@ type Config struct {
 	// value (ReviewAgainstTaskOn). Like the fields above it is never part of the
 	// file or of SHA256.
 	RepoReviewAgainstTaskSet bool `yaml:"-" json:"-"`
-	// RepoModelGradesSet is whether the repository's own file wrote the
-	// model_grades key at all, at any value: the question RepoRigorSet answers
-	// for rigor:, and ModelGrades cannot answer it — the block written empty
-	// (`model_grades: {}`) decodes to the same nil pointer as the key being
-	// absent, and a runner older than modelGradesSince refuses the key itself,
-	// whatever it says (internal/cli). Like the fields above it is never part
-	// of the file or of SHA256.
-	RepoModelGradesSet bool `yaml:"-" json:"-"`
 	// RepoVisionSet is whether the repository's own file wrote the
 	// agent.models.vision key at all, at any value: the question RepoRigorSet
 	// answers for rigor:, and Agent.VisionModel cannot answer it — the key
@@ -682,8 +674,9 @@ type Agent struct {
 	// the mode's own senior row). It is the level's one round knob — the
 	// review of #1522 asked for exactly one, so the count is not a key of
 	// each level — and a default rather than a ceiling, like ReviewRounds
-	// and FirstLineRounds: a written number replaces the mode's, up or down,
-	// inside the recipe's own bound of 10.
+	// and FirstLineRounds: a number the project layer says nothing about is
+	// judged against the mode's own row, and the tighter of the two stands
+	// (R20, RT2), inside the recipe's own bound of 10.
 	AdversarialRounds int `yaml:"adversarial_rounds"`
 	// ReviewStopFraction is the share of the run's total time budget after
 	// which the review loop starts no further review or fix round and goes to

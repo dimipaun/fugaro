@@ -455,10 +455,21 @@ export interface RecipesView {
 }
 
 /** SetupEventType is the closed set of setup event lines (`setup --events`,
- * ST2). */
-export type SetupEventType = 'stage' | 'step' | 'left_for_you' | 'notice' | 'done' | 'error'
+ * ST2): every kind a line of the feed may carry. All but `heartbeat` are events
+ * a view is handed (`SetupEvent`); a `heartbeat` is the feed's own liveness --
+ * one a minute for a step still running -- which the reader accepts and drops
+ * (D3436, D3453). */
+export type SetupEventType =
+  | 'stage'
+  | 'step'
+  | 'left_for_you'
+  | 'notice'
+  | 'done'
+  | 'error'
+  | 'heartbeat'
 
-/** SETUP_EVENT_TYPES is that set as a value, in the plan's own order. */
+/** SETUP_EVENT_TYPES is that set as a value, in the plan's own order, with the
+ * liveness line last. */
 export const SETUP_EVENT_TYPES: readonly SetupEventType[] = Object.freeze([
   'stage',
   'step',
@@ -466,6 +477,7 @@ export const SETUP_EVENT_TYPES: readonly SetupEventType[] = Object.freeze([
   'notice',
   'done',
   'error',
+  'heartbeat',
 ])
 
 /** SetupRepoLine is one repository a stage has something to say about: how the
@@ -1141,6 +1153,12 @@ function setupFeedAt(document: Record<string, unknown>, where: string): SetupFee
     } else if (type === 'error') {
       failure = failureAt(line, field, where)
       events.push({ type: 'error', ...failure })
+    } else if (type === 'heartbeat') {
+      // Liveness and not a stage of the run: the feed carries one a minute for
+      // a step still running (D3436, D3453), and no view draws one -- so the
+      // line is accepted and dropped, and nothing of it is read. It is what
+      // keeps a console that knows the kind from refusing a newer CLI's feed;
+      // an older console, which does not, still refuses it.
     } else refuse('unknown-value', `${field}.type`, where)
   }
   return { events, done, failure }

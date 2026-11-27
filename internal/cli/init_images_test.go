@@ -307,7 +307,7 @@ func TestHistoryJobAppliedAfterMirror(t *testing.T) {
 	// stage, and the count of steps is not what it used to be.
 	account := reportLines(out)
 	for stage, want := range map[string]string{"installation": markSkipped, "firebase": markDone, "images": markDone, "installation-2": markDone} {
-		if l := stepLineOf(account, stage); l == "" || !strings.HasPrefix(l, want+" "+stage) {
+		if l := stepLineOf(account, stage); l == "" || !strings.HasPrefix(l, want+" "+initflow.DisplayName(stage)) {
 			t.Errorf("%s: %q, want the %q line (%q)", stage, l, want, out)
 		}
 	}
@@ -324,7 +324,7 @@ func TestHistoryJobAppliedAfterMirror(t *testing.T) {
 		t.Errorf("history:latest is not at the destination: %v", r.dst.tags)
 	}
 	// Mirrored before the third apply, not after: the order of the stages.
-	if got := strings.Join(stepNames(out), ","); !strings.Contains(got, "images,installation-2") {
+	if got := strings.Join(stepNames(out), ","); !strings.Contains(got, initflow.Images+","+initflow.Installation2) {
 		t.Errorf("stage order %s", got)
 	}
 	// A rerun copies nothing.

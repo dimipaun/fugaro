@@ -78,9 +78,10 @@ const (
 // deployer account is there, tf.DeployerAccount) and Operators are the
 // principals the installation names — localcfg's terraform.admins, the list
 // the module's own var.operators is fed from, which is where this field's name
-// comes from — the ones the module grants the token-creator role on that
-// account to. The zero value recognises nothing, so every managed grant is
-// then a warning.
+// comes from — the ones the module grants the token-creator role to, on that
+// account and on the resident orchestrator's and the verifier's own
+// (impersonationGrant). The zero value recognises nothing, so every managed
+// grant is then a warning.
 type Managed struct {
 	Project   string
 	Operators []string
@@ -335,6 +336,11 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 				b.role == "projects/"+e.fp+"/roles/"+MinterRoleID && slices.Equal(r.perms, []string{"iam.serviceAccounts.signJwt"}):
 				f.Expected, f.Why = true, "the designed path: launchers and operators mint run tokens as the signer"
 			}
+			if !f.Expected {
+				if why := e.impersonationGrant(f); why != "" {
+					f.Expected, f.Why = true, why
+				}
+			}
 			if !f.Expected && f.Kind != SignerUnread {
 				if why := e.managedGrant(f); why != "" {
 					f.Class, f.Why = SignerManaged, why
@@ -353,6 +359,41 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 		}
 	}
 	return out
+}
+
+// impersonationGrant says why a binding is the installation's own
+// impersonation grant, and "" for every other one. Fugaro's own Terraform
+// writes two besides the deployer's own, both to the operators the
+// installation names (Managed.Operators, the module's var.operators) and to
+// nobody else, and both of exactly one shape: the token-creator role, with no
+// condition, on the account built from the project the module writes.
+//
+//   - the resident orchestrator's account (tf.OrchestratorAccountID,
+//     orchestrator.tf): the daemon on an operator's own machine mints its ID
+//     token as it, which is what the account's ladder of jobs is run from.
+//   - the verifier account (tf.VerifierAccountID, iam.tf, CSR14): the owner's
+//     live check and a launcher's own mint call the credentials service's
+//     verify route through it, and the operators are the only members the
+//     module grants that on.
+//
+// Both are the design, so both are information and neither carries a remove
+// command. The account is named literally (fugaro-orch@<project>), which is
+// what makes the recognition exact rather than a name that merely looks like
+// it, and the installation's own project is the only one this check can see
+// either binding in: it reads the Firebase project's accounts, so the two
+// coincide exactly where the Firebase project is the installation's own.
+func (e *signerEval) impersonationGrant(f SignerFinding) string {
+	if f.Kind != SignerSigns || f.Role != tf.DeployerTokenCreatorRole || f.Condition != nil || e.managed.Project == "" || !e.operator(f.Member) {
+		return ""
+	}
+	at := "@" + e.managed.Project + ".iam.gserviceaccount.com"
+	switch {
+	case strings.EqualFold(f.Account, tf.OrchestratorAccountID+at):
+		return "the operators' impersonation of the resident orchestrator's account: how the daemon on an operator's own machine mints its ID token (orchestrator.tf)"
+	case strings.EqualFold(f.Account, tf.VerifierAccountID+at):
+		return "the operators' impersonation of the verifier account: how the owner's live check calls the credentials service's verify route (iam.tf, CSR14)"
+	}
+	return ""
 }
 
 // managedGrant says why a binding is the managed deployment's own, designed

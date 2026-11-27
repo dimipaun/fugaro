@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 546 rows and the generic writer carries 240 of them.** 125 by name
+- **F1 — the registry is 547 rows and the generic writer carries 240 of them.** 125 by name
   (`internal/cli/settings_set.go:117`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -44,7 +44,7 @@ what the guard at the end of this section re-runs.
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below, and R1's thirteen named rows (F1's amendment below) bring it to 118, and W3's two named
   wildcard rows to 120.
-  **306 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **307 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -129,7 +129,12 @@ what the guard at the end of this section re-runs.
   D3371), one row beside `image_map`'s while both members exist (R15), and its owner is the `image
   map` family — the command that checks an entry against the repository and the catalog — so no name
   in the allowlist and no prefix of it reaches the row and the rows without a generic writer are one
-  more for it, 306.
+  more for it, 306. C8c of docs/forge-authorship-images/ is the last mover this section records,
+  by one row and by one: the project layer's `images.retention_days` — the retention `fugaro image
+  prune` reads, beside `base_images` ([shared-images.md](../forge-authorship-images/shared-images.md)
+  §9) — is a row a person states in their own config file and no command writes, so no name in the
+  allowlist and no prefix of it reaches it and the rows without a generic writer are one more for
+  it, 307.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:278`)
   and `rigor floor` (`:701`) as the owners of keys. Two of the registry's owner strings name a command a

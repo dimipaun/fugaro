@@ -96,13 +96,6 @@ locals {
   # is a second key beside the one the relay was told to trust.
   push_key_ring   = "fugaro-push"
   push_crypto_key = "fugaro-push-sender"
-
-  # The key's own resource name, which history.tf's signing grant writes as a
-  # literal for that file's launcher row's reason — a reference to a resource's
-  # computed name reaches the plan as UNKNOWN, and the cover could then admit a
-  # grant of this role on any key of the project — so the literal is composed
-  # once here and pinned by internal/infra's TestPushKeyNamesAreTheGoSpellings.
-  push_crypto_key_id = "projects/${var.project}/locations/${var.region}/keyRings/${local.push_key_ring}/cryptoKeys/${local.push_crypto_key}"
 }
 
 # The ring the key lives in. A ring holds no material and cannot be deleted once
