@@ -306,16 +306,18 @@ var grantRules = map[string]map[string]who{
 		// takes two principals.
 		customKey + IntakeSecretsRole: toIntake,
 		customKey + SecretListerRole:  toIntake | toCredentials,
-		// The front door's read of the orchestrator's node (O16b, D2020 (a)):
-		// a PROJECT grant on the coordinator's own Firebase project, where the
-		// database lives (D6), and the account's second role. Like the store's
-		// bit, this one is not the row's to decide: mcpauthStateReadGrant
-		// accepts exactly this account, exactly this role, on exactly the
-		// project the role was declared in and under no condition, so a plan
-		// that moved the read to another project, another role to this
-		// account, or a write permission into the role (which RolePermissions
-		// pins) is refused rather than covered.
-		customKey + MCPStateReadRole: toMCP | toVoice,
+		// The front door's read of the orchestrator's node (O16b, D2020 (a)),
+		// the resident orchestrator's own (P5.1c's finding A) and the voice
+		// hop's (P5.3.3): a PROJECT grant on the Firebase project the database
+		// lives in (D6), and each account's own role. Like the store's bit,
+		// this one is not the row's to decide: mcpauthStateReadGrant,
+		// orchestratorStateReadGrant and voiceStateReadGrant each accept
+		// exactly one account, exactly this role, on exactly the project the
+		// role was declared in and under no condition, so a plan that moved a
+		// read to another project, another role to one of the accounts, or a
+		// write permission into the role (which RolePermissions pins) is
+		// refused rather than covered.
+		customKey + MCPStateReadRole: toMCP | toVoice | toOrchestrator,
 		// The service's project-level accessor over the same fence: a PROJECT
 		// grant, unlike the bundle's (google_secret_manager_secret_iam_member),
 		// so the row is here rather than in that type's, and it names the
@@ -1695,6 +1697,42 @@ func (c Cover) voiceStateReadGrant(rc ResourceChange) string {
 	return ""
 }
 
+// orchestratorStateReadGrant is mcpauthStateReadGrant's rule for the resident
+// orchestrator's own account (P5.1c's finding A): the same role, on the project
+// the role was declared in, under no condition, and the same refusal of every
+// other role.
+//
+// It is a function of its own rather than a call with the front door's message
+// because the account is a different one and the sentence has to name it: a
+// reader of the refusal is deciding whether the update may proceed, and "the
+// front door's account" would send them to the wrong file. The reasoning is
+// mcpauthStateReadGrant's whole: RTDB IAM has no path-level scope, so this is a
+// read of the WHOLE database instance — and what the account reaches with it is
+// nothing it did not already reach, because the same account holds
+// iam.serviceAccounts.signJwt on the budget signer, which is "may be anyone"
+// (design §4.5 E4). What narrows it to the node the tick needs is its own code
+// (internal/orchestrator's paths), which is why the grant is checked rather
+// than accepted by the row.
+func (c Cover) orchestratorStateReadGrant(rc ResourceChange) string {
+	ch := rc.Change
+	project := str(ch.After["project"])
+	if !slices.Contains(c.Projects, project) {
+		return "grants the resident orchestrator's account its database read in a project that is not this run's, where the role the module declares cannot be read"
+	}
+	want := "projects/" + project + "/roles/" + MCPStateReadRole
+	if role := str(ch.After["role"]); role != want {
+		return "grants the resident orchestrator's account " + role + " on a project, and its one database role is " + MCPStateReadRole + " on the project the module declares it in"
+	}
+	conds, why := grantConditions(ch, "a project grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the resident orchestrator's account its database read under a condition, which the module never sets: RTDB IAM cannot express a path prefix, so a condition here would fence nothing"
+	}
+	return ""
+}
+
 // voiceProviderKeyGrant is licenceSecretGrant's rule for the hop's
 // provider-key binding (P5.3.5): the role is the row's own
 // (roles/secretmanager.secretAccessor on google_secret_manager_secret_iam_member,
@@ -2753,6 +2791,19 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_project_iam_member" && c.isVoiceMember(str(rc.Change.After["member"])) {
 		why = c.voiceStateReadGrant(rc)
 	}
+	// ... and the resident orchestrator's account has a row on the same role
+	// (P5.1c's finding A): the tick reads its node over IAM, so the account
+	// holds the database's read, and orchestratorStateReadGrant closes the
+	// custom-role cell to that role, on the project it was declared in, under
+	// no condition. The account's OTHER project row is the launcher's own
+	// custom role, which the table carries for it and this check must not
+	// judge, so the dispatch is gated on the role naming the state-read role:
+	// everything else the account could be handed is refused by the row lookup
+	// above.
+	if why == "" && t == "google_project_iam_member" && c.isOrchestratorMember(str(rc.Change.After["member"])) &&
+		strings.HasSuffix(str(rc.Change.After["role"]), "/roles/"+MCPStateReadRole) {
+		why = c.orchestratorStateReadGrant(rc)
+	}
 	// The hop's public invoker binding (voice.tf) is deliberately NOT checked
 	// here, and its absence is the check: `allUsers` is a member no kind of
 	// this table carries, so the classification above refuses it as a principal
@@ -3094,11 +3145,13 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			kind = toIntake
 		case c.isOrchestratorMember(m):
 			// ... and the resident orchestrator's own account (mobile plan task
-			// P5.1b): its own kind, whose four rows are the design's §4.3 table
-			// and nothing else — the launcher's project role, the job runner's
+			// P5.1b): its own kind, whose rows are the design's §4.3 table and
+			// nothing else — the launcher's project role, the job runner's
 			// role on the installation's jobs, the runs bucket's conditional
-			// write and its unconditional read, and the token-minter role on
-			// the signer account — so every other grant it is given is refused
+			// write and its unconditional read, the token-minter role on the
+			// signer account, and (P5.1c's finding A) the database read the
+			// tick makes, through the same one-permission role the front door
+			// and the hop hold — so every other grant it is given is refused
 			// and the update that carries one asks its owner. Read here, before
 			// the review screen's list, for the deployer's reason: a plan that
 			// listed this account's address would otherwise be able to grant it

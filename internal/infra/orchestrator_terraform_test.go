@@ -167,8 +167,10 @@ func TestOrchestratorTurnedOffPlansAsTheGoldenDoes(t *testing.T) {
 // one reader (P5.1e — the copy section 6 rule 5 states as the exception a
 // symmetric tag forces), the launcher's project role, the runs bucket's
 // conditioned write and its unconditioned read, the token-minter role on the
-// signer, and the job runner's role on each of the installation's own jobs. The
-// plan does not move in any other way.
+// signer, the database's one-permission read (P5.1c's finding A: without it the
+// tick answers 503 with the store's own "401: Unauthorized request." and no pull
+// request is ever labelled), and the job runner's role on each of the
+// installation's own jobs. The plan does not move in any other way.
 //
 // Two of its claims are the ones a comment cannot make. The first is that the
 // member and the role the root spells out are the ones the same plan creates:
@@ -200,6 +202,17 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		writeRow    = "module.installation.google_storage_bucket_iam_member.orchestrator_runs_launcher[0]"
 		readRow     = "module.installation.google_storage_bucket_iam_member.orchestrator_runs_reader[0]"
 		minterRow   = "module.installation.google_service_account_iam_member.orchestrator_token_minter[0]"
+		// The account's read of this installation's database (P5.1c's finding
+		// A). It is a row of the opt-in and of section 4.3's table both: the
+		// tick reads orchestrator/<id>/{state,lease} as this account, and a
+		// service-account bearer bypasses the Realtime Database rules, so the
+		// read is an IAM permission and its absence is the 503 every tick
+		// answered. The role is state_read.tf's one-permission custom role —
+		// the tree's ONE role for that node, which the front door and the hop
+		// hold too — and it is declared in the Firebase project, where the
+		// database is, not in the installation's.
+		stateReadRow  = "module.installation.google_project_iam_member.orchestrator_state_read[0]"
+		stateReadRole = "module.installation.google_project_iam_custom_role.state_read[0]"
 		// The service and its tick (mobile plan task P5.1c; the design's
 		// section 4.1). They are rows of the opt-in and not of section 4.3's
 		// table: they hold no grant for the account, and the two grants among
@@ -220,7 +233,7 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		// member; this test holds that the account gains no OTHER row for it).
 		signAddr = "module.installation.google_kms_crypto_key_iam_member.orchestrator_mailbox_signer[0]"
 	)
-	want := []string{accountAddr, secretAddr, accessAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr, signAddr}
+	want := []string{accountAddr, secretAddr, accessAddr, launcherRow, writeRow, readRow, minterRow, stateReadRow, serviceAddr, invokerAddr, tickAddr, signAddr}
 	for key := range spec.ProjectJobs {
 		want = append(want, `google_cloud_run_v2_job_iam_member.orchestrator_runner["`+key+`"]`)
 	}
@@ -305,6 +318,7 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		{writeRow, "roles/storage.objectUser", gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(spec.RunsBucket)},
 		{readRow, "roles/storage.objectViewer", "", ""},
 		{minterRow, "projects/" + fp + "/roles/fugaroTokenMinter", "", ""},
+		{stateReadRow, "projects/" + fp + "/roles/fugaroStateRead", "", ""},
 		{accessAddr, "roles/secretmanager.secretAccessor", "", ""},
 	} {
 		rc, ok := on[c.addr]
@@ -332,6 +346,17 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		"projects/"+fp+"/serviceAccounts/"+signer; got != want {
 		t.Errorf("%s: service_account_id is %q, want %q — the grant is on the signer ACCOUNT rather than on the Firebase project, which is what keeps it iam.serviceAccounts.signJwt and not a token-creator role", minterRow, got, want)
 	}
+	// The database read's project and role, tied to the role the same plan
+	// creates: the binding names `projects/<firebase project>/roles/<role_id>`
+	// as a literal, so the two spellings are one grant only if the project is
+	// the database's own and the id is the created role's. A binding in the
+	// installation's project would grant a role that project does not hold.
+	if got, want := str(on[stateReadRow].After["project"]), fp; got != want {
+		t.Errorf("%s: project is %q, want %q — the role is declared in the database's project, and a binding in any other project names a role that project does not hold", stateReadRow, got, want)
+	}
+	if got, want := str(on[stateReadRole].After["role_id"]), "fugaroStateRead"; got != want {
+		t.Errorf("%s: role_id is %q, want %q — the literal the binding names is this role's own id, and a role created under another id is a binding that names a role nobody creates", stateReadRole, got, want)
+	}
 
 	// The invoker grant's member is the installation's own scheduler account,
 	// read off the account resource the module creates rather than written out as
@@ -347,9 +372,8 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 
 	// The never-list's eleventh rule, as the plan holds it: every row naming the
 	// account is one of the table's. A grant spelled with the member and left
-	// out of the list above — the Firebase root's database read among them —
-	// would be a reach section 4.3 has not priced, on the one account whose
-	// envelope is enumerated.
+	// out of the list above would be a reach section 4.3 has not priced, on the
+	// one account whose envelope is enumerated.
 	var naming []string
 	for addr, rc := range on {
 		if strings.Contains(rc.json(), OrchestratorAccountID) {

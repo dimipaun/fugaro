@@ -2862,6 +2862,13 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 
 	want := []string{
 		"google_project_iam_member|" + customKey + "fugaroLauncher",
+		// ... and the account's read of this installation's database (P5.1c's
+		// finding A): the tick reads orchestrator/<id>/{state,lease} over IAM,
+		// and state_read.tf's one-permission role is the ONE this tree
+		// declares for the node — the front door's and the hop's. The row names
+		// the principal kind and the role, and orchestratorStateReadGrant is
+		// what closes it to that role on the project the module declares it in.
+		"google_project_iam_member|" + customKey + MCPStateReadRole,
 		"google_cloud_run_v2_job_iam_member|" + customKey + "fugaroJobRunner",
 		"google_service_account_iam_member|" + customKey + "fugaroTokenMinter",
 		"google_storage_bucket_iam_member|roles/storage.objectUser",
@@ -2910,6 +2917,18 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 	}{
 		{"the launcher's project role, as the module writes it", "google_project_iam_member",
 			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroLauncher", "project": "proj-1"}, map[string]any{}, true},
+		// P5.1c's finding A: the tick reads this installation's node over IAM,
+		// through the same one-permission role the front door and the hop hold.
+		// The row admits the account to the custom-role cell; what makes the
+		// grant the module's own is orchestratorStateReadGrant — that role, on
+		// the project it was declared in, under no condition — which is why the
+		// two cases below are refused.
+		{"the database read, as the module writes it", "google_project_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/" + MCPStateReadRole, "project": "proj-1"}, map[string]any{}, true},
+		{"the database read declared in a project the grant is not in", "google_project_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/" + MCPStateReadRole, "project": "proj-1"}, map[string]any{}, false},
+		{"the database read under a condition", "google_project_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/" + MCPStateReadRole, "project": "proj-1", "condition": launcherCond}, map[string]any{}, false},
 		{"the job runner's role on an installation job, as the root writes it", "google_cloud_run_v2_job_iam_member",
 			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroJobRunner"}, map[string]any{}, true},
 		// A role the plan leaves UNKNOWN is refused where no custom role is
