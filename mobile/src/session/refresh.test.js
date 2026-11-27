@@ -128,6 +128,21 @@ test('the project session store keeps one rotating token per project', async () 
   assert.equal((await store.get('fugaro-example')).code, REFRESH_CODES.ABSENT);
 });
 
+test('a stored token this module could not have written is unreadable, not repaired', async () => {
+  const port = new MemorySecureStore();
+  const store = new ProjectSessionStore(port);
+  const item = projectSessionItem('fugaro-example');
+  // Planted through the port, which is what a future code path with a different
+  // idea of "a token" would do: not a string at all, empty, carrying a space or
+  // a non-ASCII character, or past the platform's own 2048-byte ceiling.
+  for (const planted of [42, '', 'has space', 'café', 'x'.repeat(2049)]) {
+    await port.setItem(item, planted);
+    const read = await store.get('fugaro-example');
+    assert.equal(read.code, REFRESH_CODES.UNREADABLE, JSON.stringify(planted));
+    assert.equal(read.token, undefined);
+  }
+});
+
 test('a refresh that the project refuses as revoked signs the project out', async () => {
   const seen = [];
   const fetchPort = async (url, options) => {
