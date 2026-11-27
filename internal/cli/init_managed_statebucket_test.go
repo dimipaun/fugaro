@@ -76,11 +76,10 @@ func TestManagedCreationRefusesAForeignStateBucket(t *testing.T) {
 			}
 			// And the advice has to be sound. The bucket comes from
 			// --state-bucket or from terraform.state_bucket, so the fix is to
-			// stop recording it in either place — and NOT "create the project
-			// unmanaged and flag it later": an unmanaged creation resolves
-			// terraform.state_bucket from this same config, so it would land
-			// the state in the same bucket, and `fugaro managed flag` refuses
-			// that project for exactly this reason
+			// stop recording it in either place — and NOT "flag it managed
+			// later": there is no unmanaged creation to fall back on any more
+			// (D2214), and `fugaro managed flag` refuses a project whose config
+			// records another bucket for this same reason
 			// (TestManagedFlagNeedsTheDerivedStateBucket). Advice that sends an
 			// operator round that way costs a created project and arrives at
 			// the same refusal.
