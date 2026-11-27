@@ -221,10 +221,10 @@ func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 
 // TestCatalogCheckSpecCarriesNoBuildBound: the spec records no count of builds
 // (D1543), because no installation has one to record — the marker's
-// max_image_builds is gone and the count that bounded a night's builds is the
-// job's own (catalogRunBuildCap). What bounds a build's cost is the lease it
-// takes (D1554), and this pins that the removal really reached the bytes on the
-// wire rather than leaving a key the reader would silently ignore.
+// max_image_builds is gone and the run has no count of its own either (D3444:
+// it rebuilds every stale entry, four at a time). What bounds a build's cost is
+// the lease it takes (D1554), and this pins that the removal really reached the
+// bytes on the wire rather than leaving a key the reader would silently ignore.
 //
 // The other direction — the mixture `fugaro update` leaves behind, since the
 // spec and the job image swap without an order between them — is pinned beside
@@ -306,6 +306,9 @@ func TestCatalogCheckSpecVersionIsRefusedWhenItIsNotOne(t *testing.T) {
 // hops are tested apart — jobsPaused reads the file, internal/infra's own tests
 // take the options — so this is the line between them, and the one a change
 // could drop with neither of the others noticing.
+//
+// The layer being silent runs the check (D3444), so the file's own answer is
+// what both directions of this table are read through.
 func TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	lc, err := localcfg.Parse([]byte(catalogProducerLocal))
@@ -317,9 +320,10 @@ func TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer(t *testing.T) {
 		layer  string // "" writes no layer file at all
 		paused bool
 	}{
-		{"no layer file", "", true},
-		{"a layer that says nothing about jobs", "version: 1\nproject: aurora\ngcp_project: proj-1234\n", true},
+		{"no layer file", "", false},
+		{"a layer that says nothing about jobs", "version: 1\nproject: aurora\ngcp_project: proj-1234\n", false},
 		{"a layer that starts the check", "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n", false},
+		{"a layer that stops the check", "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: true }\n", true},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			path := localLayerPath(t)
@@ -355,10 +359,13 @@ func TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer(t *testing.T) {
 // file's bytes in place: it seeds a file that is not there FROM the published
 // object (D830), and it re-seeds one the object has moved past (D854's stale
 // state, where the file's bytes are discarded for the object's). Reading the
-// file alone in either state would apply paused — and stop a project-wide
-// schedule the published layer has started — until the next update put it back.
-// The published object is the project's answer there, and in every other state
-// the file wins, whatever it says: it is the one this run publishes.
+// file alone in either state would apply the file's answer where the project
+// published another. Since the check runs unless the layer stops it (D3444),
+// what the correction carries here is a stop: a file seeded silent while the
+// published object says paused: true would run a project-wide schedule the
+// project had stopped, until the next update put it back. The published object
+// is the project's answer there, and in every other state the file wins,
+// whatever it says: it is the one this run publishes.
 //
 // The read is the layer stage's own (layerPlanFor, and through it
 // layerPublishedRead), so the two agree about the bucket and about which state
@@ -366,8 +373,9 @@ func TestInstallOptionsReadsTheJobsPausedSettingFromTheLayer(t *testing.T) {
 // either.
 func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
 	const (
-		starts = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n"
-		silent = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+		started = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n"
+		stopped = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: true }\n"
+		silent  = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
 	)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	lc, err := localcfg.Parse([]byte(catalogProducerLocal))
@@ -386,16 +394,17 @@ func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
 		want     bool
 		reads    bool // whether the run reads the bucket at all
 	}{
-		{"no local file, the published layer starts the check", "", starts, false, "", false, true},
-		{"no local file, the published layer says nothing", "", silent, false, "", true, true},
-		{"no local file, no published layer", "", "", false, "", true, true},
-		{"no local file, the bucket cannot be read", "", starts, true, "", true, true},
-		{"no local file, a published layer this CLI does not read", "", "version: 1\njobz: {}\n", false, "", true, true},
-		{"the local file says nothing, the published one starts the check", silent, starts, false, "", true, true},
-		{"the local file starts the check, the published one says nothing", starts, silent, false, "", false, true},
-		{"the local file is one this CLI does not read", "unreadable", starts, false, "", true, false},
-		{"the local file is stale and says nothing, the published one starts the check", silent, starts, false, "3", false, true},
-		{"the local file is stale and starts the check, the published one says nothing", starts, silent, false, "3", true, true},
+		{"no local file, the published layer starts the check", "", started, false, "", false, true},
+		{"no local file, the published layer stops the check", "", stopped, false, "", true, true},
+		{"no local file, the published layer says nothing", "", silent, false, "", false, true},
+		{"no local file, no published layer", "", "", false, "", false, true},
+		{"no local file, the bucket cannot be read", "", stopped, true, "", false, true},
+		{"no local file, a published layer this CLI does not read", "", "version: 1\njobz: {}\n", false, "", false, true},
+		{"the local file says nothing, the published one starts the check", silent, started, false, "", false, true},
+		{"the local file starts the check, the published one stops it", started, stopped, false, "7", false, true},
+		{"the local file is one this CLI does not read", "unreadable", started, false, "", false, false},
+		{"the local file is stale and says nothing, the published one starts the check", silent, started, false, "3", false, true},
+		{"the local file is stale and starts the check, the published one stops it", started, stopped, false, "3", true, true},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			lc.LayerGeneration = tc.recorded
@@ -473,12 +482,16 @@ func TestTheInstallationTakesTheJobsSettingFromThePublishedLayer(t *testing.T) {
 // the next update.
 //
 // The two keys are one object, so the answers are read together: a document
-// that starts both jobs corrects both, and the bucket is read once.
+// that starts both jobs corrects both, and the bucket is read once. The catalog
+// check's own default is the other direction (D3444: it runs unless the layer
+// stops it), so the same object carries both answers and only one of them is
+// the stop this test's own job is about.
 func TestTheInstallationTakesTheReportsJobSettingFromThePublishedLayer(t *testing.T) {
 	const (
-		both    = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n  reports: { paused: false }\n"
-		silent  = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
-		stopped = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  reports: { paused: true }\n"
+		both            = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: false }\n  reports: { paused: false }\n"
+		silent          = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+		stopped         = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  reports: { paused: true }\n"
+		checkStoppedJob = "version: 1\nproject: aurora\ngcp_project: proj-1234\njobs:\n  catalog_check: { paused: true }\n  reports: { paused: false }\n"
 	)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	lc, err := localcfg.Parse([]byte(catalogProducerLocal))
@@ -491,12 +504,16 @@ func TestTheInstallationTakesTheReportsJobSettingFromThePublishedLayer(t *testin
 		published string // "" publishes no layer at all
 		recorded  string // the generation this machine's file was written from; "" is the first run
 		want      bool
+		// check is the catalog check's answer out of the same read (D3444:
+		// running by default, stopped by the layer).
+		check bool
 	}{
-		{"no local file, the published layer starts the job", "", both, "", false},
-		{"the local file is stale, the published layer starts the job", silent, both, "3", false},
-		{"the local file is the published one, and it starts the job", both, both, "7", false},
-		{"the local file is the published one, and it stops the job", stopped, stopped, "7", true},
-		{"no local file, no published layer", "", "", "", true},
+		{"no local file, the published layer starts the job", "", both, "", false, false},
+		{"the local file is stale, the published layer starts the job", silent, both, "3", false, false},
+		{"the local file is the published one, and it starts the job", both, both, "7", false, false},
+		{"the local file is the published one, and it stops the job", stopped, stopped, "7", true, false},
+		{"no local file, no published layer", "", "", "", true, false},
+		{"no local file, the published layer stops the check", "", checkStoppedJob, "", false, true},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			lc.LayerGeneration = tc.recorded
@@ -541,12 +558,12 @@ func TestTheInstallationTakesTheReportsJobSettingFromThePublishedLayer(t *testin
 			}
 			// The two keys are corrected together, from the one read: the
 			// document starts both jobs, so whenever it is the project's answer
-			// the catalog check comes back started in the same call.
+			// the catalog check comes back as that document wrote it.
 			if got.CatalogCheck == nil {
 				t.Fatal("the spec lost its catalog check")
 			}
-			if want := tc.published != both; got.CatalogCheck.Paused != want {
-				t.Errorf("the catalog check comes back paused %v, want %v: the two keys are one object, and one read answers for both", got.CatalogCheck.Paused, want)
+			if got.CatalogCheck.Paused != tc.check {
+				t.Errorf("the catalog check comes back paused %v, want %v: the two keys are one object, and one read answers for both", got.CatalogCheck.Paused, tc.check)
 			}
 		})
 	}

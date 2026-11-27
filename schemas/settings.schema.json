@@ -1249,7 +1249,7 @@
           "default": "unset = Fugaro's own tiers"
         },
         "layer.jobs.catalog_check.paused": {
-          "default": "true"
+          "default": "false"
         },
         "layer.jobs.reports.paused": {
           "default": "true"

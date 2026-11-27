@@ -1300,44 +1300,74 @@ func TestLayerLevelsNoneReplacesTheLevel(t *testing.T) {
 	}
 }
 
-// TestProjectLayerJobsPausedDefaultsTrue: the two schedules the layer's jobs:
-// block carries default to paused, so an installation whose owner writes
-// nothing about them — and one whose project publishes no layer at all —
-// deploys both jobs stopped. The direction is the whole point: paused: false
-// is what makes a schedule run, and a default of false would start the reports
-// job and the catalog check on every project that upgraded without asking.
-func TestProjectLayerJobsPausedDefaultsTrue(t *testing.T) {
-	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+// layerJobsHead is the layer every jobs: case below is written relative to: a
+// project whose owner writes nothing about either schedule.
+const layerJobsHead = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+
+// TestCatalogCheckUnpausedByDefault: the catalog check schedule runs unless the
+// layer stops it (D3444). The nightly rebuild is what catches a stale image up
+// after a release without an update waiting for it, and the pause that kept it
+// from ever running left every catalog stale — the one direction that must not
+// be left to a default.
+func TestCatalogCheckUnpausedByDefault(t *testing.T) {
 	for _, tc := range []struct{ name, text string }{
-		{"no jobs: block", head},
-		{"no jobs: key", head + "jobs: {}\n"},
-		{"a job with no paused:", head + "jobs:\n  reports: {}\n"},
-		{"a job written as null", head + "jobs:\n  catalog_check:\n"},
-		{"paused: true written out", head + "jobs:\n  reports: { paused: true }\n  catalog_check: { paused: true }\n"},
+		{"no jobs: block", layerJobsHead},
+		{"no jobs: key", layerJobsHead + "jobs: {}\n"},
+		{"a job with no paused:", layerJobsHead + "jobs:\n  catalog_check: {}\n"},
+		{"a job written as null", layerJobsHead + "jobs:\n  catalog_check:\n"},
+		{"paused: false written out", layerJobsHead + "jobs:\n  catalog_check: { paused: false }\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			l := mustLayer(t, tc.text)
-			if !l.ReportsPaused() || !l.CatalogCheckPaused() {
-				t.Errorf("reports paused = %v, catalog check paused = %v, want both true", l.ReportsPaused(), l.CatalogCheckPaused())
+			if l := mustLayer(t, tc.text); l.CatalogCheckPaused() {
+				t.Errorf("catalog check paused = true, want false: the nightly rebuild runs unless the layer stops it")
 			}
 		})
 	}
 	// A caller holding no layer is the same answer as one holding a layer that
 	// wrote nothing: the default belongs to the read, not to the file, so a
-	// resolve with no project layer cannot start a schedule either.
+	// resolve with no project layer runs the schedule too.
 	var none *ProjectLayer
-	if !none.ReportsPaused() || !none.CatalogCheckPaused() {
-		t.Error("a nil layer is not paused: the value nobody wrote must be the safe one")
+	if none.CatalogCheckPaused() || (&ProjectLayer{}).CatalogCheckPaused() {
+		t.Error("a layer that wrote nothing pauses the catalog check: it runs by default (D3444)")
 	}
-	if !(&ProjectLayer{}).CatalogCheckPaused() {
-		t.Error("a zero ProjectLayer is not paused")
+}
+
+// TestReportsStillPaused: the reports job keeps its own default, which is the
+// opposite of the catalog check's (D3444): a project that upgraded without
+// writing anything has nobody reading its reports, and starting a job that
+// writes them is not a schedule's decision to make.
+func TestReportsStillPaused(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"no jobs: block", layerJobsHead},
+		{"no jobs: key", layerJobsHead + "jobs: {}\n"},
+		{"a job with no paused:", layerJobsHead + "jobs:\n  reports: {}\n"},
+		{"a job written as null", layerJobsHead + "jobs:\n  reports:\n"},
+		{"paused: true written out", layerJobsHead + "jobs:\n  reports: { paused: true }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if l := mustLayer(t, tc.text); !l.ReportsPaused() {
+				t.Errorf("reports paused = false, want true: the reports job keeps the default the catalog check left behind")
+			}
+		})
 	}
-	// The one direction that starts a schedule, read from the same block: it
-	// is here rather than in a test of its own because the default above is
-	// exactly what it must not swallow.
-	l := mustLayer(t, head+"jobs:\n  reports: { paused: false }\n  catalog_check: { paused: true }\n")
-	if l.ReportsPaused() || !l.CatalogCheckPaused() {
-		t.Errorf("reports paused = %v, catalog check paused = %v, want false and true", l.ReportsPaused(), l.CatalogCheckPaused())
+	var none *ProjectLayer
+	if !none.ReportsPaused() || !(&ProjectLayer{}).ReportsPaused() {
+		t.Error("a layer that wrote nothing runs the reports job: the value nobody wrote must be the safe one")
+	}
+}
+
+// TestExplicitPauseHolds: what the layer writes wins over either default, in
+// both directions. paused: true is the one thing the catalog check's default
+// must not swallow, and paused: false is the one thing the reports job's must
+// not.
+func TestExplicitPauseHolds(t *testing.T) {
+	stopped := mustLayer(t, layerJobsHead+"jobs:\n  reports: { paused: true }\n  catalog_check: { paused: true }\n")
+	if !stopped.ReportsPaused() || !stopped.CatalogCheckPaused() {
+		t.Errorf("reports paused = %v, catalog check paused = %v, want both true", stopped.ReportsPaused(), stopped.CatalogCheckPaused())
+	}
+	started := mustLayer(t, layerJobsHead+"jobs:\n  reports: { paused: false }\n  catalog_check: { paused: false }\n")
+	if started.ReportsPaused() || started.CatalogCheckPaused() {
+		t.Errorf("reports paused = %v, catalog check paused = %v, want both false", started.ReportsPaused(), started.CatalogCheckPaused())
 	}
 }
 

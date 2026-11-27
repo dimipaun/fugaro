@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -11,8 +12,8 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -88,18 +89,19 @@ type catalogCheckSpec struct {
 	FirebaseProject string `json:"firebase_project"`
 }
 
-// catalogRunBuildCap is how many builds one run of the catalog check job may
-// submit, whatever the catalog says changed.
+// catalogBuildsAtOnce is how many rebuilds one run of the catalog check job
+// submits at a time (D3444).
 //
-// It is the job's own cap and no longer a project setting: D1013's count lived
-// in the managed marker's max_image_builds and fugaro update rendered it here,
-// and T10 removed the count (D1543) — the marker records no bound, so this is
-// the job's own figure, the same one every installation's marker recorded by
-// default. What bounds a build's cost now is the lease it takes (D1554), and
-// this bounds only how many one night submits: the entries it leaves are
-// recorded with the build-cap reason and are the next run's, exactly as they
-// were when the cap was a project's.
-const catalogRunBuildCap = 1
+// It bounds concurrency and nothing else: every entry whose triggers fired is
+// submitted, so a release, a base-image change or a moved definition that made
+// the whole catalog stale is caught up in one night rather than one entry a
+// night. The builds are independent of one another — each entry's spec is its
+// own, and each takes its own lease — so submitting four of them at once costs
+// the same wall clock as one, and the project's budget still bounds the night:
+// what a build may cost is what its lease has room for, refused by name when
+// the caps are full (D1550, D1554). D1013's project count and the job's own
+// per-night count are both gone (D1543, D3444).
+const catalogBuildsAtOnce = 4
 
 // catalogCheckRepo is one repository's part of the catalog check job's spec:
 // the facts a build of one of its entries is submitted with, and the entries it
@@ -197,7 +199,6 @@ type catalogCheckTarget struct {
 	spec       catalogCheckSpec
 	gcpProject string
 	region     string
-	maxBuilds  int
 	force      bool
 	now        time.Time
 	bucket     *blobx.Bucket
@@ -562,6 +563,78 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 	return res.ID, res.Status, nil
 }
 
+// catalogSubmission is one entry's rebuild as submitAll sent it: the build
+// Cloud Build accepted it as, the lease it took (the caller settles or releases
+// it once it has recorded what happened), why there is no build when there is
+// none, and the notes the lease's own writes had for a person. The notes are
+// held here rather than printed, because catalogBuildsAtOnce of these run at
+// once and the run's stderr is one writer.
+type catalogSubmission struct {
+	id     string
+	status string
+	lease  *buildLease
+	err    error
+	notes  bytes.Buffer
+}
+
+// submitAll submits every entry in due, catalogBuildsAtOnce at a time (D3444):
+// one night rebuilds the whole catalog however many entries are stale, and what
+// bounds that night is the lease each submission takes (D1550), not a count of
+// builds the run allows itself. Nothing here writes to the command's output: a
+// submission that refuses — a lease with no room, a price the catalog will not
+// give, a database that will not answer — comes back in its own result, and the
+// caller prints every line a person has to read, in the catalog's order.
+//
+// Every entry of due is in the map, so the caller's record pass sees a result
+// for each one it submitted.
+func (t *catalogCheckTarget) submitAll(ctx context.Context, e catalogJobEnv, due []*catalogRun) map[*catalogRun]catalogSubmission {
+	subs := make(map[*catalogRun]catalogSubmission, len(due))
+	if len(due) == 0 {
+		return subs
+	}
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
+	tokens := make(chan struct{}, catalogBuildsAtOnce)
+	for _, r := range due {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tokens <- struct{}{}
+			defer func() { <-tokens }()
+			sub := t.submitOne(ctx, e, r)
+			mu.Lock()
+			subs[r] = sub
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return subs
+}
+
+// submitOne is one entry's rebuild: the lease first, then the submission. The
+// lease is taken under the entry's own name, so a build the project's caps have
+// no room for is refused before anything is paid for (D1550, D1554); a
+// submission Cloud Build refused gives the whole reservation back, since a build
+// that never ran is not money spent.
+func (t *catalogCheckTarget) submitOne(ctx context.Context, e catalogJobEnv, r *catalogRun) catalogSubmission {
+	var sub catalogSubmission
+	lease, lerr := openCatalogJobLease(ctx, &sub.notes, e, t.spec, r.w.repo.Repo, r.w.slug)
+	if lerr != nil {
+		sub.err = fmt.Errorf("leasing the rebuild: %s", oneLine(lerr.Error()))
+		return sub
+	}
+	sub.lease = lease
+	id, status, serr := t.submit(ctx, r.w.entry, r.w.repo, r.w.slug, r.ev)
+	if serr != nil {
+		sub.err = fmt.Errorf("submitting the rebuild: %s", oneLine(withLease(serr, lease.release(ctx)).Error()))
+		return sub
+	}
+	sub.id, sub.status = id, status
+	return sub
+}
+
 // catalogSmokeSpec is the smoke a catalog build of r's entries runs: the spec
 // image.SpecForCloud renders for the manual path, so the two submit the same
 // one. The config is a stub because an entry is not a workflow and
@@ -603,25 +676,22 @@ type catalogCheckLogLine struct {
 }
 
 type catalogCheckLogger struct {
-	w        io.Writer
-	dryRun   bool
-	maxBuild int
+	w      io.Writer
+	dryRun bool
 }
 
-// log writes one entry's line. rebuild-failed-last, check-failed, a last
-// rebuild that failed and a rebuild the run's cap stopped are ERROR, which the
-// alert matches; an entry the installed job does not know and one nothing has
-// built yet are WARNING, the severity checkLogger gives a workflow head and the
-// job disagree about: both are states fugaro update or one fugaro image build
-// fixes, not a check that failed.
+// log writes one entry's line. rebuild-failed-last, check-failed and a last
+// rebuild that failed are ERROR, which the alert matches; an entry the
+// installed job does not know and one nothing has built yet are WARNING, the
+// severity checkLogger gives a workflow head and the job disagree about: both
+// are states fugaro update or one fugaro image build fixes, not a check that
+// failed.
 func (l *catalogCheckLogger) log(entry, repo, decision string, reasons []string, buildID, lastStatus, errMsg string) {
-	capped := slices.Contains(reasons, imagecheck.ReasonBuildCap)
 	sev := "INFO"
 	switch {
 	case decision == imagecheck.RebuildFailedLast || decision == imagecheck.CheckFailed,
 		// A failed last rebuild matters while a rebuild is still due.
-		decision == imagecheck.Rebuild && imagecheck.FailedBuild(lastStatus),
-		capped:
+		decision == imagecheck.Rebuild && imagecheck.FailedBuild(lastStatus):
 		sev = "ERROR"
 	case decision == imagecheck.NotInstalled, decision == imagecheck.NeedsBuild:
 		sev = "WARNING"
@@ -637,10 +707,8 @@ func (l *catalogCheckLogger) log(entry, repo, decision string, reasons []string,
 	switch {
 	case errMsg != "":
 		msg += ": " + errMsg
-	case decision == imagecheck.Rebuild && buildID != "" && !l.dryRun && !capped:
+	case decision == imagecheck.Rebuild && buildID != "" && !l.dryRun:
 		msg += "; submitted Cloud Build build " + buildID
-	case capped:
-		msg += fmt.Sprintf("; this run's cap of %d build(s) is reached, so this rebuild is left for the next run", l.maxBuild)
 	case decision == imagecheck.RebuildFailedLast:
 		msg += "; the last rebuild " + buildID + " ended " + lastStatus + " on these same inputs without clearing the triggers, so it is not submitted again until something changes (fugaro image check --force overrides)"
 	}
@@ -679,6 +747,15 @@ type catalogAssignment struct {
 	slug  string
 }
 
+// catalogRun is one entry this run decides: the assignment it came from, what
+// this run read for it, and why it could not be read when it could not.
+type catalogRun struct {
+	w  catalogAssignment
+	ev catalogEvaluation
+	// err is why this run could not read the entry, nil when it could.
+	err error
+}
+
 // runImageCheckCatalogJob is fugaro image check --job --catalog: one run of the
 // project's own catalog check job (D1148). It decides every entry of the
 // project's image catalog with imagecheck.DecideCatalog's triggers and submits
@@ -692,10 +769,10 @@ type catalogAssignment struct {
 // (check-failed, nothing submitted), never "no record, so rebuild". Each
 // submission takes a lease on its estimated cost before it is sent
 // (openCatalogJobLease), so a build the project's caps have no room for is
-// refused by name and is not submitted at all (D1550, D1554); the run's own
-// build cap (catalogRunBuildCap) bounds how many builds one run may submit, so
-// a bug in a decision cannot spend a project's budget in one night: the entries
-// it leaves are recorded with the build-cap reason and are the next run's.
+// refused by name and is not submitted at all (D1550, D1554). Every entry
+// whose triggers fired is submitted, catalogBuildsAtOnce at a time (D3444):
+// the run catches the catalog up in one night, and the project's caps — the
+// lease each build takes — are what bound what that night costs.
 func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 	ctx := cmd.Context()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -705,7 +782,6 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		lg.log("", "", imagecheck.CheckFailed, nil, "", "", oneLine(err.Error()))
 		return remote(err)
 	}
-	lg.maxBuild = catalogRunBuildCap
 	s := e.spec
 	warn := func(msg string) { fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", msg) }
 
@@ -759,7 +835,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		return catalogFailAll(cmd, ctx, lg, e, bucket, fmt.Errorf("the installed catalog check job has no %s base image: %s", config.BaseKind, catalogNotInstalledReason), now, o.dryRun)
 	}
 	t := &catalogCheckTarget{
-		spec: s, gcpProject: e.gcpProject, region: e.region, maxBuilds: catalogRunBuildCap,
+		spec: s, gcpProject: e.gcpProject, region: e.region,
 		force: o.force, now: now, bucket: bucket, builder: builder, registry: checkRegistry(),
 		base: base, warn: warn,
 	}
@@ -770,14 +846,6 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 	// prebuilt skip and the catalog's own order are one implementation and not
 	// two. An entry this run could not read is never handed to it — it is
 	// check-failed here, and nothing is submitted for it.
-	type catalogRun struct {
-		w  catalogAssignment
-		ev catalogEvaluation
-		// err is why this run could not read the entry, nil when it could.
-		err error
-		// d is the entry's decision, from CheckCatalog or from err.
-		d imagecheck.CatalogDecision
-	}
 	var runs []*catalogRun
 	inputs := map[string]imagecheck.CatalogInputs{}
 	for _, w := range work {
@@ -822,10 +890,14 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		byName[d.Entry] = d
 	}
 
-	var failed []string
-	submitted := 0
+	// The decisions first, and every entry that is due collected: the rebuilds
+	// are submitted together, so the pass that decides must not print or write
+	// anything (D3444). An entry whose triggers fired is this run's to rebuild,
+	// whatever the rest of the catalog says — no count of builds bounds the
+	// night.
+	var due []*catalogRun
 	for _, r := range runs {
-		w, ev := r.w, r.ev
+		w, ev := r.w, &r.ev
 		switch {
 		case r.err != nil:
 			ev.d = imagecheck.CatalogDecision{Entry: w.name, Decision: imagecheck.CheckFailed, Error: oneLine(r.err.Error())}
@@ -843,46 +915,54 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 			ev.d.Decision, ev.d.Error = imagecheck.NeedsBuild, fmt.Sprintf("fugaro image build %s from %s's checkout builds it once, and the schedule rebuilds it from then on",
 				pluginwire.Printable(w.name), pluginwire.Printable(w.repo.Repo))
 		}
-		// A rebuild the run's cap stops is left for the next run: it is
-		// recorded as a rebuild with the cap note, so the entry stays due and
-		// the line is an ERROR.
-		capped := ev.d.Decision == imagecheck.Rebuild && !o.dryRun && submitted >= t.maxBuilds
-		if capped {
-			ev.d.Reasons = append(ev.d.Reasons, imagecheck.ReasonBuildCap)
+		if ev.d.Decision == imagecheck.Rebuild && !o.dryRun {
+			due = append(due, r)
 		}
+	}
+
+	// The rebuilds, catalogBuildsAtOnce at a time (D3444). Each carries its own
+	// entry and takes its own lease, so the submissions share nothing but the
+	// clients; each writes the notes it would print to its own buffer, so the
+	// run's stderr stays in the catalog's order rather than in the order four
+	// goroutines happened to reach it.
+	submitted := t.submitAll(ctx, e, due)
+
+	failed := make([]string, 0, len(runs))
+	for _, r := range runs {
+		w, ev := r.w, &r.ev
 		state := catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
-		if ev.d.Decision == imagecheck.Rebuild && !o.dryRun && !capped {
-			lease, lerr := openCatalogJobLease(ctx, cmd.ErrOrStderr(), e, s, w.repo.Repo, w.slug)
-			if lerr != nil {
+		if sub, ok := submitted[r]; ok {
+			// The lease's own notes — no budget backend, an unpriced build, a
+			// reclaimed lease — are the submission's, and they print here, in
+			// the catalog's order, once each.
+			fmt.Fprint(cmd.ErrOrStderr(), sub.notes.String())
+			switch {
+			case sub.err != nil:
 				// The lease is taken before the submission, so a cap with no
 				// room, a price the catalog will not give and a database that
 				// will not answer are all refusals of the build itself
 				// (D1550): nothing is submitted, and the next run is the one
 				// that tries again.
-				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "leasing the rebuild: "+oneLine(lerr.Error())
+				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, sub.err.Error()
 				state = catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
-			} else if id, status, serr := t.submit(ctx, w.entry, w.repo, w.slug, ev); serr != nil {
-				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "submitting the rebuild: "+oneLine(withLease(serr, lease.release(ctx)).Error())
-				state = catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
-			} else {
+			default:
 				// Nothing here watches the build to an end — SubmitCatalog
 				// returns as soon as Cloud Build accepts it — so the whole
 				// reservation is what the day counts (buildLease.settle).
-				submitted++
 				inputs := ev.d.Inputs
-				state.BuildID, state.BuildInputs, state.LastBuildStatus, state.LastBuildAt = id, &inputs, status, &now
-				if lerr := lease.settle(ctx, false); lerr != nil {
+				state.BuildID, state.BuildInputs, state.LastBuildStatus, state.LastBuildAt = sub.id, &inputs, sub.status, &now
+				if lerr := sub.lease.settle(ctx, false); lerr != nil {
 					// The build runs; what failed is the day's counters, and
 					// the entry says which build it was.
 					ev.d.Decision, ev.d.Error = imagecheck.CheckFailed,
-						"submitted Cloud Build build "+id+", but could not record what it reserves: "+oneLine(lerr.Error())
+						"submitted Cloud Build build "+sub.id+", but could not record what it reserves: "+oneLine(lerr.Error())
 				}
 			}
 		}
 		if !o.dryRun && !ev.prevUnreadable {
-			if err := catalogWriteState(ctx, bucket, imagecheck.CatalogCheckKey(w.slug, w.name), state, ev); err != nil {
+			if err := catalogWriteState(ctx, bucket, imagecheck.CatalogCheckKey(w.slug, w.name), state, *ev); err != nil {
 				msg := oneLine(err.Error())
-				if ev.d.Decision == imagecheck.Rebuild && state.BuildID != "" && !capped {
+				if ev.d.Decision == imagecheck.Rebuild && state.BuildID != "" {
 					// The build runs, but the next check cannot back off from it
 					// or wait for it: say which build it is.
 					msg = "submitted Cloud Build build " + state.BuildID + ", but could not record it in check.json: " + msg
@@ -890,13 +970,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, cmp.Or(ev.d.Error, msg)
 			}
 		}
-		// A capped entry's build_id is the last build a check submitted, not
-		// one this run did: the line says so rather than implying a submission.
-		logID := state.BuildID
-		if capped {
-			logID = ""
-		}
-		lg.log(w.name, w.repo.Repo, ev.d.Decision, ev.d.Reasons, logID, ev.lastStatus, ev.d.Error)
+		lg.log(w.name, w.repo.Repo, ev.d.Decision, ev.d.Reasons, state.BuildID, ev.lastStatus, ev.d.Error)
 		if ev.d.Decision == imagecheck.CheckFailed {
 			failed = append(failed, w.name)
 		}

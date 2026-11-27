@@ -61,12 +61,6 @@ const (
 	// ReasonLastBuildIneffective: the last build of these inputs ended
 	// without failing, but didn't clear the trigger.
 	ReasonLastBuildIneffective = "last-build-ineffective"
-	// ReasonBuildCap: a trigger fired, and the run's own build cap was
-	// already reached, so this entry's rebuild is left for the next run. It
-	// is the runner's note rather than the decision's — the decision is a
-	// rebuild either way — and the catalog check job is the one that appends
-	// it, since a workflow check submits at most one build.
-	ReasonBuildCap = "build-cap"
 )
 
 // FailedBuild reports whether a Cloud Build status is a failure the check

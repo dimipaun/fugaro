@@ -143,10 +143,11 @@ func (l *ProjectLayer) Applies(project, gcpProject string) bool {
 
 // Jobs is the project layer's jobs: block (R13): the installation's two
 // scheduled jobs, and whether each is stopped. Every field is a pointer
-// because the default is paused: a layer that writes no jobs: block, no block
-// for one job or no paused: key means the schedule stays stopped, and the
-// zero value of a bool would say the opposite — the one direction this key
-// must never take by omission.
+// because each job has its own default — the reports job pauses where the
+// layer says nothing, the catalog check runs (D3444) — and the zero value of a
+// bool says the opposite of one of them. Which default belongs to which job is
+// jobPaused's, in one place, because "the layer wrote nothing" and "the layer
+// wrote false" are one bool apart.
 type Jobs struct {
 	// Reports is the reports job: the project's one writer of reports/ in the
 	// runs bucket (R12's module, R11's code). Fugaro before 0.22.0 refuses
@@ -154,20 +155,23 @@ type Jobs struct {
 	// job image against).
 	Reports *JobState `yaml:"reports"`
 	// CatalogCheck is the project's catalog check job, scheduled since 0.18.0
-	// (D1148). It is the job whose own operator note offered a `gcloud
-	// scheduler jobs resume` that did not stick: paused was a Terraform
-	// variable with no field in CatalogCheckSpec for a run to set it from,
-	// so the next fugaro update applied the module's true again.
+	// (D1148), and running where the layer says nothing (D3444). It is the job
+	// whose own operator note offered a `gcloud scheduler jobs resume` that did
+	// not stick: paused was a Terraform variable with no field in
+	// CatalogCheckSpec for a run to set it from, so the next fugaro update
+	// applied the module's true again.
 	CatalogCheck *JobState `yaml:"catalog_check"`
 }
 
 // JobState is one scheduled job's own settings.
 type JobState struct {
-	// Paused stops the job's Cloud Scheduler job. It defaults to true, so a
-	// project that publishes a catalog and one that runs the reports job
-	// deploy both schedules stopped, and turning one on is the operator's own
-	// edit of the layer file: `fugaro settings set` refuses both keys (the
-	// generic path writes its allowlist and nothing else), so the file is
+	// Paused stops the job's Cloud Scheduler job. Which value silence means is
+	// each job's own (jobPaused): a project that runs the reports job deploys
+	// its schedule stopped, and one that publishes a catalog deploys the
+	// catalog check running, so the nightly rebuild needs no operator edit
+	// (D3444). Stopping a schedule or starting one is the operator's own edit
+	// of the layer file either way: `fugaro settings set` refuses both keys
+	// (the generic path writes its allowlist and nothing else), so the file is
 	// written by hand and `fugaro update` is what publishes it and applies it.
 	Paused *bool `yaml:"paused"`
 }
@@ -206,30 +210,37 @@ type LayerSecurity struct {
 	AlwaysLevel3 bool `yaml:"always_level_3"`
 }
 
-// ReportsPaused is the reports job's own state: the value the layer wrote,
-// and true (paused) wherever it wrote none — no jobs: block, no reports:
-// block, no paused: key, and no layer at all. It is nil-safe in both hops, so
-// a caller holding no layer file reads the default.
+// ReportsPaused is the reports job's own state: the value the layer wrote, and
+// true (paused) wherever it wrote none — no jobs: block, no reports: block, no
+// paused: key, and no layer at all. It is nil-safe in both hops, so a caller
+// holding no layer file reads the default.
 func (l *ProjectLayer) ReportsPaused() bool {
-	return jobPaused(l, func(j *Jobs) *JobState { return j.Reports })
+	return jobPaused(l, true, func(j *Jobs) *JobState { return j.Reports })
 }
 
-// CatalogCheckPaused is the catalog check job's own state; see
-// ReportsPaused for the default and why silence means paused.
+// CatalogCheckPaused is the catalog check job's own state: the value the layer
+// wrote, and false (running) wherever it wrote none (D3444), so a project that
+// publishes a catalog gets its nightly rebuild with nothing written about it.
+// An operator who wants it off writes jobs.catalog_check.paused: true, which
+// this reads like every other value the layer states.
 func (l *ProjectLayer) CatalogCheckPaused() bool {
-	return jobPaused(l, func(j *Jobs) *JobState { return j.CatalogCheck })
+	return jobPaused(l, false, func(j *Jobs) *JobState { return j.CatalogCheck })
 }
 
-// jobPaused reads one job's paused out of a layer that may be absent at any
-// of the three hops: the default is a fact of one place rather than of each
-// caller, because "the layer wrote nothing" and "the layer wrote false" are
-// one bool apart and only one of them stops the schedule.
-func jobPaused(l *ProjectLayer, job func(*Jobs) *JobState) bool {
+// jobPaused reads one job's paused out of a layer that may be absent at any of
+// the three hops, taking the job's own default where the layer is silent: the
+// default is a fact of one place rather than of each caller, because "the layer
+// wrote nothing" and "the layer wrote false" are one bool apart and which of
+// them a job takes is a decision about that job (D3444).
+func jobPaused(l *ProjectLayer, def bool, job func(*Jobs) *JobState) bool {
 	if l == nil || l.Jobs == nil {
-		return true
+		return def
 	}
 	st := job(l.Jobs)
-	return st == nil || st.Paused == nil || *st.Paused
+	if st == nil || st.Paused == nil {
+		return def
+	}
+	return *st.Paused
 }
 
 // LayerDefaults are the project-wide values of the repository keys the

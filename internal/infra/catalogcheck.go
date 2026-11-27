@@ -33,9 +33,10 @@ const CatalogCheckSpecEnv = "FUGARO_CATALOG_CHECK_SPEC"
 // meaning in place).
 //
 // Version 2 is the document without max_image_builds, which D1013's count was
-// (D1543, D1554): the job's own per-run cap is a constant of its binary now
-// (internal/cli's catalogRunBuildCap), and what bounds a build's cost is the
-// lease it takes. Version 1 stays readable and the key in it is ignored —
+// (D1543, D1554): no run bounds how many builds one night submits any more
+// (D3444) — every stale entry is rebuilt, four at a time (internal/cli's
+// catalogBuildsAtOnce) — and what bounds a build's cost is the lease it takes.
+// Version 1 stays readable and the key in it is ignored —
 // which is what makes the two directions of a mixed installation work while
 // `fugaro update` moves the job's image: the reader here decodes into a struct
 // with no such key, and the release behind's job binary reads a version-2
@@ -86,7 +87,10 @@ type CatalogCheckSpec struct {
 	// to exist: paused was a variable no run could set, so the operator note
 	// the 0.18.0 job shipped offered a `gcloud scheduler jobs resume` that the
 	// next `fugaro update` reverted. It is now the layer's
-	// jobs.catalog_check.paused, which the owner writes and update applies.
+	// jobs.catalog_check.paused, which the owner writes and update applies,
+	// and its default where the layer writes nothing is RUNNING (D3444): the
+	// nightly rebuild is what catches a stale catalog up, and an operator who
+	// wants it off writes paused: true.
 	Paused bool `json:"paused"`
 	// Env is the job's environment: the platform variables every job has
 	// (platformEnvFor, the same bytes the repository check job's env carries)
@@ -205,17 +209,17 @@ type CatalogCheckRepoSpec struct {
 // validated runs bucket.
 //
 // Nothing here bounds how many builds one run may submit any more: D1013's
-// count is gone (D1543), the job holds itself to its own per-run cap
-// (catalogRunBuildCap, internal/cli), and what bounds each build's cost is the
-// lease it takes through the same estimator a checkout's build goes through
-// (D1554). The budget backend that lease is written into is the
-// installation's own, and the variable is set below.
+// count is gone (D1543), the job submits a build for every stale entry it
+// finds — four at a time (catalogBuildsAtOnce, internal/cli, D3444) — and what
+// bounds each build's cost is the lease it takes through the same estimator a
+// checkout's build goes through (D1554). The budget backend that lease is
+// written into is the installation's own, and the variable is set below.
 //
 // paused is the schedule's own state, already resolved: the layer's
-// jobs.catalog_check.paused, or true wherever it wrote none (InstallOptions'
-// CatalogCheckPaused and jobPaused). It is a parameter rather than a field the
-// caller sets afterwards so that every field of the spec is built here, where
-// the plan review reads it.
+// jobs.catalog_check.paused, or false — running — wherever it wrote none
+// (InstallOptions' CatalogCheckPaused and jobPaused, D3444). It is a parameter
+// rather than a field the caller sets afterwards so that every field of the
+// spec is built here, where the plan review reads it.
 //
 // The job is what makes the catalog check run at all: nothing else submits a
 // build for an entry nobody pushed by hand, so the installation either deploys

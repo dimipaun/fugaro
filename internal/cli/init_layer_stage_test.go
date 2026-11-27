@@ -121,9 +121,9 @@ func TestUpdateSeedsTheLocalLayerFromThePublishedOne(t *testing.T) {
 // TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile: the project's two
 // schedules are the layer's (R13), and the installation stage — which runs
 // before the layer stage — reads them from the local file the owner edits.
-// Every way of having no value reads as no value, which the installation's
-// options then take as paused: the one direction this setting may never take
-// by accident is the one that starts a job.
+// Every way of having no value reads as the job's own default, which is the one
+// figure the layer's silence may never take by accident in either direction:
+// the reports job stays stopped and the catalog check runs (D3444).
 func TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
 	lc, err := localcfg.Load(r.cfg)
@@ -145,10 +145,11 @@ func TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile(t *testing.T) {
 		// schedule out of a file that is about to be refused.
 		want []bool
 	}{
-		{"the layer states nothing", testProjectLayer, []bool{true, true}},
+		{"the layer states nothing", testProjectLayer, []bool{true, false}},
 		{"the layer writes both out", testProjectLayer + "jobs:\n  reports: { paused: true }\n  catalog_check: { paused: true }\n", []bool{true, true}},
-		{"the owner starts the reports job", testProjectLayer + "jobs:\n  reports: { paused: false }\n", []bool{false, true}},
+		{"the owner starts the reports job", testProjectLayer + "jobs:\n  reports: { paused: false }\n", []bool{false, false}},
 		{"the owner starts the catalog check", testProjectLayer + "jobs:\n  catalog_check: { paused: false }\n", []bool{true, false}},
+		{"the owner stops the catalog check", testProjectLayer + "jobs:\n  catalog_check: { paused: true }\n", []bool{true, true}},
 		{"the owner starts both", testProjectLayer + "jobs:\n  reports: { paused: false }\n  catalog_check: { paused: false }\n", []bool{false, false}},
 		{"a jobs: key this release does not know", testProjectLayer + "jobs:\n  digests: { paused: false }\n", nil},
 		{"a paused: that is not a bool", testProjectLayer + "jobs:\n  reports: { paused: nope }\n", nil},
@@ -175,11 +176,12 @@ func TestUpdateTakesTheJobsPausedSettingFromTheLocalLayerFile(t *testing.T) {
 // TestUpdateAppliesThePublishedLayersJobsSettingWithNoLocalLayerFile: the
 // installation stage applies before the layer stage seeds a missing local layer
 // file from the published object, so a run that read the file alone would apply
-// paused — stopping the project's catalog check schedule the published layer
-// started, and putting it back only on the next update. What the installation
-// applies is the published layer's value, and a local file that IS there still
-// decides by itself: it is the file this run publishes, so the installation
-// must not carry a value the file it is about to publish does not have.
+// the run's own silence where the project published a stop — running the
+// project's catalog check schedule until the next update put it back. What the
+// installation applies is the published layer's value, and a local file that IS
+// there still decides by itself: it is the file this run publishes, so the
+// installation must not carry a value the file it is about to publish does not
+// have, and that file's silence is the check running (D3444).
 //
 // The catalog check is the job that makes the value observable: the run's
 // installation tfvars are the only place the schedule's state is decided.
@@ -194,11 +196,11 @@ func TestUpdateAppliesThePublishedLayersJobsSettingWithNoLocalLayerFile(t *testi
 		file bool // a local layer file that says nothing about jobs
 		want bool
 	}{
-		{"no local layer file", false, false},
-		{"a local layer file that says nothing", true, true},
+		{"no local layer file", false, true},
+		{"a local layer file that says nothing", true, false},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
-			r := newLayerRig(t, testProjectLayer+"jobs:\n  catalog_check: { paused: false }\n")
+			r := newLayerRig(t, testProjectLayer+"jobs:\n  catalog_check: { paused: true }\n")
 			fakeTerminal(t)
 			r.appendConfig(t, catalog)
 			r.save(t)

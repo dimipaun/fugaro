@@ -675,14 +675,18 @@ func catalogCheckPaused(t *testing.T, o InstallOptions) bool {
 
 // TestCatalogCheckSpecCarriesThePausedSetting: the schedule's own state is a
 // field of the spec, so the project layer's jobs.catalog_check.paused (R13)
-// reaches the variable the module applies to the Scheduler job's paused. The
-// gap it closes is not theoretical: paused was a Terraform variable with no
+// reaches the variable the module applies to the Scheduler job's paused. A
+// caller that read no layer gets the running schedule (D3444), and the key is
+// written out for it: the module's own default is still the stopped one, so a
+// value left unwritten would keep the nightly rebuild from ever running.
+//
+// The gap it closes is not theoretical: paused was a Terraform variable with no
 // field here for a run to set it from, so the 0.18.0 job's own operator note
 // offered a `gcloud scheduler jobs resume` that the next fugaro update reverted
 // — the module always applies paused, and the tfvars carried none.
 func TestCatalogCheckSpecCarriesThePausedSetting(t *testing.T) {
-	if paused := catalogCheckPaused(t, InstallOptions{}); !paused {
-		t.Error("an option set that names no layer turned the catalog check's schedule on: the loosening direction is the operator's alone, and a caller that read no layer must leave the schedule stopped")
+	if paused := catalogCheckPaused(t, InstallOptions{}); paused {
+		t.Error("an option set that names no layer stopped the catalog check's schedule: the nightly rebuild runs unless the layer stops it (D3444)")
 	}
 	yes := true
 	if paused := catalogCheckPaused(t, InstallOptions{CatalogCheckPaused: &yes}); !paused {
@@ -690,8 +694,9 @@ func TestCatalogCheckSpecCarriesThePausedSetting(t *testing.T) {
 	}
 }
 
-// TestCatalogCheckSpecCarriesPausedFalse: the one direction that starts the
-// schedule, and the only caller that writes it is the layer read.
+// TestCatalogCheckSpecCarriesPausedFalse: a layer that wrote paused: false is
+// carried as that value rather than left to the module's own default, which is
+// the stopped one.
 func TestCatalogCheckSpecCarriesPausedFalse(t *testing.T) {
 	no := false
 	if paused := catalogCheckPaused(t, InstallOptions{CatalogCheckPaused: &no}); paused {
