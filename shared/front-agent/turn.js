@@ -376,6 +376,7 @@ export const TRANSITIONS = Object.freeze({
         REFUSAL.UNEXPECTED_REPLY,
         REFUSAL.UNRESOLVED_TARGET,
         REFUSAL.NO_BRIEF,
+        REFUSAL.MISSING_REPLY,
         REFUSAL.MISSING_FIELD,
         REFUSAL.GO_EXPIRED,
       ],
@@ -464,6 +465,12 @@ export function turn(input) {
       if (before.spent) return refuse(REFUSAL.REPLAYED_GO, null);
       if (before.target === null) return refuse(REFUSAL.UNRESOLVED_TARGET, 'target');
       if (before.brief === null) return refuse(REFUSAL.NO_BRIEF, 'brief');
+      // The phase the conversation stood in is the whole judgement: with the
+      // target and the brief both held, READY is the only phase a go may be
+      // taken from, and the one other phase that reaches here is a reply still
+      // owed to the person's newest turn -- a brief that is about to be
+      // rewritten by the answer they are waiting for.
+      if (before.phase !== PHASE.READY) return refuse(REFUSAL.MISSING_REPLY, null);
       if (options.mode === null) return refuse(REFUSAL.MISSING_FIELD, 'mode');
       if (before.deadline !== null && now > before.deadline) return refuse(REFUSAL.GO_EXPIRED, null);
       return authorised(newest, before, transcript, options);
@@ -613,6 +620,14 @@ function isGo(record) {
  * one before it, and a turn that resolved none clears it), the brief is the
  * agent's latest answer, and a conversation that holds a go has spent its one
  * launch.
+ *
+ * A person turn with **no answer after it** is a reply still owed, and the phase
+ * says so: the agent has not answered the change the person just asked for, so
+ * the brief the conversation holds is not the brief they would be confirming.
+ * Without this the go is judged against a target and a brief that are both
+ * non-null and the old brief launches -- a person who says "go" before the agent
+ * answers "actually, the other repo" would start the run they just asked to
+ * change.
  */
 function derive(turns, options) {
   let target = null;
@@ -627,9 +642,12 @@ function derive(turns, options) {
     }
   }
   const spent = turns.some(isGo);
+  const newest = turns[turns.length - 1];
+  const owed = newest !== undefined && newest.role === ROLE.PERSON && !isGo(newest);
   const deadline = startedAt === null ? null : startedAt + options.ttlMs;
   let phase = PHASE.IDLE;
   if (spent) phase = PHASE.SPENT;
+  else if (owed) phase = PHASE.SHAPING;
   else if (startedAt !== null) phase = target !== null && brief !== null ? PHASE.READY : PHASE.SHAPING;
   return { phase, target, brief, deadline, spent, startedAt };
 }

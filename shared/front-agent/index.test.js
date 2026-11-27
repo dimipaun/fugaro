@@ -308,6 +308,13 @@ test('a go with no brief shaped is refused', () => {
   assert.equal(result.code, 'no-brief');
 });
 
+test('a go before the agent has answered the person’s newest turn is refused: that brief is about to be rewritten', () => {
+  const transcript = [...ready(), said('utt_2', 'actually, use the other repo', T0 + 2 * MINUTE), go(T0 + 3 * MINUTE)];
+  const result = refused({ transcript, reply: null, now: T0 + 3 * MINUTE, options: { mode: 'pro' } });
+  assert.equal(result.code, 'missing-reply');
+  assert.equal(result.field, null);
+});
+
 test('a replayed go authorises nothing the second time', () => {
   const first = turn({ transcript: [...ready(), go(T0 + 2 * MINUTE)], reply: null, now: T0 + 2 * MINUTE, options: { mode: 'pro' } });
   assert.equal(first.ok, true);
@@ -462,7 +469,7 @@ const EXPECTED = {
     [EVENT.GO]: {
       ok: [],
       next: ['shaping'],
-      no: ['not-agent-text', 'not-understood', 'command-and-go', 'unexpected-reply', 'unresolved-target', 'no-brief', 'missing-field', 'go-expired'],
+      no: ['not-agent-text', 'not-understood', 'command-and-go', 'unexpected-reply', 'unresolved-target', 'no-brief', 'missing-reply', 'missing-field', 'go-expired'],
     },
   },
   [PHASE.READY]: {
@@ -586,6 +593,18 @@ test('conversation names nothing it cannot know: no read-back without a brief', 
   assert.equal(view.phase, PHASE.SHAPING);
   assert.equal(view.readBack, null);
   assert.equal(view.brief, null);
+});
+
+test('a person turn the agent has not answered yet is shaping, and there is nothing to read back', () => {
+  const transcript = [...ready(), said('utt_2', 'actually, use the other repo', T0 + 2 * MINUTE)];
+  const view = conversation({ transcript, now: T0 + 2 * MINUTE, options: { mode: 'pro' } });
+  assert.equal(view.ok, true);
+  assert.equal(view.phase, PHASE.SHAPING);
+  assert.equal(view.readBack, null);
+  // The conversation still holds the brief the agent last wrote; it is simply
+  // not the brief the person is confirming, which is why the phase is shaping
+  // and the go is refused rather than taken.
+  assert.equal(view.brief, BRIEF);
 });
 
 test('a spent conversation has nothing left to read back', () => {

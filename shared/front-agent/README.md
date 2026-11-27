@@ -39,13 +39,19 @@ reviewed as a security path.
 | Phase | What the conversation holds | The go |
 |---|---|---|
 | `idle` | nothing has been said yet | refused: no resolved target and no brief |
-| `shaping` | a reply is still owed, or no brief yet, or no repository | refused, naming what is missing |
+| `shaping` | a reply is still owed, or no brief yet, or no repository | refused: `missing-reply` while the agent owes the last turn an answer, else naming what is missing |
 | `ready` | a brief **and** a repository, both live | **taken**: it authorises one launch |
 | `spent` | the go was taken | refused: `replayed-go` |
 
 A phase is a **summary of the transcript, derived on every call and never stored**. A go is judged
 against the phase of the conversation *before* it, so an utterance cannot make its own
 authorisation: the newest turn is read, and the phase rule is read from the turns before it.
+
+**A person turn with no answer after it is a reply still owed, and the phase says so.** The agent
+has not answered the change the person just asked for, so the brief the conversation holds is not
+the one they would be confirming. Judged without that rule, a go sees a target and a brief, both
+non-null, and launches the old brief — the person says "actually, the other repo" and a run starts
+in the repository they just asked to leave.
 
 ## The go reuses P6.2's rules rather than writing a second set
 
@@ -83,7 +89,10 @@ transcript, every call is handed the whole of it, and a go that was spent is a t
 in it. So a replayed go needs no ledger — the phase it left behind (`spent`) refuses the second
 one, and a repeated turn id is refused (`replayed-turn`) while the transcript is read. A module
 that kept a second copy of what the transcript already holds would be a second answer to the same
-question, and the second answer is the one that goes wrong.
+question, and the second answer is the one that goes wrong. **A second go *turn* is what this
+refuses.** The same transcript presented twice — the go already its newest turn — is the same input
+and so gets the same answer, as a pure function must; what stops the second run there is the action
+id (see Honest limits).
 
 **Nothing is parsed out of the go.** The action record is built from the conversation: the
 repository is the one that was read back, the mode is the session's, the brief is the one shaped.
@@ -93,7 +102,8 @@ refused rather than believed.
 ## The order the checks run in
 
 At a go: the router's answer, then a reply beside it (`unexpected-reply`), then the phase
-(`replayed-go`), then the target, then the brief, then the mode, then the deadline. At a turn:
+(`replayed-go`), then the target, then the brief, then a reply the agent still owes (`missing-reply`),
+then the mode, then the deadline. At a turn:
 `missing-reply` before `conversation-closed`, so the first thing a caller learns is the missing
 answer rather than the closed conversation. An **input** refusal — a transcript that is not a
 transcript, a field of the wrong type, a `now` outside its window — comes before all of them,
@@ -109,7 +119,7 @@ for all of them between `INPUT_REFUSALS` and the transition table's cells. The c
 | `not-understood` | a wake-word utterance the grammar does not know — P6.1 never forwards it, and neither does this |
 | `not-agent-text` | an app command: another screen's, not this conversation's |
 | `command-and-go` | one utterance carrying a command **and** a confirm token |
-| `missing-reply` / `unexpected-reply` | a turn with no answer yet / a reply where none is answered |
+| `missing-reply` / `unexpected-reply` | a turn with no answer yet — or a go while the agent still owes the person's newest turn one — / a reply where none is answered |
 | `conversation-closed` | a turn after the go |
 | `replayed-go` | a second go, whatever ids it carries |
 | `unresolved-target` / `no-brief` | a go with nothing read back to launch |
@@ -167,14 +177,14 @@ where P6.3's readers refuse them, because the two charsets must not disagree and
 goes into the read-back, the one sentence the person is meant to trust, where either character is a
 line break inside it.
 
-`mutation-proof.sh` plants 40 one-line bugs in `turn.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 42 one-line bugs in `turn.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. Its
 **first two guards are the task's own red step** — the phase rule that refuses a second go, and the
 deadline — so the red step stays re-runnable rather than living only in a pull-request transcript.
 
-`vectors.json` carries 36 accept-and-refuse cases as **data** (the conversation, the clock it is
+`vectors.json` carries 37 accept-and-refuse cases as **data** (the conversation, the clock it is
 judged at, and the exact answer) for P5.4.5's Go parity test; the constants travel with them so the
 Go side reads no second set. `vectors.generate.mjs` asserts every case against the live module
 before it writes, so the file cannot be minted from a module that disagrees with a case, and
@@ -193,6 +203,13 @@ claim, from a table written by hand.
 - **The transcript is not a proof of authorship.** It is the fence's input, not a MAC: whoever
   reads a conversation back in must be the one that wrote it (P5.4.2's schema and P6.7's
   re-validation are where that is decided).
+- **Replay protection for one go turn is the action id's, not this module's.** `turn` is pure, so
+  handing it the same transcript twice returns the same answer: a host that restarts and re-reads a
+  stored conversation whose newest turn is the go gets that go authorised again, with the same
+  `actionId`, at whatever `now` it asks at. What refuses the second *launch* is downstream — P6.7's
+  re-validation and P5.4.6's handoff, keyed by the action id — and this module does not hold a
+  ledger to do it with, because a ledger is the state the transcript already is (see above). The
+  host must therefore make the action id the idempotency key of the launch it authorises.
 - **The options are the session's, and this module holds no second copy of them.** `mode`,
   `costlyModes`, `biometricOnCostly` and `ttlMs` are handed in on every call, so the read-back's
   mode is the mode the go authorises **only while the caller passes the same `mode` to both calls**:

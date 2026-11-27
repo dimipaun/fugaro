@@ -214,6 +214,18 @@ run "a go with no brief has nothing to launch" \
   "      if (before.brief === null) return refuse(REFUSAL.NO_BRIEF, 'brief');" \
   "      if (false) return refuse(REFUSAL.NO_BRIEF, 'brief');"
 
+# The reply the agent still owes. A person turn with no answer after it is the
+# newest turn of the prefix, and the phase says so -- without it a go sees a
+# target and a brief, both non-null, and launches the brief the person is asking
+# to change.
+run "a go is refused while the agent still owes the newest turn an answer" \
+  "  const owed = newest !== undefined && newest.role === ROLE.PERSON && !isGo(newest);" \
+  "  const owed = false;"
+
+run "the phase the go is judged against is the whole judgement, not the brief it can see" \
+  "      if (before.phase !== PHASE.READY) return refuse(REFUSAL.MISSING_REPLY, null);" \
+  "      if (false) return refuse(REFUSAL.MISSING_REPLY, null);"
+
 run "a launch runs in a mode, and none is minted here" \
   "      if (options.mode === null) return refuse(REFUSAL.MISSING_FIELD, 'mode');" \
   "      if (false) return refuse(REFUSAL.MISSING_FIELD, 'mode');"

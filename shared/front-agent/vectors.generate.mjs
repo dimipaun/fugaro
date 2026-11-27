@@ -164,6 +164,12 @@ const CASES = [
     want: { ok: false, code: 'no-brief', field: 'brief' },
   },
   {
+    name: 'a go before the agent has answered the person’s newest turn',
+    why: 'a person turn with no answer after it is a reply still owed, so the brief the conversation holds is not the one the person is confirming: the phase is shaping, and the go is refused rather than taken',
+    call: { transcript: [...ready(), said('utt_2', 'actually, use the other repo', T0 + 2 * MINUTE), go(T0 + 3 * MINUTE)], reply: null, now: T0 + 3 * MINUTE, options: { mode: 'pro' } },
+    want: { ok: false, code: 'missing-reply', field: null },
+  },
+  {
     name: 'a go the session gave no mode for',
     why: 'a launch runs in a mode, and this module does not mint one: the field is named rather than guessed',
     call: { transcript: [...ready(), go(T0 + 2 * MINUTE)], reply: null, now: T0 + 2 * MINUTE },
