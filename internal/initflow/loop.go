@@ -1153,7 +1153,7 @@ func (l *loop) openStep(name string) {
 	l.step, l.stepStage = l.newStep(name), name
 }
 
-// step is one stage's step, opened on the reporter: the ID is the name the log
+// newStep opens one stage's step on the reporter: the ID is the name the log
 // and the result carry, and DisplayName is what every line a person reads
 // says (D3435).
 func (l *loop) newStep(name string) *report.Step {
