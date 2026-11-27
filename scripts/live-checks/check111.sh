@@ -1440,7 +1440,7 @@ assert_unlisted() {
 step_3() {
   say "mode 3: NO TTY at all — the picker must never run, and the run must not wait for input"
   run_plain 3 "$SCRATCH/mode-3.log" "" -- env -u CLAUDE_CODE_SSE_PORT fugaro "${SETUP_ARGS[@]}"
-  mode_exit 3 "the same line with standard input at /dev/null and no pty — the same case as a pipe, a redirect or --non-interactive" "$SCRATCH/mode-3.log"
+  mode_exit 3 "the same line with standard input at /dev/null and no pty — the same case as a pipe or a redirect" "$SCRATCH/mode-3.log"
   assert_no_picker 3
   assert_line 3 "$SCRATCH/mode-3.log"
   assert_api 3
