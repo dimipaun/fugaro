@@ -923,18 +923,16 @@ func ValidateMessage(r Record) (*Message, *Refusal) {
 		}
 		message.Action = action.value
 	}
-	// The brief, and the verb that carries it (P5.4.2). A launch is the one
-	// verb that starts work, so it is the one verb with something to start
-	// from: a launch with no brief would start a run with nothing to work
-	// from, and a brief beside a cancel, a merge or a confirm is a field the
-	// consumer would have to guess the meaning of. The verb is read from the
-	// record the action check above already validated.
+	// The brief, and the verb that carries it (P5.4.2). The brief is OPTIONAL
+	// (the owner's ruling of 2026-11-27): a launch carrying its task in `text`
+	// stays valid, so the schema does not require one. When a brief is present
+	// it must sit on a launch — the one verb that starts work, so the one verb
+	// with something to start from — and a brief beside a cancel, a merge or a
+	// confirm is a field the consumer would have to guess the meaning of. The
+	// verb is read from the record the action check above already validated.
 	verb := ""
 	if message.Action != nil {
 		verb = message.Action.Verb
-	}
-	if verb == "launch" && !r.has("brief") {
-		return nil, refuse(CodeMissingField, "brief")
 	}
 	if r.has("brief") {
 		if verb != "launch" {

@@ -35,7 +35,7 @@ const vectorsPath = "../../shared/mailbox-schema/vectors.json"
 // map is T1's reading of the module's own rules rather than a quote of the
 // file — and it is here rather than omitted because "every accepted vector's
 // record validates" is only half a statement without the other half. The
-// remaining 28 cases are asserted to validate.
+// remaining 29 cases are asserted to validate.
 //
 // `field` is pinned as well, and it is the only refusal in the whole replay
 // whose field the two ends could answer differently: the code-point vector
@@ -73,8 +73,8 @@ func TestSchemaVectorsReplay(t *testing.T) {
 		t.Fatalf("the vectors' key is %q: the file's own rule is a readable placeholder, never a credential", key)
 	}
 	cases := list(t, file["cases"], "cases")
-	if len(cases) != 31 {
-		t.Fatalf("vectors.json carries %d cases, not 31: the file, not the replay, is what changed", len(cases))
+	if len(cases) != 32 {
+		t.Fatalf("vectors.json carries %d cases, not 32: the file, not the replay, is what changed", len(cases))
 	}
 
 	for _, entry := range cases {
@@ -219,8 +219,8 @@ func TestRecordsNestedInRecordsValidate(t *testing.T) {
 			}
 		})
 	}
-	if accepted != 28 {
-		t.Fatalf("%d cases were accepted, not the 28 the schema accepts", accepted)
+	if accepted != 29 {
+		t.Fatalf("%d cases were accepted, not the 29 the schema accepts", accepted)
 	}
 }
 
@@ -255,8 +255,8 @@ func TestSchemaVectorDirectionPairs(t *testing.T) {
 func TestSchemaVectorRefusals(t *testing.T) {
 	file := loadVectors(t)
 	refusals := list(t, file["refusals"], "refusals")
-	if len(refusals) != 56 {
-		t.Fatalf("vectors.json carries %d refusals, not 56: the file, not the replay, is what changed", len(refusals))
+	if len(refusals) != 55 {
+		t.Fatalf("vectors.json carries %d refusals, not 55: the file, not the replay, is what changed", len(refusals))
 	}
 	for _, entry := range refusals {
 		vector := object(t, entry, "refusal")
@@ -2235,8 +2235,8 @@ func TestTheSharedBoundVectorsHold(t *testing.T) {
 	file := loadBoundVectors(t)
 	accepts := list(t, file["accepts"], "accepts")
 	refusals := list(t, file["refusals"], "refusals")
-	if len(accepts) != 18 || len(refusals) != 16 {
-		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 18 and 16: the file, not the replay, is what changed",
+	if len(accepts) != 19 || len(refusals) != 15 {
+		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 19 and 15: the file, not the replay, is what changed",
 			len(accepts), len(refusals))
 	}
 
