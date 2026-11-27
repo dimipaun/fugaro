@@ -8970,6 +8970,7 @@
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "docs/**",
+        "docs/layered-config/spec.md",
         "docs/plans/*",
         "docs/project-layer.md",
         "docs/release-streams.yaml",
