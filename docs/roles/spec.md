@@ -96,11 +96,18 @@ Read together, that table says who can do what today:
   `roles/firebasedatabase.admin` and `roles/datastore.viewer` (`modules/firebase/iam.tf:31`, `:53`,
   `:65`). They can write anything in the database over IAM, `/config` (caps and kill switches) and
   the device nodes included, and cannot launch, cancel, read the runs bucket or apply Terraform.
-- **Every launcher and every operator can mint a token for any identity in the project.** Both are
-  in `local.people`, and the token-minter role is granted to that set (F44,
-  `docs/forge-authorship-images/reconciliation.md:310`). A claim, a uid or an email in a custom token
-  therefore binds nothing against them — the reason D628 requires a minter the ranked people cannot
-  call.
+- **Neither a launcher nor an operator mints a run's token any more: the credentials service does.**
+  Both are in `local.people`, and the token-minter role was granted to that set until 0.30.0 (F44,
+  `docs/forge-authorship-images/reconciliation.md:310`), so a claim, a uid or an email in a custom
+  token bound nothing against them — the reason D628 requires a minter the ranked people cannot call.
+  That minter is the credentials service now (D3121, D3126): `fugaro update` moves the row to its own
+  account, and a launch asks it for a one-time ticket instead of signing one (LM14 of
+  [docs/launcher-does-not-mint/implementation-plan.md](../launcher-does-not-mint/implementation-plan.md)).
+  **What an operator keeps is a reach and not a grant**: an operator administers the installation's
+  IAM, so they can re-grant the row to themselves and reach it through the deployer account the update
+  impersonates (D3127); `fugaro doctor` lists every principal holding it beyond the issuer, so the
+  standing state is readable rather than assumed. A launcher's own Google ID token is still a bearer a
+  service can replay for about an hour (O5), which is what a ticket issued on a replay is.
 - **An RTDB `roles/firebasedatabase.viewer` holder bypasses the rules.** The rules bound *client
   tokens*; they are not what keeps `config/admin` private from a launcher, which reads it through
   IAM (`internal/budget/rules/rules.go:61`, `:508`). Any confidential thing placed in RTDB is
@@ -151,8 +158,9 @@ grants a read there grants a write beside it.
 | Manage credentials | must not | must not — **boundary**: the credentials service admits job service accounts only (`internal/credsvc/auth.go:312`), and the credential's secret has `secretAccessor` for the service's own account alone (`modules/installation/credentials.tf:113`) | `roles/owner`/`editor` reach Secret Manager; the service's own account is the only reader of the credential |
 
 The **viewer** row is where the matrix and today part company, and it is the row T16 asks about.
-Every one of its `must not` cells is unenforceable today: the mint is granted to `local.people`
-(`modules/firebase/iam.tf:35`), and `run.executions.cancel` comes bundled in `fugaroLauncher` with
+Every one of its `must not` cells is unenforceable today: the mint was granted to `local.people`
+(`modules/firebase/iam.tf:35`) — the credentials service holds it alone since 0.30.0 (D3121, above),
+which is the half that has closed — and `run.executions.cancel` comes bundled in `fugaroLauncher` with
 the reads, so a person cannot be given a read without also being given the writes beside it — which
 is F6's "there is no viewer anywhere" read from the other side. A read-only list needs its own role:
 `run.jobs.get`, `run.jobs.list`, `run.executions.get`, `run.executions.list` and `run.operations.get`,
@@ -213,8 +221,9 @@ What it must **not** grant, and what each absence protects:
 - **no `job_runner` on any job, and on the Batch backend no `batch.jobsEditor` and no
   `serviceAccountUser`** — a viewer cannot start a job and cannot act as a run account, which is the
   whole of the launch surface (F28);
-- **no token-minter role** — otherwise a viewer can mint the identity of anyone in the project, and
-  the role it is being denied exists only on paper (F44);
+- **no token-minter role** — otherwise a viewer could mint the identity of anyone in the project:
+  the row used to sit on `local.people`, which made denying it on paper (F44), and since 0.30.0 the
+  credentials service holds it alone and no list this design writes carries it (D3121, §5);
 - **no Terraform state bucket** — a viewer cannot read or lock the installation's state;
 - **no `secretmanager.secretAccessor`** — a viewer reads the secret list's metadata and no value;
 - **no write anywhere**, including `firebasedatabase.admin`, which writes `/config` over IAM.
@@ -244,11 +253,14 @@ hosted launch path now; `fugaro user` over the IAM lists is the interim (`:413`)
 authenticated launcher identity that would replace the claim slice A states, and it is E0's subject
 with this document.
 
-The constraint D628 creates is precise, and F44 is why: today's signer *is* callable by every
-launcher and every operator, because both are in `local.people` and the token-minter custom role is
+The constraint D628 creates is precise, and F44 is why: the signer used to be callable by every
+launcher and every operator, because both are in `local.people` and the token-minter custom role was
 granted to that set (`modules/firebase/iam.tf:35`). A role claim minted by that signer is minted by
 the people it ranks. So a minter must be an identity that the ranked people cannot impersonate or
-act as.
+act as — and **that identity is the credentials service now** (D3121, D3126): the row is its own
+since 0.30.0, it mints a run's identity on a one-time ticket and the pairing and device tokens, and
+the people it ranks hold no signing grant. The options below are how this design reached the shape
+it did.
 
 Where such a minter could live — options, not a choice (**D686**):
 
