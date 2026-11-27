@@ -8,9 +8,9 @@ owner's explicit go.
 
 **U11 is cancelled and U12 no longer waits on it** (D3420 of
 [docs/ground-rules](../ground-rules/reconciliation.md) amends D3353): U12 removes `--repo` once U9d
-is merged, and the stage over every enrolled repository is built as UO2 of
-[docs/ground-rules](../ground-rules/implementation-plan.md). The tasks below are kept as written, for
-the record.
+is merged and UO2 has landed, and the stage over every enrolled repository is built as UO2 of
+[docs/ground-rules](../ground-rules/implementation-plan.md). U11's own block below is kept as written,
+for the record.
 
 The answers that shaped it are D3340–D3352, all as recommended. D3343, D3347 and D3349 were
 amended after review and confirmed.
@@ -84,7 +84,9 @@ amended after review and confirmed.
 ## Launch notes
 
 L8 M1 merged during review round 2 (#3816), so U1 was ready. **U11 is cancelled** (D3420), so nothing
-here waits on L2, and U12's edge on U11 is lifted: it launches on U9d alone.
+here waits on L2. U12 waits on U9d and on UO2 of
+[docs/ground-rules](../ground-rules/implementation-plan.md) (behaviour: the stage that replaces what
+`--repo` did), with U9d its only edge inside this plan's graph.
 
 ## Slices
 
@@ -97,7 +99,7 @@ here waits on L2, and U12's edge on U11 is lifted: it launches on U9d alone.
 5. **The wiring** (I1) and **the documents** (U7a, U7b).
 6. **Cancelled by D3420** (U11): the repository stage over every repository. It is built as UO2 of
    [docs/ground-rules](../ground-rules/implementation-plan.md), over the shared-job profiles.
-7. **After U9d** (U12): `update --repo` goes.
+7. **After U9d and UO2** (U12): `update --repo` goes.
 8. **The owner's check** (K1, Check 930).
 
 ## Tasks
@@ -530,10 +532,11 @@ here waits on L2, and U12's edge on U11 is lifted: it launches on U9d alone.
 - Commit: `update-from-anywhere U11: the repository stage over every repository`
 - Reviewer tier: opus, with an independent review (it applies Terraform roots).
 
-### U12: `update --repo` goes (after U9d)
+### U12: `update --repo` goes (after U9d and UO2)
 - Added by the owner's ruling of 2026-11-26 (D3353), amended by D3420 the same day: U12 no longer
-  waits on U11, which is cancelled. U12 depends on U9d and launches after it. Until it merges,
-  `update --repo` stays as it is.
+  waits on U11, which is cancelled. U12 waits on U9d and on UO2 of
+  [docs/ground-rules](../ground-rules/implementation-plan.md), and launches after both; U9d is its
+  only edge inside this plan's graph. Until it merges, `update --repo` stays as it is.
 - Acceptance:
   - The `--repo` flag is removed from `fugaro update`. A repository's records come from plain
     `fugaro update` over every enrolled repository, read from its default branch (UO2 of
@@ -553,8 +556,9 @@ here waits on L2, and U12's edge on U11 is lifted: it launches on U9d alone.
   `TestDoctorFixTextsNamePlainUpdate`.
 - Command: `go test ./internal/cli/ -run 'TestUpdateHasNoRepoFlag|TestNoLiveDocumentNamesUpdateRepo|TestDoctorFixTextsNamePlainUpdate|Docs' -count=1 && go test ./plugin/ -count=1`
 - Red step: `TestUpdateHasNoRepoFlag` fails while `update` still registers `--repo`.
-- Depends on: UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md) (the repository stage
-  replaces what `--repo` did; U11, which this edge named, is cancelled); U9d (the same documents).
+- Depends on: UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md) (behaviour: the
+  repository stage replaces what `--repo` did; U11, which this edge named, is cancelled) and U9d (the
+  same documents), which is its only edge inside this plan's graph.
 - Commit: `update-from-anywhere U12: update --repo goes`
 - Reviewer tier: opus, with an independent review (it removes a flag the plugin skills name).
 
@@ -614,15 +618,17 @@ here waits on L2, and U12's edge on U11 is lifted: it launches on U9d alone.
 | 2 | U3b, U6b, U7b, U9a |
 | 3 | U10 |
 | 4 | I1, U7a, U9b |
-| 5 | U9c; U11 once L2 lands; K1 (owner); R-view-files (only if raised) |
+| 5 | U9c; K1 (owner); R-view-files (only if raised) |
 | 6 | U9d |
+| 7 | U12 (UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md) is outside the graph) |
 
 **Critical path:** C1 → U3a → U3b → U10 → U9b → U9c → U9d. That is the anchor's clean-up, which
 blocks nothing else; the core path is C1 → U3a → U3b → U10 → I1 → K1. The read names C1 as the
-bottleneck. U11 also waits on L2, outside the graph.
+bottleneck. U12 waits on UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md), outside
+the graph, and on U9d.
 
 **Sequential, and why:**
-- `init.go` and the generated CLI reference are written in the order U3b → U10 → U9b → U11, one
+- `init.go` and the generated CLI reference are written in the order U3b → U10 → U9b → U12, one
   writer at a time. `initsecrets.go` is written by U3a, then U3b.
 - `init_fugaroyaml.go` is written by U6a, then U9a, then U9b.
 - U10 needs U4's staleness function.
@@ -631,21 +637,22 @@ bottleneck. U11 also waits on L2, outside the graph.
   `image_refresh.go` with U4 and `doctor.go` and `doctor_render.go` with U6b. U9d's test needs
   U9c, and it shares `README.md` with U7a.
 - U7a and U7b describe what U4, U5, U6a and U10 built.
-- I1 joins every side, and U11 lifts I1's exemption.
+- I1 joins every side, and the exemption the constraints table gives the repository stage lifts with
+  UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md).
 
 ### Shared files
 
 | File | Writers in this plan (level) | Other plans' writers (R7: rebase, never wait) |
 | --- | --- | --- |
-| `internal/cli/init.go` | U3b (2), U10 (3), U9b (4), U11 (5) | L1 T4 #3786; L8 DK2 |
+| `internal/cli/init.go` | U3b (2), U10 (3), U9b (4), U12 (7) | L1 T4 #3786; L8 DK2 |
 | `website/content/cli-reference.md` | U3b (2), U10 (3), U9b (4) | any flag change elsewhere: regenerate |
 | `internal/cli/initsecrets.go` | U3a (1), U3b (2) | none |
 | `internal/cli/init_fugaroyaml.go` | U6a (1), U9a (2), U9b (4) | none |
 | `internal/cli/init_stages.go` | C1 (0, one field) | L1 T2a #3766; L8 M2 |
 | `internal/cli/doctor.go`, `doctor_render.go` | U6b (2), U9c (5) | image-secrets IS10 (#3802, merged) |
 | `internal/cli/image_refresh.go` | U4 (1), U9c (5) | none |
-| `internal/cli/init_repo_stage.go` | U9b (4), U11 (5) | none |
-| `internal/cli/update_anywhere_test.go` | I1 (4), U11 (5) | none |
+| `internal/cli/init_repo_stage.go` | U9b (4), U12 (7) | none |
+| `internal/cli/update_anywhere_test.go` | I1 (4) | UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md) lifts the exemption |
 | `README.md` | U7a (4), U9d (6) | none |
 | `docs/upgrade/spec.md` | U7b (2), U10 (3) | none |
 | `internal/cli/update_in_flight_test.go` | I1 (4) | image-secrets IS5; L8 |

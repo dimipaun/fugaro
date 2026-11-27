@@ -16,9 +16,11 @@ ships alone.
 - **U11 is cancelled, and U12 no longer waits on it** (D3420 amends D3353). The merged tasks stay: they
   read each repository from its default branch, with no checkout. The stage over every enrolled
   repository, which U11 would have built, is UO2 of
-  [docs/ground-rules](../ground-rules/implementation-plan.md) (D3421), so the clauses that read "until
-  U11" (R3, the constraints table, Check 930) are read against that task. R4's RC39 facts (D3346) no
-  longer have a home here.
+  [docs/ground-rules](../ground-rules/implementation-plan.md) (D3421), so every clause that reads
+  "until U11" is read against that task: R3, the two global constraints, Check 930 (K1's two clauses
+  included), I1's exemption clause, the edges table and the declined-options note, and spec.md's scope
+  line, which is the owner's text and is left as written. U12 waits on U9d and on that task. R4's RC39
+  facts (D3346) no longer have a home here.
 
 ## Assumptions
 
