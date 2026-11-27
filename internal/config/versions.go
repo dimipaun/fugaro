@@ -66,7 +66,7 @@ func upgradeVersion(data []byte) ([]byte, []Problem) {
 // upgradeTo is upgradeVersion with the target version named, which is what
 // lets a test drive the chain past today's single version.
 func upgradeTo(data []byte, target int) ([]byte, []Problem) {
-	v, ok := fileVersion(data)
+	v, ok := VersionOf(data)
 	if !ok {
 		// Not a document carrying an int version at all: the strict decode
 		// refuses it in the words it always did, so the version read is never
@@ -115,10 +115,16 @@ type versionOnly struct {
 	Version int `yaml:"version"`
 }
 
-// fileVersion reads a fugaro.yaml's own version. ok is false for a document
-// that carries no int version at all — an empty file, a scalar, a version that
-// is not a number — and its caller then leaves the file to the strict decode.
-func fileVersion(data []byte) (int, bool) {
+// VersionOf reads a fugaro.yaml's own version. ok is false for a document that
+// carries no int version at all — an empty file, a scalar, a version that is
+// not a number — and the loader then leaves the file to the strict decode.
+//
+// Its two readers are the loader, which reads the version before anything else
+// (upgradeTo), and the deprecation notice, which names a file still written at a
+// version inside its window (D3423): a Config's own version has been lifted to
+// the target by the time a caller holds one, so the file's bytes are the only
+// place the version it was written at is left.
+func VersionOf(data []byte) (int, bool) {
 	var only versionOnly
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	if err := dec.Decode(&only); err != nil {
