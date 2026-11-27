@@ -628,7 +628,10 @@ func TestLaunchBudgetUsesTheTighter(t *testing.T) {
 		pf := newBudgetFixture(t, "")
 		pf.SetCaps(100, 3, 20, 3)
 		pf.SetSpentToday(0)
-		pf.Checkout(t, "  review_rounds: 2\n")
+		// No layer published: the preview's checkout is the repository whose
+		// project says nothing about the knob, which is the case the figure is
+		// about — the fixture's own checkouts state the numbers they write.
+		pf.CheckoutWithoutLayer(t, "  review_rounds: 2\n")
 		out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "1", "--json")
 		if err != nil {
 			t.Fatal(err)
