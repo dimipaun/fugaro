@@ -421,6 +421,14 @@ const retiredFirebaseFlag = "firebase"
 // it from here.
 const retiredCredentialsFlag = "provision-credentials"
 
+// retiredManagedFlag is the flag R3 removed (D2214): every creating run records
+// its budget, so there is nothing left for an opt-in to say, and `--managed`
+// joins --firebase and --provision-credentials as a name the SetFlagErrorFunc
+// below refuses with a sentence rather than pflag's bare "unknown flag".
+// Written once, and read by the tests that pin the removal and by the scan that
+// keeps the retired name out of the help.
+const retiredManagedFlag = "managed"
+
 // managedFlaggingSentence is the tail of --managed's help about a project that
 // already exists. It describes the FLAG, and that is what makes it one sentence
 // for both doors: --managed records a budget in the creation fact of a project
