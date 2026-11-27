@@ -1,0 +1,776 @@
+{
+ "schema_version": 3,
+ "plan": "docs/ground-rules/implementation-plan.md",
+ "stream": "cli",
+ "nodes": [
+  {
+   "id": "DG0",
+   "title": "the delete classes",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/tf/classes.go",
+     "internal/infra/tf/classes_test.go",
+     "docs/ground-rules/delete-classes.md"
+    ]
+   }
+  },
+  {
+   "id": "VS0",
+   "title": "the stamp field",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/task/task.go",
+     "internal/task/task_test.go",
+     "schemas/task.schema.json"
+    ]
+   }
+  },
+  {
+   "id": "UO1",
+   "title": "the earlier plans brought in line",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "docs/update-from-anywhere/README.md",
+     "docs/update-from-anywhere/implementation-plan.md",
+     "docs/update-from-anywhere/reconciliation.md",
+     "docs/required-version-stamp/README.md",
+     "docs/managed-flag-ergonomics/README.md"
+    ]
+   }
+  },
+  {
+   "id": "UO2",
+   "title": "every repository on shared jobs; update retires the rest",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/spec.go",
+     "internal/cli/init.go",
+     "internal/cli/init_retire.go",
+     "internal/cli/init_repo_stage.go",
+     "internal/cli/update_retire_root_test.go"
+    ]
+   }
+  },
+  {
+   "id": "UO3",
+   "title": "workflows.*.resources read and ignored",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/config/retired.go",
+     "internal/config/retired_test.go"
+    ]
+   }
+  },
+  {
+   "id": "UO5",
+   "title": "the compute root is an update stage",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_compute.go",
+     "internal/cli/init.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/backends.go",
+     "internal/cli/doctor_batch.go",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "DOC1",
+   "title": "the standing rules rewritten",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "CLAUDE.md",
+     ".claude/rules/credentials-service.md",
+     "plugin/skills/update/SKILL.md",
+     "plugin/skills/setup/SKILL.md",
+     "plugin/skills/images/SKILL.md"
+    ]
+   }
+  },
+  {
+   "id": "DOC2",
+   "title": "the how-tos and the managed handoffs",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "docs/how-to/budgets.md",
+     "docs/how-to/registry-cleanup.md",
+     "docs/how-to/offboarding.md",
+     "docs/managed-agent-converge/handoffs.md"
+    ]
+   }
+  },
+  {
+   "id": "UO4",
+   "title": "update --repo goes",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init.go",
+     "internal/cli/init_refusal.go",
+     "internal/cli/init_repo_target.go",
+     "internal/cli/init_retire.go",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "CV1",
+   "title": "the versioned loader",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/config/versions.go",
+     "internal/config/versions_test.go",
+     "internal/config/config.go",
+     "internal/config/validate.go",
+     "schemas/fugaro.schema.json"
+    ]
+   }
+  },
+  {
+   "id": "CV2",
+   "title": "the deprecation notice",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/doctor_config_version.go",
+     "internal/cli/doctor_config_version_test.go",
+     "internal/cli/update_summary.go"
+    ]
+   }
+  },
+  {
+   "id": "CV3",
+   "title": "the image-age gates retire",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/recipes_skew.go",
+     "internal/cli/init_fugaroyaml.go",
+     "internal/cli/recipes_skew_test.go"
+    ]
+   }
+  },
+  {
+   "id": "DG1",
+   "title": "the gate judges what is deleted",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/tf/managed_cover.go",
+     "internal/cli/managed_gate.go",
+     "internal/infra/managed/deletelist.go",
+     "internal/cli/allow_delete.go",
+     "internal/cli/root.go"
+    ]
+   }
+  },
+  {
+   "id": "DG2",
+   "title": "the guard judges what is deleted; --allow-delete goes",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/tf/guard.go",
+     "internal/infra/tf/guard_test.go",
+     "internal/cli/init.go",
+     "internal/cli/init_refusal.go",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "DG3",
+   "title": "what update never destroys",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/tf/never_destroy_test.go",
+     "internal/cli/update_member_secrets_test.go"
+    ]
+   }
+  },
+  {
+   "id": "CO1",
+   "title": "plain step names",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/initflow/stage.go",
+     "internal/initflow/loop.go",
+     "internal/cli/testdata/*.golden"
+    ]
+   }
+  },
+  {
+   "id": "CO2",
+   "title": "liveness",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/report/spinner.go",
+     "internal/report/report.go",
+     "internal/cli/setup_events.go",
+     "schemas/setup-events.schema.json",
+     "internal/cli/testdata/setup_events.golden.ndjson"
+    ]
+   }
+  },
+  {
+   "id": "CO3",
+   "title": "no raw output on screen",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init.go",
+     "internal/cli/image.go",
+     "internal/cli/init_images.go",
+     "internal/cli/raw_output_test.go"
+    ]
+   }
+  },
+  {
+   "id": "CO4",
+   "title": "structured detail for agents",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/report_flags.go",
+     "internal/cli/root.go",
+     "internal/cli/agent_json_test.go"
+    ]
+   }
+  },
+  {
+   "id": "CO5",
+   "title": "the 140-character census",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/laconic_census_test.go",
+     "internal/cli/testdata/laconic_allowlist.txt",
+     "internal/cli/update_laconic_test.go"
+    ]
+   }
+  },
+  {
+   "id": "AG2",
+   "title": "an agent's update runs every stage",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/initflow/loop.go",
+     "internal/cli/update_managed.go",
+     "internal/cli/init.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/initsecrets.go",
+     "internal/cli/init_compute.go"
+    ]
+   }
+  },
+  {
+   "id": "AG3",
+   "title": "settings, rigor and accounts picks lift",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/settings_managed.go",
+     "internal/cli/rigor_floor.go",
+     "internal/cli/accounts_switch.go",
+     "internal/cli/accounts_alias.go",
+     "internal/cli/accounts_pool.go",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "AG4",
+   "title": "project, image and publish commands lift",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/project_enroll.go",
+     "internal/cli/project_repos_rm.go",
+     "internal/cli/image_catalog.go",
+     "internal/cli/config_publish.go",
+     "internal/cli/project_policy_managed.go"
+    ]
+   }
+  },
+  {
+   "id": "AG5",
+   "title": "the remaining person-only commands lift",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/recipes.go",
+     "internal/cli/runs_reindex.go",
+     "internal/cli/issue_sync.go",
+     "internal/cli/issue_dismiss.go",
+     "internal/cli/orchestrator_patch.go",
+     "internal/cli/orchestrator_install.go",
+     "internal/cli/stats.go",
+     "internal/cli/apply.go"
+    ]
+   }
+  },
+  {
+   "id": "DG4",
+   "title": "deletes by class, end to end",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/update_ground_rules_test.go"
+    ]
+   }
+  },
+  {
+   "id": "CF1",
+   "title": "the runner fetches a usable bake or clones",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/runner/runner.go",
+     "internal/runner/projectjob.go",
+     "internal/runner/provision.go",
+     "internal/runner/checkout_fallback_test.go",
+     "docs/checkout.md"
+    ]
+   }
+  },
+  {
+   "id": "CF2a",
+   "title": "deploy stops marking the checkout mode",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/spec.go",
+     "internal/infra/checkjob.go",
+     "internal/infra/spec_test.go"
+    ]
+   }
+  },
+  {
+   "id": "CF2b",
+   "title": "the checkout key is read and ignored",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/config/config.go",
+     "internal/config/image.go",
+     "internal/config/defaults.go",
+     "internal/config/retired.go",
+     "internal/config/layer.go"
+    ]
+   }
+  },
+  {
+   "id": "VS1",
+   "title": "the in-place upgrader",
+   "run": null,
+   "version": null,
+   "tier": "large",
+   "size": 3,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/selfupgrade/fetch.go",
+     "internal/selfupgrade/verify.go",
+     "internal/selfupgrade/install.go",
+     "internal/selfupgrade/selfupgrade_test.go"
+    ]
+   }
+  },
+  {
+   "id": "VS2",
+   "title": "the launcher stamps the task",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/run.go",
+     "internal/cli/run_stamp_test.go"
+    ]
+   }
+  },
+  {
+   "id": "VS3a",
+   "title": "the base-image epoch",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/imagecheck/epoch.go",
+     "internal/imagecheck/epoch_test.go",
+     "internal/imagecheck/record.go",
+     "internal/cli/image_build_catalog.go"
+    ]
+   }
+  },
+  {
+   "id": "VS3b",
+   "title": "update rebuilds in the background, in parallel",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_images_catalog.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/init_images_catalog_test.go"
+    ]
+   }
+  },
+  {
+   "id": "VS4",
+   "title": "the nightly rebuild runs, four at a time",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "deploy/terraform/gcp/roots/installation/variables.tf",
+     "internal/infra/catalogcheck.go",
+     "internal/cli/image_check_catalog.go",
+     "internal/cli/image_check_catalog_test.go"
+    ]
+   }
+  },
+  {
+   "id": "VS5",
+   "title": "the runner upgrades before it runs",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/exec.go",
+     "internal/selfupgrade/selfupgrade.go",
+     "internal/cli/exec_selfupgrade_test.go"
+    ]
+   }
+  }
+ ],
+ "edges": [
+  {
+   "task": "UO2",
+   "needs": "DG0",
+   "reason": "kept: the class table, a small first task"
+  },
+  {
+   "task": "UO2",
+   "needs": "CO3",
+   "reason": "kept: one file, init.go"
+  },
+  {
+   "task": "UO5",
+   "needs": "DG2",
+   "reason": "kept: one file, init.go"
+  },
+  {
+   "task": "DOC1",
+   "needs": "UO2",
+   "reason": "kept: behaviour, the text describes shipped behaviour"
+  },
+  {
+   "task": "DOC1",
+   "needs": "AG2",
+   "reason": "kept: behaviour, the text describes shipped behaviour"
+  },
+  {
+   "task": "DOC2",
+   "needs": "UO2",
+   "reason": "kept: behaviour"
+  },
+  {
+   "task": "UO4",
+   "needs": "UO2",
+   "reason": "kept: behaviour, plain update covers every repository first"
+  },
+  {
+   "task": "UO4",
+   "needs": "DOC1",
+   "reason": "kept: the plugin tests, no skill may name the flag when it goes"
+  },
+  {
+   "task": "UO4",
+   "needs": "DOC2",
+   "reason": "kept: the Docs tests"
+  },
+  {
+   "task": "UO4",
+   "needs": "UO5",
+   "reason": "kept: one file, init.go"
+  },
+  {
+   "task": "CV2",
+   "needs": "CV1",
+   "reason": "kept: SupportedVersions; a contract would be the table itself"
+  },
+  {
+   "task": "CV3",
+   "needs": "VS5",
+   "reason": "kept: behaviour, runners upgrade themselves"
+  },
+  {
+   "task": "CV3",
+   "needs": "VS2",
+   "reason": "kept: behaviour, every launch is stamped"
+  },
+  {
+   "task": "CV3",
+   "needs": "CF2b",
+   "reason": "kept: behaviour, the clone value is gone"
+  },
+  {
+   "task": "DG1",
+   "needs": "DG0",
+   "reason": "kept: the class table, a small first task"
+  },
+  {
+   "task": "DG2",
+   "needs": "DG0",
+   "reason": "kept: the class table, a small first task"
+  },
+  {
+   "task": "DG3",
+   "needs": "DG0",
+   "reason": "kept: the class table, a small first task"
+  },
+  {
+   "task": "DG2",
+   "needs": "AG2",
+   "reason": "kept: one file, init.go"
+  },
+  {
+   "task": "CO4",
+   "needs": "DG1",
+   "reason": "kept: one file, root.go"
+  },
+  {
+   "task": "AG2",
+   "needs": "DG0",
+   "reason": "kept: the class table, a small first task"
+  },
+  {
+   "task": "AG2",
+   "needs": "UO2",
+   "reason": "kept: one file, init.go"
+  },
+  {
+   "task": "AG2",
+   "needs": "CO1",
+   "reason": "kept: one file, loop.go"
+  },
+  {
+   "task": "AG2",
+   "needs": "VS3b",
+   "reason": "kept: one file, init_stages.go"
+  },
+  {
+   "task": "DG4",
+   "needs": "DG1",
+   "reason": "kept: behaviour, the end-to-end test"
+  },
+  {
+   "task": "DG4",
+   "needs": "DG2",
+   "reason": "kept: behaviour, the end-to-end test"
+  },
+  {
+   "task": "DG4",
+   "needs": "UO2",
+   "reason": "kept: behaviour, the end-to-end test"
+  },
+  {
+   "task": "DG4",
+   "needs": "AG2",
+   "reason": "kept: behaviour, the end-to-end test"
+  },
+  {
+   "task": "CF2a",
+   "needs": "CF1",
+   "reason": "kept: behaviour, the runner decides without the mark"
+  },
+  {
+   "task": "CF2a",
+   "needs": "UO2",
+   "reason": "kept: one file, infra/spec.go"
+  },
+  {
+   "task": "CF2b",
+   "needs": "CF2a",
+   "reason": "kept: build, w.Checkout is removed under it"
+  },
+  {
+   "task": "CF2b",
+   "needs": "UO3",
+   "reason": "kept: one file, retired.go"
+  },
+  {
+   "task": "CF2b",
+   "needs": "CV1",
+   "reason": "kept: one file, config.go"
+  },
+  {
+   "task": "VS2",
+   "needs": "VS0",
+   "reason": "kept: the field"
+  },
+  {
+   "task": "VS5",
+   "needs": "VS0",
+   "reason": "kept: it reads the field"
+  },
+  {
+   "task": "VS5",
+   "needs": "VS1",
+   "reason": "kept: it calls the upgrader"
+  },
+  {
+   "task": "VS3b",
+   "needs": "VS3a",
+   "reason": "kept: the recorded epoch; a contract would be the constant itself"
+  },
+  {
+   "task": "VS4",
+   "needs": "VS3a",
+   "reason": "kept: staleness by epoch"
+  }
+ ],
+ "decoupling": [],
+ "contract_changes": []
+}
