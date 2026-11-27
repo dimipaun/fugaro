@@ -164,6 +164,15 @@ func routingKinds() string {
 	return strings.Join(names, ", ")
 }
 
+// routingOwnerToken is the owner of the keys the routing table replaced (MG4 of
+// docs/model-credentials-routing/): a craft's access, a grade's access, and the
+// cascade's two retired members. The accounts family wrote them until the table
+// did, and no command of it writes one now, so the row names the command that
+// writes what replaced it — the read prints that command and the write's refusal
+// is built from the same token (settingsFamilyCommands, settingsOwnerCommands),
+// which is what keeps the two from parting.
+const routingOwnerToken = "routing"
+
 // yamlMeta is the metadata of every `fugaro.yaml` key: what config.Scopes
 // cannot answer. The key set itself, and the layers, come from Scopes — this
 // table adds the default, the merge rule and the two facts a writer needs, and
@@ -262,9 +271,9 @@ var yamlMeta = map[string]Row{
 	// the project's stands. What a repository's entry says is which model it
 	// would have run, and the record is where that is kept.
 	"model_grades.strong.model":     {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
-	"model_grades.strong.access":    {Owner: "accounts", Default: unset("the project's default credential"), Doc: docEscalation},
+	"model_grades.strong.access":    {Owner: routingOwnerToken, Default: unset("the project's default credential"), Doc: docEscalation},
 	"model_grades.strongest.model":  {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
-	"model_grades.strongest.access": {Owner: "accounts", Default: unset("the project's default credential"), Doc: docEscalation},
+	"model_grades.strongest.access": {Owner: routingOwnerToken, Default: unset("the project's default credential"), Doc: docEscalation},
 
 	"agent.review_rounds": {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
 	"agent.max_budget_usd": {
@@ -840,9 +849,9 @@ var layerRows = []Row{
 	// rather than applied (internal/policy's tightenGrades). A grade nobody set
 	// is not a model Fugaro chooses for the rung — it refuses and asks.
 	layerRow("defaults.model_grades.strong.model", "none: a rung whose grade the project sets nowhere refuses and asks", "models", docEscalation),
-	layerRow("defaults.model_grades.strong.access", "the project's default credential", "accounts", docEscalation),
+	layerRow("defaults.model_grades.strong.access", "the project's default credential", routingOwnerToken, docEscalation),
 	layerRow("defaults.model_grades.strongest.model", "none: a rung whose grade the project sets nowhere refuses and asks", "models", docEscalation),
-	layerRow("defaults.model_grades.strongest.access", "the project's default credential", "accounts", docEscalation),
+	layerRow("defaults.model_grades.strongest.access", "the project's default credential", routingOwnerToken, docEscalation),
 	layerRow("defaults.agent.review_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),
@@ -1258,15 +1267,15 @@ var localRows = []Row{
 		RetiredWhy: "the project's pools replace it: which subscriptions a run may spread over is the pool's own rule, and `fugaro update` offers its removal, see docs/model-credentials-routing/spec.md",
 	},
 	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
-	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
+	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", routingOwnerToken, docCrafts),
 	locLocal("crafts.review.model", "the coder's model", "models", docCrafts),
-	locLocal("crafts.review.access", "the coder's access", "accounts", docCrafts),
+	locLocal("crafts.review.access", "the coder's access", routingOwnerToken, docCrafts),
 	locLocal("crafts.senior-review.model", "required: the senior review is the second opinion a run needs", "models", docCrafts),
-	locLocal("crafts.senior-review.access", "required: the senior review's calls go out on a credential or a pool", "accounts", docCrafts),
+	locLocal("crafts.senior-review.access", "required: the senior review's calls go out on a credential or a pool", routingOwnerToken, docCrafts),
 	locLocal("crafts.security-review.model", "the senior review's model", "models", docCrafts),
-	locLocal("crafts.security-review.access", "the senior review's access", "accounts", docCrafts),
+	locLocal("crafts.security-review.access", "the senior review's access", routingOwnerToken, docCrafts),
 	locLocal("crafts.merge-judge.model", "the coder's model", "models", docCrafts),
-	locLocal("crafts.merge-judge.access", "the coder's access", "accounts", docCrafts),
+	locLocal("crafts.merge-judge.access", "the coder's access", routingOwnerToken, docCrafts),
 	// The project's routing table (docs/model-credentials-routing/spec.md,
 	// D3182, RT2): the ordered entries that say which credential reaches which
 	// model, and `admit` per source — the repositories a source of the three
@@ -1542,8 +1551,13 @@ var localRows = []Row{
 	// (D2607's silence rule): the figures below are what a cascade with no
 	// member written already means there, so a reader of this table is not told
 	// that a key means nothing when it means 15m.
-	locLocal("credential_cascade.fallback", "oauth-only: a run waits for the shared token's reset and never falls over to the paid tiers, and the written auto is the value that does — the node refuses it unless the budget block enforces a per-run ceiling above zero (D152)", "accounts", docConfigOwnership),
-	locLocal("credential_cascade.wait_threshold", "15m: how long a run waits for an exhausted credential's reset before it fails over to the next tier (projectpolicy.DefaultWaitThreshold); under oauth-only there is no tier to fail over to, so the run waits for the earliest reset whatever the threshold says", "accounts", docConfigOwnership),
+	// The two members R4 retires answer with the routing token rather than the
+	// accounts family's (MG4 of docs/model-credentials-routing/): the chain of
+	// the routing table's entry says what a run does when its credential is
+	// exhausted, `fugaro accounts cascade set` refuses both flags, and
+	// `fugaro routing set` writes the entry the chain lives in.
+	locLocal("credential_cascade.fallback", "oauth-only: a run waits for the shared token's reset and never falls over to the paid tiers, and the written auto is the value that does — the node refuses it unless the budget block enforces a per-run ceiling above zero (D152)", routingOwnerToken, docConfigOwnership),
+	locLocal("credential_cascade.wait_threshold", "15m: how long a run waits for an exhausted credential's reset before it fails over to the next tier (projectpolicy.DefaultWaitThreshold); under oauth-only there is no tier to fail over to, so the run waits for the earliest reset whatever the threshold says", routingOwnerToken, docConfigOwnership),
 	locLocal("credential_cascade.backoff.initial", "15m: the first wait a credential is held for when its exhaustion reported no reset time, doubling from there (projectpolicy.DefaultBackoffInitial)", "accounts", docConfigOwnership),
 	locLocal("credential_cascade.backoff.cap", "5h: the longest that wait doubles to (projectpolicy.DefaultBackoffCap); a cap below the initial wait is refused, because a probe schedule that never doubles retries a credential with no reset time for ever (D153)", "accounts", docConfigOwnership),
 	locLocal("credential_cascade.stop_after_exhaustion_per_window", "true: a run stops rather than spending the project's money on a credential that has exhausted its window, and only the written false opts out (D142)", "accounts", docConfigOwnership),
@@ -1867,10 +1881,13 @@ var policyRows = []Row{
 	// chain where `fallback: auto` was set and leaves it out for `oauth-only`,
 	// and a run moves to the next source at once rather than waiting for a
 	// reset. Release 2 rejects both; this release still reads them, which is
-	// why the rows keep their owner and their default.
-	{Key: "credentials.fallback", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"), Owner: "accounts", Doc: docCredentialsCascade,
+	// why the rows keep their default. Their owner is the routing token and not
+	// the accounts family's (MG4 of docs/model-credentials-routing/): no
+	// command of that family writes them any more, and the chain of the routing
+	// table's entry is what replaced both.
+	{Key: "credentials.fallback", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"), Owner: routingOwnerToken, Doc: docCredentialsCascade,
 		RetiredWhy: "the chain's own order replaces it: `fugaro update` puts the key in the chain where `fallback: auto` was set and leaves it out for `oauth-only`, then offers its removal, see docs/model-credentials-routing/spec.md"},
-	{Key: "credentials.wait_threshold", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"), Owner: "accounts", Doc: docCredentialsCascade,
+	{Key: "credentials.wait_threshold", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"), Owner: routingOwnerToken, Doc: docCredentialsCascade,
 		RetiredWhy: "the chain's own order replaces it: a run moves to the next source at once rather than waiting for a reset, and `fugaro update` offers its removal, see docs/model-credentials-routing/spec.md"},
 	{Key: "credentials.backoff.initial", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("15m: the first wait of a credential backed off with no reset time (projectpolicy.DefaultBackoffInitial)"), Owner: "accounts", Doc: docCredentialsCascade},
 	{Key: "credentials.backoff.cap", Layers: []string{LayerPolicy}, Merge: Replace, Default: unset("5h: the longest wait the doubling reaches (projectpolicy.DefaultBackoffCap)"), Owner: "accounts", Doc: docCredentialsCascade},

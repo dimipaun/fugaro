@@ -52,9 +52,13 @@ The keys are the whole of what may name an account as a choice:
 
   default_claude_account
   stages.<stage>.claude_account
-  crafts.<craft>.access
   repos.<repo>.claude_accounts
   profiles.<profile>.claude_accounts
+
+A craft's access is not one of them: which credential a craft's calls go out on
+is the project's routing table now, so a switch leaves that key where it is and
+names the command that moves it — ` + "`fugaro routing set`" + `, with a subscription
+account in a pool first (` + "`fugaro accounts pool add`" + `).
 
 Nothing else in the file is touched: the claude_accounts block keeps both names
 and the credentials block keeps both credentials, so both accounts stay declared
@@ -66,8 +70,8 @@ repository the keys it takes over serve: each repository whose own
 claude_accounts list names it, and every allow_repos entry of a profile that
 lists it. The refusal names the one command that widens the list.
 
-FROM may be a declared account, the default account (the unsuffixed
-claude-oauth-token secret) or a craft's own credential. It may not be an alias:
+FROM may be a declared account or the default account (the unsuffixed
+claude-oauth-token secret). It may not be an alias:
 the keys naming one are meant to keep naming it, and fugaro accounts alias set
 moves all of them in one edit. It may not be a pool or one of a pool's members:
 a pool is walked inside a run, at the stage boundary, and a switch may not
@@ -134,6 +138,7 @@ func runAccountsSwitch(cmd *cobra.Command, from, to string, o accountsSwitchOpti
 	}
 	keys := accountsSwitchPlan(lc, from)
 	if len(keys) == 0 {
+		accountsSwitchRetiredLines(cmd, lc, from)
 		fmt.Fprintf(cmd.OutOrStdout(), "no change: no key of this config names %s as an account choice\n", pluginwire.Printable(from))
 		return nil
 	}
@@ -167,6 +172,7 @@ func runAccountsSwitch(cmd *cobra.Command, from, to string, o accountsSwitchOpti
 		}
 	}
 	accountsSwitchLines(cmd, keys, from, to)
+	accountsSwitchRetiredLines(cmd, lc, from)
 	if o.dryRun {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s\ndry run: nothing was written; run `%s` to write %s and converge\n",
 			sel.Path, settingsEditDiff(old, next), command, sel.Path)
@@ -205,11 +211,17 @@ type accountsSwitchKey struct {
 
 // accountsSwitchPlan is every key of the config that names from as an account
 // choice, in the order the file writes its blocks: the default, the stages, the
-// crafts, the repositories and the profiles. The two list keys are rewritten as
-// lists and the three scalar keys as scalars, and the order is the plan's own
-// rather than the file's, because a key the file writes under another block
-// than it is named in would make the lines a person reads harder to follow
-// while changing nothing.
+// repositories and the profiles. The two list keys are rewritten as lists and
+// the two scalar keys as scalars, and the order is the plan's own rather than
+// the file's, because a key the file writes under another block than it is
+// named in would make the lines a person reads harder to follow while changing
+// nothing.
+//
+// A craft's access is not a key of this plan (MG4 of
+// docs/model-credentials-routing/implementation-plan.md): the project's routing
+// table says which credential a craft's calls go out on, so this command may not
+// rewrite the key, and accountsSwitchRetiredCrafts is what names it for the
+// person instead.
 func accountsSwitchPlan(lc *localcfg.Config, from string) []accountsSwitchKey {
 	var out []accountsSwitchKey
 	if lc.DefaultClaudeAccount == from {
@@ -220,12 +232,6 @@ func accountsSwitchPlan(lc *localcfg.Config, from string) []accountsSwitchKey {
 			continue
 		}
 		out = append(out, accountsSwitchKey{key: "stages." + stage + ".claude_account", path: []string{"stages", stage, "claude_account"}})
-	}
-	for _, craft := range config.CraftNames {
-		if lc.Crafts.Of(craft).Access != from {
-			continue
-		}
-		out = append(out, accountsSwitchKey{key: "crafts." + craft + ".access", path: []string{"crafts", craft, "access"}})
 	}
 	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
 		items := lc.Repos[repo].ClaudeAccounts
@@ -452,6 +458,35 @@ func accountsSwitchLines(cmd *cobra.Command, keys []accountsSwitchKey, from, to 
 	}
 }
 
+// accountsSwitchRetiredLines is one line per craft whose access names FROM: the
+// key this command may not move, and the two commands that move it (MG4).
+//
+// It is printed beside the plan rather than kept out of it, and in the plan's
+// dry run as well: a switch whose config still holds the key would otherwise
+// answer "no change" or "nothing else to run" over a craft that keeps spending
+// the account the person asked to move off. The key is not inert — a run reads
+// which credential a craft's calls go out on out of the routing table, and the
+// key is what the update migrated that entry from — so the line says what
+// governs now and names the write that changes it.
+func accountsSwitchRetiredLines(cmd *cobra.Command, lc *localcfg.Config, from string) {
+	for _, craft := range accountsSwitchRetiredCrafts(lc, from) {
+		fmt.Fprintf(cmd.OutOrStdout(), "crafts.%s.access names %s and stays where it is: which credential a craft's calls go out on is the project's routing table now, so `fugaro routing set` writes it, and a subscription account goes in a pool first (`fugaro accounts pool add`)\n",
+			craft, pluginwire.Printable(from))
+	}
+}
+
+// accountsSwitchRetiredCrafts is the crafts whose access names the account, in
+// the config's own craft order.
+func accountsSwitchRetiredCrafts(lc *localcfg.Config, from string) []string {
+	var out []string
+	for _, craft := range config.CraftNames {
+		if lc.Crafts.Of(craft).Access == from {
+			out = append(out, craft)
+		}
+	}
+	return out
+}
+
 // accountsSwitchCommand is the command a refusal prints for the person to run at
 // their own terminal: the same edit, spelled whole, because nothing they type
 // inside a session is remembered.
@@ -530,7 +565,11 @@ func accountsSwitchReport(cmd *cobra.Command, lc *localcfg.Config, stages map[st
 // next, which is nothing. What it says about a run already going is the half of
 // D2094 the owner needs — a switch moves NEW launches, and a run in flight keeps
 // the account its launch resolved — and it is the same rule the help states.
+//
+// It claims the account-choice keys and never "every key": a craft's access
+// names the account too, this command may not move it (MG4), and the line above
+// this one is where a person is told which crafts those are.
 func accountsSwitchLastLine(from, to string) string {
-	return fmt.Sprintf("Nothing else to run: every key that named %s now names %s, so new launches choose it; a run already going keeps the account its launch resolved.\n",
+	return fmt.Sprintf("Nothing else to run: every account-choice key that named %s now names %s, so new launches choose it; a run already going keeps the account its launch resolved.\n",
 		pluginwire.Printable(from), pluginwire.Printable(to))
 }

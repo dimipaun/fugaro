@@ -1015,14 +1015,16 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 // `credential_cascade.<leaf>` is this machine's own carrier, which is the file
 // the command edits (F23, D2607). A refusal that answered one of the two with
 // the allowlist's sentence would send a person looking for a key this release
-// does not write either way.
+// does not write either way. The member held to it here is one the command
+// still writes: the two R4 retires answer with `fugaro routing set`, which is
+// the line that runs (MG4, TestRetiredRowsNameTheRoutingCommand).
 func TestSettingsSetCredentialsRefusesNamingTheCascadeCommand(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
 
-	for _, key := range []string{"credentials.fallback", "credential_cascade.fallback"} {
+	for _, key := range []string{"credentials.backoff.cap", "credential_cascade.backoff.cap"} {
 		t.Run(key, func(t *testing.T) {
-			out, _, err := execute(t, "settings", "set", key, "oauth-only")
+			out, _, err := execute(t, "settings", "set", key, "5h")
 			if err == nil {
 				t.Fatalf("settings set wrote %s:\n%s", key, out)
 			}
@@ -1031,7 +1033,7 @@ func TestSettingsSetCredentialsRefusesNamingTheCascadeCommand(t *testing.T) {
 			}
 			for _, want := range []string{
 				key + " is written by fugaro accounts cascade set, not by the generic path",
-				"run `fugaro accounts cascade set --fallback <value>`",
+				"run `fugaro accounts cascade set --backoff-cap <value>`",
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal does not carry %q: %v", want, err)
