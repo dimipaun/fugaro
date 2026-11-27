@@ -26,7 +26,9 @@ var baseEpochTrees = []string{"base", "derived", "common"}
 // TestBaseEpochTracksBaseImage until the epoch moves and the new hash is
 // recorded here, which is what keeps BaseEpoch a fact about the trees rather
 // than a number somebody remembers to bump.
-var baseEpochHashes = map[int]string{}
+var baseEpochHashes = map[int]string{
+	1: "485459be1c7f19265dea414ed6b7fc242a92bc2ef9b70aa818ee148e564123c3",
+}
 
 // baseEpochHash hashes the three trees as one value: every file's path under
 // its tree, then its bytes, with the lines naming FUGARO_VERSION left out —
@@ -85,5 +87,27 @@ func TestBaseEpochTracksBaseImage(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("images/base, images/derived and images/common hash to %s, and imagecheck.BaseEpoch %d was recorded with %s: bump BaseEpoch and record the new hash, so update rebuilds every image built before the change", got, BaseEpoch, want)
+	}
+}
+
+// TestRecordCarriesEpoch: a catalog build's record says which epoch it was
+// built from (D3446), so the check and update can tell an image built from the
+// base image as it is now from one built before it changed. A record written
+// before the field existed reads as 0 — no epoch stated — which is what makes
+// release A's update rebuild every entry once (D3445).
+func TestRecordCarriesEpoch(t *testing.T) {
+	rec, err := ParseCatalogRecordState([]byte(`{"version":1,"entry":"go","epoch":7,"built_at":"2026-11-27T00:00:00Z"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Epoch != 7 {
+		t.Fatalf("a record stating epoch 7 reads as epoch %d", rec.Epoch)
+	}
+	before, err := ParseCatalogRecordState([]byte(`{"version":1,"entry":"go","built_at":"2026-11-27T00:00:00Z"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Epoch != 0 {
+		t.Fatalf("a record written before the epoch existed reads as epoch %d, want 0 (no epoch stated)", before.Epoch)
 	}
 }

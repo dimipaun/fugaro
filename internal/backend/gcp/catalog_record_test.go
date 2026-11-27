@@ -70,6 +70,7 @@ func recordSpec(t *testing.T) gcp.CatalogBuildSpec {
 		Bucket:                "gs://fugaro-runs-proj-1234",
 		Selftest:              []byte(`{"skip_verify":true,"tools":"critical"}`),
 		TemplateSalt:          strings.Repeat("1", 64),
+		Epoch:                 3,
 	}
 }
 
@@ -150,7 +151,8 @@ func TestCatalogRecordDecodesStrictly(t *testing.T) {
 		"CONTEXT_COMMIT": spec.ContextCommit, "CONTEXT_SHA256": spec.ContextSHA256,
 		"GENERATION": strconv.FormatInt(spec.Definition.Generation, 10),
 		"SHA256":     spec.Definition.SHA256, "TEMPLATE_SALT": spec.TemplateSalt,
-		"BASE": spec.Base, "IMAGE": spec.Image,
+		"EPOCH": strconv.Itoa(spec.Epoch),
+		"BASE":  spec.Base, "IMAGE": spec.Image,
 		"TAG": spec.Definition.SHA256, "BUILD_ID": recordBuildID,
 		"image_digest": recordImageDigest, "base_digest": recordBaseDigest, "built_at": recordBuiltAt,
 	})
@@ -164,8 +166,8 @@ func TestCatalogRecordDecodesStrictly(t *testing.T) {
 		Version: 1, Entry: spec.Entry, SourceCommit: spec.Definition.SourceCommit,
 		ContextCommit: spec.ContextCommit, ContextSHA256: spec.ContextSHA256,
 		DefinitionGeneration: spec.Definition.Generation, DefinitionSHA256: spec.Definition.SHA256,
-		TemplateSalt: spec.TemplateSalt,
-		BaseRef:      spec.Base, BaseDigest: recordBaseDigest, Image: spec.Image,
+		TemplateSalt: spec.TemplateSalt, Epoch: spec.Epoch,
+		BaseRef: spec.Base, BaseDigest: recordBaseDigest, Image: spec.Image,
 		ContentTag: spec.Definition.SHA256, ImageDigest: recordImageDigest,
 		BuildID: recordBuildID, BuiltAt: at,
 	}
@@ -295,6 +297,7 @@ exit "$CURL_EXIT"
 		"CONTEXT_COMMIT=" + spec.ContextCommit, "CONTEXT_SHA256=" + spec.ContextSHA256,
 		"GENERATION=" + strconv.FormatInt(spec.Definition.Generation, 10),
 		"SHA256=" + spec.Definition.SHA256, "TEMPLATE_SALT=" + spec.TemplateSalt,
+		"EPOCH=" + strconv.Itoa(spec.Epoch),
 		"BASE=" + spec.Base, "IMAGE=" + spec.Image,
 		"TAG=" + spec.Definition.SHA256, "BUILD_ID=" + recordBuildID,
 		// What the reads cut out of the script would have left it: the step's
@@ -452,7 +455,7 @@ func TestCatalogRecordStepFailsWhenTheUploadFails(t *testing.T) {
 // catalog_test.go's catalogPrebuiltSpec builds it: the record step rendered
 // below is the one that spec produces. It names none of a build's own inputs
 // — checkPrebuilt refuses a spec that does — so the record such a run writes
-// is the same thirteen keys with the build's fields empty.
+// is the same fourteen keys with the build's fields empty.
 func recordPrebuiltSpec(t *testing.T) gcp.CatalogBuildSpec {
 	t.Helper()
 	slug, err := task.Slug("bitbucket", "acme/app")
@@ -466,6 +469,9 @@ func recordPrebuiltSpec(t *testing.T) gcp.CatalogBuildSpec {
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://fugaro-runs-proj-1234",
 		Selftest:       []byte(`{"tools_only":true,"tools":"critical"}`),
+		// A smoke-only run states the epoch too: it is the submitter's own,
+		// and not a build's input the run leaves empty.
+		Epoch: 3,
 	}
 }
 
@@ -585,7 +591,7 @@ exit 0
 
 // TestCatalogRecordStepWritesAPrebuiltEntrysRecord: a smoke-only run writes
 // the record the doctor reads through the same step, the same key and the same
-// thirteen keys a build's run writes, with the fields only a build has empty.
+// fourteen keys a build's run writes, with the fields only a build has empty.
 // That is the whole of what a prebuilt entry has to say for itself — there is
 // no image of this installation's to inspect and no definition to compare — so
 // the two things that carry the answer are the reference the entry names and
@@ -618,7 +624,7 @@ func TestCatalogRecordStepWritesAPrebuiltEntrysRecord(t *testing.T) {
 	want := imagecheck.CatalogRecordState{
 		Version: imagecheck.CatalogRecordVersion, Entry: spec.Entry,
 		Image: spec.Prebuilt, ImageDigest: recordImageDigest,
-		BuildID: recordBuildID, BuiltAt: at,
+		BuildID: recordBuildID, BuiltAt: at, Epoch: spec.Epoch,
 	}
 	if got != want {
 		t.Fatalf("the record a smoke-only run writes decodes to\n%+v\nwant\n%+v\nfrom %s", got, want, payload)
