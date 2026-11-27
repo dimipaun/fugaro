@@ -824,7 +824,7 @@ func appliedRules(warned bool) []string {
 	cover := "the managed cover admitted every change of the plan"
 	costs := "the cost list blocked no attribute of the plan"
 	if warned {
-		guard = "the guard refused no delete and no replace that D1551's classification protects: a removal of a non-data-bearing type did not refuse this plan, and the record of it holds that as a warning (D1545)"
+		guard = "the guard refused no delete and no replace that the removal rule protects: a removal of a type the class does not call irreplaceable did not refuse this plan, and the record of it holds that as a warning (D1545, D3430)"
 		cover = "the managed cover refused no change of this plan that its integrity rules judge: the changes it did not announce did not refuse it, and the record of it holds them as warnings (D1545)"
 		costs = "the cost list refused no attribute of the plan: a blocked attribute did not refuse it, and the record of it holds it as a warning (D1545)"
 	}

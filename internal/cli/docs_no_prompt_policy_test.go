@@ -76,7 +76,7 @@ var npPolicyCopies = []struct {
 		"that the tables do not carry **is applied**",
 		"go into that step's audit record",
 		"`fugaro doctor` prints the newest warned record",
-		"a delete or replace of a data-bearing type, or of one nobody has classified, refuses",
+		"a delete or replace of an irreplaceable type, or of one nobody has classified, refuses",
 		"that review is the **pre-apply control**",
 		"docs/no-prompt-policy/",
 	}},
@@ -91,7 +91,7 @@ var npPolicyCopies = []struct {
 		"`fugaro setup` applies its Terraform with no gate at all",
 		"a project that is not managed keeps the confirmations and the coding agent's refusals it had, and leaves no record",
 		"that gate is audit-only for what a plan *contains*",
-		"a delete or replace of a **data-bearing or unclassified** type refuses",
+		"a delete or replace of an **irreplaceable or unclassified** type refuses",
 		"the identity that applied the plan is the identity that could delete the record",
 		"`fugaro doctor` prints the newest record that carries warnings, over the two days it reads (today and yesterday)",
 		"is the pre-apply control this decision rests on",
@@ -119,7 +119,17 @@ var npPolicyRetired = []struct {
 	{
 		"SECURITY.md",
 		"the gate refuses a plan",
-		"what the gate refuses is the integrity class and a data-bearing or unclassified removal; everything else it records and warns, and a sentence saying otherwise is read as a boundary the product does not have",
+		"what the gate refuses is the integrity class and an irreplaceable or unclassified removal; everything else it records and warns, and a sentence saying otherwise is read as a boundary the product does not have",
+	},
+	{
+		".claude/rules/terraform.md",
+		"a delete or replace of a data-bearing type, or of one nobody has classified, refuses",
+		"D3430 moves the refusal off D1551's type question and onto the class: a data-bearing type the same apply makes again (an artifact registry repository, a service account Fugaro made) is applied and recorded, so a rule file still saying a data-bearing removal refuses sends an agent widening a table for a refusal that is not there",
+	},
+	{
+		"SECURITY.md",
+		"a delete or replace of a **data-bearing or unclassified** type refuses",
+		"the removal rule refuses the irreplaceable class, not every data-bearing type: D3430 makes an artifact registry repository and a Fugaro-made service account recreatable, and a security document promising a refusal a reader cannot find is the failure this folder exists to stop",
 	},
 }
 
