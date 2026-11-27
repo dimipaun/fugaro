@@ -612,6 +612,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// would read each of them twice for the same facts.
 	repoViews, _ := enrolledRepos(theUpdateLeavesTheRemoval(ctx), enrolledIn{LC: lc, ExtraPaths: repoNoticeExtra})
 	o.Checks = append(o.Checks, doctorRepoNoticeChecks(repoViews)...)
+	// And the version a default branch still writes its fugaro.yaml at, while
+	// the window that version is inside is open (CV2, D3423), off the same read.
+	o.Checks = append(o.Checks, doctorConfigVersionChecks(repoViews)...)
 	o.Checks = append(o.Checks, doctorClaudeGateChecks(lc, repoViews)...)
 	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is

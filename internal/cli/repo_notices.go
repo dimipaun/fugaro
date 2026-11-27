@@ -128,6 +128,13 @@ func (e *initEngine) noticeRepoValues(ctx context.Context) {
 	// step is the same thing — one pass, one line per repository, needs-you —
 	// and because that list is KS12's file in this plan's own order.
 	e.noticeClaudeGate(views)
+	// And CV2's: the version a repository's file is still written at, while the
+	// window that version is inside is open (D3423). It rides this turn for the
+	// reason the line above does — one pass over the enrolled list, one line per
+	// repository — and it is a notice for the same reason the two dead values
+	// are: the file reads until the window closes, and the version line is the
+	// repository's own edit.
+	e.noticeConfigVersions(views)
 	lines := noticeRepoLines(views)
 	if len(lines) == 0 {
 		return
