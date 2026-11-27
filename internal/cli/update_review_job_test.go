@@ -112,7 +112,7 @@ func TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning(t *testing.T
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRef())...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
 		"intake":              intakeServiceOutput(),

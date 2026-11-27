@@ -89,6 +89,12 @@ func (r *initRun) retireProjectJobs(ctx context.Context, c *infra.Clients, t *tf
 	if r.o.planOnly || !retiresProjectJobs(r.o.doorName()) {
 		return nil, nil
 	}
+	// A coding agent's session the gate admitted is admitted to the plan's
+	// document, and the job's delete and the state removal are no part of it:
+	// the next update in the owner's own terminal retires them.
+	if r.gateLeavesTheIAMCall() {
+		return nil, nil
+	}
 	vars, err := wd.Vars()
 	if err != nil {
 		return nil, userErr("reading the installation's tfvars: %v", err)

@@ -30,6 +30,11 @@ import (
 func alwaysRig(t *testing.T) *fbRig {
 	t.Helper()
 	r := newFBRig(t)
+	// The installation is a managed one (newInitRig's marks), so the steps
+	// these runs apply are the gate's and every one of them leaves a record
+	// naming who ran it (D1014) — a hermetic world has no credentials to answer
+	// with.
+	isolateGateCredentials(t)
 	r.installationState(t)
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
@@ -300,6 +305,16 @@ func TestTheNewDatabaseStartsInObserve(t *testing.T) {
 // be deleted while the database stays. The run asks the project and never the
 // history account, so it finds a database this machine records none of, says
 // so, and adopts what is there rather than creating a second one.
+//
+// The rig is a managed installation, so the Firebase root's own apply is the
+// gate's and its confirmation is not put: a gate-admitted step prints the gate's
+// verdict in its confirmation's place (D1016, gateProceeded), and the words the
+// confirmation would have carried — the imports and "adopting the existing
+// Realtime Database" among them — are not printed at all on this door. That
+// sentence is pinned where it IS printed: the setup door, whose run keeps every
+// confirmation it has (TestInitFirebaseAdoptFour, and the adoption it names in
+// docs/adopt-firebase-root/spec.md). What this run says about the adoption is
+// the warning below; what it does is the mark in the database already there.
 func TestADeletedStateDoesNotLeadToASecondDatabase(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
@@ -310,18 +325,21 @@ func TestADeletedStateDoesNotLeadToASecondDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "already has a Realtime Database") || !strings.Contains(out, "rather than creating a second one") {
-		t.Errorf("the run does not say it found a database this machine records none of:\n%s", out)
+	whole := out + newestLog(t, "update")
+	if !strings.Contains(whole, "already has a Realtime Database") || !strings.Contains(whole, "rather than creating a second one") {
+		t.Errorf("the run does not say it found a database this machine records none of:\n%s", whole)
 	}
-	if !strings.Contains(out, "adopting the existing Realtime Database") {
-		t.Errorf("the Firebase root's own apply does not adopt the database that is there:\n%s", out)
+	// The adoption itself: the database that was already there is the one this
+	// run wrote into. A run that made a second one fails here two ways — the
+	// Firebase Management fake answers a create with an error (gcpfake.FirebaseDB
+	// handles the list call only), and the mark would land on a database this
+	// rig's own fake does not hold.
+	if r.db.Value(budget.PathMark) == nil {
+		t.Errorf("the database that was already there holds no mark: the run did not adopt it\n%s", whole)
 	}
 	if b := r.localConfig(t).Budget; b == nil || b.RTDBURL != r.db.URL {
 		t.Errorf("the local config records budget %+v, want the database that is there", b)
 	}
-	// And no second database was made: the Firebase Management fake answers a
-	// create with an error (gcpfake.FirebaseDB handles the list call only), so
-	// the adoption above is the whole of what this run did to the project.
 }
 
 // TestTheStagesBehindTheFlagRunWithTheDatabase is F29: the three readers of
@@ -330,6 +348,10 @@ func TestADeletedStateDoesNotLeadToASecondDatabase(t *testing.T) {
 // history image's mirror, and the budget admins' review.
 func TestTheStagesBehindTheFlagRunWithTheDatabase(t *testing.T) {
 	r := newImagesRigFor(t, "1.2.3", fpID)
+	// A managed project's steps file an audit record naming the account the
+	// run is running as (D1014), and this rig's default is a managed
+	// installation (newInitRig): the account is answered by the test.
+	isolateGateCredentials(t)
 	r.installationState(t)
 	mayCreate(t, r.fbRig)
 	noDatabaseYet(t, r.fbRig)
@@ -662,6 +684,14 @@ func TestAConvergedMemberWithTheBindingSkipsTheStage(t *testing.T) {
 // line is written where the answer is known to be absent (the stage's check)
 // rather than left to the loop, which stops the whole update at a stage whose
 // steps nobody can answer.
+//
+// `fugaro setup` on an installation that is there is the door this run takes,
+// and not `fugaro update`: the gate is update's own (initRun.gateable), so a
+// managed project's setup keeps every confirmation it has, and the session
+// above can answer none of them. On update's door the gate stands in for them
+// — a coding agent's session included (D3028, R11) — and the database is
+// created where the gate admits the step
+// (TestAManagedProjectCreatesItsDatabaseUnderTheGate).
 func TestWithNothingToAnswerTheStageIsSkippedWithItsLine(t *testing.T) {
 	r := alwaysRig(t)
 	mayCreate(t, r)
@@ -669,7 +699,7 @@ func TestWithNothingToAnswerTheStageIsSkippedWithItsLine(t *testing.T) {
 	noTerminal(t)
 	t.Setenv("CLAUDECODE", "1")
 
-	out, err := updateRun(t, r.initRig, "update")
+	out, err := updateRun(t, r.initRig, "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -677,7 +707,7 @@ func TestWithNothingToAnswerTheStageIsSkippedWithItsLine(t *testing.T) {
 	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) {
 		t.Errorf("the Firebase stage is %q, want the skip that says what nothing answers\n%s", l, out)
 	}
-	whole := out + newestLog(t, "update")
+	whole := out + newestLog(t, "setup")
 	if !strings.Contains(whole, "nothing answers this run's confirmation") || !strings.Contains(whole, "a project owner runs") {
 		t.Errorf("the run does not say why it created nothing:\n%s", whole)
 	}

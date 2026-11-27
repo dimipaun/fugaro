@@ -87,16 +87,14 @@ func (e *initEngine) convergeMarkerVersion(ctx context.Context) {
 	// refusal and would have to say something about it, while the run already
 	// knows there is nothing there.
 	//
-	// There are two of them because there are two ways this run can hold the
-	// fact: the gate's read at the head of the run answers the version of a
-	// fact it believed (read.go), which is every managed installation's; and
-	// the self-flag step's read answers the version of the object it just
-	// finished the label on (update_selfflag.go), which is the half-written
-	// flag's — the one state the gate reads as nothing at all, because the
-	// label it requires is the half that was missing. Every other path holds
-	// neither, and this step then reads nothing, which is what leaves an
-	// installation that was never marked exactly as cheap to update as it was.
-	if v := r.gate.factVersion(); v != managed.MarkerVersionBuilds && e.flagFactVersion != managed.MarkerVersionBuilds {
+	// The version is the one read the head of the run made (initRun.gateRead):
+	// it answers the version of a fact it believed (read.go), which is every
+	// managed installation's, and 0 for every project whose marks it did not
+	// find — the unmanaged project, whose fact this step has nothing to do
+	// about. Every other path holds nothing, and this step then reads nothing,
+	// which is what leaves an installation that was never marked exactly as
+	// cheap to update as it was.
+	if v := r.gateRead.factVersion(); v != managed.MarkerVersionBuilds {
 		return
 	}
 	// The bucket the managed read looks in, by its default name: a fact kept

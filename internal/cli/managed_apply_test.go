@@ -69,8 +69,13 @@ func managedBudgetRig(t *testing.T) (*initRig, string) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// The bucket and the label are this rig's own (the world is managed), and
+	// the marker is not: every row of the gate's own table writes the fact it
+	// is about, the first of them writing none at all, and the fixture's own
+	// default object would open the gate for it.
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
 	labelled(r.crm, initProject)
+	r.gcs.Remove(initRunsBucket, managed.MarkerObject)
 	// The whole-project read these tests do not exercise: no Cloud Asset
 	// server is configured here, so the command would reach Google's own API.
 	// A read that cannot be made is the fallback (Task 4.5), which is the

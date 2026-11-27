@@ -881,17 +881,6 @@ func markReads(r *initRig) int {
 	return n
 }
 
-// theMarkerObject writes the runs bucket's half of the fact and leaves the
-// project's half (the label) alone: half of the fact is not the fact, which is
-// the world TestUpdateReadsTheGateBeforeAnyWrite's third arm runs in.
-func theMarkerObject(t *testing.T, r *initRig, gcp string) {
-	t.Helper()
-	body := `{"version":1,"gcp_project":"` + gcp + `"}`
-	if err := r.gcs.Bucket(t, initRunsBucket).Bucket.WriteAll(context.Background(), managed.MarkerObject, []byte(body), nil); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // The wiring property (spec §8.5): the gate is read BEFORE the step writes, and
 // the one shape that can witness it is the same run in two worlds. The plan,
 // the session and the command line are the same; the only thing that moves is
@@ -899,11 +888,17 @@ func theMarkerObject(t *testing.T, r *initRig, gcp string) {
 // command that wrote first and asked afterwards, or that asked only where a
 // clean answer was already in hand, cannot pass both halves.
 //
-// The three worlds that write nothing are the three ways a mark is not the
-// fact: the object gone, the label gone, and the object present but unreadable.
-// The last is the read blip M6's review binds this to (a transient GCS or CRM
-// failure must fail closed and never read as "not managed"), and all three are
-// the zero verdict's own answer: today's refusal, in the session's own words.
+// The two worlds that write nothing are the two halves of the fact: the object
+// gone, and the label that carries the verdict gone. Neither reaches the gate
+// at all — TN1's stop (T3 of docs/managed-flag-ergonomics) reads the fact at
+// the head of `fugaro update` and refuses the run there (D1541), so the plan
+// the gate would have judged is never offered to it — and the property is
+// still the one asserted: a command that wrote first and asked afterwards
+// cannot pass either half.
+//
+// The third world, and M6's own bind (a transient read that fails must fail
+// closed), is the object present and the read of it failing: the run STOPS on
+// the read rather than reading the failure as "not managed" and going on.
 func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 
@@ -929,18 +924,20 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 	})
 
 	// The two worlds in which the marks are not the fact, one half each: the
-	// step writes nothing, and the session reads the refusal it always read.
+	// step writes nothing, and the run is stopped at the head.
 	for _, tc := range []struct {
 		name  string
 		world func(t *testing.T, r *initRig)
 	}{
 		{"no object", func(t *testing.T, r *initRig) {
-			r.markedRuns(t, initProjectName, initProject)
-			labelled(r.crm, initProject)
+			// The project's own label is there and the runs bucket's half is
+			// not: half of the fact is not the fact (read.go).
+			r.gcs.Remove(initRunsBucket, managed.MarkerObject)
 		}},
 		{"no label", func(t *testing.T, r *initRig) {
-			r.markedRuns(t, initProjectName, initProject)
-			theMarkerObject(t, r, initProject)
+			// The object is there and the label that carries the verdict is
+			// not, which read.go answers from the label alone.
+			r.removeManagedInstallation(t)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -952,23 +949,23 @@ func TestUpdateReadsTheGateBeforeAnyWrite(t *testing.T) {
 			r.setPlan(t, change(additive, "create"))
 
 			got, err := updateRun(t, r, "update")
+			if err == nil {
+				t.Fatalf("the run converged an installation whose marks are not the fact:\n%s", got)
+			}
 			if n := len(r.ran(t, "apply")); n != 0 {
-				t.Errorf("%d terraform apply(s) ran in a session whose gate was never opened:\n%s", n, got)
+				t.Errorf("%d terraform apply(s) ran in a run the head refuses:\n%s", n, got)
 			}
-			// The step's line carries one clause of the refusal and the log the
-			// whole of it (report.Brief); the run says it either way.
-			whole := got + namedLog(t, got)
-			if !strings.Contains(whole, initflow.AgentRefusal("CLAUDECODE")) {
-				t.Errorf("the session did not read the refusal it has always read:\n%s", whole)
+			if !strings.Contains(got, initProject+" is not managed") {
+				t.Errorf("the run did not read the marks as the answer they are:\n%s", got)
 			}
-			if strings.Contains(whole, initflow.AgentProceeded("CLAUDECODE")) {
-				t.Errorf("the step proceeded on a mark that is not the fact:\n%s", whole)
+			if strings.Contains(got, managedmode.NotConverged) {
+				t.Errorf("the gate judged a step in a run the head refused:\n%s", got)
+			}
+			if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
+				t.Errorf("the step proceeded on a mark that is not the fact:\n%s", got)
 			}
 			if recs := audits(t, r); len(recs) != 0 {
 				t.Errorf("a step nothing judged left %+v: the record is the gate's", recs)
-			}
-			if err == nil {
-				t.Error("the run exited 0 with the step left for the user")
 			}
 		})
 	}
@@ -1069,7 +1066,11 @@ func TestUpdateRevokedMidRunKeepsTheOwnersTerminal(t *testing.T) {
 	spy := &readSpy{Reader: strings.NewReader("")}
 	e.r.in = bufio.NewReader(spy)
 	e.r.cmd.SetIn(spy)
-	e.r.gate = &initGate{g: gate, managed: true}
+	// The run's own read, in the field the door's head reads it from
+	// (initRun.gateRead, update_managed.go's readUpdateGate): this is the memo
+	// the whole run shares, so the head's stop and the gate's own admission ask
+	// the same question and both see the answer taken before the label moved.
+	e.r.gateRead = &initGate{g: gate, managed: true}
 	_ = e.converge(t.Context())
 
 	got := out.String()
@@ -1295,72 +1296,70 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 		})
 	}
 
-	// The control for the projection arm: the same plan, the same terminal, a
-	// project that is not managed. No gate stands there, so nothing refuses the
-	// plan: the step asks its own confirmation, the person at the terminal is
-	// the answer to it (T7), and the plan is applied. That is what the refusal
-	// above holds back.
+	// The control for the projection arm: the same plan and the same terminal
+	// on an installation whose managed fact is gone. No gate stands there, and
+	// nothing needs one: TN1's stop (T3 of docs/managed-flag-ergonomics) reads
+	// the fact at the head of the command and refuses the run before the first
+	// step (D1541), so the plan the gate refuses above is never offered to a
+	// gate here either — no gate sentence, no confirmation, and no apply. That
+	// is the second promise about an installation that is not managed, and the
+	// one this door keeps now: the step's own confirmation is reachable only
+	// where a run reaches a step at all, which is a managed installation.
 	r := updateRig(t)
-	// A project of Fugaro's own that is not managed: the marker names it, so
-	// the review is a run confirmation a person answers by being there
-	// (markedRuns writes no management label and no mark of the gate's), and no
-	// grant for the runs bucket's project Viewers to lose, so that removal is
-	// not a step of this run at all.
-	r.markedRuns(t, initProjectName, initProject)
-	r.gcs.SetBucketPolicy(initRunsBucket, nil)
+	r.unmarkedInstallation(t)
 	fakeTerminal(t)
 	noAgentSession(t)
 	updating(t, r)
 	r.setPlan(t, anotherProject())
 	got, _, err := executeStdin(t, "", "update")
-	if err != nil {
-		t.Fatalf("the plan the gate refuses was not applied in a project that is not managed: %v\n%s", err, got)
+	if err == nil {
+		t.Fatalf("a run converged an installation that is not managed:\n%s", got)
 	}
-	if strings.Contains(got, managedmode.NotConverged) {
-		t.Errorf("a project that is not managed stopped in the managed gate's sentence, so the control does not witness what the refusal above holds back:\n%s", got)
+	all := got + ErrorText(err)
+	if !strings.Contains(all, initProject+" is not managed") {
+		t.Errorf("the run was not stopped by the managed fact's own read:\n%s", got)
 	}
-	if !strings.Contains(got, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): applies") {
-		t.Errorf("the control's step did not ask its own confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
+	if strings.Contains(all, managedmode.NotConverged) {
+		t.Errorf("a project that is not managed stopped in the managed gate's sentence, so the control does not witness what the refusal above holds back:\n%s", all)
 	}
-	if n := len(r.ran(t, "apply")); n != 2 {
-		t.Errorf("%d terraform apply(s) in the control run, want the two (the installation stage's and installation-2's):\n%s", n, got)
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("%d terraform apply(s) in the control run, want none: the door refuses before the first step:\n%s", n, got)
 	}
 }
 
-// A person's own run on a project that is NOT managed keeps every behaviour it
-// had: --yes covers what it always covered, nothing asks a new question, and no
-// record is written about a decision this design never made.
+// A person's own run on a project that is NOT managed is refused at the head of
+// `fugaro update`, and the count of reads is where that is measured.
 //
-// The count of reads is where "keeps every behaviour" is measured. One call
-// names the marker object for the installation's own fact, and one more for
-// each gated step the run has: the gate reads the marks per step (D1015) in
-// the owner's session too, because whether to show a prompt at all is the
-// question those marks answer (the ruling of 2026-11-01). An ordinary update
-// has two gated steps — the installation stage's own and installation-2's,
-// which this rig's run makes because its config records no base image for the
-// images stage to leave alone, so the root is applied again for the scheduled
-// jobs (R7) — and three reads is the whole of what the marks cost it. Each is
-// a read and nothing else: no verdict is reached for this run, nothing is
-// applied on it. A change that makes an owner's run read the mark more times
-// than it has gated steps, or that makes one of those reads reach a write,
-// fails here.
-func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
+// TN1's stop (T3 of docs/managed-flag-ergonomics) reads the managed fact before
+// the first step of `fugaro update` and refuses the run there (D1541), so this
+// owner's run reads the creation fact exactly once — the head's own read, which
+// is the one that answers — and reads it for no step at all: the gate reads the
+// marks per gated step (D1015), and no stage of this run is reached for one to
+// be read. Nothing is applied on a read, and no record is written about a
+// decision this design never made (D1025). A run that reached the gate would
+// read the object once per gated step — an ordinary update has two, the
+// installation stage's own and installation-2's — and one that applied anything
+// would show up as an apply here.
+func TestUpdateStopsAnUnmanagedOwnersRunAtTheHead(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	r := updateRig(t)
-	r.markedRuns(t, "", "") // the runs bucket, and no mark of any kind in it
+	r.unmarkedInstallation(t)
 	fakeTerminal(t)
 	updating(t, r)
 	r.setPlan(t, change(additive, "create"))
 
 	got, err := updateRun(t, r, "update")
-	if err != nil {
-		t.Fatalf("an owner's run on an unmanaged project failed: %v\n%s", err, got)
+	if err == nil {
+		t.Fatalf("an owner's run on an unmanaged project converged it:\n%s", got)
 	}
-	if n := len(r.ran(t, "apply")); n == 0 {
-		t.Errorf("the owner's own terminal stopped covering the installation step:\n%s", got)
+	if !strings.Contains(got, initProject+" is not managed") {
+		t.Errorf("the run was not stopped by the managed fact's own read:\n%s", got)
 	}
-	if n := markReads(r); n != 3 {
-		t.Errorf("an owner's run read the managed marker %d time(s), want three: the installation's own fact read, and the one each of the run's two gated steps makes to know whether to ask at all", n)
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("an unmanaged project applied %d step(s):\n%s", n, got)
+	}
+	if n := markReads(r); n != 1 {
+		t.Errorf("an owner's run read the managed marker %d time(s), want one: the head's own read of the creation fact, which is the read that stops it", n)
 	}
 	if strings.Contains(got, initflow.AgentProceeded("CLAUDECODE")) {
 		t.Errorf("a person's run printed the coding agent's own sentence:\n%s", got)
@@ -1483,28 +1482,137 @@ func TestUpdateManagedDefaultViewShowsTheStepsOnly(t *testing.T) {
 	}
 }
 
-// The other half, and the control the whole rule is read against: the same run
-// on a project that is NOT managed. A person at the terminal is answered
-// exactly as the managed project's owner is — the step runs, nothing is typed,
-// and nothing reads the run's input (T7) — and the sentence that says what
-// decided the step is the only thing missing from the output. The session with
-// nobody at it keeps the refusal the project always had: the step needs the
-// person, nothing is read, and no stage applies. The mutations caught:
-// initRun.gateUnderway answering true for every project (the pipe arm would
-// then apply a step under the gate's own sentence), and Managed.Removes with
-// it.
+// catalogEntryPlan is the plan an added catalog entry leaves on the
+// installation root, as check 292's log holds it (the owner's, 2026-11-26): the
+// catalog check job's configuration — the env the catalog is read out of, which
+// is what the entry moved — and a project child's job, the repository the
+// entry's own jobs run from. Both are the module's `google_cloud_run_v2_job`,
+// and both are in the cover's tables.
+func catalogEntryPlan() []planChange {
+	return []planChange{
+		jobUpdate("module.installation.google_cloud_run_v2_job.catalog_check[0]"),
+		jobUpdate(`module.project["fugaro-p-acme-0123456789ab"].google_cloud_run_v2_job.this`),
+	}
+}
+
+// jobUpdate is one Cloud Run job's in-place update with its configuration
+// moved: the before/after views the plan carries, shaped as the modules write
+// them (a one-element template list, the container's env among its fields), so
+// the changed path is the sensitive location the step's warning line names.
+func jobUpdate(addr string) planChange {
+	job := func(catalog string) map[string]any {
+		return map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{
+			"containers": []any{map[string]any{
+				"image": "us-east5-docker.pkg.dev/" + initProject + "/fugaro/fugaro@sha256:0000",
+				"env": []any{
+					map[string]any{"name": "FUGARO_PROJECT", "value": initProject},
+					map[string]any{"name": "FUGARO_IMAGE_CATALOG", "value": catalog},
+				},
+			}},
+		}}}}}
+	}
+	return planChange{"address": addr, "type": "google_cloud_run_v2_job",
+		"change": map[string]any{"actions": []string{"update"},
+			"before": job(`{"version":2,"catalog":{"entries":[{"name":"tools"}]}}`),
+			"after":  job(`{"version":2,"catalog":{"entries":[{"name":"tools"},{"name":"chk292"}]}}`)}}
+}
+
+// TestUpdateManagedAppliesInASessionNobodyIsAt is check 292's own case: a
+// managed project, a session nobody is at — no coding agent's marker, no
+// terminal, no --json and no --non-interactive, which is the pipe a script, a
+// cron or a sandbox check drives the command in — and the plan an added catalog
+// entry leaves (catalogEntryPlan).
+//
+// The step applies and nothing is confirmed. What answers for it is the run's
+// own confirmation — the read of the two marks, which is the same answer the
+// owner's own terminal gets on a managed project (D1016, the ruling of
+// 2026-11-01) — because there is no one to put a question to: a run that asked
+// here would be asking a person who is not there, which is the prompt the
+// managed case exists to remove. What check 292 read instead was "CONFIRM
+// (project …): applies 0 imports, 0 creates, 7 updates …" and then "the
+// confirmation of this step needs a real terminal": the session rule answered
+// for the marks at the terminal only, a pipe carries no marker and is no
+// terminal, and the step kept a confirmation it asked of nobody.
+//
+// The plan is one the run's own cover covers (tf.Cover, whose tables name the
+// job and the paths an entry moves), so the step is one the run may take
+// silently; a plan outside it — a delete, a replace, an IAM binding — asks its
+// own question and refuses in this session, which is the half that must not
+// move.
+//
+// The plugin stage is current in this rig — Claude Code's own record of the
+// installed plugin, at this release's version — which is the machine a by-hand
+// update leaves behind: a stage with work of its own still stops the run, and
+// that stop is the stage's own and not this plan's.
+func TestUpdateManagedAppliesInASessionNobodyIsAt(t *testing.T) {
+	r := updateManagedRig(t)
+	clearAgentMarkers(t)
+	noTerminal(t)
+	updating(t, r)
+	r.setPlan(t, catalogEntryPlan()...)
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.2.0"}]}}`)
+
+	got, err := updateRun(t, r, "update")
+	if err != nil {
+		t.Fatalf("a managed project's update stopped in a session nobody is at: %v\n%s", err, got)
+	}
+	for _, asked := range []string{"CONFIRM", "needs a real terminal", "[y/N]"} {
+		if strings.Contains(got, asked) {
+			t.Errorf("the run put a confirmation to a session nobody is at (%q):\n%s", asked, got)
+		}
+	}
+	// The installation stage's own apply, and installation-2's behind it: the
+	// stage that re-applies the root once the images stage has moved the base
+	// image the scheduled jobs run FROM (R7). Both are the one document.
+	if n := len(r.ran(t, "apply")); n != 2 {
+		t.Errorf("%d terraform apply(s) ran, want the two the run covered:\n%s", n, got)
+	}
+	// The sentence the covered step prints is the run's own account of it and
+	// goes where that account goes (initRun.stageDetail): the log, which is
+	// where a run that is not --verbose keeps it.
+	if log := newestLog(t, "update"); !strings.Contains(log, initflow.GateOrdinary()) {
+		t.Errorf("the applied step does not say what covered it, so nothing reads as the run's own account:\n%s", log)
+	}
+	recs := audits(t, r)
+	if len(recs) != 2 || recs[0].Verdict != managedmode.AuditAdmitted {
+		t.Fatalf("%d record(s) after an admitted plan, want two admitted: %+v", len(recs), recs)
+	}
+	if recs[0].AgentMarker != "" {
+		t.Errorf("the record names a coding agent's marker (%q), and this session carries none: %+v", recs[0].AgentMarker, recs[0])
+	}
+}
+
+// The control the whole rule is read against, in the shape T3 of
+// docs/managed-flag-ergonomics leaves it: the same run on an installation the
+// managed read answers is not managed. TN1's stop reads the fact at the head of
+// `fugaro update` and refuses the run there (D1541) — and it is the fact that
+// decides it, not the session: a person at the terminal and a session with
+// nobody at it are answered the same way, nothing is applied, nothing is filed,
+// and nothing reads the run's input.
+//
+// The promise the gate's own refusal used to be told apart from — "no gate
+// stands on a project that is not managed, so the step asks its own
+// confirmation and a person's being there is the answer to it" (T7) — is not
+// reachable through this door any more: no step of `fugaro update` runs on a
+// project that is not managed, so the step's own refusal never gets to be said.
+// The mutations caught: a head stop that answered the session rather than the
+// fact (one arm would then apply a step, or read the step's refusal), and
+// initRun.gateUnderway answering true for every project.
 func TestUpdateManagedTerminalControlKeepsTheRefusal(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	for _, tc := range []struct {
 		what     string
 		terminal bool
 	}{
-		{"a person at the terminal: the step is answered by being there", true},
-		{"nobody at the terminal: the step is left", false},
+		{"a person at the terminal: the fact is what stops the run", true},
+		{"nobody at the terminal: the fact is what stops the run", false},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			r := updateRig(t)
-			r.markedRuns(t, "", "")
+			r.unmarkedInstallation(t)
 			isolateGateCredentials(t)
 			updating(t, r)
 			r.setPlan(t, change(additive, "create"))
@@ -1518,6 +1626,11 @@ func TestUpdateManagedTerminalControlKeepsTheRefusal(t *testing.T) {
 			got, _, err := executeStdinReader(t, spy, "update")
 			if err != nil {
 				got += ErrorText(err)
+			} else {
+				t.Fatalf("a run converged an installation that is not managed:\n%s", got)
+			}
+			if !strings.Contains(got, initProject+" is not managed") {
+				t.Errorf("the run was not stopped by the managed fact's own read:\n%s", got)
 			}
 			if spy.read {
 				t.Errorf("a run in a project that is not managed read its own input: nothing is typed at a confirmation any more (T7):\n%s", got)
@@ -1528,26 +1641,14 @@ func TestUpdateManagedTerminalControlKeepsTheRefusal(t *testing.T) {
 			if strings.Contains(got, initflow.GateProceeded()) || strings.Contains(got, initflow.GateOrdinary()) {
 				t.Errorf("a project that is not managed printed the managed gate's sentence:\n%s", got)
 			}
+			if n := len(r.ran(t, "apply")); n != 0 {
+				t.Errorf("a project that is not managed applied %d step(s):\n%s", n, got)
+			}
+			if strings.Contains(got, "needs a real terminal") {
+				t.Errorf("the refusal is a step's own, so a stage ran on a project that is not managed:\n%s", got)
+			}
 			if recs := audits(t, r); len(recs) != 0 {
 				t.Errorf("a project that is not managed filed %+v", recs)
-			}
-			if tc.terminal {
-				if err != nil {
-					t.Fatalf("a person's own run on a project that is not managed failed: %v\n%s", err, got)
-				}
-				if n := len(r.ran(t, "apply")); n == 0 {
-					t.Errorf("the step did not run at the person's own terminal: a project that is not managed kept a prompt the policy took away:\n%s", got)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("a project that is not managed ran to completion with nobody at its terminal:\n%s", got)
-			}
-			if n := len(r.ran(t, "apply")); n != 0 {
-				t.Errorf("a project that is not managed applied %d step(s) with nobody there to confirm them", n)
-			}
-			if !strings.Contains(got, "needs a real terminal") {
-				t.Errorf("the refusal does not say what the step needs:\n%s", got)
 			}
 		})
 	}

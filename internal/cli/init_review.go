@@ -77,7 +77,7 @@ func (r *initRun) ctx() context.Context {
 }
 
 // runCovers reports whether the run's one confirmation covers an ordinary
-// step now, taking it the first time. It is true only for a person at a real
+// step now, taking it the first time. It is true for a person at a real
 // terminal (initflow.CanConfirmRun: never --yes, --non-interactive, --json, a
 // pipe, --plan-only or a coding agent), in a project Fugaro owns; nothing is
 // typed for it (T7: the policy's confirmations are gone, and --ask is the flag
@@ -92,9 +92,21 @@ func (r *initRun) ctx() context.Context {
 // account, coming back on the terminal under --verbose (reviewScreen). The
 // review is printed ONCE either way, as the question the person answered was
 // asked once.
+//
+// A session nobody is at takes it the same way the owner's terminal does, and
+// that is what the gate's own verdict is: the run's confirmation is the read of
+// the two marks there too, so a pipe with its input closed converges a managed
+// project's ordinary steps instead of leaving each of them with a confirmation
+// no person can give (check 292, the owner's, 2026-11-26). It is not a way past
+// the marks: the gate's read and every step's own Removes are asked exactly as
+// they are at the terminal, and a project that is not managed, a mark that did
+// not answer, --ask, --json and --non-interactive keep the answer they had.
 func (r *initRun) runCovers() (bool, error) {
 	rv := r.review
-	if rv == nil || r.o.planOnly || agentMarker(os.Getenv, r.stdinTerminal()) != "" || !initflow.CanConfirmRun(r.conditions()) {
+	if rv == nil || r.o.planOnly || agentMarker(os.Getenv, r.stdinTerminal()) != "" {
+		return false, nil
+	}
+	if !initflow.CanConfirmRun(r.conditions()) && !(r.gateStandsIn() && initflow.NobodyIsAtTheSession(r.conditions())) {
 		return false, nil
 	}
 	switch rv.state {

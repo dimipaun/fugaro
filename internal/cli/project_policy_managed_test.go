@@ -99,6 +99,12 @@ func newPolicyFixture(t *testing.T, extra string, managedProject bool) *managedP
 	writeRunsMarker(t, filepath.Join(r.dir, "runs"), "aurora", initProject)
 	if managedProject {
 		markManagedProject(t, r)
+	} else {
+		// The rig's own default is a managed installation (newInitRig), so the
+		// other side of the boundary is taken back out here: the project's own
+		// half of the fact goes, and the read answers "not managed" from the
+		// label alone (removeManagedInstallation).
+		r.removeManagedInstallation(t)
 	}
 	// The account a record names, and the day it is written: both are read out
 	// of the world at the write, so a test that wants to read the day's

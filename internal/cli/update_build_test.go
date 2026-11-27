@@ -34,6 +34,11 @@ const buildSecretName = "sandbox-probe"
 func buildFlipRig(t *testing.T, addr string) *initRig {
 	t.Helper()
 	r, db := proxiedDropRig(t)
+	// The rows below are about the path an installation that is NOT managed
+	// takes: the guard's own refusal is the one that names --allow-delete, and in
+	// a managed project the gate answers first with its own sentence and no flag
+	// (D1012).
+	r.unmarkedInstallation(t)
 	publishProxiedNode(t, db, false, proxiedRepoCanonical(t))
 	putSwitchBundle(t, r, proxiedRepoBundle(t))
 	r.script["show -json@repo"] = map[string]any{"stdout": vaultStateDoc(t, addr)}

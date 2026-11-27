@@ -17,22 +17,26 @@ import (
 // terminal is asked nothing at a confirmation — no step of these is answered by
 // a name typed under the banner, data loss and secret values included, and
 // --ask is the one flag that puts a question back — and a step nobody is at the
-// terminal for is left for the user.
+// terminal for is left for the user, unless the run's own cover announced it:
+// the gate's read answers for that one in a pipe too (check 292).
 //
 // Each test below is one of the ruling's cases, and each is run in the worlds
 // that have to be told apart — the same run with a coding agent's marker in the
 // environment, the same run on a project that is NOT managed, and the same run
 // with nobody at the terminal at all (stdin a pipe, managed marks and no
-// --yes) — because what a step gets is about WHO is at the terminal and never
-// about what the gate admitted. The mutations the file exists to catch are the
-// tempting ones: reading "a terminal" as "the owner" (a coding agent's session
-// has a terminal too, and the marker read in PersonAtTheTerminal is the whole
-// of what keeps an agent out of these writes), reading the ruling as one about
-// the project rather than about the session (a project that is not managed
-// prints the gate's own sentence nowhere), and dropping the terminal itself out
-// of the predicate — a pipe carries no marker, so a run nobody is at reads
-// exactly like the owner's own, and an arm that asked only the marker would
-// write there.
+// --yes) — because what a step that still needs a confirmation gets is about
+// WHO is at the terminal and never about what the gate admitted; a step the
+// run's own cover announced is the one exception, and the gate's read answers
+// for it in a pipe exactly as it does at the owner's terminal (check 292). The
+// mutations the file exists to catch are the tempting ones: reading "a terminal"
+// as "the owner" (a coding agent's session has a terminal too, and the marker
+// read in PersonAtTheTerminal is the whole of what keeps an agent out of these
+// writes), reading the ruling as one about the project rather than about the
+// session (a project that is not managed prints the gate's own sentence
+// nowhere), dropping the terminal itself out of the predicate — a pipe carries
+// no marker, so a run nobody is at reads exactly like the owner's own, and an
+// arm that asked only the marker would write there — and taking the covered
+// branch's answer away from a session nobody is at, which is check 292 itself.
 //
 // The rigs are managed_money_steps_test.go's managedTerminalUpdate (the gate
 // read once, beside the loop, in the owner's own session, and the same rig with
@@ -62,23 +66,37 @@ func managedUpdateNoTerminal(t *testing.T) (*initRig, *initEngine, *syncBuf) {
 	return r, e, out
 }
 
-// TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal is the
-// other half of the owner's own sentence, and the half a reader of it gets
-// wrong: the ruling is about a PERSON at the terminal, so a managed run whose
-// stdin is a pipe is asked for the name exactly as before — the gate's read
-// says who may act, and this run has nobody there to act. Both steps are
-// asserted, because the arm is drawn inside the covered branch and the two
-// arrive there differently: the covered one is the step the arm would otherwise
-// answer for with nothing typed, and the one outside the review keeps the note
-// the arm would have carried beside its sentence, with the prompt instead.
-func TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal(t *testing.T) {
+// TestManagedOwnerTerminalOrdinaryStepWithNobodyAtTheTerminal is the other half
+// of the owner's own sentence, and the half a reader of it gets wrong: the
+// ruling is about a PERSON at the terminal, so a step that still needs the run's
+// confirmation reads there exactly as it did — a pipe cannot type and nothing
+// is read. Both steps are asserted, because the arm is drawn at the plan's cover
+// and the two arrive at it differently:
+//
+//   - the covered one is a step the review's cover announced, and a session
+//     nobody is at takes it the way the owner's own terminal does (check 292,
+//     the owner's, 2026-11-26): the gate's own read stands in for the run there
+//     too, so the step proceeds with nothing typed and reads the gate's
+//     sentence. It is not a way past the read — a project whose marks did not
+//     answer, --ask, --json and --non-interactive keep the confirmation, and
+//     the gate's own verdict on the plan's document is asked before any of
+//     this — and it is what makes a managed project's update converge in a
+//     session no person is at rather than leave every covered step with a
+//     confirmation nobody can give.
+//   - the one outside the review keeps the note and the confirmation: a plan the
+//     review did not announce is exactly the plan that may delete, replace or
+//     remove an IAM grant, and the gate has no verdict for it either (the
+//     refusal is why the step never reaches a confirmation at all,
+//     TestManagedOwnerTerminalRefusedPlanIsNotApplied).
+func TestManagedOwnerTerminalOrdinaryStepWithNobodyAtTheTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		what       string
 		notCovered string
+		proceeds   bool
 	}{
-		{"covered", "writes the Terraform state bucket (cents a month)", ""},
-		{"outside the review", "applies the plan as shown", "the plan is outside what the review announced (a destroy of one resource)"},
+		{"covered", "writes the Terraform state bucket (cents a month)", "", true},
+		{"outside the review", "applies the plan as shown", "the plan is outside what the review announced (a destroy of one resource)", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, e, out := managedUpdateNoTerminal(t)
@@ -88,17 +106,29 @@ func TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal(t *testi
 			if err != nil {
 				t.Fatalf("a run nobody is at was refused with an error rather than asked: %v\n%s", err, out)
 			}
-			if ok {
-				t.Fatalf("a step of a managed run nobody is at proceeded with nothing typed:\n%s", out)
+			if ok != tc.proceeds {
+				t.Fatalf("askOrdinary with nobody at the terminal = %v, want %v:\n%s", ok, tc.proceeds, out)
 			}
-			// A pipe cannot type, so what the step's own confirmation is here
-			// is its banner: ask prints it and answers false for a run with
-			// nobody at the terminal (init.go's ask).
-			if !strings.Contains(out.String(), "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): "+tc.what) {
-				t.Errorf("a run nobody is at was not asked for the step:\n%s", out)
-			}
-			if tc.notCovered != "" && !strings.Contains(out.String(), tc.notCovered+"; it is shown and then applied, and where nobody is at the terminal the run leaves it to you") {
-				t.Errorf("the step's own confirmation was not the one asked:\n%s", out)
+			if tc.proceeds {
+				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the step the run announced does not say what covers it with nobody at the terminal:\n%s", out)
+				}
+				if strings.Contains(out.String(), "⚠ CONFIRM") {
+					t.Errorf("a step nothing is asked about printed the confirmation banner:\n%s", out)
+				}
+			} else {
+				// A pipe cannot type, so what the step's own confirmation is
+				// here is its banner: ask prints it and answers false for a run
+				// with nobody at the terminal (init.go's ask).
+				if !strings.Contains(out.String(), "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): "+tc.what) {
+					t.Errorf("a run nobody is at was not asked for the step:\n%s", out)
+				}
+				if !strings.Contains(out.String(), tc.notCovered+"; it is shown and then applied, and where nobody is at the terminal the run leaves it to you") {
+					t.Errorf("the step's own confirmation was not the one asked:\n%s", out)
+				}
+				if strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("a step the review did not announce read the sentence of the ones it did:\n%s", out)
+				}
 			}
 			if strings.Contains(out.String(), initflow.OwnerProceeded()) {
 				t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)

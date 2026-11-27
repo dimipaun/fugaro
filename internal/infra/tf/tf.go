@@ -308,6 +308,30 @@ func New(bin, dir string, env []string) (*TF, error) {
 	return t, nil
 }
 
+// ProbeVersion runs bin's own `version -json` and refuses a version this build
+// does not support, with the sentence New refuses it with. New is the caller
+// that has a working directory and the environment of tf.Env; this is for the
+// caller that must make the check before it has either — the stop that reads a
+// project's marks only for a run whose environment is this project's, and a
+// terraform that cannot plan this tree must not have put that read on the wire
+// — so it runs with the environment it was given.
+func ProbeVersion(bin string) (string, error) {
+	out, err := exec.Command(bin, "version", "-json").Output()
+	if err != nil {
+		return "", fmt.Errorf("terraform version -json: %w", err)
+	}
+	var v struct {
+		Version string `json:"terraform_version"`
+	}
+	if err := json.Unmarshal(out, &v); err != nil {
+		return "", fmt.Errorf("terraform version -json: %w", err)
+	}
+	if err := checkVersion(v.Version); err != nil {
+		return "", err
+	}
+	return v.Version, nil
+}
+
 var versionRE = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$`)
 
 func checkVersion(v string) error {

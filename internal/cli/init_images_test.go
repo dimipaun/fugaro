@@ -166,6 +166,10 @@ type imagesRig struct {
 	*fbRig
 	src, dst *imagesRegistry
 	built    int
+	// version is the release this rig's CLI is: what the fake source publishes
+	// the credentials image under, and so the tag every ref the rig reads back
+	// carries (credentialsRef).
+	version string
 	// basePin is the digest the fake resolve-and-verify step returns: the
 	// base image the fake source publishes. The destination registry serves
 	// that manifest by digest, as the remote repository does, so the
@@ -197,7 +201,7 @@ func newImagesRig(t *testing.T, version string) *imagesRig { return newImagesRig
 
 func newImagesRigFor(t *testing.T, version, fp string) *imagesRig {
 	t.Helper()
-	r := &imagesRig{fbRig: newFBRigFor(t, fp), src: newImagesRegistry(t), dst: newImagesRegistry(t)}
+	r := &imagesRig{fbRig: newFBRigFor(t, fp), src: newImagesRegistry(t), dst: newImagesRegistry(t), version: version}
 	t.Chdir(t.TempDir()) // outside any checkout: no fugaro.yaml names a base
 	for _, n := range []string{"fugaro-history", "fugaro-base"} {
 		r.src.publish("dimipaun/"+n, "1.2.3")

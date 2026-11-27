@@ -282,10 +282,12 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 		} {
 			t.Run(name, func(t *testing.T) {
 				r := newInitRig(t)
-				// The old project's own runs bucket, labelled, and no fact:
-				// an installation that was never managed.
-				r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
-				labelled(r.crm, initProject)
+				// The old project's own runs bucket, and no fact: an
+				// installation that was never managed. The rig's own default
+				// is one that is (newInitRig), so both halves of its fact come
+				// back out here and the bucket stays where it is — the read
+				// answers "not managed" from the label alone.
+				r.unmarkedInstallation(t)
 				lc, err := localcfg.Load(r.cfg)
 				if err != nil {
 					t.Fatal(err)
@@ -303,8 +305,10 @@ func TestRestoreBudgetComesFromTheOldProjectsFact(t *testing.T) {
 
 	t.Run("unreadable: proceeds on the flags, and only on them", func(t *testing.T) {
 		for name, gone := range map[string]func(r *initRig, lc *localcfg.Config){
-			// The project answers and its runs bucket is not there.
-			"no runs bucket": func(*initRig, *localcfg.Config) {},
+			// The project answers and its runs bucket is not there: the rig's
+			// own default is an installation whose runs bucket exists
+			// (newInitRig), so it is taken out of the world here.
+			"no runs bucket": func(r *initRig, _ *localcfg.Config) { r.gcs.RemoveBucket(initRunsBucket) },
 			// The project itself does not answer (deleted, or not yours).
 			"no project": func(_ *initRig, lc *localcfg.Config) { lc.GCPProject = "proj-gone-9999" },
 		} {
