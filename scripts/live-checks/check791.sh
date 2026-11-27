@@ -272,8 +272,9 @@ What it would do, in order:
   mode-off  the check writes its own scratch checkout, holding the sandbox's
             COMMITTED fugaro.yaml (git -C @SANDBOX@ show HEAD:fugaro.yaml)
             with 'budget.mode: off' written in, and launches from THERE
-            (never from the sandbox):
-              fugaro run --task-file <a task the check writes> --json
+            (never from the sandbox), cut from 'main' — the branch that checkout
+            holds — so no base branch is resolved and none is a reading:
+              fugaro run --ref main --task-file <a task the check writes> --json
             -> it must be refused, at once, with the word 'off' named (D3022). A config
                load is what refuses it, so nothing is spent; a launch it does NOT
                refuse is a real run, and the row names it and the command that stops it.
@@ -285,9 +286,8 @@ Premises this dry run does NOT settle (nothing is read: no git, no fugaro, no po
   NOT settled  the sandbox's committed fugaro.yaml can be read         (read at run time)
   NOT settled  the sandbox has an 'origin' remote                      (read at run time;
                a scratch checkout of it cannot be placed without one, and the row reads UNVERIFIED)
-  NOT settled  its committed file names 'main' as its git.base_branch  (read at run time;
-               the scratch checkout is built on 'main', so another branch is a repository this row does not cover)
-  NOT settled  the launch is refused at once, naming 'off'             (read at run time; only a real run settles it)
+  NOT settled  the launch is refused at once, naming 'off'             (read at run time; only a real run settles it;
+               the launch names 'main', the branch the scratch checkout holds, so no base branch is resolved)
 
   The two subjects themselves are settled by construction: the check writes them,
   and writes nothing anywhere but its scratch directory.
@@ -546,9 +546,14 @@ step_mode_off() {
 
 Change nothing: this launch exists to be refused.
 TASK
+  # --ref main names the branch the scratch checkout holds, so the base branch
+  # the launch would otherwise resolve — the local config's or the project's,
+  # neither of which this check reads — is never a reading: a launch cut from a
+  # branch the checkout does not hold is refused naming the branch, and that
+  # refusal would be read as one that never names off.
   say "launching a run from the scratch checkout (never from the sandbox)"
   local rstatus=0
-  (cd "$subj" && fugaro run --task-file "$SCRATCH/task.md" --json) >"$SCRATCH/launch.out" 2>&1 || rstatus=$?
+  (cd "$subj" && fugaro run --ref main --task-file "$SCRATCH/task.md" --json) >"$SCRATCH/launch.out" 2>&1 || rstatus=$?
   if [ "$rstatus" -eq 0 ]; then
     local rid
     rid=$(jget "$SCRATCH/launch.out" run_id)

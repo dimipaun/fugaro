@@ -212,10 +212,14 @@ test_a_dry_run_does_not_claim_a_run_pass() {
   expect_contains "$out" "NOT settled" "the plan says what this dry run cannot settle"
   expect_contains "$out" "only a real run" "and that a real run is what settles them"
   # Everything the mode-off subject depends on is on the list: the file it is
-  # built from, the remote it is placed by, and the branch the scratch checkout
-  # holds it on.
+  # built from and the remote it is placed by. The base branch is not, and must
+  # not be: the launch names the branch the scratch checkout holds, so no base
+  # branch is resolved at all.
   expect_contains "$out" "'origin' remote" "the plan says the sandbox needs an origin"
-  expect_contains "$out" "git.base_branch" "the plan says which branch the subject is built on"
+  expect_contains "$out" "run --ref main" "the plan says which branch the launch is cut from"
+  case "$out" in
+  *git.base_branch*) fail "the plan lists a base branch premise the launch does not read" ;;
+  esac
   [ ! -s "$CALLS" ] || fail "a dry run made a call: $(cat "$CALLS")"
 }
 
@@ -379,6 +383,11 @@ test_the_launch_runs_from_the_checks_own_checkout() {
     fail "the check changed the sandbox: $(git -C "$sandbox" status --porcelain)"
   git -C "$sandbox" log --format=%s -n 1 | grep -qx "fugaro.yaml" ||
     fail "the check added a commit to the sandbox"
+  # The launch is cut from the branch the scratch checkout holds, so the base
+  # branch the installation would otherwise resolve — and refuse over, naming
+  # that branch rather than off — is never read.
+  grep -q 'fugaro run --ref main --task-file' "$CALLS" ||
+    fail "the launch did not name the branch the scratch checkout holds: $(grep 'fugaro run' "$CALLS" || true)"
 }
 
 test_a_missing_sandbox_is_refused() {

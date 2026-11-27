@@ -25158,10 +25158,13 @@ refused below would not be the repository file's refusal — republish with `fug
 a policy read that answered with no mode, or a mode this release does not have.
 
 **Prerequisites.** `--sandbox` is a **git checkout** of a sandbox repository whose HEAD carries a
-**committed** `fugaro.yaml`, with an `origin` remote, naming **`main`** as its `git.base_branch` — nothing
-else about it matters: the check builds both subjects itself. The origin and the branch are the two premises
-of the second subject (a scratch checkout cannot be placed without a remote, and the check's own checkout is
-built on `main`), and each reads UNVERIFIED rather than a pass where it does not hold. `fugaro`, `git`, `python3` and `mktemp` on PATH. The check reads that checkout and the published
+**committed** `fugaro.yaml`, with an `origin` remote — nothing else about it matters: the check builds both
+subjects itself. The remote is the one premise of the second subject, since a scratch checkout of the sandbox
+cannot be placed without one, and it reads UNVERIFIED rather than a pass where it does not hold. The launch
+is cut from **`main`** (`fugaro run --ref main`), the branch the check's own checkout holds, so the base
+branch the installation would otherwise resolve — the local config's or the project's, neither of which the
+check reads — is never a reading: a launch cut from a branch the checkout does not hold is refused naming
+that branch, which would be read as a refusal that never names `off`. `fugaro`, `git`, `python3` and `mktemp` on PATH. The check reads that checkout and the published
 policy and touches nothing else; run it on a sandbox you are happy to see named.
 
 **What a failure means, row by row.**
