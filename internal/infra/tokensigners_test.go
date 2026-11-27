@@ -71,6 +71,13 @@ func (r *signerRig) find(t *testing.T) ([]SignerFinding, error) {
 // findNumber is find with project number n (0: unknown).
 func (r *signerRig) findNumber(t *testing.T, n uint64) ([]SignerFinding, error) {
 	t.Helper()
+	return r.findManaged(t, n, Managed{})
+}
+
+// findManaged is findNumber with the installation's own managed deployment
+// (its project and the operators it names) handed to the detector.
+func (r *signerRig) findManaged(t *testing.T, n uint64, managed Managed) ([]SignerFinding, error) {
+	t.Helper()
 	ctx := context.Background()
 	opts := func(u string) []option.ClientOption {
 		return []option.ClientOption{option.WithEndpoint(u), option.WithoutAuthentication()}
@@ -83,7 +90,7 @@ func (r *signerRig) findNumber(t *testing.T, n uint64) ([]SignerFinding, error) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return TokenSigners(ctx, c, i, tsProject, tsSigner, n, Managed{})
+	return TokenSigners(ctx, c, i, tsProject, tsSigner, n, managed)
 }
 
 // unexpected is the findings that are a risk: neither designed nor one of
@@ -131,6 +138,79 @@ func TestTokenSignersExpected(t *testing.T) {
 		if f.Why == "" {
 			t.Errorf("expected finding without a reason: %+v", f)
 		}
+	}
+}
+
+// The operators the installation names hold the token-creator role on the
+// resident orchestrator's account (orchestrator.tf, so the daemon on an
+// operator's machine can mint its ID token) and on the verifier's (iam.tf,
+// CSR14, the account the owner's live check calls the verify route through).
+// Fugaro's own Terraform writes both, to var.operators and to nobody else, so
+// both are what the design expects; the same role on any other account, or to
+// a principal the installation does not name, stays a risk.
+func TestTokenSignersOperatorImpersonationIsDesigned(t *testing.T) {
+	orch := OrchestratorAccountID + "@" + tsProject + ".iam.gserviceaccount.com"
+	verifier := VerifierAccountID + "@" + tsProject + ".iam.gserviceaccount.com"
+	for name, tc := range map[string]struct {
+		account, member string
+		designed        bool
+	}{
+		"the resident orchestrator's account":        {orch, "user:ops@example.com", true},
+		"the verifier account":                       {verifier, "user:ops@example.com", true},
+		"a principal the installation does not name": {orch, "user:eve@example.com", false},
+		"the signer account":                         {tsSigner, "user:ops@example.com", false},
+		"an account nobody here creates":             {"fugaro-else@fp-1.iam.gserviceaccount.com", "user:ops@example.com", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newSignerRig(t)
+			if tc.account != tsSigner && tc.account != tsSched {
+				r.iam.AddServiceAccount(tsProject, tc.account, tc.account)
+			}
+			r.iam.SetServiceAccountPolicy(tsProject, tc.account, gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{tc.member}})
+			fs, err := r.findManaged(t, 111, Managed{Project: tsProject, Operators: []string{"user:ops@example.com"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *SignerFinding
+			for i := range fs {
+				if strings.EqualFold(fs[i].Account, tc.account) && strings.EqualFold(fs[i].Member, tc.member) {
+					found = &fs[i]
+				}
+			}
+			if found == nil {
+				t.Fatalf("no finding for %s on %s: %+v", tc.member, tc.account, fs)
+			}
+			if found.Expected != tc.designed || (!tc.designed && found.Class != SignerRisk) {
+				t.Fatalf("finding %+v, designed want %v", *found, tc.designed)
+			}
+			if tc.designed && found.Why == "" {
+				t.Errorf("designed finding without a reason: %+v", *found)
+			}
+		})
+	}
+}
+
+// The operators' impersonation is recognised only with the installation's own
+// local config: no project or no operators recognises nothing, exactly as the
+// deployer's own grant is.
+func TestTokenSignersOperatorImpersonationWithoutTheInstallation(t *testing.T) {
+	orch := OrchestratorAccountID + "@" + tsProject + ".iam.gserviceaccount.com"
+	for name, managed := range map[string]Managed{
+		"no project":   {Operators: []string{"user:ops@example.com"}},
+		"no operators": {Project: tsProject},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newSignerRig(t)
+			r.iam.AddServiceAccount(tsProject, orch, orch)
+			r.iam.SetServiceAccountPolicy(tsProject, orch, gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"user:ops@example.com"}})
+			fs, err := r.findManaged(t, 111, managed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(unexpected(fs)) != 1 {
+				t.Fatalf("findings %+v", fs)
+			}
+		})
 	}
 }
 

@@ -161,6 +161,55 @@ func TestDoctorTokenSignersNoneIsStillPartial(t *testing.T) {
 	}
 }
 
+// The operators' impersonation of the resident orchestrator's and the
+// verifier's accounts is the module's own grant (orchestrator.tf, iam.tf), so
+// the two bindings are the design, and the summary line says so instead of
+// warning about them — the state the owner's installation was left in by
+// 0.29.5's update, where doctor printed two numbered warnings.
+func TestDoctorTokenSignersOperatorImpersonationIsDesigned(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.withOperators(t, "user:ops@example.com")
+	for _, a := range []string{
+		tf.OrchestratorAccountID + "@proj-1234.iam.gserviceaccount.com",
+		tf.VerifierAccountID + "@proj-1234.iam.gserviceaccount.com",
+	} {
+		r.iam.AddServiceAccount("proj-1234", a, a)
+		r.iam.SetServiceAccountPolicy("proj-1234", a, gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{"user:ops@example.com"}})
+	}
+	// No --strict: the rig's orchestrator account is here only for this
+	// binding, so the check that reads its section 4.3 table warns about the
+	// rows a config alone cannot give it, which is not this test's subject.
+	o, _ := r.doctor(t)
+	if cs := signerChecks(o); len(cs) != 0 {
+		t.Fatalf("the module's own grants are not numbered warnings: %+v", cs)
+	}
+	if _, ok := checkByID(o, "token-signers-managed"); ok {
+		t.Error("an impersonation grant that is not on the deployer account produced a managed line")
+	}
+	c, ok := summary(o)
+	if !ok || !strings.Contains(c.Problem, "can sign as designed") || !strings.Contains(c.Problem, "user:ops@example.com") {
+		t.Fatalf("the designed grants are not on the summary line: %+v", c)
+	}
+}
+
+// The recognition is exact: an operator's or anybody else's token-creator
+// grant on an account the installation does not name that way stays a numbered
+// warning with a remove command.
+func TestDoctorTokenSignersImpersonationOnAnotherAccountWarns(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.withOperators(t, "user:ops@example.com")
+	r.iam.AddServiceAccount("proj-1234", "fugaro-else@proj-1234.iam.gserviceaccount.com", "else")
+	r.iam.SetServiceAccountPolicy("proj-1234", "fugaro-else@proj-1234.iam.gserviceaccount.com", gcpfake.Binding{Role: tf.DeployerTokenCreatorRole, Members: []string{"user:ops@example.com"}})
+	o, _ := r.doctor(t)
+	cs := signerChecks(o)
+	if len(cs) != 1 || !strings.Contains(cs[0].Problem, "fugaro-else@proj-1234.iam.gserviceaccount.com") || !strings.Contains(cs[0].Fix, "remove-iam-policy-binding") {
+		t.Fatalf("checks %+v", cs)
+	}
+	if c, ok := summary(o); ok && strings.Contains(c.Problem, "can sign as designed") {
+		t.Errorf("a grant on another account is on the designed line: %+v", c)
+	}
+}
+
 // Only the designed path and the Admin SDK account: informational, so it
 // never fails doctor, even with --strict.
 func TestDoctorTokenSignersOnlyExpectedIsInfo(t *testing.T) {
