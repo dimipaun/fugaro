@@ -2,7 +2,15 @@
 
 This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), which wins.
 
-**Status: nothing is implemented, and no task is approved.** Each task needs the owner's explicit go.
+**Status as of 2026-11-27: most of the plan is merged (C1, U1, U2, U3a, U3b, U4, U5, U6a, U6b, U7a,
+U7b, U8, U9a, U9b, U10 and U13); U9c, U9d, U12, I1 and K1 are left.** Each task still needs the
+owner's explicit go.
+
+**U11 is cancelled and U12 no longer waits on it** (D3420 of
+[docs/ground-rules](../ground-rules/reconciliation.md) amends D3353): U12 removes `--repo` once U9d
+is merged, and the stage over every enrolled repository is built as UO2 of
+[docs/ground-rules](../ground-rules/implementation-plan.md). The tasks below are kept as written, for
+the record.
 
 The answers that shaped it are D3340–D3352, all as recommended. D3343, D3347 and D3349 were
 amended after review and confirmed.
@@ -75,9 +83,8 @@ amended after review and confirmed.
 
 ## Launch notes
 
-L8 M1 merged during review round 2 (#3816), so U1 is ready. The graph has no external gate for
-**U11**, which reads as ready once its edges clear but must not launch before L2 lands. Whoever
-launches by plan edges holds it by hand.
+L8 M1 merged during review round 2 (#3816), so U1 was ready. **U11 is cancelled** (D3420), so nothing
+here waits on L2, and U12's edge on U11 is lifted: it launches on U9d alone.
 
 ## Slices
 
@@ -88,8 +95,9 @@ launches by plan edges holds it by hand.
 4. **The anchor** (U9a, U9b, U9c, U9d). It moves into `repos add`, and the flag goes from both
    doors.
 5. **The wiring** (I1) and **the documents** (U7a, U7b).
-6. **After L2** (U11): the repository stage over every repository.
-7. **After U11** (U12): `update --repo` goes.
+6. **Cancelled by D3420** (U11): the repository stage over every repository. It is built as UO2 of
+   [docs/ground-rules](../ground-rules/implementation-plan.md), over the shared-job profiles.
+7. **After U9d** (U12): `update --repo` goes.
 8. **The owner's check** (K1, Check 930).
 
 ## Tasks
@@ -496,7 +504,10 @@ launches by plan edges holds it by hand.
 - Commit: `update-from-anywhere U13: the repos and notices members`
 - Reviewer tier: standard.
 
-### U11: the repository stage over every repository, and the RC39 facts (after L2)
+### U11: the repository stage over every repository, and the RC39 facts (after L2) — CANCELLED (D3420)
+- **Cancelled by D3420** ([docs/ground-rules](../ground-rules/reconciliation.md)), and kept here for the
+  record: the stage it would build does not ship in this plan. The stage over every enrolled repository
+  is UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md).
 - Acceptance:
   - The repository stage applies each enrolled repository's records from its default branch,
     through L2's per-repository roots.
@@ -519,12 +530,14 @@ launches by plan edges holds it by hand.
 - Commit: `update-from-anywhere U11: the repository stage over every repository`
 - Reviewer tier: opus, with an independent review (it applies Terraform roots).
 
-### U12: `update --repo` goes (after U11)
-- Added by the owner's ruling of 2026-11-26 (D3353). Until U11 merges nothing changes: `update --repo`
-  stays as it is. U12 depends on U11 and on U9d, and launches after both.
+### U12: `update --repo` goes (after U9d)
+- Added by the owner's ruling of 2026-11-26 (D3353), amended by D3420 the same day: U12 no longer
+  waits on U11, which is cancelled. U12 depends on U9d and launches after it. Until it merges,
+  `update --repo` stays as it is.
 - Acceptance:
   - The `--repo` flag is removed from `fugaro update`. A repository's records come from plain
-    `fugaro update` over every enrolled repository, read from its default branch (U11).
+    `fugaro update` over every enrolled repository, read from its default branch (UO2 of
+    [docs/ground-rules](../ground-rules/implementation-plan.md)).
   - Every document, help text, plugin skill line, website page and message that tells anyone to run
     `fugaro update --repo` per checkout names plain `fugaro update` instead: the README's Providers
     step 6, `docs/how-to/budgets.md`, `registry-cleanup.md`, `retiring-a-workflow.md`,
@@ -535,12 +548,13 @@ launches by plan edges holds it by hand.
   `README.md`, `docs/how-to/budgets.md`, `docs/how-to/registry-cleanup.md`,
   `docs/how-to/retiring-a-workflow.md`, `docs/how-to/offboarding.md`, `docs/how-to/teammates.md`,
   `plugin/skills/update/SKILL.md`, `internal/cli/docs_no_update_repo_test.go` (new).
-- Interfaces: removes the `--repo` flag of `update`; consumes U11's repository stage.
+- Interfaces: removes the `--repo` flag of `update`; consumes UO2's repository stage.
 - Tests: `TestUpdateHasNoRepoFlag`, `TestNoLiveDocumentNamesUpdateRepo`,
   `TestDoctorFixTextsNamePlainUpdate`.
 - Command: `go test ./internal/cli/ -run 'TestUpdateHasNoRepoFlag|TestNoLiveDocumentNamesUpdateRepo|TestDoctorFixTextsNamePlainUpdate|Docs' -count=1 && go test ./plugin/ -count=1`
 - Red step: `TestUpdateHasNoRepoFlag` fails while `update` still registers `--repo`.
-- Depends on: U11 (the repository stage replaces what `--repo` did); U9d (the same documents).
+- Depends on: UO2 of [docs/ground-rules](../ground-rules/implementation-plan.md) (the repository stage
+  replaces what `--repo` did; U11, which this edge named, is cancelled); U9d (the same documents).
 - Commit: `update-from-anywhere U12: update --repo goes`
 - Reviewer tier: opus, with an independent review (it removes a flag the plugin skills name).
 

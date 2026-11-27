@@ -1,6 +1,8 @@
 # Update from anywhere (lift L5)
 
-**Status: plan only; nothing is implemented; no task approved.** Every decision is answered.
+**Status as of 2026-11-27: most of the plan is merged; U9c, U9d, U12, I1 and K1 are left, and U11 is
+cancelled — U12 no longer waits on it (D3420, [docs/ground-rules](../ground-rules/reconciliation.md)).
+See [docs/status.md](../status.md) for the current table.** Every decision is answered.
 
 **Spec owner:** Dimi Paun. The owner approved the spec on 2026-11-23. It was reconciled and planned
 on 2026-11-24, against `origin/main` at `486823a00`.
@@ -17,7 +19,7 @@ It covers audit rows RC12, RC13, RC38, RC39, RC75, RC98, RC104 and RC105.
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
 | [reconciliation.md](reconciliation.md) | Assumptions A1–A5, findings F1–F50 (F15–F30 from review round 1, F31–F41 from round 2, F42–F50 from round 3), decisions D3340–D3352 with the owner's answers (D3343, D3347 and D3349 amended after review and confirmed), resolutions R1–R22, open items O1–O3 (O3 closed), UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, eighteen tasks (U1, U2, U3a, U3b, U4, U5, U6a, U6b, U7a, U7b, U8, U9a–U9d, U10, U11, U13), integration I1, the owner's Check 930 (K1) and one contract change that runs only if raised, in seven levels. Also the critical path, the shared files and the edges broken and kept. Nothing in it is approved |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, the tasks (U1, U2, U3a, U3b, U4, U5, U6a, U6b, U7a, U7b, U8, U9a–U9d, U10, U13, with U11 cancelled and U12 added by D3353), integration I1, the owner's Check 930 (K1) and one contract change that runs only if raised, in seven levels. Also the critical path, the shared files and the edges broken and kept. **U11 is cancelled and U12 no longer waits on it** (D3420 amends D3353) |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 **The owner's answers, all as recommended:**
@@ -75,5 +77,4 @@ The highest decision was image-secrets' reserved block (D3320–D3339), and the 
 
 **What waits on something external:**
 - the owner's go for each task;
-- L2 (shared-jobs) for U11;
 - Check 930, which the owner runs after the release that carries I1.
