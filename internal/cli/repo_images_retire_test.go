@@ -299,6 +299,46 @@ func TestRetireImageMapIsSkippedInACodingAgentsSession(t *testing.T) {
 	}
 }
 
+// TestRetireImageMapLeavesANodeAnotherReleaseWrote: the node every installation
+// one release behind carries refuses this release's strict read, and it is the
+// state the run's own preview reads it in — before the policy stage, which
+// follows it in the order, has migrated the node. The check skips (owed, since
+// the member is still on a node that carries it) rather than failing: a failure
+// here ends the preview at this stage, which is a run with no review screen at
+// all, and the workspace converges read the node with the migration's own
+// member and see it. TestUpdateConvergesAWorkspaceFromThePreviousRelease is
+// where that is pinned end to end.
+func TestRetireImageMapLeavesANodeAnotherReleaseWrote(t *testing.T) {
+	rg := newMapRetireRig(t)
+	e := rg.engine(t, &initOptions{door: updateDoor.name, yes: true})
+	// Version 7, the node a converge's fixtures write for an installation whose
+	// release is behind (v7Node): this release's readers refuse a node that far
+	// back, because the steps between it and this version are not all shape-free
+	// (internal/projectpolicy/migrate.go's shapeFreeSteps).
+	rg.node(t, map[string]any{
+		"version":     7,
+		"allow_repos": []any{"github/acme/app"},
+		"image_map":   map[string]any{"acme/app": "entry-a"},
+	})
+	st, err := newImageMapRetireStage(e).Check(t.Context())
+	if err != nil {
+		t.Fatalf("the check failed on a node another release wrote, and a preview ends there: %v", err)
+	}
+	if st.State != initflow.Skipped || !st.Undone || st.Detail != imageMapRetireOtherVersion {
+		t.Fatalf("Check = %+v, want skipped and owed with %q", st, imageMapRetireOtherVersion)
+	}
+	res, out, err := runRetireStage(t, e)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := res.Stages[0].State; got != initflow.Skipped {
+		t.Errorf("the run's state is %v, want skipped:\n%s", got, out)
+	}
+	if got := rg.nodeWrites(); got != 0 {
+		t.Errorf("the node was written %d time(s), want none: this release does not read it", got)
+	}
+}
+
 // TestRetireImageMapHoldsWhileTheServiceIsBehind: a run that did not replace
 // the credentials service — a dev build resolves no released image, so the
 // stage above leaves it where it is — may not take the member that service

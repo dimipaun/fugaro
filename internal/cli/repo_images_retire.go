@@ -37,6 +37,13 @@ import (
 // flight is asked to wait for it and no lease is touched: what changes is one
 // member no reader of this release reads at all.
 //
+// **A node another release wrote is skipped, not refused.** The run's own
+// preview reads the node before the policy stage has migrated it, and every
+// installation whose node is far enough behind is in that state: the member is
+// only ever taken off a document this release reads, so this step waits for
+// that stage — in the execution pass behind the preview, where the removal then
+// lands on the node the migration wrote.
+//
 // **A coding agent's session is skipped, not refused.** The member is the map a
 // release behind reads, and the service that reads it is one only the owner's
 // own session replaces (credentialsSessionHeld), so the session deploys nothing
@@ -56,7 +63,13 @@ const (
 	imageMapRetireDone   = "the repository-to-image map: repo_images only"
 	imageMapRetireWaits  = "the repository-to-image map: image_map stays, repo_images is not on the node yet"
 	imageMapRetireNoNode = "the repository-to-image map: no policy is published"
-	imageMapRetireWhat   = "this takes the legacy image_map member off the published policy node: the credentials service that read it is this release's, and the node serves the repository-to-image map from repo_images alone"
+	// imageMapRetireOtherVersion is the node written by another release, which
+	// is what a run reads at its own preview, before the policy stage — which
+	// runs earlier in this order — has migrated the node. The removal is the
+	// write the node that stage leaves gets: a member is only ever taken off a
+	// document this release reads.
+	imageMapRetireOtherVersion = "the repository-to-image map: the published policy is another version, so the policy stage rewrites it before this step: the member leaves the node that stage writes"
+	imageMapRetireWhat         = "this takes the legacy image_map member off the published policy node: the credentials service that read it is this release's, and the node serves the repository-to-image map from repo_images alone"
 )
 
 // imageMapRetireSkip is one reason this run leaves the node exactly as it is.
@@ -175,7 +188,15 @@ func (s *imageMapRetireStage) read(ctx context.Context) (*imageMapRetirePlan, er
 	}
 	node, ok, err := projectpolicy.Decode(raw)
 	if err != nil {
-		return nil, err
+		// A node another release wrote refuses Decode, and it is the ordinary
+		// state of the run's own preview: every installation one release behind
+		// reads version N here, before the policy stage has migrated it. It is
+		// a skip rather than a failure — a failure would end the preview at
+		// this stage and leave the run without the review screen it exists for,
+		// which is exactly what the workspace converge tests caught. The
+		// removal follows the migration, in the execution pass, on the node the
+		// policy stage writes.
+		return nil, &imageMapRetireSkip{reason: imageMapRetireOtherVersion, undone: true}
 	}
 	if !ok || node == nil {
 		return p, nil
