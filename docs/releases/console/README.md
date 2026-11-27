@@ -59,6 +59,7 @@ in this order:
 | `0.125.0` | Watermelon |
 | `0.126.0` | Yuzu |
 | `0.127.0` | Zante |
+| `0.128.0` | Zapote |
 
 **Granny Smith, Golden Delicious and Crab are not on the list**, and neither is Lemon: a
 name that spells "Apple" puts the word in a console release's title, and the desktop app is
