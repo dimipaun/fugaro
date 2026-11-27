@@ -313,3 +313,40 @@ func planRow(t *testing.T, path, doc, marker string) string {
 	}
 	return found[0]
 }
+
+// TestDocsMobilePlanP41IsInTheTreeAndSaysSo: Task P4.1's consumer — `fugaro
+// mailbox`, `internal/cli/mailbox.go` — landed as #2871, and the plan asserts
+// it in two places a reader reaches without opening the task: the Phase 5 row
+// that places P5.4.5 behind P4.1 ("the file is in the tree now, and `fugaro
+// mailbox` is a registered command") and the dated note beside the 2026-11-14
+// paragraph, which supersedes the older sentences that still call P4.1 unbuilt.
+// The claim and the tree are the two halves: the file has to exist and the
+// command has to be registered, or the plan sends a later reader back to a
+// prerequisite they already hold — the drift the note is written for.
+//
+// Nothing else holds this claim to the branch: the mailbox-consumer plan's
+// Phase 6 guard reads a different file, and the P4.1 sentences the note leaves
+// as written are prose this plan keeps on purpose.
+//
+// Mutation (verified, run and restored): delete internal/cli/mailbox.go, or
+// drop newMailboxCmd() from root.go's root.AddCommand, and this fails on the
+// tree half; delete the note and it fails on the plan half.
+func TestDocsMobilePlanP41IsInTheTreeAndSaysSo(t *testing.T) {
+	const path = "docs/mobile/implementation-plan.md"
+	doc := readDoc(t, path)
+
+	if _, err := os.Stat("../../internal/cli/mailbox.go"); err != nil {
+		t.Fatalf("internal/cli/mailbox.go is not in the tree, so %s's P4.1 claim is false: %v", path, err)
+	}
+	if root := readDoc(t, "internal/cli/root.go"); !strings.Contains(root, "newMailboxCmd()") {
+		t.Errorf("`fugaro mailbox` is not registered in internal/cli/root.go's root.AddCommand, so %s's P4.1 claim is false", path)
+	}
+	for _, want := range []string{
+		"the file is in the tree now, and `fugaro mailbox` is a registered command",
+		"the older sentences elsewhere in this plan that still call P4.1 unbuilt",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s no longer says %q: the P4.1 claim and the note that supersedes the sentences naming it unbuilt are what a reader plans against", path, want)
+		}
+	}
+}
