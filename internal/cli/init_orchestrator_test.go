@@ -23,11 +23,11 @@ import (
 //
 // Without the carry in prepare, that installation's next `fugaro update` hands
 // Terraform a document with no orchestrator block at all, and the plan is the
-// account's and its bindings' removal. The account is a google_service_account,
-// which D1551 classifies as data-bearing — "an identity whose keys and grants
-// are lost with it" — and the removal rule refuses the plan (internal/infra/tf's
-// RefusesRemovalType), so the run stops and every later run stops the same way:
-// the HARD RULE's failure mode, an installation that cannot be updated.
+// account's and its bindings' removal. Those are deletes Fugaro's rules judge by
+// class (internal/infra/tf's RemovalClass, D3430) and not ones an update makes by
+// rebuilding a document, so the carry is what keeps a hand-opted installation
+// from planning its own daemon away: the HARD RULE's own concern, an installation
+// that loses what it opted into.
 //
 // Mutation (run, restore): drop the infra.CarriedOrchestrator loop from prepare
 // and this test reports a document with no orchestrator in it.
