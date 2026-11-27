@@ -1177,7 +1177,7 @@ func TestGcpSetupSaysTheManagedPathShipsUnmeasured(t *testing.T) {
 		"has not been measured live",
 		"Check 68",
 		"NOT RUN",
-		"`--create-project --managed`",
+		"`--create-project`",
 	} {
 		if !strings.Contains(note, want) {
 			t.Errorf("%s's managed note does not say %q: 0.10.0 ships the path with the fence unmeasured (Check 68 is written, owner-run after the release and NOT RUN), and the note is where an operator reads that", path, want)
