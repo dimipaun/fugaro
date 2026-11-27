@@ -59,9 +59,8 @@ var mineCaller = func(ctx context.Context) (string, error) { return calleraccess
 // no config for the project answers "none" here rather than a refusal).
 //
 // It reads the checkout and the local config and nothing else — no credential,
-// no network — which is why a coding agent's session may call it and still
-// reach no shared store (F10): what a session must not do is read the bucket or
-// upload, and the project's own name is a local file.
+// no network — so a coding agent's session resolves the project exactly as a
+// person's does and the project's own name stays a local file.
 var mineProject = func(ctx context.Context) (*localcfg.Config, error) {
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
@@ -131,15 +130,12 @@ func runIssueMine(cmd *cobra.Command, asJSON, all bool) error {
 	agent := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	var notes []string
 	if agent != "" {
-		notes = append(notes, "note: this is a coding agent's session: only this machine's own issues and the last shared read are shown, and nothing is uploaded")
+		notes = append(notes, "note: this is a coding agent's session: the project's issues are read, and nothing is uploaded")
 	}
 	deps := issues.Deps{
 		Lookup: mineCaller,
-		// A coding agent's session asks the credential nothing (F10). What it
-		// may read is the cache, which is display data either way.
-		NoLookup: agent != "",
-		Getenv:   os.Getenv,
-		GOOS:     runtime.GOOS,
+		Getenv: os.Getenv,
+		GOOS:   runtime.GOOS,
 	}
 	id, err := issues.ResolveIdentity(ctx, deps)
 	if err != nil {
@@ -160,10 +156,9 @@ func runIssueMine(cmd *cobra.Command, asJSON, all bool) error {
 		// one project's issue out of another project's store (F8b).
 		store.Installation = installation
 	}
-	// A coding agent's session opens no bucket (F10): what it may read of the
-	// project is the snapshot, which is a file, and who "me" is there is either
-	// cached or nobody.
-	if projectErr == nil && agent == "" && id.Digest != "" {
+	// A coding agent's session reads the project's store like a person's
+	// (D3425 lifts the read); what it does not do is upload, below.
+	if projectErr == nil && id.Digest != "" {
 		b, openErr := mineOpen(ctx, lc)
 		if openErr != nil {
 			notes = append(notes, "note: the project's shared store could not be opened ("+oneLine(openErr.Error())+")")
@@ -176,16 +171,21 @@ func runIssueMine(cmd *cobra.Command, asJSON, all bool) error {
 	var shared issues.MineShared
 	if bucket != nil {
 		defer func() { _ = bucket.Close() }()
-		sync, syncErr := issues.SyncPending(ctx, store, bucket, installation, deps)
-		if syncErr != nil {
-			notes = append(notes, "note: this machine's pending issues could not be uploaded: "+oneLine(syncErr.Error()))
+		// The upload is `issue sync`'s write and stays refused to a session: a
+		// listing that made it on the way would be that write by the back door.
+		if agent == "" {
+			sync, syncErr := issues.SyncPending(ctx, store, bucket, installation, deps)
+			if syncErr != nil {
+				notes = append(notes, "note: this machine's pending issues could not be uploaded: "+oneLine(syncErr.Error()))
+			}
+			for _, n := range sync.Notes {
+				notes = append(notes, "note: "+oneLine(n))
+			}
 		}
-		for _, n := range sync.Notes {
-			notes = append(notes, "note: "+oneLine(n))
-		}
-		shared, syncErr = issues.ListMine(ctx, bucket, id, now)
-		if syncErr != nil {
-			notes = append(notes, "note: the project's issues could not be read ("+oneLine(syncErr.Error())+")")
+		var readErr error
+		shared, readErr = issues.ListMine(ctx, bucket, id, now)
+		if readErr != nil {
+			notes = append(notes, "note: the project's issues could not be read ("+oneLine(readErr.Error())+")")
 		} else {
 			source = mineSourceShared
 		}

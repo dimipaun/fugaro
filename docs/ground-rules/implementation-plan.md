@@ -248,13 +248,15 @@ was dropped with D3424's amendment.
 - Acceptance:
   - no non-test Go file names `update --repo` (64 today, F37); each message says `fugaro update` or drops
     the instruction, within 140 characters;
-  - no command's help still says it is refused in a coding agent's session unless it is on D3425's keep
-    list;
+  - no command's help or document still says a command is refused in a coding agent's session, or that a
+    session reads nothing from the project, unless it is on D3425's keep list: the sweep follows the
+    behaviour, not the word "refused", so every later lift's claim is swept too;
   - the CLI reference is regenerated.
 
   The lift tasks (AG2b–AG5d) change no help text, so that this one sweep owns it.
-- Files: `internal/**/*.go` (a sweep), `website/content/cli-reference.md`, and the console's pins of
-  doctor's `fix` value: `console/docs/json-contract.md`, `console/test/unit/manage-code.test.ts`.
+- Files: `internal/**/*.go` (a sweep), `docs/issues.md`, `plugin/skills/working/SKILL.md`,
+  `website/content/cli-reference.md`, and the console's pins of doctor's `fix` value:
+  `console/docs/json-contract.md`, `console/test/unit/manage-code.test.ts`.
 - Tests: `TestNoMessageNamesRepoFlag`, `TestHelpMatchesAgentKeepList`, CO5's census, `go test ./ee/clidoc/`.
 - Command: `go test ./internal/cli/ -run 'TestNoMessageNamesRepoFlag|TestHelpMatchesAgentKeepList|TestMessagesAreLaconic' -count=1 && go test ./ee/clidoc/ -count=1 && (cd console && npm run test:unit -- --maxWorkers=2 manage-code)`
 - Red step: `TestNoMessageNamesRepoFlag` lists today's 64 files.

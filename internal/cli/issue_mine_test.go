@@ -447,7 +447,11 @@ func TestMineOfflineWithoutSnapshotShowsLocalOnly(t *testing.T) {
 	}
 }
 
-func TestMineAgentSessionReadsLocalOnly(t *testing.T) {
+// TestMineAgentSessionReadsTheProject: a coding agent's session reads the
+// project's store like a person's (D3425 lifts the read) and uploads nothing.
+// The rows are the store's and this machine's own files together, and a
+// `cli_only` row's retry command is still the local file's (F8, O4).
+func TestMineAgentSessionReadsTheProject(t *testing.T) {
 	rig := newMineRig(t)
 	useVersion(t, "0.22.1")
 	// A resolved issue and this machine's own file for it, so the session has
@@ -462,33 +466,16 @@ func TestMineAgentSessionReadsLocalOnly(t *testing.T) {
 	local.ResolvedIn, local.FailedCommand = "0.22.1", "fugaro update"
 	rig.save(local)
 
-	// One read as a person first, so the identity cache holds the credential's
-	// last answer and the successful read wrote the snapshot: on this machine
-	// the identity resolves without the lookup the guard also forbids, which is
-	// what makes the guard the only thing that can keep the bucket shut here
-	// (F10). Without the warm cache an empty digest would hold it shut on its
-	// own and the guard could be deleted with this test still green.
-	rig.mine()
-	lookups, opens := rig.lookups, rig.opens
-
 	pending := mineRec("2", "sig-b")
 	rig.save(pending)
 	t.Setenv("CLAUDECODE", "1")
 
 	// A session is one `issue mine` has --json in (D3437): stdout is the
 	// listing's document and the notes are the stderr half. The retry line the
-	// human view carries (F8, O4) is not a field of this document, so a session
-	// reads the rows without it — the gap the issue family's own document owns,
-	// recorded in the pull request of the task that added this rule.
+	// human view carries (F8, O4) is not a field of this document.
 	out, errOut, err := rig.run("issue", "mine")
 	if err != nil {
 		t.Fatalf("issue mine: %v\n%s%s", err, out, errOut)
-	}
-	if rig.lookups != lookups {
-		t.Errorf("a coding agent's session asked the credential %d more time(s)", rig.lookups-lookups)
-	}
-	if rig.opens != opens {
-		t.Errorf("a coding agent's session opened the shared store %d more time(s)", rig.opens-opens)
 	}
 	if !strings.Contains(errOut, "coding agent's session") {
 		t.Errorf("a coding agent's session does not say what it read:\n%s", errOut)
@@ -508,8 +495,14 @@ func TestMineAgentSessionReadsLocalOnly(t *testing.T) {
 	if !own {
 		t.Errorf("a coding agent's session drops the local rows:\n%s", out)
 	}
-	// The write the guarded build skips: the issue this machine just diagnosed
-	// is still its own file.
+	// The read lifts and the upload does not: the issue this machine just
+	// diagnosed is still its own file, and the store holds only what was
+	// uploaded before the session.
+	if rows, err := issues.ListShared(context.Background(), rig.bucket); err != nil {
+		t.Fatalf("reading the shared store: %v", err)
+	} else if len(rows) != 1 {
+		t.Errorf("a coding agent's session uploaded: the store holds %d issue(s), want 1", len(rows))
+	}
 	got, err := rig.store.Get(pending.LocalID)
 	if err != nil {
 		t.Fatalf("reading the local issue back: %v", err)
