@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -33,10 +34,10 @@ func TestAgentMayReadAndStop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("issue list in a coding agent's session: %v", err)
 		}
-		if syncRow(out, mineRefOf(up.Number)) == nil {
+		if !jsonHasField(t, out, "number", float64(up.Number)) {
 			t.Errorf("a session's listing does not read the project's store:\n%s", out)
 		}
-		if syncRow(out, local.LocalID) == nil {
+		if !jsonHasField(t, out, "local_id", local.LocalID) {
 			t.Errorf("a session's listing drops this machine's own issue:\n%s", out)
 		}
 
@@ -48,8 +49,12 @@ func TestAgentMayReadAndStop(t *testing.T) {
 			t.Errorf("a session's show does not print the project's copy:\n%s", shown)
 		}
 
-		if syncRow(rig.mine(), mineRefOf(up.Number)) == nil {
-			t.Errorf("a session's mine does not read the project's store:\n%s", rig.mine())
+		mineOut, _, err := rig.run("issue", "mine")
+		if err != nil {
+			t.Fatalf("issue mine in a coding agent's session: %v", err)
+		}
+		if !jsonHasField(t, mineOut, "number", float64(up.Number)) {
+			t.Errorf("a session's mine does not read the project's store:\n%s", mineOut)
 		}
 
 		// The read lifts and the upload does not: this is AG5a's write, and a
@@ -89,4 +94,36 @@ func TestAgentMayReadAndStop(t *testing.T) {
 			t.Fatal("budget resume --workspace in a coding agent's session: want the owner-only refusal")
 		}
 	})
+}
+
+// jsonHasField reports whether the session's document, which is JSON in an
+// agent's session (D3437), holds an object with key set to want anywhere in it.
+func jsonHasField(t *testing.T, doc, key string, want any) bool {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal([]byte(doc), &v); err != nil {
+		t.Fatalf("a session's output is not a JSON document: %v\n%s", err, doc)
+	}
+	var walk func(any) bool
+	walk = func(n any) bool {
+		switch x := n.(type) {
+		case map[string]any:
+			if got, ok := x[key]; ok && got == want {
+				return true
+			}
+			for _, c := range x {
+				if walk(c) {
+					return true
+				}
+			}
+		case []any:
+			for _, c := range x {
+				if walk(c) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(v)
 }
