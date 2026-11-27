@@ -16497,8 +16497,9 @@ sandbox run. The check is `scripts/live-checks/check-501.sh` (its sibling test
 `scripts/live-checks/check-501_test.sh` drives it against fake `gcloud` and `fugaro` only), the owner types
 `bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>`, and what it runs is the
 owner's own two commands in the owner's own session: run `fugaro update` in the sandbox checkout, then
-`fugaro run` from it, with the update's questions answered by you and by nobody else — **no agent runs any
-step of it**, and the check passes no `--yes` precisely so that you are the person it asks. A project or
+`fugaro run` from it, at your own terminal and by nobody else — **no agent runs any
+step of it**, and the check passes no `--yes`: `fugaro update` asks nothing at a terminal, so its steps are
+taken where you are and no flag stands in for you. A project or
 region naming `belong` is refused by name, and the update is refused in such a checkout — **never `belong`**
 is the first thing this row says.
 
@@ -16512,10 +16513,11 @@ the second is the reading that a job starts on it.
   once after the update — because the one command is the whole upgrade: what it leaves is what the
   installation is on. An installation whose config records no base pin is a finding here too, and it is the
   same one doctor's own `local-config-base` check makes.
-- **The update is yours to answer.** `fugaro update`, run in the checkout the check was pointed at, with no
+- **The update is yours to run.** `fugaro update`, run in the checkout the check was pointed at, with no
   `--yes` and its output echoed to your terminal as it is written: its review, its Terraform and the
-  rebuild of the checkout's workflow images are answered by you in its own confirmation, and the check
-  never answers one for you. It keeps the transcript in the scratch directory and reads the exit status —
+  rebuild of the checkout's workflow images are its own confirmation, shown at your terminal and answered
+  by nobody — a run there asks nothing, and the check never stands in for you. It keeps the transcript in
+  the scratch directory and reads the exit status —
   that is all. A failed update is a finding, and the rows below still say what the installation it left is
   on, because that is the state a reader has to know about.
 - **The pin the update left.** Read again with the same command, and the row says which of the two happened:
@@ -16538,10 +16540,10 @@ the second is the reading that a job starts on it.
   base image directly) is reported as a row the check could not date rather than as a finding.
 
 **What a run costs.** What `fugaro update` costs on your installation — among its steps, the rebuild of the
-checkout's base-derived workflow images (each is built FROM the installation's base), billable and asked for
-on its own — plus one sandbox run and what its task costs, with the pull request it opens. The check writes
+checkout's base-derived workflow images (each is built FROM the installation's base), billable and its own
+step — plus one sandbox run and what its task costs, with the pull request it opens. The check writes
 no pin, no config and no policy of its own: the only
-write is the update, whose steps you answer. On disk it is one scratch directory, removed at the end.
+write is the update, whose steps are taken at your terminal. On disk it is one scratch directory, removed at the end.
 `CHECK501_SKIP_UPDATE=1` measures the pin and the run without running the upgrade, which is what to use on
 a machine that has just been updated.
 
@@ -16552,8 +16554,8 @@ bash scripts/live-checks/check-501.sh --dry-run
 bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>
 ```
 
-The update runs in the foreground, so its questions and Ctrl-C reach it: that is the bound an interactive
-command should have, and there is no timeout knob for it. Progress goes to stderr and one `CHECK 501 RESULT`
+The update runs in the foreground, so Ctrl-C reaches it and its steps are taken where you are: that is the
+bound an interactive command should have, and there is no timeout knob for it. Progress goes to stderr and one `CHECK 501 RESULT`
 block goes to stdout at the end: paste that block here and nothing else. **Exit `0`** is every criterion
 that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped the
 check — a failed update, an installation with no base pin, a record that is not this run's, an image built

@@ -894,7 +894,7 @@ step_store() {
 # NOTHING. The reading is the transcript: the update must print no `fugaro
 # secrets set bitbucket-token` line and no "still missing" line for a repository
 # the allow-list covers. It runs at YOUR terminal, the way the rest of the check
-# does: a step the update needs confirmed is answered by the person sitting
+# does: a step the update would need confirmed is taken with the person sitting
 # here, and no flag stands in for them.
 update_one() { # update_one NAME PATH
   local name=$1 path=$2 rc=0 out="$SCRATCH/update.log"
@@ -1332,8 +1332,8 @@ step_second_machine() {
   # The seed is a WRITE, not a read: it writes the scratch home's local config
   # from the installation's outputs, and the CLI confirms that write at a real
   # terminal (internal/cli/init.go: writeLocalConfig -> confirmOrdinary). This
-  # check runs at YOUR terminal, so it is the person sitting here who answers
-  # it, and the step inherits that terminal rather than closing it: with stdin at
+  # check runs at YOUR terminal, so the person sitting here is what covers it,
+  # and the step inherits that terminal rather than closing it: with stdin at
   # /dev/null the write would be left for you and the seed would refuse on every
   # run, so the second-machine row could never be anything but UNVERIFIED. The
   # write lands in the scratch home's own config, which this check creates and

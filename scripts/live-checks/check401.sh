@@ -45,9 +45,9 @@
 #             the empty plan alone.
 # Costs:      one converge and one plan of a sandbox installation. Nothing here
 #             is billable on its own; an image rebuild or a deploy that an
-#             unrelated stage decides it wants is the converge's own asking, and
-#             it asks YOU at your own terminal — run the check where that is
-#             acceptable.
+#             unrelated stage decides it wants is the converge's own step, taken
+#             at your own terminal where it asks nothing — run the check where
+#             that is acceptable.
 # Runs:       by YOU. No agent runs any step of it.
 # Cleanup:    always, including on a Ctrl-C: the scratch directory is removed.
 #             Nothing else was created, so the `restore` row says that and

@@ -15,8 +15,9 @@
 #
 # The check runs `fugaro update` in the FOREGROUND with this shell's stdin, so
 # the fake is asked nothing here and reads nothing: what a case measures is the
-# row, not the answer — that the update asks YOU is asserted from the fake's
-# transcript and from the check's own argv, which answers nothing.
+# row, not the answer — that the update is run at the owner's terminal, with no
+# flag standing in for them, is asserted from the fake's transcript and from the
+# check's own argv, which passes nothing.
 #
 # Usage: bash scripts/live-checks/check-501_test.sh
 set -euo pipefail
@@ -329,9 +330,9 @@ test_happy_path() {
 }
 
 test_the_update_is_run_without_yes() {
-  # The whole point of the row: the upgrade asks its questions of the person in
-  # front of it, so the check must never answer one for them. Nothing here reads
-  # the fake's stdin either — the check has no answer to give.
+  # The whole point of the row: the upgrade's steps belong to the person in front
+  # of it, so the check must never stand in for them with a flag. Nothing here
+  # reads the fake's stdin either — the check has nothing to answer with.
   local dir=$work/noyes
   prepare "$dir"
   run_check "$dir"
