@@ -63,10 +63,10 @@ func (s *issueShared) Close() {
 //
 // The second return is D1541's fence and never a store problem: the store's
 // own failures stay the notes they always were. The project's issues are the
-// project's own state, so `issue sync` and `issue dismiss` — the two commands
-// that write them — are fenced, and the read is made here, where the project's
-// name becomes known and before mineOpen could build a client. An exempt
-// command — every reader of this store — is answered without a read
+// project's own state, so the fence is asked by the two commands that write
+// them — `issue sync` and `issue dismiss` — and the read is made here, where
+// the project's name becomes known and before mineOpen could build a client.
+// An exempt command — every reader of this store — is answered without a read
 // (requireManaged), so a listing never pays for the fence and never fails on
 // it; a caller that ignores the error would be writing the store of a project
 // the fence refused, which is why every caller returns it.

@@ -274,16 +274,16 @@ counts included; no other reporter's name or digest is in the document.
 
 ## In a coding agent's session
 
-An agent's session may read what is on this machine and may not write to the
-cloud, so the family splits there. `list` and `show` print this machine's own
-files and read nothing from the project; `mine` is the one of the three that
-also prints the last shared read it cached, because the rows it shows are the
-project's and an offline `mine` would otherwise have none. `sync` refuses,
-because uploading is a write to the project's store. `dismiss` refuses even for
-an issue that exists only on this machine: a steered diagnosis could otherwise
-bury a real bug, so a person sets one aside. `submit` previews as usual, and
-what it previews is the bytes this machine holds rather than the project's
-record of a numbered issue; `--ask` refuses, because the upload and the claim
-are writes, so a person's own run re-reads that record and shows what it will
-file. Each refusal names the command a person runs at their own terminal
-rather than saying that an agent may not.
+An agent's session reads what is on this machine and writes the project's
+issues with the same commands a person does. `list` and `show` print this
+machine's own files and read nothing from the project; `mine` is the one of the
+three that also prints the last shared read it cached, because the rows it shows
+are the project's and an offline `mine` would otherwise have none. `sync`
+uploads this machine's pending issues to the project's store, and `dismiss` sets
+one aside as not worth filing: both write the project's store, and a session
+runs them like any other command. `submit` previews as usual, and what it
+previews is the bytes this machine holds rather than the project's record of a
+numbered issue; `--ask` refuses, because the upload and the claim are writes, so
+a person's own run re-reads that record and shows what it will file. That
+refusal names the command a person runs at their own terminal rather than saying
+that an agent may not.
