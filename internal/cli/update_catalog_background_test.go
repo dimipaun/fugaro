@@ -211,10 +211,24 @@ func TestCatalogBuildsFourAtOnce(t *testing.T) {
 // step, in one line naming the entry. The person or agent reruns `fugaro
 // update`, which is the step the loop leaves: the entry is on a runner the
 // launcher may refuse, and it is never left silently behind (D3446).
+//
+// The entry past its rebuild age beside it is NOT submitted: an eager failure
+// stops the background submissions of the same run, so a run about to fail
+// leaves no build of its own running (catalogOutcome's early return). Nothing
+// else would catch that: without the return this run would start a billable
+// build on its way out.
 func TestEagerBuildFailureFailsStep(t *testing.T) {
-	const reason = "Cloud Build ended FAILURE for server"
-	_, _, _ = catalogStaleRig(t, releaseBehindBuild(), thisReleaseBuild())
-	catalogRebuild = func(_ *cobra.Command, entry string, _ imageBuildOptions) error {
+	const reason = "Cloud Build ended FAILURE for app0"
+	_, _, _ = catalogPoolRig(t, releaseBehindBuild(), oldBuild())
+	var mu sync.Mutex
+	var opts []imageBuildOptions
+	catalogRebuild = func(_ *cobra.Command, _ string, o imageBuildOptions) error {
+		mu.Lock()
+		opts = append(opts, o)
+		mu.Unlock()
+		if o.noWait {
+			return nil
+		}
 		return errors.New(reason)
 	}
 
@@ -224,7 +238,7 @@ func TestEagerBuildFailureFailsStep(t *testing.T) {
 		t.Fatalf("a run whose eager rebuild failed reported success:\n%s", out)
 	}
 	all := out + errOut
-	if want := "server: the rebuild from this release's base image did not finish (" + reason + ")"; !strings.Contains(all, want) {
+	if want := "app0: the rebuild from this release's base image did not finish (" + reason + ")"; !strings.Contains(all, want) {
 		t.Errorf("the run does not name the entry and its failure in one line:\n%s\nwant %q", all, want)
 	}
 	if !strings.Contains(all, "fugaro update again") {
@@ -233,6 +247,16 @@ func TestEagerBuildFailureFailsStep(t *testing.T) {
 	for _, unwanted := range []string{"left for you (images, command)", "not covered", "submitted"} {
 		if strings.Contains(all, unwanted) {
 			t.Errorf("a failed eager rebuild says %q:\n%s", unwanted, all)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(opts) != 1 {
+		t.Errorf("the run attempted %d rebuild(s), want the eager one alone: an eager failure stops the background submissions of the same run", len(opts))
+	}
+	for _, o := range opts {
+		if o.noWait {
+			t.Errorf("the run submitted a background build after its eager rebuild failed")
 		}
 	}
 }

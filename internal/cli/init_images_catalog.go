@@ -331,6 +331,21 @@ type catalogBuildResult struct {
 func (s *imagesStage) rebuildCatalog(ctx context.Context, entries []catalogStaleEntry, noWait bool) []catalogBuildResult {
 	r := s.e.r
 	res := make([]catalogBuildResult, len(entries))
+	// Every nested command and its own flag set is built before the first
+	// goroutine starts: pflag's AddFlag writes the *Flag it is handed
+	// (flag.Name = …), and the flags handed to it here are the run's own, so
+	// four AddFlagSet calls at once — or one beside a build already running —
+	// is a data race on the command this run is.
+	subs := make([]*cobra.Command, len(entries))
+	for i := range entries {
+		sub := &cobra.Command{Use: r.cmd.Use}
+		sub.Flags().AddFlagSet(r.cmd.Flags())
+		sub.SetIn(r.cmd.InOrStdin())
+		sub.SetOut(&res[i].out)
+		sub.SetErr(&res[i].out)
+		sub.SetContext(ctx)
+		subs[i] = sub
+	}
 	slots := make(chan struct{}, catalogRebuildAtOnce)
 	var wg sync.WaitGroup
 	for i, se := range entries {
@@ -339,13 +354,7 @@ func (s *imagesStage) rebuildCatalog(ctx context.Context, entries []catalogStale
 			defer wg.Done()
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			sub := &cobra.Command{Use: r.cmd.Use}
-			sub.Flags().AddFlagSet(r.cmd.Flags())
-			sub.SetIn(r.cmd.InOrStdin())
-			sub.SetOut(&res[i].out)
-			sub.SetErr(&res[i].out)
-			sub.SetContext(ctx)
-			res[i].err = catalogRebuild(sub, se.entry.Name, imageBuildOptions{cloud: r.o.cloud, noWait: noWait})
+			res[i].err = catalogRebuild(subs[i], se.entry.Name, imageBuildOptions{cloud: r.o.cloud, noWait: noWait})
 		}()
 	}
 	wg.Wait()
