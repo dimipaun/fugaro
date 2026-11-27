@@ -262,11 +262,26 @@ func liftedCheckout(t *testing.T, f *cloudFixture, body string) string {
 	return dir
 }
 
+// liftedSentinels are the values testdata/lifted/fugaro.yaml writes for the
+// lifted keys a resolution can carry out of it: the model every model key names,
+// the rigor area's own name and match, and the rigor level. None is a value the
+// layer the fixture publishes names, so one in a resolved configuration came from
+// the file. The names check beside this one cannot stand in for them: three of
+// the readers answer no config.Resolution (checkoutParse, cascadeRefConfig and
+// launchLevelsConfig), and a reader that resolved rigor or ab.rate outside
+// config.Resolve would slip past a search for the model alone (the review's
+// finding).
+var liftedSentinels = []string{liftedSentinelModel, "repo-area", "hotfix"}
+
 // assertNoLiftedValue fails when the resolved configuration still carries a
 // lifted key's value. The whole struct is marshalled rather than its fields read
 // one by one: a lifted key can land in any of the model slots, the rigor block
 // or the grades, and a reader that grew a slot of its own would slip past a
 // hand-written list of them.
+//
+// ab.rate is the one value no search can find — the file writes 0, which is what
+// an absent block reads as too — so the A/B opt-out is read by the block's own
+// presence instead (R2: the drop takes the block with the key, D556).
 func assertNoLiftedValue(t *testing.T, who string, cfg *config.Config) {
 	t.Helper()
 	if cfg == nil {
@@ -276,8 +291,13 @@ func assertNoLiftedValue(t *testing.T, who string, cfg *config.Config) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(out, []byte(liftedSentinelModel)) {
-		t.Errorf("%s resolved a configuration carrying %q, a lifted key's value: %s", who, liftedSentinelModel, out)
+	for _, s := range liftedSentinels {
+		if bytes.Contains(out, []byte(s)) {
+			t.Errorf("%s resolved a configuration carrying %q, a lifted key's value: %s", who, s, out)
+		}
+	}
+	if cfg.AB != nil {
+		t.Errorf("%s resolved a configuration carrying the file's ab: block (the repository's opt-out R2 drops with it): %+v", who, cfg.AB)
 	}
 }
 
