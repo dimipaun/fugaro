@@ -125,17 +125,15 @@ func TestDefaultBranchRefusesModelGrades(t *testing.T) {
 		}
 	})
 
-	t.Run("a launch outside a checkout", func(t *testing.T) {
+	t.Run("no checkout to read", func(t *testing.T) {
 		// The gate reads the default branch's file, which a launch from
-		// outside a checkout has not got: what the task carries is all it can
-		// be judged on, so this refuses nothing (every other trigger of the
-		// gate reads the same way).
-		f := newCloudFixture(t)
-		isolateCache(t)
-		writeBuildRecord(t, f, appSlug, "web", l8Base(shiftRelease(t, l8Since, 1)))
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261124-100000-abcd", "A task")
-		if err != nil {
-			t.Fatalf("err = %v, want the launch: the grades gate reads a checkout", err)
+		// outside a checkout of the repository has not got: what the task
+		// carries is all it can be judged on, so this refuses nothing — the
+		// reading every other trigger of the gate makes (R16).
+		spec := deadKeysSpec()
+		spec.Repo = "acme/app"
+		if err := deadGradeModelsRefusal(context.Background(), spec); err != nil {
+			t.Fatalf("err = %v, want none: the gate reads a checkout's default branch", err)
 		}
 	})
 
