@@ -775,7 +775,11 @@ func (s *imagesStage) prepare(ctx context.Context) (*mirror.Mirror, []imageItem,
 	if err != nil {
 		return nil, nil, err
 	}
-	m.Log = func(l string) { fmt.Fprintln(s.e.r.w, "    "+l) }
+	// The mirror's own lines are the copy's progress — a raw stream of the
+	// same kind Terraform's is — so they go to the run's log and not the
+	// screen (D3438): the step's line and the plan view above it are what a
+	// person reads while the copy goes past.
+	m.Log = func(l string) { fmt.Fprintln(s.e.r.progress(), "    "+l) }
 	return m, items, nil
 }
 
