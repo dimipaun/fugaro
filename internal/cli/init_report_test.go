@@ -119,27 +119,32 @@ func stepName(line string) string {
 // colon or nothing.
 func stageNameOf(rest string) (string, bool) {
 	for _, name := range initflow.Names() {
-		shown := initflow.DisplayName(name)
-		r, ok := strings.CutPrefix(rest, shown)
-		if ok && (r == "" || strings.HasPrefix(r, " ") || strings.HasPrefix(r, ":")) {
+		if namesStage(rest, initflow.DisplayName(name)) {
 			return name, true
 		}
 	}
 	return "", false
 }
 
-// stepLineOf is the one line of account that is the named stage's step. The
-// stage is named by its ID here, and its line carries the plain-words name.
+// namesStage is whether a step line's rest opens with the word w a stage is
+// named by, and then a detail, a colon or nothing: never a word that only
+// starts with it ("installation" and "installation-2" are two stages).
+func namesStage(rest, w string) bool {
+	r, ok := strings.CutPrefix(rest, w)
+	return ok && (r == "" || strings.HasPrefix(r, " ") || strings.HasPrefix(r, ":"))
+}
+
+// stepLineOf is the one line that is the named stage's step, read from either
+// the account, which names the stage in plain words (D3435), or from the log,
+// which carries its ID — a caller that reads both together gets either.
 func stepLineOf(account []string, name string) string {
-	shown := initflow.DisplayName(name)
 	for _, l := range account {
 		for _, m := range []string{markDone, markFailed, markLeft, markSkipped} {
 			rest, ok := strings.CutPrefix(l, m+" ")
 			if !ok {
 				continue
 			}
-			r, ok := strings.CutPrefix(rest, shown)
-			if ok && (r == "" || strings.HasPrefix(r, " ") || strings.HasPrefix(r, ":")) {
+			if namesStage(rest, initflow.DisplayName(name)) || namesStage(rest, name) {
 				return l
 			}
 		}
