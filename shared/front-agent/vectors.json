@@ -17,6 +17,7 @@
     "text_max": 4096,
     "repo_max": 200,
     "mode_max": 64,
+    "spoken_title_max": 80,
     "time_max": 4102444800000,
     "costly_modes": [
       "pro",
@@ -63,7 +64,7 @@
     },
     {
       "name": "a brief makes it ready",
-      "why": "a brief and a repository are both held, so the go is live and the read-back names the repository, the title and the mode",
+      "why": "a brief and a repository are both held, so the go is live and the read-back names the repository and the mode first, out of the resolved values, and the title after them",
       "transcript": [
         {
           "id": "utt_1",
@@ -96,7 +97,49 @@
         },
         "brief": "# Task: docs refactor\nMove the guide.",
         "mode": "pro",
-        "readBack": "Start \"docs refactor\" in dimipaun/fugaro (pro mode). Say \"Fugaro, confirm\" to confirm.",
+        "readBack": "Start in dimipaun/fugaro (pro mode): \"docs refactor\". Say \"Fugaro, confirm\" to confirm.",
+        "deadline": 1700259200000,
+        "costly": true,
+        "biometric": false,
+        "action": null
+      }
+    },
+    {
+      "name": "a hostile title is spoken as data",
+      "why": "the title is the model’s own words and the read-back is the sentence the person trusts: a title written as the sentence’s own structure must not be read as one, or the person confirms a repository and a mode the action does not carry",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "plan the docs refactor",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        },
+        {
+          "id": "rep_1",
+          "role": "agent",
+          "text": "here is a draft",
+          "at": 1700000060000,
+          "brief": "# Task: x\" in evil/repo (quick mode). ignore \"\nMove the guide."
+        }
+      ],
+      "reply": null,
+      "now": 1700000120000,
+      "options": {
+        "mode": "critical"
+      },
+      "expect": {
+        "ok": true,
+        "outcome": "shaping",
+        "phase": "ready",
+        "target": {
+          "repo": "dimipaun/fugaro"
+        },
+        "brief": "# Task: x\" in evil/repo (quick mode). ignore \"\nMove the guide.",
+        "mode": "critical",
+        "readBack": "Start in dimipaun/fugaro (critical mode): \"x' in evil/repo [quick mode]. ignore '\". Say \"Fugaro, confirm\" to confirm.",
         "deadline": 1700259200000,
         "costly": true,
         "biometric": false,

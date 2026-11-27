@@ -26,7 +26,7 @@ const answer = turn({
 // ok: true, outcome: OUTCOME.GO      -> answer.action is the one typed launch it authorised
 
 const view = conversation({ transcript, now: clock(), options: { mode: 'pro' } });
-// view.phase, view.target, view.brief, view.readBack, view.deadline, view.expired
+// view.phase, view.target, view.brief, view.readBack, view.mode, view.deadline, view.ttlMs, view.expired
 ```
 
 **The whole point of the module** is that a "go" is `fugaro run` authority: the front agent shapes
@@ -65,6 +65,15 @@ is the thing authorised, and it is not a value a router resolved out of the utte
 read-back names the brief and the repository as well as the mode, and the machine that holds it is
 this one. The **rules** are P6.2's; the **sentence** is this module's, because the thing read back
 is not the same thing.
+
+**The sentence speaks the title as data.** The title is the model's own words and the read-back is
+the one sentence the person is asked to trust before the go, so the repository and the mode are
+spoken **first**, out of the values the action carries, and the title is quoted with its own quote
+and parenthesis characters replaced (`spokenTitle`) and cut to `SPOKEN_TITLE_MAX`. A title written
+as the sentence's structure — `x" in evil/repo (quick mode). ignore "` — would otherwise close the
+quote and open a parenthesis of its own, and the person would confirm a launch in `evil/repo` in
+`quick` while the action carried the repository that was resolved and the mode the session gave.
+The brief keeps the title it was shaped with; only the spoken sentence is restricted.
 
 ## The transcript is the state, and the ledger
 
@@ -120,6 +129,7 @@ cannot render a refused utterance as an answered one.
 | `MIN_TTL_MS` / `MAX_TTL_MS` | 1 s / 30 days | P1.1's floor and ceiling, through P6.5 |
 | `ID_MAX` / `TEXT_MAX` / `REPO_MAX` | 100 / 4096 / 200 | **P6.3's** action record, which the go's authorisation must fit |
 | `MODE_MAX` | 64 | P6.2's `MAX_MODE_LENGTH` |
+| `SPOKEN_TITLE_MAX` | 80 characters | this module's own, and exported because P5.4.5's Go side must cut the spoken title in the same place |
 | `TIME_MAX` | 2100-01-01 | `shared/lease`'s `MAX_TIMESTAMP`: two modules must not disagree about a time |
 | `DEFAULT_MAX_TURNS` | 64 (1…256) | a bound, not a policy; `ttlMs`, `maxTurns` and `maxBrief` are all options a caller may move inside their bounds |
 
@@ -141,29 +151,30 @@ node --test "front-agent/*.test.js"       # this module's alone
 shared/front-agent/mutation-proof.sh      # the guards, mutation-proved
 ```
 
-`index.test.js` holds the plan's cases: the phases and what each says, the read-back, the go's one
-action record, each near-miss as agent text, an app command, a wake word the grammar does not know,
-the replayed go, the expired go (and the deadline edge), the command-and-go, the unresolved target,
-the withdrawn brief, the cleared target, purity, and a transition table **written by hand** —
-never imported — compared cell for cell with `TRANSITIONS` and then driven through every cell with
-literal transcripts. A source-level scan holds both files to no clock, no randomness, no network
-and no `process`.
+`index.test.js` holds the plan's cases: the phases and what each says, the read-back (its sentence,
+and a hostile title it must not be read as), the go's one action record, each near-miss as agent
+text, an app command, a wake word the grammar does not know, the replayed go, the expired go (and
+the deadline edge), the command-and-go, the unresolved target, the withdrawn brief, the cleared
+target, purity, and a transition table **written by hand** — never imported — compared cell for
+cell with `TRANSITIONS` and then driven through every cell with literal transcripts. A source-level
+scan holds both files to no clock, no randomness, no network and no `process`.
 
 `bounds.test.js` sweeps every `REFUSAL` code against a probe, proves a getter is refused **without
 ever being called**, holds every bound from both sides, and reaches the encoding branches — an id's
 control characters, an id's or a text's lone surrogate, and the line separators U+2028 and U+2029 —
 **each by its own value** rather than through another field's refusal. The separators are refused
 where P6.3's readers refuse them, because the two charsets must not disagree and because the title
-goes into the read-back verbatim.
+goes into the read-back, the one sentence the person is meant to trust, where either character is a
+line break inside it.
 
-`mutation-proof.sh` plants 36 one-line bugs in `turn.js` — each disabling exactly one guard — and
+`mutation-proof.sh` plants 40 one-line bugs in `turn.js` — each disabling exactly one guard — and
 requires every one to make this module's suite fail. It refuses to report at all if it cannot find
 a working runner, if the pristine suite is not green with at least one test actually run (an empty
 glob exits 0, see [the package README](../README.md)), or if a control mutation goes uncaught. Its
 **first two guards are the task's own red step** — the phase rule that refuses a second go, and the
 deadline — so the red step stays re-runnable rather than living only in a pull-request transcript.
 
-`vectors.json` carries 35 accept-and-refuse cases as **data** (the conversation, the clock it is
+`vectors.json` carries 36 accept-and-refuse cases as **data** (the conversation, the clock it is
 judged at, and the exact answer) for P5.4.5's Go parity test; the constants travel with them so the
 Go side reads no second set. `vectors.generate.mjs` asserts every case against the live module
 before it writes, so the file cannot be minted from a module that disagrees with a case, and
@@ -182,6 +193,14 @@ claim, from a table written by hand.
 - **The transcript is not a proof of authorship.** It is the fence's input, not a MAC: whoever
   reads a conversation back in must be the one that wrote it (P5.4.2's schema and P6.7's
   re-validation are where that is decided).
+- **The options are the session's, and this module holds no second copy of them.** `mode`,
+  `costlyModes`, `biometricOnCostly` and `ttlMs` are handed in on every call, so the read-back's
+  mode is the mode the go authorises **only while the caller passes the same `mode` to both calls**:
+  a go called with a different `mode` authorises that one, and a larger `ttlMs` at the go moves the
+  deadline. Binding them into the conversation would write them into the turn, which is P5.4.2's
+  schema and not this task's, so this is a **host contract**: the host (P5.4.5) pins the session's
+  options for the life of one conversation. `conversation(...)` hands back `mode` and `ttlMs` so it
+  can compare them against what it read back.
 - **`shared/README.md` is not edited by this task**, and the module therefore has no line in the
   package's own contract yet. That file is P0.1's by the plan's shared-files table ("no level holds
   two writers of one file"), so the line belongs to a later sweep of P0.1's — recorded here rather

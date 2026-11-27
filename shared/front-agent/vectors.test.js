@@ -131,6 +131,7 @@ test('the file’s constants are the module’s, so the Go side cannot read a se
     text_max: frontAgent.TEXT_MAX,
     repo_max: frontAgent.REPO_MAX,
     mode_max: frontAgent.MODE_MAX,
+    spoken_title_max: frontAgent.SPOKEN_TITLE_MAX,
     time_max: frontAgent.TIME_MAX,
     costly_modes: [...frontAgent.DEFAULT_COSTLY_MODES],
     biometric_on_costly: frontAgent.DEFAULT_BIOMETRIC_ON_COSTLY,

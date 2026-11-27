@@ -286,7 +286,10 @@ run "a repository is owner/name, shaped so neither half can be a flag" \
   "    if (part.length > 100 || !REPO_SEGMENT_PATTERN.test(part)) return { bad: refuse(REFUSAL.BAD_REPO, 'target.repo') };" \
   "    if (part.length > 100) return { bad: refuse(REFUSAL.BAD_REPO, 'target.repo') };"
 
-# The read-back is recomputed from the resolved values, never stored.
+# The read-back is recomputed from the resolved values, never stored, and the
+# sentence it speaks is the one a person is asked to trust: the repository and
+# the mode are this module's values and are spoken first, and the model's title
+# is spoken as data.
 run "the read-back is spoken only where the go is live" \
   "    outcome: action === null ? OUTCOME.SHAPING : OUTCOME.GO,
     phase: derived.phase,
@@ -300,6 +303,22 @@ run "the read-back is spoken only where the go is live" \
     brief: derived.brief,
     mode: options.mode,
     readBack: null,"
+
+run "the repository and the mode are spoken before the title, out of the values the action carries" \
+  'Start in ${target.repo} (${mode} mode): "${title}". ' \
+  'Start "${title}" in ${target.repo} (${mode} mode). '
+
+run "a title's quote and parenthesis characters are not spoken as the sentence's own" \
+  "  const plain = title.replace(/\"/gu, \"'\").replace(/\(/gu, '[').replace(/\)/gu, ']');" \
+  "  const plain = title;"
+
+run "the spoken title is cut to its bound" \
+  "  if (characters.length <= SPOKEN_TITLE_MAX) return plain;" \
+  "  if (true) return plain;"
+
+run "the spoken title is cut by character, not by code unit" \
+  "  return \`\${characters.slice(0, SPOKEN_TITLE_MAX).join('')}...\`;" \
+  "  return \`\${plain.slice(0, SPOKEN_TITLE_MAX)}...\`;"
 
 # The input checks that stand between a transcript and a decision.
 run "a field read through a getter is refused without ever being called" \

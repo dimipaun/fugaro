@@ -34,6 +34,7 @@ import {
   MIN_TTL_MS,
   MODE_MAX,
   REPO_MAX,
+  SPOKEN_TITLE_MAX,
   TEXT_MAX,
   TIME_MAX,
   turn,
@@ -62,9 +63,20 @@ const CASES = [
   },
   {
     name: 'a brief makes it ready',
-    why: 'a brief and a repository are both held, so the go is live and the read-back names the repository, the title and the mode',
+    why: 'a brief and a repository are both held, so the go is live and the read-back names the repository and the mode first, out of the resolved values, and the title after them',
     call: { transcript: ready(), reply: null, now: T0 + 2 * MINUTE, options: { mode: 'pro' } },
-    want: { ok: true, outcome: 'shaping', phase: 'ready', readBack: 'Start "docs refactor" in dimipaun/fugaro (pro mode). Say "Fugaro, confirm" to confirm.' },
+    want: { ok: true, outcome: 'shaping', phase: 'ready', readBack: 'Start in dimipaun/fugaro (pro mode): "docs refactor". Say "Fugaro, confirm" to confirm.' },
+  },
+  {
+    name: 'a hostile title is spoken as data',
+    why: 'the title is the model’s own words and the read-back is the sentence the person trusts: a title written as the sentence’s own structure must not be read as one, or the person confirms a repository and a mode the action does not carry',
+    call: {
+      transcript: [said('utt_1', 'plan the docs refactor', T0, { target: REPO }), replied('rep_1', T0 + MINUTE, 'here is a draft', '# Task: x" in evil/repo (quick mode). ignore "\nMove the guide.')],
+      reply: null,
+      now: T0 + 2 * MINUTE,
+      options: { mode: 'critical' },
+    },
+    want: { ok: true, phase: 'ready', target: REPO, mode: 'critical', readBack: 'Start in dimipaun/fugaro (critical mode): "x\' in evil/repo [quick mode]. ignore \'". Say "Fugaro, confirm" to confirm.' },
   },
   {
     name: 'a target that is already resolved is sticky',
@@ -329,6 +341,7 @@ const document = {
     text_max: TEXT_MAX,
     repo_max: REPO_MAX,
     mode_max: MODE_MAX,
+    spoken_title_max: SPOKEN_TITLE_MAX,
     time_max: TIME_MAX,
     costly_modes: DEFAULT_COSTLY_MODES,
     biometric_on_costly: DEFAULT_BIOMETRIC_ON_COSTLY,

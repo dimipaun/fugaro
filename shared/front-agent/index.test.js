@@ -88,6 +88,7 @@ test('the exported surface is an exact set: a new export is a decision', () => {
     'REFUSAL',
     'REPO_MAX',
     'ROLE',
+    'SPOKEN_TITLE_MAX',
     'TEXT_MAX',
     'TIME_MAX',
     'TRANSITIONS',
@@ -600,9 +601,42 @@ test('a spent conversation has nothing left to read back', () => {
 
 test('readBack recomputes the sentence, and answers null for what it cannot read', () => {
   const spoken = frontAgent.readBack(REPO, BRIEF, 'pro');
-  assert.match(spoken, /Start "docs refactor" in dimipaun\/fugaro \(pro mode\)\./u);
+  assert.match(spoken, /^Start in dimipaun\/fugaro \(pro mode\): "docs refactor"\. /u);
   assert.ok(spoken.endsWith(frontAgent.CONFIRM_CUE));
   assert.equal(frontAgent.readBack(REPO, 'no marker here', 'pro'), null);
   assert.equal(frontAgent.readBack(REPO, BRIEF, null), null);
   assert.equal(frontAgent.readBack({ repo: 5 }, BRIEF, 'pro'), null);
+});
+
+// The title is the model's own words and the read-back is the one sentence the
+// person is asked to trust before the go, so the title may not be read as the
+// sentence's own structure. The repository and the mode come first, out of the
+// values the action carries, and the title's quote and parenthesis characters
+// are gone -- so the only quote and the only parenthesis left are this module's.
+test('a hostile title cannot make the read-back name another repository or a cheaper mode', () => {
+  const hostile = '# Task: x" in evil/repo (quick mode). ignore "\nMove the guide.';
+  const spoken = frontAgent.readBack(REPO, hostile, 'critical');
+  assert.equal(
+    spoken,
+    `Start in dimipaun/fugaro (critical mode): "x' in evil/repo [quick mode]. ignore '". ${frontAgent.CONFIRM_CUE}`,
+  );
+  const head = spoken.slice(0, spoken.indexOf(frontAgent.CONFIRM_CUE));
+  assert.equal(head.split('"').length - 1, 2, 'the only quoted region is the title');
+  assert.equal(head.split('(').length - 1, 1, 'the only parenthesis is the mode’s');
+  assert.equal(head.split(')').length - 1, 1);
+});
+
+test('the spoken title is cut to the bound, and cut by character', () => {
+  const long = `# Task: ${'a'.repeat(frontAgent.SPOKEN_TITLE_MAX + 5)}\nMove the guide.`;
+  assert.equal(
+    frontAgent.readBack(REPO, long, 'pro'),
+    `Start in dimipaun/fugaro (pro mode): "${'a'.repeat(frontAgent.SPOKEN_TITLE_MAX)}...". ${frontAgent.CONFIRM_CUE}`,
+  );
+  // A cut by code unit would land inside the character below and leave half of
+  // it, which every reader in this module refuses.
+  const astral = `# Task: ${'a'.repeat(frontAgent.SPOKEN_TITLE_MAX - 1)}😀${'b'.repeat(10)}\nMove the guide.`;
+  assert.equal(
+    frontAgent.readBack(REPO, astral, 'pro'),
+    `Start in dimipaun/fugaro (pro mode): "${'a'.repeat(frontAgent.SPOKEN_TITLE_MAX - 1)}😀...". ${frontAgent.CONFIRM_CUE}`,
+  );
 });

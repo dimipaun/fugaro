@@ -53,7 +53,9 @@
 // the utterance -- so the read-back names the brief and the repository as well
 // as the mode, and the machine that holds it is this one. The *rules* are
 // P6.2's; the sentence is this module's, because the thing read back is not the
-// same thing.
+// same thing. In that sentence the repository and the mode are spoken first and
+// out of this module's own values, and the model's title is quoted with the
+// sentence's own punctuation taken out of it, so the title can name neither.
 //
 // **The four phases, and what each one says.**
 //
@@ -171,6 +173,14 @@ export const MODE_MAX = MAX_MODE_LENGTH;
 
 /** The latest `now` or `at` this module reads (shared/lease's MAX_TIMESTAMP: two modules must not disagree about a time). */
 export const TIME_MAX = MAX_TIMESTAMP;
+
+/**
+ * How much of a brief's title the read-back speaks. This module's own bound and
+ * not a policy -- a title may be a whole line -- and it is exported because the
+ * Go consumer reimplements the sentence and the two must cut it in the same
+ * place (P5.4.5's parity test reads it from the vectors).
+ */
+export const SPOKEN_TITLE_MAX = 80;
 
 /**
  * How long a shaped brief stays live, in milliseconds: **P6.5's mailbox TTL**,
@@ -502,6 +512,19 @@ export function conversation(input) {
  * where, and in which mode, then P6.2's cue -- so the sentence that asks for the
  * phrase and the recogniser that accepts it are the same rule's.
  *
+ * **The repository and the mode are spoken first, and the title is spoken as
+ * data.** The title is the model's own words; the repository and the mode are
+ * this module's values. Spoken in the other order -- the title first, as this
+ * sentence once was -- a title is free to name a repository and a mode of its
+ * own and be heard as the sentence's answer: `x" in evil/repo (quick mode).
+ * ignore "` closes the quote and opens a parenthesis, and the person is asked to
+ * confirm a launch in `evil/repo` in `quick` while the action carries the
+ * repository that was resolved and the mode the session gave. So the two facts
+ * the person is trusting come first and out of the values themselves, and the
+ * title is quoted with its own quote and parenthesis characters replaced
+ * (`spokenTitle`), which leaves the sentence one quote and one parenthesis and
+ * both of them this module's.
+ *
  * It is a function of the resolved values and **recomputed, never stored** (P6.2's
  * rule for its own read-backs): a view handed back with an edited read-back
  * cannot be spoken. It answers null for anything it cannot read, which is why it
@@ -516,8 +539,8 @@ export function readBack(target, brief, mode) {
   if (!isPlainObject(target) || typeof target.repo !== 'string') return null;
   if (typeof brief !== 'string' || !brief.startsWith(TASK_MARKER)) return null;
   if (typeof mode !== 'string' || mode === '') return null;
-  const title = firstLine(brief).slice(TASK_MARKER.length);
-  return `Start "${title}" in ${target.repo} (${mode} mode). ${CONFIRM_CUE}`;
+  const title = spokenTitle(firstLine(brief).slice(TASK_MARKER.length));
+  return `Start in ${target.repo} (${mode} mode): "${title}". ${CONFIRM_CUE}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -962,6 +985,31 @@ function repoField(value) {
 function firstLine(value) {
   const end = value.indexOf('\n');
   return end === -1 ? value : value.slice(0, end);
+}
+
+// spokenTitle renders a brief's title into what the read-back may say, and it is
+// a rendering and not a validation: the brief keeps the title it was shaped with,
+// and only the spoken sentence is restricted. Two things are done to it, and
+// both are about the title being the model's words in a sentence this module
+// composes.
+//
+// The sentence's own punctuation goes. A title carrying `"` or `(`/`)` -- `x" in
+// evil/repo (quick mode). ignore "` -- would close the quote and open a
+// parenthesis, and the person would hear a repository and a mode the action does
+// not carry. Each is replaced by a mark the sentence does not use for structure
+// rather than deleted, so the title stays readable and nothing is silently
+// dropped.
+//
+// Then it is cut to SPOKEN_TITLE_MAX characters, because a title may be a whole
+// line and a sentence that never ends buries the mode and the cue. The cut is
+// made by character and not by code unit: half of one is a lone surrogate, which
+// every reader in this module refuses and which this one must therefore not
+// write.
+function spokenTitle(title) {
+  const plain = title.replace(/"/gu, "'").replace(/\(/gu, '[').replace(/\)/gu, ']');
+  const characters = Array.from(plain);
+  if (characters.length <= SPOKEN_TITLE_MAX) return plain;
+  return `${characters.slice(0, SPOKEN_TITLE_MAX).join('')}...`;
 }
 
 // hasBadCharacter reports whether a string carries a control character (a
