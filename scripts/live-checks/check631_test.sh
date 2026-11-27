@@ -243,6 +243,16 @@ accounts_add() { # accounts_add NAME TYPE
     printf 'fugaro: the value is shorter than 16 bytes, too short to redact from logs\n' >&2
     exit 1
   fi
+  if [ "$mode" = add-outlives ]; then
+    # The command outstays its bound on purpose, by seconds, and writes a marker
+    # when it does: the bound a case gives it is one second, so a marker says the
+    # ending that row reports did not reach this command.
+    printf 'Paste the value for credential-%s-key (input hidden), then press Enter: ' "$name" >&2
+    sleep 5
+    printf '%s\n' "$name" >>"$FAKE_LOG_DIR/outlived"
+    printf 'fugaro: declared %s\n' "$name"
+    return 0
+  fi
   if [ "$mode" != add-no-prompt ]; then
     printf 'Paste the value for credential-%s-key (input hidden), then press Enter: ' "$name" >&2
   fi
@@ -835,6 +845,25 @@ test_a_declaration_is_measured_against_its_own_bound() {
   expect_absent "$out" "FACT add-anthropic: PASS" "a declaration nothing answers: no value was read"
 }
 
+# The ending a bound asks for is the command's own. bound_loop signals the
+# runner this check starts, and the command runs in a session of its own, so a
+# runner that died on that signal alone would leave the command running with the
+# owner's terminal still on its input — and the row would say "was ended" about a
+# command nothing ended. The fake below outlives its one-second bound by seconds
+# and writes a marker when it does; the owner's terminal stays held open for the
+# whole of it, which is what a surviving command would be holding.
+test_a_command_a_bound_ended_is_not_still_running() {
+  local dir=$work/declare-ended
+  prepare "$dir"
+  need_pty || return 0
+  start_feeder "$dir" "${CHECK631_TEST_VALUE_ONE:-$value_one}" "${CHECK631_TEST_VALUE_TWO:-$value_two}"
+  run_check "$dir" CHECK631_DECLARE_TIMEOUT_SECONDS=1 FAKE_MODE=add-outlives
+  sleep 6
+  [ ! -e "$dir/logs/outlived" ] || fail "a command a bound ended is still running: $(cat "$dir/logs/outlived") outlived the bound that ended it, with the terminal still held open"
+  stop_feeder
+  expect_status "$status" 2 "a command a bound ended"
+}
+
 test_a_session_that_is_refused() {
   local dir=$work/session
   prepare "$dir"
@@ -1235,6 +1264,7 @@ t test_a_command_that_prints_no_prompt_is_a_finding
 t test_both_commands_read_at_their_own_prompts
 t test_with_no_terminal_the_check_stops
 t test_a_declaration_is_measured_against_its_own_bound
+t test_a_command_a_bound_ended_is_not_still_running
 t test_a_session_that_is_refused
 t test_a_session_that_is_not_refused_is_a_finding
 t test_a_session_refusal_that_names_nothing_is_a_finding

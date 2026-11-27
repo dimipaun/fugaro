@@ -539,6 +539,21 @@ argv = sys.argv[4:]
 
 out_master, out_slave = output_terminal()
 err_master, err_slave = output_terminal()
+# This check's own bound signals THIS runner, not the command: the command runs
+# in a session of its own (start_new_session), so a runner that died on the
+# signal alone would leave the command running with the owner's terminal still
+# on its input. The signal only brings the one ending below forward — the
+# command's own process group, killed — which is what makes the row's "was
+# ended" true.
+bound_signalled = False
+
+
+def end_at_the_bound(signum, frame):
+    global bound_signalled
+    bound_signalled = True
+
+
+signal.signal(signal.SIGTERM, end_at_the_bound)
 env = dict(os.environ, NO_COLOR="1")
 child = subprocess.Popen(argv, stdin=5, stdout=out_slave, stderr=err_slave,
                          env=env, start_new_session=True, close_fds=True)
@@ -576,7 +591,7 @@ while True:
             live.discard(master)
     if child.poll() is not None:
         break
-    if time.time() > deadline:
+    if bound_signalled or time.time() > deadline:
         timed_out = True
         try:
             os.killpg(os.getpgid(child.pid), signal.SIGKILL)
