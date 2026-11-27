@@ -5907,131 +5907,269 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 	return ""
 }
 
-// dataBearingTypes and nonDataBearingTypes classify every entry of allowedTypes
-// under D1551 (docs/no-prompt-policy/reconciliation.md): whether the objects the
-// type holds are data a delete or a replace would destroy, and — by the type's
-// presence in one of the two — whether anybody has decided the question at all.
-//
-// D1545 makes the managed gate audit-only for CONTENT: a refusal about what a
-// plan contains becomes record-and-warn. D1551 is the exception it leaves, and
-// it is scoped to TYPES: a delete or a replace of a resource whose objects hold
-// data is a loss the record-and-warn rule was never meant to take, so its type
-// still refuses. Data-bearing here is exactly D1551's list of nine.
-//
-// The two tables are stated separately and neither is derived from the other by
-// subtraction, deliberately: a type added to allowedTypes by a later module is
-// in NEITHER table and is therefore UNCLASSIFIED, so DataBearingType answers
-// (false, false) for it and RefusesRemovalType refuses its removal — a type
-// refuses until somebody classifies it on purpose, which is D1551's fail-closed
-// direction (an unclassified type behaves like a data-bearing one rather than a
-// non-data-bearing one). TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds
-// the split: every allowedTypes entry is in exactly one table, the two do not
-// overlap, and the nine data-bearing names are D1551's own.
-var dataBearingTypes = map[string]bool{
-	// The budget ledger's instance: D1551 names it by what it holds (the kill
-	// switches, the caps and the mode the whole installation is bounded by).
-	"google_firebase_database_instance": true,
-	// Artifact Registry holds the images a managed project's jobs run; the
-	// repository is the container the image lives in.
-	"google_artifact_registry_repository": true,
-	// The log bucket and the view over it are where a managed project's logs
-	// are kept — deleting the bucket destroys the records in it.
-	"google_logging_project_bucket_config": true,
-	"google_logging_log_view":              true,
-	// D1551 names the key's container: a secret's values live in its versions,
-	// and deleting the secret destroys them.
-	"google_secret_manager_secret": true,
-	// An identity whose keys and grants are lost with it (D1551).
-	"google_service_account": true,
-	// The bucket and the objects in it: the plan's own storage.
-	"google_storage_bucket":        true,
-	"google_storage_bucket_object": true,
-	// A key's own value is the credential an API call carries.
-	"google_apikeys_key": true,
-	// The consumer's signing key (mobile-identity-pairing plan task J6; O17):
-	// the one resource of this tree whose loss is not repairable, and D1551's
-	// question is whether a delete or a replace destroys data its objects hold.
-	// It does. What the key holds is the private half every paired phone's
-	// pinned public key corresponds to: destroy or replace it and every phone
-	// verifies nothing the installation signs again — silently, at the phone,
-	// with no error anywhere in the installation — until each one is paired
-	// again. That is why the module carries prevent_destroy beside this entry
-	// (deploy/terraform's TestPreventDestroy) and why the classification is
-	// data-bearing rather than a type nobody decided.
-	"google_kms_crypto_key": true,
+// Class is what one planned removal deletes, decided per change (D3430,
+// docs/ground-rules/delete-classes.md): a thing Fugaro made and can make again
+// from the same plan, or a thing it did not make and cannot put back. It is the
+// input every delete rule now reads (DG1a, DG2), and it replaces D1551's
+// data-bearing question as what a removal is judged by — the two are one table
+// below, because they ask the same question of the same types.
+type Class int
+
+const (
+	// ClassRecreatable is a removal Fugaro may plan and apply on its own: a
+	// Cloud Run job or service, a scheduler job, an image or the registry
+	// holding it, a build artifact, and a service account or IAM binding Fugaro
+	// wrote. Applying it again makes the object again, so no approval stands
+	// between the plan and the apply.
+	ClassRecreatable Class = iota
+	// ClassIrreplaceable is a removal that destroys something an apply cannot
+	// put back: a secret's versions, a bucket's objects, the RTDB, a KMS key,
+	// the policy and the settings, the spend ledger and the run history — and a
+	// type nobody has decided about, which is the same answer (fail closed).
+	ClassIrreplaceable
+)
+
+// String is the class as a refusal names it.
+func (c Class) String() string {
+	if c == ClassRecreatable {
+		return "recreatable"
+	}
+	return "irreplaceable"
 }
 
-// nonDataBearingTypes is the other half of D1551's classification: every entry
-// of allowedTypes whose removal destroys no data its objects hold. D1551 groups
-// them — the *_iam_member grant types, the Cloud Run job and service, the
-// scheduler, the compute network, the monitoring and logging plumbing, the
-// billing budget, a custom role, an enabled service and the Firebase project —
-// and each is named here one by one so that the classification of every type is
-// a decision rather than a default.
-var nonDataBearingTypes = map[string]bool{
-	"google_artifact_registry_repository_iam_member": true,
-	"google_billing_budget":                          true,
-	"google_cloud_run_v2_job":                        true,
-	"google_cloud_run_v2_job_iam_member":             true,
-	"google_cloud_run_v2_service":                    true,
-	"google_cloud_run_v2_service_iam_member":         true,
-	"google_cloud_scheduler_job":                     true,
-	"google_compute_firewall":                        true,
-	"google_compute_router":                          true,
-	"google_compute_router_nat":                      true,
-	"google_firebase_project":                        true,
+// removalClassRow is one resource type's classification: D1551's data-bearing
+// question and D3430's removal class, side by side in the ONE table below.
+//
+// They are one table rather than two lists because both answer the same
+// question — what a removal takes away — and a later module that adds a type
+// must decide it once, where the next reader finds it. The two columns do not
+// always agree, and D3430 is why: an artifact registry repository and a service
+// account are data-bearing under D1551 (the images in it, the identity's keys
+// and grants) and recreatable under D3430 (Fugaro made them and the same apply
+// makes them again), and D3430 supersedes D1551 for those two types. So
+// DataBearingType reads bearing and RemovalClass/RefusesRemovalType read class.
+type removalClassRow struct {
+	// bearing is D1551's answer: see DataBearingType.
+	bearing bool
+	// class is D3430's answer: see RemovalClass.
+	class Class
+}
+
+// removalClasses classifies every entry of allowedTypes: whether the objects
+// the type holds are data a delete or a replace would destroy (D1551), and
+// whether its removal is recreatable or irreplaceable (D3430). A type added to
+// allowedTypes by a later module and named in NEITHER row is UNCLASSIFIED: both
+// readers answer the fail-closed direction (DataBearingType says (false, false)
+// and RefusesRemovalType refuses), so a type refuses until somebody decides it
+// on purpose.
+//
+// D1545 is what makes the bearing column matter beyond the refusal: the managed
+// gate records and warns about what a plan CONTAINS, and D1551's exception —
+// the types whose objects hold data — is what still refuses. The class column
+// is D3430's, and it is what the delete rules read now.
+//
+// TestRemovalClassFollowsD3430 holds the class column against D3430's two
+// lists, and TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds the bearing
+// column against D1551's.
+var removalClasses = map[string]removalClassRow{
+	// A key's own value is the credential an API call carries: nothing an
+	// apply writes restores it.
+	"google_apikeys_key": {bearing: true, class: ClassIrreplaceable},
+	// Artifact Registry holds the images a managed project's jobs run, and
+	// D3430 makes the container recreatable: the same apply writes the
+	// repository again, and DG6 rebuilds its catalog entries beside it.
+	"google_artifact_registry_repository":            {bearing: true, class: ClassRecreatable},
+	"google_artifact_registry_repository_iam_member": {bearing: false, class: ClassRecreatable},
+	"google_billing_budget":                          {bearing: false, class: ClassRecreatable},
+	"google_cloud_run_v2_job":                        {bearing: false, class: ClassRecreatable},
+	"google_cloud_run_v2_job_iam_member":             {bearing: false, class: ClassRecreatable},
+	"google_cloud_run_v2_service":                    {bearing: false, class: ClassRecreatable},
+	"google_cloud_run_v2_service_iam_member":         {bearing: false, class: ClassRecreatable},
+	"google_cloud_scheduler_job":                     {bearing: false, class: ClassRecreatable},
+	// The Batch root's own network plumbing: Fugaro wrote it, terraform
+	// writes it again.
+	"google_compute_firewall":                {bearing: false, class: ClassRecreatable},
+	"google_compute_router":                  {bearing: false, class: ClassRecreatable},
+	"google_compute_router_nat":              {bearing: false, class: ClassRecreatable},
+	"google_firebase_project":                {bearing: false, class: ClassRecreatable},
+	"google_logging_project_exclusion":       {bearing: false, class: ClassRecreatable},
+	"google_logging_project_sink":            {bearing: false, class: ClassRecreatable},
+	"google_monitoring_alert_policy":         {bearing: false, class: ClassRecreatable},
+	"google_monitoring_notification_channel": {bearing: false, class: ClassRecreatable},
+	"google_project_iam_custom_role":         {bearing: false, class: ClassRecreatable},
+	// The grant types are recreatable BY TYPE and judged per change by
+	// RemovalClass: a binding Fugaro wrote is made again by the same apply,
+	// while one naming a person is membership and irreplaceable.
+	"google_project_iam_member":               {bearing: false, class: ClassRecreatable},
+	"google_project_service":                  {bearing: false, class: ClassRecreatable},
+	"google_secret_manager_secret_iam_member": {bearing: false, class: ClassRecreatable},
+	// The service account: Fugaro's own accounts are recreatable (D3430 — a
+	// recreated account gets a new ID, which the same apply binds again), and
+	// the workspace account is the exception RemovalClass reads per change
+	// (D3456).
+	"google_service_account":            {bearing: true, class: ClassRecreatable},
+	"google_service_account_iam_member": {bearing: false, class: ClassRecreatable},
+	"google_storage_bucket_iam_member":  {bearing: false, class: ClassRecreatable},
 	// An index holds no documents: the runs it orders live in the collection,
 	// and deleting the index loses an answer, never a row.
-	"google_firestore_index": true,
+	"google_firestore_index": {bearing: false, class: ClassRecreatable},
 	// The key's ring and the grant on the key (plan task J6): a ring holds no
-	// material of its own — the key inside it does, and it is the data-bearing
-	// entry above — and a grant holds none. Removing the ring while the key is
-	// in it is not something Terraform plans anyway (Cloud KMS refuses a ring
-	// that is not empty), and removing the grant revokes the signing reach
-	// rather than destroying anything, which is the state an installation that
-	// turns the resident orchestrator off is left in: the key and its published
-	// public half stand, and nothing signs with them.
-	"google_kms_crypto_key_iam_member":        true,
-	"google_kms_key_ring":                     true,
-	"google_logging_log_view_iam_member":      true,
-	"google_logging_project_exclusion":        true,
-	"google_logging_project_sink":             true,
-	"google_monitoring_alert_policy":          true,
-	"google_monitoring_notification_channel":  true,
-	"google_project_iam_custom_role":          true,
-	"google_project_iam_member":               true,
-	"google_project_service":                  true,
-	"google_secret_manager_secret_iam_member": true,
-	"google_service_account_iam_member":       true,
-	"google_storage_bucket_iam_member":        true,
+	// material of its own — the key inside it does, and it is the entry below —
+	// and a grant holds none. Removing the ring while the key is in it is not
+	// something Terraform plans anyway (Cloud KMS refuses a ring that is not
+	// empty), and removing the grant revokes the signing reach rather than
+	// destroying anything, which is the state an installation that turns the
+	// resident orchestrator off is left in: the key and its published public
+	// half stand, and nothing signs with them.
+	"google_kms_crypto_key_iam_member":   {bearing: false, class: ClassRecreatable},
+	"google_kms_key_ring":                {bearing: false, class: ClassRecreatable},
+	"google_logging_log_view_iam_member": {bearing: false, class: ClassRecreatable},
+	// The budget ledger's instance: D1551 names it by what it holds (the kill
+	// switches, the caps and the mode the whole installation is bounded by),
+	// and D3430's irreplaceable list names the RTDB.
+	"google_firebase_database_instance": {bearing: true, class: ClassIrreplaceable},
+	// The log bucket and the view over it are where a managed project's logs
+	// are kept — deleting the bucket destroys the records in it.
+	"google_logging_project_bucket_config": {bearing: true, class: ClassIrreplaceable},
+	"google_logging_log_view":              {bearing: true, class: ClassIrreplaceable},
+	// D1551 names the key's container: a secret's values live in its versions,
+	// and deleting the secret destroys them.
+	"google_secret_manager_secret": {bearing: true, class: ClassIrreplaceable},
+	// The bucket and the objects in it: the plan's own storage.
+	"google_storage_bucket":        {bearing: true, class: ClassIrreplaceable},
+	"google_storage_bucket_object": {bearing: true, class: ClassIrreplaceable},
+	// The consumer's signing key (mobile-identity-pairing plan task J6; O17):
+	// the one resource of this tree whose loss is not repairable. What the key
+	// holds is the private half every paired phone's pinned public key
+	// corresponds to: destroy or replace it and every phone verifies nothing
+	// the installation signs again — silently, at the phone, with no error
+	// anywhere in the installation — until each one is paired again. That is
+	// why the module carries prevent_destroy beside this entry
+	// (deploy/terraform's TestPreventDestroy) and why the class is
+	// irreplaceable rather than a type nobody decided.
+	"google_kms_crypto_key": {bearing: true, class: ClassIrreplaceable},
+}
+
+// dataBearingTypes and nonDataBearingTypes are D1551's two halves as views of
+// removalClasses: every type whose row is data-bearing, and every type whose row
+// is not. They are derived from the one table above rather than written again,
+// so the D1551 rule and the D3430 rule cannot be told different classifications
+// of the same type.
+var (
+	dataBearingTypes    = classifiedTypes(true)
+	nonDataBearingTypes = classifiedTypes(false)
+)
+
+func classifiedTypes(bearing bool) map[string]bool {
+	out := make(map[string]bool)
+	for typ, row := range removalClasses {
+		if row.bearing == bearing {
+			out[typ] = true
+		}
+	}
+	return out
 }
 
 // DataBearingType classifies a resource type for D1551: whether its objects
 // hold data a delete or a replace would destroy, and whether the type is
-// classified at all. A type in neither table — one added to allowedTypes by a
-// later module and not yet decided — is (false, false): not data-bearing as far
-// as anyone has said, and unclassified, which the caller reads as the
-// fail-closed direction (RefusesRemovalType refuses it).
+// classified at all. A type no row names — one added to allowedTypes by a later
+// module and not yet decided — is (false, false): not data-bearing as far as
+// anyone has said, and unclassified, which the caller reads as the fail-closed
+// direction (RefusesRemovalType refuses it).
 //
 // The question is asked of the TYPE and not of the change, because D1551's
 // ruling is about types: it is what makes a type's removal refuse wherever it
 // appears, whether or not the plan says anything else about it.
 func DataBearingType(t string) (dataBearing, classified bool) {
-	if dataBearingTypes[t] {
-		return true, true
-	}
-	if nonDataBearingTypes[t] {
-		return false, true
-	}
-	return false, false
+	row, ok := removalClasses[t]
+	return row.bearing, ok
 }
 
-// RefusesRemovalType is D1551's rule as the delete and replace rule reads it: a
-// removal of a data-bearing type refuses, and so does one of an unclassified
-// type — a type added to allowedTypes later refuses until somebody classifies
-// it on purpose. Every other classified, non-data-bearing type is one the
-// managed gate now takes with a warning (D1545).
+// RefusesRemovalType is D3430's rule for a reader that holds a TYPE alone: a
+// removal of an irreplaceable type refuses, and so does one of an unclassified
+// type — a type added to allowedTypes later refuses until somebody decides it
+// on purpose. Every recreatable type is one the gate admits (DG1a, DG2), and
+// the per-change half of the rule — a person's grant, the workspace account —
+// is RemovalClass, which a caller with a plan asks.
 func RefusesRemovalType(t string) bool {
-	bearing, classified := DataBearingType(t)
-	return !classified || bearing
+	return removalClass(t) == ClassIrreplaceable
+}
+
+// removalClass is the class the table gives a type, with an unclassified type
+// answering ClassIrreplaceable: the fail-closed direction both readers share.
+func removalClass(t string) Class {
+	row, ok := removalClasses[t]
+	if !ok {
+		return ClassIrreplaceable
+	}
+	return row.class
+}
+
+// accountMemberPrefix is how IAM spells a service account in a grant's member,
+// the class that tells Fugaro's own bindings from membership. The person class
+// is workspacePersonPrefix ("user:"), which the workspace root's own grants
+// already read.
+const accountMemberPrefix = "serviceAccount:"
+
+// RemovalClass classifies ONE planned removal (D3430): by the type of the
+// object it removes, and — for an IAM member grant — by the member that grant
+// names.
+//
+// A grant to a service account is a binding Fugaro wrote and the same apply
+// writes again, so it is ClassRecreatable. A grant to a person is membership:
+// irreplaceable, because `update` never deletes a member's grant on its own —
+// and admitted (ClassRecreatable) only when people records that person's
+// removal, which is the roster DG5 writes when a membership command revokes a
+// person. That is the whole of D3454's hybrid: the command revokes what it can
+// reach and records the person, and the owning member's own `update` may then
+// remove a grant the command could not reach. A principal that is neither a
+// service account nor a recorded person — a group, a domain, a public member —
+// is refused (fail closed), and so is a before view that carries no member at
+// all.
+//
+// The workspace service account (WorkspaceIAMAccountID, Terraform's
+// workspace_iam) is the one exception among them: D3456 makes it
+// ClassIrreplaceable, because Link is the member owner's act and no admin list
+// exists for `update` to re-grant from, so a removal of that account is not
+// something an apply puts back.
+//
+// The member and the account id are read from the removed view (before), the
+// object a delete or a replace takes away; a create has none and so answers for
+// the type alone, which the callers ask only about removals.
+func RemovalClass(rc ResourceChange, people []string) Class {
+	if _, known := removalClasses[rc.Type]; !known {
+		return ClassIrreplaceable
+	}
+	before := rc.Change.Before
+	if strings.HasSuffix(rc.Type, "_iam_member") {
+		return memberGrantClass(str(before["member"]), people)
+	}
+	if rc.Type == "google_service_account" && str(before["account_id"]) == WorkspaceIAMAccountID {
+		return ClassIrreplaceable
+	}
+	return removalClass(rc.Type)
+}
+
+// memberGrantClass is the member half of RemovalClass: the class of one IAM
+// member grant, read from the member it names and the roster of people whose
+// removal is recorded.
+func memberGrantClass(member string, people []string) Class {
+	if strings.HasPrefix(member, accountMemberPrefix) {
+		return ClassRecreatable
+	}
+	if person, ok := strings.CutPrefix(member, workspacePersonPrefix); ok && recordedRemoval(people, person) {
+		return ClassRecreatable
+	}
+	return ClassIrreplaceable
+}
+
+// recordedRemoval reports whether people records the person's removal: the
+// roster's record of removed people, as the member's own address (the roster
+// holds addresses, and a member is "user:" and an address). Both sides are
+// compared without the member prefix, so a roster that wrote either spelling
+// answers the same.
+func recordedRemoval(people []string, person string) bool {
+	return slices.ContainsFunc(people, func(p string) bool {
+		return strings.TrimPrefix(p, workspacePersonPrefix) == person
+	})
 }
