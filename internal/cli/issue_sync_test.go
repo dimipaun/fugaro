@@ -154,40 +154,6 @@ func TestSyncOfflineKeepsLocal(t *testing.T) {
 	}
 }
 
-// TestSyncRefusesInAgentSession: uploading is a write to the project's store,
-// and a coding agent's session makes none (F10, D1734). The refusal names the
-// command a person runs, and it comes before anything is read: no credential
-// is asked and no bucket is opened.
-func TestSyncRefusesInAgentSession(t *testing.T) {
-	rig := newMineRig(t)
-	rec := rig.save(mineRec("1", "sig-a"))
-	t.Setenv("CLAUDECODE", "1")
-
-	out, errOut, err := rig.sync()
-	if err == nil {
-		t.Fatalf("a coding agent's session uploaded:\n%s%s", out, errOut)
-	}
-	if !strings.Contains(err.Error(), "coding agent's session") || !strings.Contains(err.Error(), "fugaro issue sync") {
-		t.Errorf("sync = %q, want a refusal naming the session and the command a person runs", err)
-	}
-	if rig.lookups != 0 {
-		t.Errorf("a coding agent's session asked the credential %d time(s)", rig.lookups)
-	}
-	if rig.opens != 0 {
-		t.Errorf("a coding agent's session opened the shared store %d time(s)", rig.opens)
-	}
-	if rows, err := issues.ListShared(context.Background(), rig.bucket); err != nil {
-		t.Fatalf("reading the shared store: %v", err)
-	} else if len(rows) != 0 {
-		t.Errorf("a coding agent's session left %d issue(s) in the shared store", len(rows))
-	}
-	if got, err := rig.store.Get(rec.LocalID); err != nil {
-		t.Fatalf("the issue is not where it was: %v", err)
-	} else if got.Uploaded {
-		t.Error("a coding agent's session marked the issue uploaded")
-	}
-}
-
 // TestListShowsWholeTeamsIssues: an issue is the project's, so `list` shows
 // every issue of the project's store and not only the ones this machine saved
 // (spec 4b). Where both sides have a record of one number the store's is the

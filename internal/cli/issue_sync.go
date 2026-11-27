@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/issues"
 )
 
@@ -19,10 +18,10 @@ import (
 // uploads this machine's pending issues, and the one resolution of the
 // project's store that `sync`, `list`, `show` and `dismiss` all read through.
 //
-// Uploading is a cloud write, so every one of them goes through the guard
-// `recipes publish` uses (F10): in a coding agent's session nothing is
-// uploaded, `sync` refuses and names the command a person runs, and the
-// listing commands read this machine's own files only (D1734).
+// Uploading is a cloud write, and `sync` and `dismiss` are an agent's to make
+// (D3425): a session reaches the project's store with them like anyone else.
+// The listing commands still read this machine's own files only in a session
+// (F10, D1734), and `submit --ask` is a person's.
 
 // issueShared is the project's shared store as one `issue` command reaches it:
 // the bucket, the name of the project it belongs to, and the lines the run has
@@ -56,10 +55,11 @@ func (s *issueShared) Close() {
 // notes and a nil bucket, never an error, because the commands that call it
 // have this machine's own records to answer with either way.
 //
-// It reads the checkout and the local config and nothing else — no credential,
-// no network — which is why a coding agent's session may call it and still
-// reach no shared store (F10): what a session must not do is upload, and the
-// project's own name is a local file.
+// It reads the checkout and the local config — no credential, no network —
+// and a caller that passes its session's marker gets no shared store out of it
+// (F10): the project's own name is a local file, and what a fenced command
+// must not reach is the store behind it. `sync` and `dismiss` pass none, since
+// a session may write the project's issues (D3425).
 //
 // The second return is D1541's fence and never a store problem: the store's
 // own failures stay the notes they always were. The project's issues are the
@@ -221,12 +221,6 @@ func newIssueSyncCmd() *cobra.Command {
 }
 
 func runIssueSync(cmd *cobra.Command) error {
-	// The guard `recipes publish` uses: an agent-set marker refuses whatever the
-	// terminal, and the IDE extension's marker alone refuses only without one,
-	// so a person in their own IDE terminal may sync (F10).
-	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was uploaded: fugaro issue sync writes to the project's store, so a person runs it at their own terminal: %s", initflow.AgentRefusal(m))
-	}
 	ctx := cmd.Context()
 	store, err := openIssueStore()
 	if err != nil {

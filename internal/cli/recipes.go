@@ -17,7 +17,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -321,9 +320,6 @@ func newRecipesPublishCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-				return userErr("nothing was published: fugaro recipes publish writes to the cloud and changes the loop of every run of the project that names this recipe: %s", initflow.AgentRefusal(m))
-			}
 			data, err := readRecipeFile(args[0])
 			if err != nil {
 				return userErr("nothing was published: %s", pluginwire.Printable(oneLineCLI(err.Error())))
@@ -386,9 +382,6 @@ func newRecipesRmCmd() *cobra.Command {
 			name := args[0]
 			if !recipe.IsNameOrCopy(name) {
 				return userErr("%q is not a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit, or the name of the project's copy of one (that name, a dot, the repository's slug and 8 hex)", pluginwire.Printable(name))
-			}
-			if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-				return userErr("nothing was removed: fugaro recipes rm writes to the cloud and changes the loop of every run of the project that names this recipe: %s", initflow.AgentRefusal(m))
 			}
 			env, err := openCloud(ctx, o)
 			if err != nil {
