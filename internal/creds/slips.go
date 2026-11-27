@@ -104,6 +104,18 @@ type Slip struct {
 	// pool if its credentials are served from one, and a launch may name a pool
 	// none of its credentials come from).
 	Pool string `json:"pool"`
+	// Resumes is the paused run this run continues, empty for a run that
+	// continues none (runstore.PauseMemberResumes, D3185). It is recorded
+	// because it is what carries a chain's paused time forward: the credentials
+	// service cannot walk the runs bucket the chain lives in, so a run whose
+	// slip names one inherits the chain and the paused time of the pause it
+	// continues, and the pause it later takes is measured against them (D3190).
+	//
+	// It is a member of the record and not of the request alone (the request's
+	// own `resumes` is what chose the grant), because it is read days later by
+	// the run's own /pause call, which holds the slip and nothing else of its
+	// grant.
+	Resumes string `json:"resumes,omitempty"`
 	// SlipChain is the grant's two own members (C2, CS14): `sources`, the
 	// sources this grant covers, and `named_pool`, the pool the launch asked
 	// for. They are embedded rather than written out here so that the two names
@@ -557,4 +569,197 @@ func (s *RTDBStore) End(ctx context.Context, id string) error {
 		return fmt.Errorf("creds: ending the slip %q: %w", id, err)
 	}
 	return nil
+}
+
+// The pause record (docs/model-credentials-routing, PR3): what the credentials
+// service decided about one run it suspended, and the whole of what it reads
+// back when that run is resumed.
+//
+// IT IS THE SERVICE'S OWN RECORD AND NOT THE DATABASE NODE. The node under
+// runstore.PauseNodeRoot is what the orchestrator reads and what a launcher's
+// view draws (R19, R26): it carries the pause and nothing else, because it is
+// display data to every launcher. What a RESUME needs is the run's whole grant
+// — the launcher's principal, the pool its launch named, the chain and the
+// chain's paused time — and a resume is granted days after the pause it
+// continues, so none of it can be held in the service's memory: Cloud Run
+// scales to zero, and a service that forgot would leave a chain suspended with
+// nothing to resume it. The record is therefore written where the service's own
+// records already live, under the paths the database rules deny every run
+// token (C1.3), and the node is derived from it.
+const pathPauses = "creds/pauses"
+
+// PathPause is the service's record of one paused run: its repository and the
+// run id, both escaped for the database exactly as every other path in this
+// package is (seg). It is built here because the two sides that need it are the
+// service's own — the pause that writes it and the resume that reads it.
+func PathPause(slug, run string) string {
+	return pathPauses + "/" + seg("slug", slug) + "/" + seg("run id", run)
+}
+
+// Pause is one paused run as the service recorded it (R8, D3189, D3191). Every
+// member is a fact the service itself read or computed, and none is text the
+// paused run's job could have chosen: the job names nothing about its own
+// pause (runstore.PausePath carries no member at all).
+type Pause struct {
+	// Launcher is the verified principal of the run's slip (R7): a person's
+	// Google subject, or a verified service account's address. It is what the
+	// resumed run's slip records as its launcher, so a run that resumes a
+	// person's paused run spends that person's tokens and draws on that
+	// person's pool (D3191).
+	Launcher routing.Principal `json:"launcher"`
+	// Pool is the pool the paused run's launch NAMED (`fugaro run --pool`),
+	// empty when it named none. It is kept apart from the resumed slip's own
+	// deciding pool for the reason Slip.Pool and Slip.NamedPool are: which pool
+	// decided a grant and which pool a launch asked for are two facts.
+	Pool string `json:"pool,omitempty"`
+	// ResumeAt is the instant the service decided the pause ends, in epoch
+	// milliseconds UTC — the unit the wire's resume_at and the node's resume_at
+	// are in. It is this service's figure, computed when the run's call was
+	// answered exhausted, and a resume is refused until it has passed.
+	ResumeAt int64 `json:"resume_at"`
+	// Chain is the id of the chain the paused run belongs to (runstore.Chain's
+	// Root): the run the chain was rooted at, which the resumed run continues.
+	// The credentials service cannot read the runs bucket the chain is walked
+	// over, so it takes the chain forward the one way it can: a run whose own
+	// slip names `resumes` inherits the chain of the pause it continues.
+	Chain string `json:"chain"`
+	// PausedSeconds is the chain's paused time so far, this pause included, the
+	// unit the chain's own Time dimension is measured in (D3190). It is
+	// inherited and added to the same way the chain is, and it is what bounds
+	// how long one chain may spend suspended.
+	PausedSeconds int64 `json:"paused_seconds,omitempty"`
+	// ResumedBy is the run that continued this pause, empty while none has. It
+	// is the record's mark of single use (contract-pause, "Once"): the grant of
+	// a resume is what writes it, under a compare-and-set, so two asks at the
+	// same instant resume a chain once.
+	ResumedBy string `json:"resumed_by,omitempty"`
+	// Cancelled is the mark the paused run's own launcher sets to stop the pause
+	// ever being resumed (D3197). A cancelled pause is refused by every resume
+	// and stays readable as the pause it was; the mark is written by the cancel
+	// route and never by the run itself.
+	Cancelled bool `json:"cancelled,omitempty"`
+}
+
+// The pause record's refusals, as sentinels so a caller can answer without
+// reading a message. None carries a value.
+var (
+	// ErrNoPause is a run this service recorded no pause of its own for: an
+	// ask to resume one is refused rather than answered, because the record is
+	// the whole of the evidence a resume is granted on (D3189).
+	ErrNoPause = errors.New("creds: this service recorded no pause of that run")
+	// ErrPauseExists is a pause record already written for that run. A run
+	// pauses once: a second record would be a second resume time for one pause.
+	ErrPauseExists = errors.New("creds: that run has already paused")
+	// ErrPauseMalformed is a record that could not be written or read as it
+	// stands: a launcher that names nobody, no resume instant, a chain that is
+	// empty, or a paused time before zero. Fail closed at the writer, where the
+	// mistake is, rather than at a resume days later.
+	ErrPauseMalformed = errors.New("creds: the pause record is not one this service could have written")
+	// ErrPauseResumed is a pause that has already been resumed. A pause is
+	// resumed at most once (contract-pause, "Once").
+	ErrPauseResumed = errors.New("creds: that pause has already been resumed")
+	// ErrPauseCancelled is a pause its launcher cancelled: nothing resumes it.
+	ErrPauseCancelled = errors.New("creds: that pause was cancelled by its launcher")
+	// ErrPauseEarly is a resume asked for before the instant the service
+	// computed. The caller cannot move it.
+	ErrPauseEarly = errors.New("creds: that pause is not due yet")
+)
+
+// checkWritable holds a pause record to the members nothing can be decided
+// without.
+func (p Pause) checkWritable() error {
+	switch {
+	case !p.Launcher.Valid():
+		return fmt.Errorf("%w: it names no launcher", ErrPauseMalformed)
+	case p.ResumeAt <= 0:
+		return fmt.Errorf("%w: it names no resume instant", ErrPauseMalformed)
+	case p.Chain == "":
+		return fmt.Errorf("%w: it names no chain", ErrPauseMalformed)
+	case p.PausedSeconds < 0:
+		return fmt.Errorf("%w: its paused time is negative", ErrPauseMalformed)
+	}
+	return nil
+}
+
+// WritePause records a run's pause. It is written once, by the run's own
+// /pause call and by nothing else, and a second write for the same run is
+// refused rather than allowed to move a resume instant the run is already
+// waiting on.
+func (s *RTDBStore) WritePause(ctx context.Context, slug, run string, p Pause) error {
+	if slug == "" || run == "" {
+		return ErrPauseMalformed
+	}
+	if err := p.checkWritable(); err != nil {
+		return err
+	}
+	path := PathPause(slug, run)
+	var raw json.RawMessage
+	etag, found, err := s.db().GetETag(ctx, path, &raw)
+	if err != nil {
+		return fmt.Errorf("creds: writing the pause of run %q: %w", run, err)
+	}
+	if found {
+		return fmt.Errorf("creds: writing the pause of run %q: %w", run, ErrPauseExists)
+	}
+	if err := s.db().PutIfMatch(ctx, path, etag, p); err != nil {
+		return fmt.Errorf("creds: writing the pause of run %q: %w", run, err)
+	}
+	return nil
+}
+
+// Pause reads one run's pause record: found is false for a run this service
+// recorded no pause of. The node is decoded with the strict decoder, as every
+// record in this package is and for the same reason — a member this release
+// does not model would otherwise be dropped silently, and a dropped member here
+// is a resume granted on half a record.
+func (s *RTDBStore) Pause(ctx context.Context, slug, run string) (Pause, bool, error) {
+	if slug == "" || run == "" {
+		return Pause{}, false, ErrPauseMalformed
+	}
+	raw := json.RawMessage{}
+	_, found, err := s.db().GetETag(ctx, PathPause(slug, run), &raw)
+	if err != nil {
+		return Pause{}, false, fmt.Errorf("creds: reading the pause of run %q: %w", run, err)
+	}
+	if !found {
+		return Pause{}, false, nil
+	}
+	p, err := decodeStrict[Pause](raw)
+	if err != nil {
+		return Pause{}, false, fmt.Errorf("creds: reading the pause of run %q: %w", run, err)
+	}
+	if err := p.checkWritable(); err != nil {
+		return Pause{}, false, fmt.Errorf("creds: reading the pause of run %q: %w", run, err)
+	}
+	return p, true, nil
+}
+
+// Resume marks a pause resumed by one run, and it is the whole of "once": the
+// mark is written under a compare-and-set against the record it read, so two
+// asks arriving in the same instant resume one chain once and the loser is
+// refused (ErrPauseResumed). The three refusals that are not about the mark are
+// asked in the same read for that reason — a pause its launcher cancelled, or
+// one whose resume instant has not passed, is refused by the write that would
+// have resumed it and not only by the check before it.
+func (s *RTDBStore) Resume(ctx context.Context, slug, run, by string, now time.Time) error {
+	if slug == "" || run == "" || by == "" {
+		return ErrPauseMalformed
+	}
+	_, err := cas(ctx, s.db(), PathPause(slug, run), s.attempts(), func(prev Pause, found bool) (Pause, error) {
+		switch {
+		case !found:
+			return Pause{}, ErrNoPause
+		case prev.checkWritable() != nil:
+			return Pause{}, ErrPauseMalformed
+		case prev.Cancelled:
+			return Pause{}, ErrPauseCancelled
+		case prev.ResumedBy != "":
+			return Pause{}, ErrPauseResumed
+		case now.UnixMilli() < prev.ResumeAt:
+			return Pause{}, ErrPauseEarly
+		}
+		prev.ResumedBy = by
+		return prev, nil
+	})
+	return err
 }

@@ -425,61 +425,91 @@ func TestServiceContractMirrorsCredsvcReadsWhatItWrites(t *testing.T) {
 
 	t.Run("exhausted_until", func(t *testing.T) {
 		// The typed answer, written by the contract's own writer, read back
-		// by the gateway's mirror of it: the instant and the tried list the
-		// run is told about are the ones the service wrote.
+		// by the gateway's mirror of it: the instant, the tried list and the
+		// action the run is told about are the ones the service wrote.
+		//
+		// Every action the service decides is written by that writer and read
+		// back here, not only the actionless answer a service of a release
+		// behind gives: a wait or a halt whose body carried the pause's instant
+		// is a body THIS gateway refuses ("only a pause carries a resume
+		// instant"), and the run halts on an unreadable state where the service
+		// meant it to hold its job and wait (the contract's own guard, checked
+		// over the wire rather than in the struct alone).
 		instant := time.UnixMilli(1800000000000).UTC()
-		rec := httptest.NewRecorder()
-		credsvc.WriteExhaustedUntil(rec, credsvc.ExhaustedUntil{
-			ResetAt: instant,
-			Tried: []credsvc.Tried{
-				{Name: "cred-a", Tier: credsvc.TierA, Reason: credsvc.ReasonExhausted},
-				{Name: "cred-b", Tier: credsvc.TierB, Reason: credsvc.ReasonBroken},
-			},
-		}, time.UnixMilli(1700000000000))
-		body := rec.Body.String()
+		instant2 := time.UnixMilli(1800001800000).UTC()
+		for _, tc := range []struct {
+			name    string
+			ans     credsvc.ExhaustedUntil
+			want    string
+			wantRes time.Time
+		}{
+			{name: "no action", ans: credsvc.ExhaustedUntil{}},
+			{name: "wait", ans: credsvc.ExhaustedUntil{Action: runstore.ActionWait}, want: gateway.ActionWait},
+			{name: "halt", ans: credsvc.ExhaustedUntil{Action: runstore.ActionHalt}, want: gateway.ActionHalt},
+			{name: "pause", ans: credsvc.ExhaustedUntil{Action: runstore.ActionPause, ResumeAt: instant2},
+				want: gateway.ActionPause, wantRes: instant2},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				ans := tc.ans
+				ans.ResetAt = instant
+				ans.Tried = []credsvc.Tried{
+					{Name: "cred-a", Tier: credsvc.TierA, Reason: credsvc.ReasonExhausted},
+					{Name: "cred-b", Tier: credsvc.TierB, Reason: credsvc.ReasonBroken},
+				}
+				rec := httptest.NewRecorder()
+				credsvc.WriteExhaustedUntil(rec, ans, time.UnixMilli(1700000000000))
+				body := rec.Body.String()
 
-		var answers []gateway.ServiceAnswer
-		f, srv := anthropicfake.New(t)
-		f.Func = func(*http.Request, []byte) anthropicfake.Reply {
-			return anthropicfake.Reply{Status: rec.Code, Body: body}
-		}
-		gw, err := gateway.Start(context.Background(), gateway.Options{
-			Upstream: gateway.Upstream{Kind: gateway.KindService, BaseURL: srv.URL,
-				Service: &gateway.Service{
-					IDToken:    func(context.Context) (string, error) { return "id-token", nil },
-					RunIDToken: func() string { return "run-identity" },
-					Job:        mirrorJob,
-				}},
-			Prices:          pricing.Embedded(),
-			Mode:            gateway.Observe,
-			Log:             slog.New(slog.DiscardHandler),
-			OnServiceAnswer: func(a gateway.ServiceAnswer) { answers = append(answers, a) },
-		})
-		if err != nil {
-			t.Fatalf("Start: %v", err)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		t.Cleanup(func() { _ = gw.Close(ctx) })
-		gw.BeginStage(gateway.Stage{Name: "implement", Model: mirrorModel})
+				var answers []gateway.ServiceAnswer
+				f, srv := anthropicfake.New(t)
+				f.Func = func(*http.Request, []byte) anthropicfake.Reply {
+					return anthropicfake.Reply{Status: rec.Code, Body: body}
+				}
+				gw, err := gateway.Start(context.Background(), gateway.Options{
+					Upstream: gateway.Upstream{Kind: gateway.KindService, BaseURL: srv.URL,
+						Service: &gateway.Service{
+							IDToken:    func(context.Context) (string, error) { return "id-token", nil },
+							RunIDToken: func() string { return "run-identity" },
+							Job:        mirrorJob,
+						}},
+					Prices:          pricing.Embedded(),
+					Mode:            gateway.Observe,
+					Log:             slog.New(slog.DiscardHandler),
+					OnServiceAnswer: func(a gateway.ServiceAnswer) { answers = append(answers, a) },
+				})
+				if err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				t.Cleanup(func() { _ = gw.Close(ctx) })
+				gw.BeginStage(gateway.Stage{Name: "implement", Model: mirrorModel})
 
-		status, _ := postMirror(t, gw)
-		if status != http.StatusServiceUnavailable {
-			t.Fatalf("the exhausted answer was answered %d", status)
-		}
-		if len(answers) != 1 || answers[0].Exhausted == nil {
-			t.Fatalf("the hook was told %+v, want one exhausted answer", answers)
-		}
-		ex := answers[0].Exhausted
-		if !ex.ResetAt.Equal(instant) {
-			t.Errorf("the instant read back as %v, want %v", ex.ResetAt, instant)
-		}
-		if len(ex.Tried) != 2 || ex.Tried[0].Name != "cred-a" || ex.Tried[0].Reason != credsvc.ReasonExhausted ||
-			ex.Tried[1].Name != "cred-b" || ex.Tried[1].Tier != credsvc.TierB {
-			t.Errorf("the tried list read back as %+v", ex.Tried)
-		}
-		if detail := haltDetail(t, gw); detail != "" {
-			t.Errorf("an exhausted answer halted the run: %q", detail)
+				status, _ := postMirror(t, gw)
+				if status != http.StatusServiceUnavailable {
+					t.Fatalf("the exhausted answer was answered %d", status)
+				}
+				if len(answers) != 1 || answers[0].Exhausted == nil {
+					t.Fatalf("the hook was told %+v, want one exhausted answer", answers)
+				}
+				ex := answers[0].Exhausted
+				if !ex.ResetAt.Equal(instant) {
+					t.Errorf("the instant read back as %v, want %v", ex.ResetAt, instant)
+				}
+				if len(ex.Tried) != 2 || ex.Tried[0].Name != "cred-a" || ex.Tried[0].Reason != credsvc.ReasonExhausted ||
+					ex.Tried[1].Name != "cred-b" || ex.Tried[1].Tier != credsvc.TierB {
+					t.Errorf("the tried list read back as %+v", ex.Tried)
+				}
+				if ex.Action != tc.want {
+					t.Errorf("the action read back as %q, want %q", ex.Action, tc.want)
+				}
+				if !ex.ResumeAt.Equal(tc.wantRes) {
+					t.Errorf("the resume instant read back as %v, want %v", ex.ResumeAt, tc.wantRes)
+				}
+				if detail := haltDetail(t, gw); detail != "" {
+					t.Errorf("an exhausted answer halted the run: %q", detail)
+				}
+			})
 		}
 	})
 

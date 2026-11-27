@@ -1218,7 +1218,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			if due {
 				continue
 			}
-			s.refuseSelection(ctx, w, id, err, tried)
+			s.refuseSelection(ctx, w, id, err, tried, cl.stage)
 			return
 		}
 		if sent[c.Name] {
@@ -1815,7 +1815,13 @@ const waitFloor = 15 * time.Second
 // typed wait carries it structurally (ExhaustedUntil), and a refusal that
 // halts carries it in the same field of the same body (WriteWireError), so a
 // run reading either finds the same list in the same place.
-func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id Identity, err error, tried []Tried) {
+// stage is whether the caller sent the stage header, and it is the one fact
+// that decides whether the exhausted answer carries the pause's own members
+// (C3's PauseMemberAction, R24/F57): a gateway of a release behind decodes the
+// refusal strictly, so a member it does not know would halt a run this release
+// means to pause. A caller that sent no stage is answered as it always was, and
+// its run waits in its job.
+func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id Identity, err error, tried []Tried, stage bool) {
 	var until *creds.ExhaustedUntil
 	if errors.As(err, &until) {
 		now := s.now()
@@ -1831,6 +1837,15 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 			s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 		}
 		ans := ExhaustedUntil{ResetAt: reset, Tried: tried}
+		if stage {
+			// The action is this service's decision (R19) and it is recorded
+			// here, before the answer leaves: a run that takes a pause and then
+			// posts /pause is honoured against the answer this call gave it and
+			// not against a second decision taken later (pause.go's take).
+			if b, ok := callSlipOf(ctx); ok && b.slip != nil {
+				ans.Action, ans.ResumeAt = s.answerExhausted(ctx, id.Slug, id.Run, b.slip.Resumes, b.slip.Launcher, now, reset)
+			}
+		}
 		// The selection's refusal is a refusal like every other and leaves the
 		// same diagnosis (logRefusal). The message is read off the very struct
 		// the answer is written from, so the run and the operator read one

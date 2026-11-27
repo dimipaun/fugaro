@@ -1535,6 +1535,17 @@ func (a *Authenticator) VerifyOrchestrator(ctx context.Context, tok string) (str
 	return account, nil
 }
 
+// OrchestratorInstalled reports whether this installation runs a resident
+// orchestrator at all (D3186): an installation whose roster of orchestrator
+// accounts is empty has nobody to resume a paused run, so a project served by
+// one suspends nothing and its exhausted runs halt where they always did.
+//
+// It is the roster alone and never the project's own switch, which is the other
+// half and is read from the published policy (OrchestratorOn): a switch a
+// person turned off is a project's decision, and an installation that names no
+// orchestrator has no decision to make.
+func (a *Authenticator) OrchestratorInstalled() bool { return len(a.orchestratorAccounts) > 0 }
+
 // VerifyBuildCaller admits the caller of the build route (buildtoken.go), or
 // refuses it with ErrUnverifiedJob (the caller is not one of the installation's
 // build service accounts) or ErrUnavailable (the key set could not be read). It

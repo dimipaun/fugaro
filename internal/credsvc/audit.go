@@ -485,7 +485,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposePoolDesignate, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue,
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposePoolDesignate, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue, PurposePause,
 		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
 		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken, PurposeBuild,
 		PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke:
