@@ -200,10 +200,12 @@ func TestSettingsOwnerMovesLeaveTheRefusalAlone(t *testing.T) {
 // (docs/config-ownership, D2613): they keep the owner token `accounts`, the
 // family whose command K1 adds, so the generic path refuses them in that
 // family's name — and since K1 landed, in the writer table's own sentence,
-// which names `fugaro accounts cascade set` rather than the token alone. The
-// owner is what decides that: `settingsRefuseRow` asks the family first, so
-// what the reader sees is the writer's line and never the allowlist's, which
-// `credentials.` left with K1 (settingsGenericPrefixes).
+// which names a command rather than the token alone: `fugaro accounts cascade
+// set` for the four members it still writes, and `fugaro routing set` for the
+// two R4 retires, whose flag the command refuses (MG4). The owner is what
+// decides that: `settingsRefuseRow` asks the family first, so what the reader
+// sees is the writer's line and never the allowlist's, which `credentials.`
+// left with K1 (settingsGenericPrefixes).
 //
 // The row's Layers stay the policy node's alone: the carrier N1 added is the
 // key K1's command edits (`credential_cascade.*`), not a settings layer, and a
@@ -237,12 +239,19 @@ func TestGenericPathRefusesTheCascadeRows(t *testing.T) {
 		}
 		// K1's registration is what the sentence is read for: the refusal names
 		// the command that writes the key, which is the accounts family's and one
-		// spelling of the family token the head carries.
-		if command := settingsFamilyCommands["accounts"]; !strings.Contains(err.Error(), "is written by "+command) {
-			t.Errorf("%s: the write refuses it in %v, and the six are refused in `%s`'s name (D2613)", key, err, command)
+		// spelling of the family token the head carries. The two members R4
+		// retires answer with the routing command instead (MG4): `accounts
+		// cascade set` refuses `--fallback` and `--wait-threshold`, and the line
+		// a refusal prints has to run.
+		head, line := "is written by "+settingsFamilyCommands["accounts"], "run `fugaro accounts cascade set "
+		if accountsCascadeRetiredLeaf(strings.TrimPrefix(key, "credentials.")) {
+			head, line = "is written by fugaro routing set", "run `fugaro routing set "
 		}
-		if !strings.Contains(err.Error(), "run `fugaro accounts cascade set ") {
-			t.Errorf("%s: the refusal does not name the command K1 registers for it: %v", key, err)
+		if !strings.Contains(err.Error(), head) {
+			t.Errorf("%s: the write refuses it in %v, and the six are refused in the name of the command that owns them (D2613): want %q", key, err, head)
+		}
+		if !strings.Contains(err.Error(), line) {
+			t.Errorf("%s: the refusal does not print the line of the command that owns the write now (%q): %v", key, line, err)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/settings"
 )
 
 // This file is MG4 of docs/model-credentials-routing/implementation-plan.md: the
@@ -185,4 +186,37 @@ func TestAccountsCommandsWriteNoAccess(t *testing.T) {
 			t.Errorf("the member the cascade still owns was not written:\n%s", got)
 		}
 	})
+}
+
+// TestRetiredRowsNameTheRoutingCommand is the settings path's half of the same
+// change: a retired key's row keeps answering — a row no writer answers for
+// leaves the generic refusal printing a family a person would have to look up
+// (W3) — and the line it answers with is the routing command's, which runs,
+// rather than the retired command's, which refuses.
+func TestRetiredRowsNameTheRoutingCommand(t *testing.T) {
+	for _, key := range []string{
+		"crafts.coder.access",
+		"model_grades.strong.access",
+		"layer.defaults.model_grades.strong.access",
+		"credential_cascade.fallback",
+		"credentials.fallback",
+		"credential_cascade.wait_threshold",
+		"credentials.wait_threshold",
+	} {
+		t.Run(key, func(t *testing.T) {
+			w, ok := settings.WriterOf(key)
+			if !ok || w.Command != "fugaro routing set" {
+				t.Fatalf("the writer is %+v (found %v), want the command that writes what replaced the key", w, ok)
+			}
+			sentence := settingsRefusalNamesTheWriter(key, settings.Row{}, w)
+			if !strings.Contains(sentence, "run `fugaro routing set ") {
+				t.Errorf("the refusal prints no routing line, so it hands a person no way forward: %s", sentence)
+			}
+			for _, retired := range []string{"accounts craft set", "accounts grade set", "accounts cascade set"} {
+				if strings.Contains(sentence, retired) {
+					t.Errorf("the refusal names the retired command %q, which refuses in turn: %s", retired, sentence)
+				}
+			}
+		})
+	}
 }

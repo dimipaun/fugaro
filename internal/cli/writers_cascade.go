@@ -28,8 +28,15 @@ import (
 // key the row is spelled by is the node's path, so a rig holding only files
 // cannot see the write at that spelling. The line a refusal prints is the fact
 // those registrations exist for (item 5 of the owner's direction: a refusal
-// names the working spelling), and `settings set credentials.fallback` is
+// names the working spelling), and `settings set credentials.backoff.cap` is
 // refused with the very command line this file registers.
+//
+// The two members R4 retires, `fallback` and `wait_threshold`, are registered
+// too, and answer with retiredRoutingWriter rather than with `accounts cascade
+// set`: the flag that wrote one is refused (MG4 of
+// docs/model-credentials-routing/), the chain of the routing table's entry is
+// what says what a run does when its credential is exhausted, and a refusal
+// that named the retired flag would print a line that refuses in turn.
 //
 // A template carries the two words ArgvFor fills: settings.ValuePlaceholder
 // where the value goes, and nothing for a key segment — a cascade member's name
@@ -58,6 +65,9 @@ var cascadeWriterRows = func() []modelsWriterRow {
 				leaf.valueWords(modelsValuePlaceholder)...),
 			Store: settings.StoreLocal,
 			Node:  true,
+		}
+		if accountsCascadeRetiredLeaf(leaf.leaf) {
+			writer = retiredRoutingWriter()
 		}
 		rows = append(rows,
 			modelsWriterRow{pattern: "credential_cascade." + leaf.leaf, writer: writer},

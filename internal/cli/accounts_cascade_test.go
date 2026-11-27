@@ -387,8 +387,17 @@ func TestCascadeSetEndsWithTheAfterWriteHook(t *testing.T) {
 // the read and every refusal print — with the command line that writes it, the
 // store the bytes land in, and the node flag that says the published node
 // serves the key besides.
+//
+// The two members R4 retires are the exception, and their line is the routing
+// command's: `accounts cascade set` refuses `--fallback` and `--wait-threshold`
+// (MG4), so a refusal naming them would hand a person a line that refuses in
+// turn. The retired rows' own sentence is pinned in
+// TestRetiredRowsNameTheRoutingCommand (accounts_routing_test.go).
 func TestCascadeWritersRegisterTheirKeys(t *testing.T) {
 	for _, leaf := range cascadeWriterLeaves {
+		if accountsCascadeRetiredLeaf(leaf.leaf) {
+			continue
+		}
 		for _, spelling := range []string{"credential_cascade." + leaf.leaf, "credentials." + leaf.leaf} {
 			w, ok := settings.WriterOf(spelling)
 			if !ok {

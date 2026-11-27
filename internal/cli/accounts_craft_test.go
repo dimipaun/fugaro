@@ -534,10 +534,11 @@ func TestCraftWritesRefuseAForeignLayerNamingTheRight(t *testing.T) {
 // TestAccountsCraftWritersRegisterTheirKeys is the registration's own half
 // (contract §2, §4): every leaf these commands write is registered under its own
 // pattern, with the argv that changes exactly that leaf, the store it lands in
-// and whether the node serves the key besides it. The layer flag is in the two
-// grade templates because a grade has two layers and the argv is the sentence a
-// refusal prints for either of them; a craft and a repository's list carry no
-// flag because they have the one layer and no choice to state.
+// and whether the node serves the key besides it. A craft's access and a
+// grade's are registered too, under the writer of the command that replaced
+// them (MG4): the row keeps answering so that a refusal prints a line, and the
+// line is `fugaro routing set` — the retired command itself would be a line
+// that refuses.
 func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 	for _, tc := range []struct {
 		key     string
@@ -546,11 +547,11 @@ func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 		node    bool
 		argv    string
 	}{
-		{"crafts.coder.access", "fugaro accounts craft set", settings.StoreLocal, true, "accounts craft set coder --access <value>"},
+		{"crafts.coder.access", "fugaro routing set", settings.StoreLocal, true, "routing set <pattern> <source>"},
 		{"node_removals.crafts", "fugaro accounts craft rm", settings.StoreLocal, true, "accounts craft rm <value>"},
 		{"node_removals.craft_credentials", "fugaro accounts rm", settings.StoreLocal, true, "accounts rm <value>"},
-		{"model_grades.strong.access", "fugaro accounts grade set", settings.StoreRepo, false, "accounts grade set strong --access <value> --layer repo"},
-		{"layer.defaults.model_grades.strongest.access", "fugaro accounts grade set", settings.StoreProject, false, "accounts grade set strongest --access <value> --layer project"},
+		{"model_grades.strong.access", "fugaro routing set", settings.StoreLocal, true, "routing set <pattern> <source>"},
+		{"layer.defaults.model_grades.strongest.access", "fugaro routing set", settings.StoreLocal, true, "routing set <pattern> <source>"},
 		{"repos.owner/repo-a.claude_accounts", "fugaro accounts repo add", settings.StoreLocal, true, "accounts repo add owner/repo-a <value>"},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
@@ -585,15 +586,13 @@ func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 			t.Errorf("%s: %+v (found %v), want a writer that states the node serves it (D2615)", key, w, ok)
 		}
 	}
-	// The two grade rows state none, and not for the crafts' reason: the node's
-	// model_grades block is published from the local config's own model_grades
-	// carrier, which no command of this release writes, while these two write the
-	// project layer file and a checkout's own file — and each of those reaches
-	// runs by the stage its own store names (the layer stage, or the merge).
-	for _, key := range []string{"model_grades.strong.access", "layer.defaults.model_grades.strong.access"} {
+	// A retired access row states it too, and for the routing table's own
+	// reason: the entry lands in this machine's config and reaches runs out of
+	// the published policy, so the store alone names no stage (D2615).
+	for _, key := range []string{"crafts.coder.access", "model_grades.strong.access", "layer.defaults.model_grades.strongest.access"} {
 		w, ok := settings.WriterOf(key)
-		if !ok || w.Node {
-			t.Errorf("%s: %+v (found %v), want no node stated beside that store", key, w, ok)
+		if !ok || !w.Node {
+			t.Errorf("%s: %+v (found %v), want a writer that states the node serves it (D2615)", key, w, ok)
 		}
 	}
 }
