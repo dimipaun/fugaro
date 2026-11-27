@@ -2327,3 +2327,101 @@ func TestTaskRejectsANegativeLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestParseCLIVersion: a task stamped with the launcher's release
+// (task.Spec.CLIVersion, D3441) parses and round-trips, and a task without
+// one is byte-identical to what the release before this field wrote, so a
+// runner that has never heard of the field still reads it.
+//
+// Mutation (drop cli_version from Spec, or its json tag): Parse refuses the
+// stamped task as an unknown field, which is the red step.
+func TestParseCLIVersion(t *testing.T) {
+	base := Spec{Version: 1, RunID: "20261127-030000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	data, err := base.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "cli_version") {
+		t.Errorf("no stamp, yet the task has cli_version: %s", data)
+	}
+	stamped := base
+	stamped.CLIVersion = "0.27.0"
+	data, err = stamped.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse of a stamped task: %v", err)
+	}
+	if got.CLIVersion != "0.27.0" {
+		t.Errorf("cli_version round trip = %q, want 0.27.0", got.CLIVersion)
+	}
+}
+
+// TestCLIVersionMustBeSemver: the stamp is a release version or empty and
+// nothing else (D3441, D3449). Empty is every spec written before the field
+// and every launch from a development build, which carries no release to
+// upgrade to; a value the runner could not fetch a release for is refused
+// where it is written.
+func TestCLIVersionMustBeSemver(t *testing.T) {
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20261127-030000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	}
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{
+		{"", true},
+		{"0.27.0", true},
+		{"1.2.3", true},
+		{"v1.2.3", true},
+		{"dev", false},
+		{"1.2", false},
+		{"1.2.3-rc1", false},
+		{"1.2.3+meta", false},
+		{"01.2.3", false},
+		{"1.2.3 ", false},
+	} {
+		s := base()
+		s.CLIVersion = tc.version
+		err := s.Validate()
+		if (err == nil) != tc.ok {
+			t.Errorf("cli_version %q: err = %v, want ok=%v", tc.version, err, tc.ok)
+		}
+	}
+}
+
+// TestSchemaHasCLIVersion pins schemas/task.schema.json to the field: the
+// schema is additionalProperties:false, so a launch that stamped a task
+// would otherwise publish a task.json the schema rejects. Its pattern is
+// releaseVersionRE, the one rule this package applies on read.
+func TestSchemaHasCLIVersion(t *testing.T) {
+	data, err := os.ReadFile("../../schemas/task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := doc.Properties["cli_version"]
+	if !ok {
+		t.Fatal("schemas/task.schema.json has no cli_version property")
+	}
+	var prop struct {
+		Type    string `json:"type"`
+		Pattern string `json:"pattern"`
+	}
+	if err := json.Unmarshal(raw, &prop); err != nil {
+		t.Fatal(err)
+	}
+	if prop.Type != "string" {
+		t.Errorf("cli_version type = %q, want string", prop.Type)
+	}
+	if prop.Pattern != releaseVersionRE.String() {
+		t.Errorf("cli_version pattern = %q, want the Go rule %q", prop.Pattern, releaseVersionRE.String())
+	}
+}
