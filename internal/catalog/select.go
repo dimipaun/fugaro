@@ -339,21 +339,16 @@ type ImageRequest struct {
 	// when it states one, the published node's otherwise (localcfg's keep
 	// rule, D1140). nil when the project has neither.
 	Catalog *config.Catalog
-	// ImageMap is the project's repo-to-image map in its old form (D1906): the
-	// entry each repository's jobs run, keyed by canonical repository name.
-	// nil when the project maps none, or when the map is RepoImages' below. It
-	// is read until X1 has moved every caller onto RepoImages and LegacyMap.
-	ImageMap map[string]string
-	// RepoImages is the project's repository-to-image map in the form L11 gives
-	// it (D3371): the entry each repository's jobs run, keyed by
-	// provider/owner/name (projectpolicy.Canonical). It is looked up under
+	// RepoImages is the project's repository-to-image map (D3371, D1906 before
+	// it): the entry each repository's jobs run, keyed by provider/owner/name
+	// (projectpolicy.Canonical). It is looked up under
 	// Canonical(Provider, Canonical), and Provider is what makes a GitHub and a
 	// Bitbucket repository of one name two keys rather than one. nil when the
 	// project maps none, or when the map is still legacy.
 	RepoImages map[string]string
 	// LegacyMap is the map in its old form — bare repository names, matched
-	// against every provider, as ImageMap was — and it is read only where
-	// RepoImages is nil (R2). A caller fills exactly one of the two, from
+	// against every provider — and it is read only where RepoImages is nil (R2).
+	// A caller fills exactly one of the two, from
 	// projectpolicy.Policy.EffectiveRepoImages.
 	LegacyMap map[string]string
 	// Provider is the provider kind of Canonical's repository ("github",
@@ -591,11 +586,6 @@ func (req ImageRequest) mappedEntry() (string, bool) {
 		return name, ok && name != ""
 	}
 	legacy := req.LegacyMap
-	if len(legacy) == 0 {
-		// ImageMap is the same map under the name it had before this release,
-		// and it is read until X1 has moved every caller onto LegacyMap.
-		legacy = req.ImageMap
-	}
 	if len(legacy) == 0 {
 		return "", false
 	}
