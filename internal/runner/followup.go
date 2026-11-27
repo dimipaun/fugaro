@@ -109,11 +109,13 @@ func (r *run) checkoutFollowUp(ctx context.Context, repo *gitops.Repo) error {
 // request branch, which an earlier agent or a comment could have changed;
 // a review run's (reviewmode.go), which never trusts a reviewed pull
 // request's own tree at all. The base named in it must be the task's ref.
+//
+// The fetch of origin/<ref> is not here but in the tree phase that precedes it
+// (settleTree's checkoutTree): a tree that cannot be fetched is a tree this run
+// does not work on, and reading it here would make a broken checkout look like a
+// configuration this run cannot use.
 func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 	ref := r.spec.Ref
-	if err := r.repo.FetchBase(ctx, ref); err != nil {
-		return nil, fmt.Errorf("fetching base %s: %w", ref, err)
-	}
 	rev := "origin/" + ref
 	data, err := r.repo.ShowFile(ctx, rev, "fugaro.yaml")
 	if err != nil {

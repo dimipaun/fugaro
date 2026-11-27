@@ -778,16 +778,42 @@ func (r *run) checkProjectCheckoutOrigin(ctx context.Context, remote string) err
 	if !project {
 		return nil
 	}
+	// A tree this run may not work on goes and the run clones its own (CF1,
+	// D3440): the refusal a guard below writes is this run's answer to a
+	// checkout the image holds that is not one it can use, and it is the same
+	// answer openBakedCheckout gives one. A local invocation keeps the refusal
+	// instead and stops (discardBakedCheckout, F24).
+	if err := r.settleProjectCheckout(ctx, job, remote); err != nil {
+		return r.discardBakedCheckout(ctx, err)
+	}
+	return nil
+}
+
+// settleProjectCheckout is checkProjectCheckoutOrigin's own work, split out so
+// that every refusal it makes is one answer to one question — is the tree this
+// project job's image holds usable by this run? — and the caller decides what a
+// "no" does (discardBakedCheckout).
+//
+// "No" from the two returns below is the quietest one: the image holds no
+// checkout of this run's repository at all — a project job's image bakes the
+// project's repositories and this run's is not among them — so the run clones
+// its own, and the clone path is the absence of a usable bake and nothing else
+// (openCheckout reads r.cloned, D3440, F35).
+func (r *run) settleProjectCheckout(ctx context.Context, job jobTriple, remote string) error {
 	if err := r.removeOtherBakedRepos(); err != nil {
 		return err
 	}
 	dir := r.bakedProjectCheckout()
 	if dir == "" {
-		return nil // no checkout: the run clones remote
+		// No checkout: the run clones remote.
+		r.cloned = true
+		return nil
 	}
 	repo, err := gitops.Open(dir, nil)
 	if err != nil {
-		return nil // not a checkout after all: the run clones remote
+		// Not a checkout after all: the run clones remote.
+		r.cloned = true
+		return nil
 	}
 	origin, err := strip(repo).BakedGitOrigin(ctx)
 	if err != nil {
