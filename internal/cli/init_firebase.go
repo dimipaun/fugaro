@@ -211,7 +211,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 				return plan, err
 			}
 			if r.o.planOnly {
-				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				fmt.Fprintln(r.w, r.planOnlyLine(filepath.Join(wd.Root, infra.PlanFile)))
 				stop = true
 				return plan, nil
 			}

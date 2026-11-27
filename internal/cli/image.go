@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -237,9 +238,16 @@ func runImageBuildLocal(cmd *cobra.Command, o imageBuildOptions) error {
 	if err := image.DockerAvailable(ctx, nil); err != nil {
 		return &ExitError{Code: ExitUserError, Err: err}
 	}
+	// Docker's own output is a raw stream, so it goes to the run's log and
+	// never to the terminal (D3438): what a person reads is the build's report
+	// on stdout, and the log the failure names below is where the rest is.
+	rep, sink := reporterFor(cmd, "image-build", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
 	res, buildErr := image.BuildLocal(ctx, image.LocalOptions{
 		Root: root, Config: cfg, Workflow: name, Base: base, Tag: tag, Platform: o.platform,
-		Version: Version, Smoke: !o.noSmoke, Env: os.Environ(), Log: cmd.ErrOrStderr(),
+		Version: Version, Smoke: !o.noSmoke, Env: os.Environ(), Log: rep.Log(),
 	})
 	if buildErr != nil {
 		res.Error = buildErr.Error()
@@ -249,11 +257,21 @@ func runImageBuildLocal(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	switch {
 	case buildErr != nil:
-		return &ExitError{Code: ExitUserError, Err: buildErr}
+		return &ExitError{Code: ExitUserError, Err: buildLogErr(buildErr, sink)}
 	case res.Smoke != nil && !res.Smoke.Passed:
 		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s built, but its smoke test failed", res.Image)}
 	}
 	return nil
+}
+
+// buildLogErr names the run's log under a failed local build: docker's own
+// output is in it and on no screen (D3438), so the failure has to say where,
+// or the message points at nothing.
+func buildLogErr(err error, sink report.Sink) error {
+	if sink == nil || sink.Path() == "" {
+		return err
+	}
+	return fmt.Errorf("%w (the log is %s)", err, sink.Path())
 }
 
 // openBuildCloud is the installation a build acts on: the one the caller
