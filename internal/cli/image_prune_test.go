@@ -211,6 +211,140 @@ func TestPruneRemovesTheImageAMigratedRepositoryLeftBehind(t *testing.T) {
 	}
 }
 
+// TestPruneJSONIsWhatItRemoved: `image prune --json` prints the removal as one
+// document and nothing else — the human lines are what it replaces — with the
+// installation, the retention the ages were measured against, and a row per
+// image that names the lock entry by its key and a repository's own image by
+// its build record's object.
+func TestPruneJSONIsWhatItRemoved(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now().UTC()
+	pinned := lockedImage(keyA, now.AddDate(0, 0, -400), map[string]string{"acme/app": "web"})
+	unused := lockedImage(keyB, now.AddDate(0, 0, -40), nil)
+	writeSharedLock(t, f, map[string]imagecheck.LockedImage{keyA: pinned, keyB: unused})
+	own := "us-east5-docker.pkg.dev/proj-1234/fugaro-acme-app/web"
+	rec := imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "web", Image: own,
+		ImageDigest: "sha256:" + strings.Repeat("cd", 32), BuiltAt: now.AddDate(0, 0, -40)}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeBucketFile(t, f, imagecheck.RecordKey(appSlug, "web"), string(data))
+	reg := pruneRig(t, pinned, unused)
+	reg.SetManifest("proj-1234/fugaro-acme-app/web", rec.ImageDigest, rec.ImageDigest)
+
+	out, _, err := execute(t, "image", "prune", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc imagePruneOut
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("not one JSON document: %v\n%s", err, out)
+	}
+	if doc.Version != 1 || doc.Project != "aurora" || doc.RetentionDays != 30 {
+		t.Errorf("the document's head = %+v, want version 1, the project and images.retention_days", doc)
+	}
+	if doc.DryRun {
+		t.Error("the document says dry_run on a run that removed the images")
+	}
+	if doc.Count != 2 || len(doc.Images) != 2 {
+		t.Fatalf("the document lists %d of %d images, want the two eligible ones:\n%s", len(doc.Images), doc.Count, out)
+	}
+	rows := map[string]prunedImageRow{}
+	for _, r := range doc.Images {
+		switch {
+		case r.Key != "" && r.Record != "":
+			t.Errorf("the row %+v names a lock entry and a record", r)
+		case r.Key != "":
+			rows[r.Key] = r
+		case r.Record != "":
+			rows[r.Record] = r
+		default:
+			t.Errorf("the row %+v names neither a lock entry nor a record", r)
+		}
+	}
+	lock, ok := rows[keyB]
+	if !ok {
+		t.Fatalf("no row for the lock entry nothing points at: %+v", doc.Images)
+	}
+	if lock.Image != sharedImageRef(keyB) || lock.Digest != unused.Digest || !lock.Since.Equal(unused.LastUsedAt) {
+		t.Errorf("the lock entry's row = %+v, want %s at %s since %s", lock, sharedImageRef(keyB), unused.Digest, unused.LastUsedAt)
+	}
+	repo, ok := rows[imagecheck.RecordKey(appSlug, "web")]
+	if !ok {
+		t.Fatalf("no row for the migrated repository's own image: %+v", doc.Images)
+	}
+	if repo.Image != own || repo.Digest != rec.ImageDigest || !repo.Since.Equal(rec.BuiltAt) {
+		t.Errorf("the record's row = %+v, want %s at %s since %s", repo, own, rec.ImageDigest, rec.BuiltAt)
+	}
+	if _, ok := rows[keyA]; ok {
+		t.Error("the document lists the image a job points at")
+	}
+	if strings.Contains(out, "images removed (") {
+		t.Errorf("--json printed the human summary too:\n%s", out)
+	}
+}
+
+// TestPruneJSONDryRunRemovesNothing: the document is the whole of what --json
+// prints, and --dry-run removes nothing whether or not it is asked with it.
+func TestPruneJSONDryRunRemovesNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now().UTC()
+	old := lockedImage(keyA, now.AddDate(0, 0, -31), nil)
+	fresh := lockedImage(keyB, now.AddDate(0, 0, -29), nil)
+	writeSharedLock(t, f, map[string]imagecheck.LockedImage{keyA: old, keyB: fresh})
+	reg := pruneRig(t, old, fresh)
+
+	out, _, err := execute(t, "image", "prune", "--json", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc imagePruneOut
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("not one JSON document: %v\n%s", err, out)
+	}
+	if !doc.DryRun {
+		t.Error("the document does not say dry_run on a dry run")
+	}
+	if doc.Count != 1 || len(doc.Images) != 1 || doc.Images[0].Key != keyA {
+		t.Errorf("the document = %+v, want the one entry older than the retention", doc)
+	}
+	if got := reg.Deleted(); len(got) != 0 {
+		t.Errorf("--dry-run deleted %v", got)
+	}
+	if lock := readLockOf(t, f); len(lock.Images) != 2 {
+		t.Errorf("--dry-run left %d entries, want both", len(lock.Images))
+	}
+	if strings.Contains(out, "nothing was removed") || strings.Contains(out, "to remove (") {
+		t.Errorf("--json printed the human dry-run lines too:\n%s", out)
+	}
+}
+
+// TestPruneJSONWithNoSharedImages: an installation with no lock at all is the
+// same document with an empty list, rather than the note the human view
+// prints.
+func TestPruneJSONWithNoSharedImages(t *testing.T) {
+	newCloudFixture(t)
+
+	out, _, err := execute(t, "image", "prune", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc imagePruneOut
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("not one JSON document: %v\n%s", err, out)
+	}
+	if doc.Version != 1 || doc.Project != "aurora" || doc.Count != 0 || len(doc.Images) != 0 {
+		t.Errorf("the document = %+v, want the installation and no images", doc)
+	}
+	if !strings.Contains(out, `"images": []`) {
+		t.Errorf("the empty list is not an empty list:\n%s", out)
+	}
+	if strings.Contains(out, "nothing to prune") {
+		t.Errorf("--json printed the human note too:\n%s", out)
+	}
+}
+
 // recordBucketOf is the fixture's runs bucket, opened as the record bucket
 // the commands read and write it through.
 func recordBucketOf(t *testing.T, f *cloudFixture) *blobx.Bucket {
