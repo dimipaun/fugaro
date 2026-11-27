@@ -778,30 +778,85 @@ func (r *run) checkProjectCheckoutOrigin(ctx context.Context, remote string) err
 	if !project {
 		return nil
 	}
+	// A tree this run may not work on goes and the run clones its own (CF1,
+	// D3440): the refusal a guard below writes is this run's answer to a
+	// checkout the image holds that is not one it can use, and it is the same
+	// answer openBakedCheckout gives one. A local invocation keeps the refusal
+	// instead and stops (discardBakedCheckout, F24).
+	//
+	// Only a refusal about the tree goes that way. What settleProjectCheckout
+	// fails with besides those is the run's own machinery — the repositories the
+	// image baked beside this run's, which it could not remove, and a state
+	// directory that would sit inside the checkout the agent works in — and that
+	// ends the run rather than sending it to clone its own: neither is a tree to
+	// log a line about and clone over, and both end the run in openBakedCheckout,
+	// which asks the same questions of the other job class.
+	err := r.settleProjectCheckout(ctx, job, remote)
+	if err == nil {
+		return nil
+	}
+	var unusable treeUnusable
+	if !errors.As(err, &unusable) {
+		return err
+	}
+	return r.discardBakedCheckout(ctx, err)
+}
+
+// treeUnusable marks the failures of settleProjectCheckout that are about the
+// tree the image holds and not about the run's own machinery: the checkout is
+// another repository's, it cannot be read, or it cannot be reset. Those are the
+// ones this run answers by discarding the tree and cloning its own (CF1, D3440),
+// and the marker is what tells them from the rest. It wraps, so the text a
+// reader of the run's log sees is the refusal's own — why the tree went, not
+// that a marker carried it — and errors.Is and errors.As keep answering what
+// they answered before it existed.
+type treeUnusable struct{ err error }
+
+func (e treeUnusable) Error() string { return e.err.Error() }
+
+func (e treeUnusable) Unwrap() error { return e.err }
+
+// settleProjectCheckout is checkProjectCheckoutOrigin's own work, split out so
+// that the caller decides what a "no" does (discardBakedCheckout). Two kinds of
+// failure come out of it, and treeUnusable is what tells them apart: the
+// refusals about the tree this project job's image holds — is it one this run can
+// use? — which the caller answers by discarding it, and the failures of the run's
+// own machinery, which end the run instead.
+//
+// "No" from the two returns below is the quietest one: the image holds no
+// checkout of this run's repository at all — a project job's image bakes the
+// project's repositories and this run's is not among them — so the run clones
+// its own, and the clone path is the absence of a usable bake and nothing else
+// (openCheckout reads r.cloned, D3440, F35).
+func (r *run) settleProjectCheckout(ctx context.Context, job jobTriple, remote string) error {
 	if err := r.removeOtherBakedRepos(); err != nil {
 		return err
 	}
 	dir := r.bakedProjectCheckout()
 	if dir == "" {
-		return nil // no checkout: the run clones remote
+		// No checkout: the run clones remote.
+		r.cloned = true
+		return nil
 	}
 	repo, err := gitops.Open(dir, nil)
 	if err != nil {
-		return nil // not a checkout after all: the run clones remote
+		// Not a checkout after all: the run clones remote.
+		r.cloned = true
+		return nil
 	}
 	origin, err := strip(repo).BakedGitOrigin(ctx)
 	if err != nil {
-		return fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)
+		return treeUnusable{fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)}
 	}
 	// The image's own configuration is not the run's, and its origin is the one
 	// line of it this run quotes: registered before anything can print it, as
 	// the job's remote and a work-directory checkout's are (bootstrap).
 	r.addRemoteSecrets(origin)
 	if err := remoteAdmissionErr(origin, job.Provider, r.spec.Repo, r.d.Store.Slug()); err != nil {
-		return fmt.Errorf("the checkout this run found at %s is not this run's repository (origin %s): %w", dir, remoteDisplay(origin), err)
+		return treeUnusable{fmt.Errorf("the checkout this run found at %s is not this run's repository (origin %s): %w", dir, remoteDisplay(origin), err)}
 	}
 	if err := strip(repo).ResetBakedGit(ctx, remote, r.bakedHooksDir()); err != nil {
-		return fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)
+		return treeUnusable{fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)}
 	}
 	if dir == r.d.WorkDir {
 		return nil // already the work directory: there is nothing to adopt
@@ -815,7 +870,7 @@ func (r *run) checkProjectCheckoutOrigin(ctx context.Context, remote string) err
 	// refusal was about — because the run adopts the per-slug directory and
 	// never looks at the work directory again.
 	if err := r.refuseForeignWorkDirCheckout(ctx, job); err != nil {
-		return err
+		return treeUnusable{err}
 	}
 	// From here the checkout this run works on is this one, as it is for a
 	// per-repository job that adopts its own baked path (openBakedCheckout),
@@ -974,26 +1029,66 @@ func (r *run) bakedHooksDir() string {
 //
 // A run in a per-repository job keeps the phase-1 answer: the origin of a
 // checkout already in the work directory, else the job's FUGARO_REMOTE.
+//
+// A cloud run in that class whose bake went — the tree the image held was
+// another repository's or could not be read, so discardBakedCheckout removed it
+// (CF1, D3440) — and whose environment names no remote at all has neither: the
+// deployer writes FUGARO_REMOTE only on a job whose image holds no checkout of
+// this repository (a clone or shared workflow's, a prebuilt entry's), so a job
+// whose image baked one carries none, and the bake was the only thing that named
+// the repository. Its URL is computed instead, on the same three inputs and
+// through the same helper the project-job branch calls (policyCloneURL) —
+// task.json's repository, the provider kind this run's own slug derives, and the
+// project's clone URL for the repository when the policy names one
+// (repourl.CloneURL, which refuses anything that is not this repository's URL on
+// its provider's host) — so a run that falls back clones its own repository and
+// can be sent nowhere else, and only one whose tree went does (r.bakeDiscarded):
+// what a local invocation and a job that still holds its bake clone from is
+// their caller's or their job's to name (F24), and such a run stops with
+// "FUGARO_REMOTE is empty" rather than reaching for a URL nothing of its own
+// named.
 func (r *run) cloneURL(ctx context.Context) (string, error) {
 	job, project := r.projectJob()
-	if !project {
-		return r.originURL(ctx), nil
+	if project {
+		return r.policyCloneURL(ctx, job.Provider, fmt.Sprintf("on the job profile %q", job.Profile))
 	}
+	if remote := r.originURL(ctx); remote != "" {
+		return remote, nil
+	}
+	if !r.bakeDiscarded {
+		return "", nil
+	}
+	kind, ok := providerForSlug(r.d.Store.Slug(), r.spec.Repo)
+	if !ok {
+		return "", nil
+	}
+	return r.policyCloneURL(ctx, kind, "under "+kind)
+}
+
+// policyCloneURL is where the run of one repository clones it from under one
+// provider kind: task.json's repository, that kind, and the project's clone URL
+// for the repository when the policy names one. Both job classes compute their
+// URL this way — a project job's kind is the one its name pins, a per-repository
+// run's the one its own slug derives (cloneURL) — so both are checked against the
+// same rules the deployer applies (repourl.CloneURL, one function for both) and
+// neither can clone from anything but its own repository. where names the kind
+// in the error, each class in its own terms: the job's profile, or the slug's.
+func (r *run) policyCloneURL(ctx context.Context, kind, where string) (string, error) {
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
 		return "", err
 	}
 	custom := ""
 	if found {
-		canonical, err := projectpolicy.Canonical(job.Provider, r.spec.Repo)
+		canonical, err := projectpolicy.Canonical(kind, r.spec.Repo)
 		if err != nil {
 			return "", fmt.Errorf("the repository this run is for cannot be named in the project's policy: %w", err)
 		}
 		custom = p.CloneURL(canonical)
 	}
-	url, err := repourl.CloneURL(job.Provider, r.spec.Repo, custom)
+	url, err := repourl.CloneURL(kind, r.spec.Repo, custom)
 	if err != nil {
-		return "", fmt.Errorf("the clone URL of this run's repository on the job profile %q: %w", job.Profile, err)
+		return "", fmt.Errorf("the clone URL of this run's repository %s: %w", where, err)
 	}
 	return url, nil
 }
