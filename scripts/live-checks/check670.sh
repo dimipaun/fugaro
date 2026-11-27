@@ -232,10 +232,13 @@ run_bounded() { # run_bounded SECONDS KEY CMD...
   # appended to the first is a file that parses as neither.
   ( trap - ERR; cd "${BOUNDED_CWD:-$CHECKOUT}" || exit 1; exec "$@" ) <"${BOUNDED_STDIN:-/dev/null}" \
     >"$SCRATCH/$key.out" 2>"$SCRATCH/$key.err" &
-  local pid=$! waited=0
+  # The bound is counted in tenths of a second: a whole-second tick made every
+  # command that answers at once cost a second of wall clock, and this check runs
+  # some twenty of them per pass (the test's sixty passes were most of an hour).
+  local pid=$! waited=0 limit=$((secs * 10))
   while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
+    [ "$waited" -lt "$limit" ] || break
+    sleep 0.1
     waited=$((waited + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
