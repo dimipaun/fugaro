@@ -3206,11 +3206,16 @@ func isNewCredsPath(p string) bool {
 //     generation instead of taking one of its own: it is a **field a client
 //     writes**, which is J5r's own reason, but generation 11 is in no release —
 //     no shipped binary deploys a generation-11 document without the field — so
-//     nothing on an installation is refused by the addition, and the next
-//     generation is the front agent's own turn (P5.4.3). An installation that
-//     already carries a generation-11 document converges the way any document
-//     difference does: `fugaro update`'s rules stage redeploys when the marker
-//     is this generation and the document is not this binary's.
+//     nothing on an installation is refused by the addition, and **P5.4.3 — the
+//     task that ships the field's denials — states the number it took: 11**,
+//     because the document does not change with it. What P5.4.3 adds is the
+//     directed case set that proves the fence holds
+//     (`emulator_front_agent_test.go`), not a second generation: a generation
+//     that records no document difference is what this constant's own comment
+//     refuses. An installation that already carries a generation-11 document
+//     converges the way any document difference does: `fugaro update`'s rules
+//     stage redeploys when the marker is this generation and the document is not
+//     this binary's.
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -3230,7 +3235,7 @@ func isNewCredsPath(p string) bool {
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
 	if projectpolicy.RulesVersion != 11 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 11: the optional `brief` a launch may carry joins generation 11's own content rather than taking a generation (mobile plan task P5.4.2; version.go's generation-11 block says why)", projectpolicy.RulesVersion)
+		t.Errorf("projectpolicy.RulesVersion = %d, want 11: the optional `brief` a launch may carry joins generation 11's own content rather than taking a generation, and P5.4.3 (its denials) states that 11 is the number it took (mobile plan tasks P5.4.2 and P5.4.3; version.go's generation-11 block says why)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)
