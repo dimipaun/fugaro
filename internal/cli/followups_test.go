@@ -1309,7 +1309,7 @@ func TestFollowUpsWithoutAnAppIDNamesBothPlaces(t *testing.T) {
 	if ExitCode(errors.New(err)) == 0 {
 		t.Fatalf("the refusal reads as a success: %s", err)
 	}
-	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo acme/app --github-app-id", providers.EnvGitHubAppID} {
+	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo --github-app-id", providers.EnvGitHubAppID} {
 		if !strings.Contains(err, want) {
 			t.Errorf("the refusal does not name %q: %s", want, err)
 		}

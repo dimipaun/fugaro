@@ -6058,7 +6058,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 			var drift *driftError
 			if errors.As(err, &drift) {
 				why = drift.short()
-				fix = "\n  fix: run " + selfCommand() + " " + r.o.doorName() + " --repo " + spec.Name + " in its checkout, so the mounts and the grants agree again"
+				fix = "\n  fix: run " + selfCommand() + " " + r.o.doorName() + " --repo in " + spec.Name + "'s checkout, so the mounts and the grants agree again"
 			}
 			fmt.Fprintf(r.w, "GitHub App check for %s was not made: %s%s\n  The first image build is not offered until this is fixed (nothing was billed).\n", spec.Name, why, fix)
 			return why

@@ -193,7 +193,7 @@ func TestCatalogGitHubAppIDFromTheConfigOrTheEnvironment(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v: no App ID anywhere is a user error", ExitCode(err), err)
 	}
-	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo acme/app --github-app-id", providers.EnvGitHubAppID} {
+	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo --github-app-id", providers.EnvGitHubAppID} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %s: %v", want, err)
 		}
@@ -746,7 +746,7 @@ func TestImageBuildCatalogGitHubWithoutAnAppID(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v: a missing App ID is a user error", ExitCode(err), err)
 	}
-	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo acme/app --github-app-id", providers.EnvGitHubAppID} {
+	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo --github-app-id", providers.EnvGitHubAppID} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %s: %v", want, err)
 		}

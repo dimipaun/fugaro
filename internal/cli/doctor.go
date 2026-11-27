@@ -1225,7 +1225,7 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 				problem = drift.short()
 			}
 			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: problem,
-				Fix: "run " + selfCommand() + " update --repo " + quoteWord(repo) + " in its checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
+				Fix: "run " + selfCommand() + " update --repo in " + quoteWord(repo) + "'s checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
 			continue
 		}
 		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: keyID, Notice: notice})
@@ -1696,7 +1696,7 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 	}
 	return &doctorCheck{ID: "project-secret-scope-stale", Severity: "warning",
 		Problem: strings.Join(stale, "; ") + ": the deployed job was applied before the secret's scope changed",
-		Fix:     "run " + selfCommand() + " update --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
+		Fix:     "run " + selfCommand() + " update --repo in " + quoteWord(facts.repo) + "'s checkout, in your own terminal, to reapply the repository, so the next run mounts the copy Fugaro resolves"}
 }
 
 // doctorSecretScopeChecks are doctor's "secret-scope" pair (plan Task 2.3
@@ -1856,7 +1856,7 @@ func doctorProjectSecretAccessorChecks(ctx context.Context, lc *localcfg.Config,
 		slices.Sort(extra)
 		cmds := make([]string, len(extra))
 		for i, repo := range extra {
-			cmds[i] = "re-run " + selfCommand() + " update --repo " + quoteWord(repo) + " and pass --allow-delete"
+			cmds[i] = "re-run " + selfCommand() + " update --repo in " + quoteWord(repo) + "'s checkout and pass --allow-delete"
 		}
 		out = append(out, doctorCheck{ID: "project-secret-extra-accessors", Severity: "warning",
 			Problem: fmt.Sprintf("project secret %s can still be read by %s, which its allow_data_to no longer lists: the grant stays live until each of those repositories is applied again",

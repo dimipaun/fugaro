@@ -74,8 +74,8 @@ func repoGitHubAppID(lc *localcfg.Config, repo string, getenv func(string) strin
 	if id := getenv(providers.EnvGitHubAppID); id != "" {
 		return id, nil
 	}
-	return "", userErr("%s has no GitHub App ID: record it in the project's local config as repos.%s.github_app_id with %s update --repo %s --github-app-id <id>, or export %s (the App's numeric ID, not a secret)",
-		pluginwire.Printable(repo), pluginwire.Printable(repo), selfCommand(), pluginwire.Printable(repo), providers.EnvGitHubAppID)
+	return "", userErr("%s has no GitHub App ID: record it in the project's local config as repos.%s.github_app_id with %s update --repo --github-app-id <id> in a checkout of it, or export %s (the App's numeric ID, not a secret)",
+		pluginwire.Printable(repo), pluginwire.Printable(repo), selfCommand(), providers.EnvGitHubAppID)
 }
 
 // catalogAppKeySecretID is the secret a catalog build reads the App's private

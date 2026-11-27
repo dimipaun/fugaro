@@ -1389,7 +1389,7 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 	if !proxied {
 		return []doctorCheck{{ID: id, Severity: "info",
 			Problem: fmt.Sprintf("%s is a Bitbucket repository that is not proxied: its jobs mount their own %s, so a run of it holds a credential that reaches the repository itself (D462)", printable, config.BitbucketSecret),
-			Fix:     "to broker it instead, add it to the local config's project_secrets entry for " + config.BitbucketSecret + " (allow_data_to with " + printable + ", proxy: true), publish the policy, then re-apply the repository: " + selfCommand() + " update --repo " + quoteWord(repo)}}
+			Fix:     "to broker it instead, add it to the local config's project_secrets entry for " + config.BitbucketSecret + " (allow_data_to with " + printable + ", proxy: true), publish the policy, then re-apply the repository: run " + selfCommand() + " update --repo in " + quoteWord(repo) + "'s checkout"}}
 	}
 	if !flipServes(lc, repo, auth) {
 		return []doctorCheck{{ID: id, Severity: "info",
@@ -1458,7 +1458,7 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 	}
 	return []doctorCheck{{ID: id, Severity: "warning",
 		Problem: fmt.Sprintf("%s is proxied, and %s still mounts %s: the job was applied before the flip, so its account's accessor is gone and the next deploy of it fails on the mount", printable, strings.Join(mounting, ", "), config.BitbucketSecret),
-		Fix:     "re-apply the repository so the jobs are deployed without the mount: " + selfCommand() + " update --repo " + quoteWord(repo)}}
+		Fix:     "re-apply the repository so the jobs are deployed without the mount: run " + selfCommand() + " update --repo in " + quoteWord(repo) + "'s checkout"}}
 }
 
 // flipServes is the flip's own switch for one repository, judged through the

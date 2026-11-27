@@ -492,7 +492,7 @@ func reposStatusRowImageOf(ctx context.Context, lc *localcfg.Config, row reposVi
 	if len(unresolved) > 0 {
 		return doctorCheck{ID: reposStatusRowImage,
 			Problem: fmt.Sprintf("%s's image is not resolved: %s", pluginwire.Printable(row.Canonical), strings.Join(unresolved, "; ")),
-			Fix:     selfCommand() + " update --repo " + quoteWord(reposViewLocalNameOf(row.Canonical, row.Local.Key)) + " re-resolves it, or fix the image_name: or needs: line the repository's fugaro.yaml names"}
+			Fix:     selfCommand() + " update --repo in " + quoteWord(reposViewLocalNameOf(row.Canonical, row.Local.Key)) + "'s checkout re-resolves it, or fix the image_name: or needs: line the repository's fugaro.yaml names"}
 	}
 	problem := fmt.Sprintf("%s runs %s, chosen by the %s", pluginwire.Printable(row.Canonical), imageEntryWord(row), imageSourceWord(row.ImageSource))
 	// Only a catalog entry a Fugaro build writes has a build record to read: a
@@ -681,11 +681,11 @@ func reposStatusRowBrokerOf(lc *localcfg.Config, row reposViewRepo) doctorCheck 
 	case r.CredentialsServiceReady == nil:
 		return doctorCheck{ID: reposStatusRowBroker, Severity: "warning",
 			Problem: fmt.Sprintf("the installation has the credentials service (%s) and nothing records whether %s is served by it: no apply has run at this repository's own root since the service was deployed", infra.CredentialsServiceName, p),
-			Fix:     selfCommand() + " update --repo " + quoteWord(row.Canonical)}
+			Fix:     selfCommand() + " update --repo in " + quoteWord(row.Canonical) + "'s checkout"}
 	case !r.CredentialsServiceOn():
 		return doctorCheck{ID: reposStatusRowBroker, Severity: "warning",
 			Problem: fmt.Sprintf("%s's own root recorded that the credentials service does NOT serve it: the service is deployed and this repository's runs hold their own credential, which is what an agent.auth other than cascade gives it", p),
-			Fix:     selfCommand() + " update --repo " + quoteWord(row.Canonical) + " re-applies it once its fugaro.yaml runs with agent.auth: cascade"}
+			Fix:     selfCommand() + " update --repo in " + quoteWord(row.Canonical) + "'s checkout re-applies it once its fugaro.yaml runs with agent.auth: cascade"}
 	}
 	return doctorCheck{ID: reposStatusRowBroker, OK: true, Severity: "info",
 		Problem: fmt.Sprintf("recorded: the credentials service serves %s", p)}
@@ -763,7 +763,7 @@ func reposStatusRowJobGrantOf(ctx context.Context, lc *localcfg.Config, row repo
 	if !slices.ContainsFunc(jobs, func(j doctorListedJob) bool { return j.Labels[gcp.LabelRepo] == slug }) {
 		return doctorCheck{ID: reposStatusRowJobGrant,
 			Problem: fmt.Sprintf("%s has no job in %s: the readiness gate plans none for a workflow mounting a secret with no enabled version, so an enrolment can look complete and a launch still be refused", p, pluginwire.Printable(lc.Region)),
-			Fix:     selfCommand() + " update --repo " + quoteWord(row.Canonical) + " (store the credential the workflow mounts first, or it plans no job again)"}
+			Fix:     selfCommand() + " update --repo in " + quoteWord(row.Canonical) + "'s checkout (store the credential the workflow mounts first, or it plans no job again)"}
 	}
 	if lc.CredentialsService == nil {
 		return doctorCheck{ID: reposStatusRowJobGrant, OK: true, Severity: "info",
@@ -804,12 +804,12 @@ func reposStatusRowJobGrantOf(ctx context.Context, lc *localcfg.Config, row repo
 	if !matched {
 		return doctorCheck{ID: reposStatusRowJobGrant, Severity: "warning",
 			Problem: fmt.Sprintf("%s's job is deployed, and the installation's profiles name no job account of its own, so whether one may invoke the credentials service is not in this answer", p),
-			Fix:     selfCommand() + " update --repo " + quoteWord(row.Canonical) + " plans its jobs once its fugaro.yaml names a workflow the profile covers"}
+			Fix:     selfCommand() + " update --repo in " + quoteWord(row.Canonical) + "'s checkout plans its jobs once its fugaro.yaml names a workflow the profile covers"}
 	}
 	if !granted {
 		return doctorCheck{ID: reposStatusRowJobGrant,
 			Problem: fmt.Sprintf("%s's job account holds no %s on the credentials service (%s), so a run of it that is on the switch would fail to fetch a model credential", p, runInvokeRoles[0], infra.CredentialsServiceName),
-			Fix:     selfCommand() + " update --repo " + quoteWord(row.Canonical) + " grants its job accounts " + runInvokeRoles[0] + " on the service"}
+			Fix:     selfCommand() + " update --repo in " + quoteWord(row.Canonical) + "'s checkout grants its job accounts " + runInvokeRoles[0] + " on the service"}
 	}
 	return doctorCheck{ID: reposStatusRowJobGrant, OK: true, Severity: "info",
 		Problem: fmt.Sprintf("%s's job is deployed and its job account holds %s on the credentials service", p, runInvokeRoles[0])}
