@@ -203,6 +203,11 @@ type pauseDecision struct {
 //     it;
 //   - the chain has no orchestrator to be resumed by, so a pause here would be
 //     a chain nobody continues (D3186);
+//   - the run's launcher is a service account, whose runs are never resumed: a
+//     slip's owner is a launcher's verified numeric account id and a service
+//     account has none (noGrantForTheOrchestrator), so a pause recorded for one
+//     is a record the resume grant refuses — the stranding this part of the
+//     contract exists to prevent, refused here rather than written there;
 //   - the reset is further away than a chain may stay paused in total
 //     (D3187);
 //   - the pause this would record would take the chain's total past that bound
@@ -211,10 +216,17 @@ type pauseDecision struct {
 //     caller can compute is one a run may be resumed at, and one nearer than
 //     the minimum would spin a chain against a state that has not moved (D3190
 //     as amended).
-func (s *Server) pauseAction(now, reset time.Time, d pauseChain, set pauseSettings) pauseDecision {
+func (s *Server) pauseAction(now, reset time.Time, d pauseChain, set pauseSettings, launcher routing.Principal) pauseDecision {
 	away := reset.Sub(now)
 	if away <= set.waitInJob {
 		return pauseDecision{action: runstore.ActionWait, chain: d}
+	}
+	if launcher.Kind == routing.PrincipalServiceAccount {
+		// The launcher the run's own slip records decides this, and not the
+		// job's: a service account's run has no owner a resumed run's slip
+		// could be written with, so a pause of it would be a chain nothing
+		// resumes (grantResume refuses exactly this record).
+		return pauseDecision{action: runstore.ActionHalt, chain: d}
 	}
 	if !set.resident || away > set.maxPause {
 		return pauseDecision{action: runstore.ActionHalt, chain: d}
@@ -304,7 +316,11 @@ func (b *pauseBook) forget(slug, run string) {
 // strictly, so a member it does not know would halt a run this release means to
 // pause. A caller that sent no stage is answered exactly as it was before this
 // contract existed, actionless, and its run waits in its job.
-func (s *Server) answerExhausted(ctx context.Context, slug, run, resumes string, now, reset time.Time) (runstore.PauseAction, time.Time) {
+//
+// launcher is the run's own launcher, out of the slip the call presents and
+// never out of the job (R8): a run a service account launched is halted rather
+// than paused, because nothing could resume it.
+func (s *Server) answerExhausted(ctx context.Context, slug, run, resumes string, launcher routing.Principal, now, reset time.Time) (runstore.PauseAction, time.Time) {
 	set, err := s.pauseSettingsOf(ctx)
 	if err != nil {
 		// The settings could not be read, which is this service's own state:
@@ -319,7 +335,7 @@ func (s *Server) answerExhausted(ctx context.Context, slug, run, resumes string,
 		s.log.Error("credsvc: the chain of a paused run could not be read", "repository", slug, "run", run, "error", err)
 		return "", time.Time{}
 	}
-	dec := s.pauseAction(now, reset, d, set)
+	dec := s.pauseAction(now, reset, d, set, launcher)
 	if dec.action != runstore.ActionPause {
 		// A wait and a halt are the run's answer and nothing of this service's:
 		// nothing is recorded, because nothing would resume them.

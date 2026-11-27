@@ -78,11 +78,24 @@ func (s *pauses) withoutOrchestrator() {
 	s.policy.shared.OrchestratorEnabled = &off
 }
 
+// personLauncher is the fixture's own run launcher: a person, which is the
+// launcher a run's pause is recorded with and the one a resume is granted to.
+var personLauncher = routing.Principal{Kind: routing.PrincipalPerson, ID: testLauncherSub}
+
 // answerPause is the exhausted answer's own half: what the service decides for
 // the fixture's run when every source is exhausted, and what it records.
 func (s *pauses) answerPause(t *testing.T, resumes string, reset time.Time) (runstore.PauseAction, time.Time) {
 	t.Helper()
-	return s.server.answerExhausted(context.Background(), s.slug, s.run, resumes, s.now, reset)
+	return s.answerPauseAs(t, personLauncher, resumes, reset)
+}
+
+// answerPauseAs is the same answer for a run whose own slip records launcher as
+// its launcher (R8): the launcher is the service's record of the run's grant and
+// never the job's word about itself, and it is what decides whether a pause
+// could ever be resumed.
+func (s *pauses) answerPauseAs(t *testing.T, launcher routing.Principal, resumes string, reset time.Time) (runstore.PauseAction, time.Time) {
+	t.Helper()
+	return s.server.answerExhausted(context.Background(), s.slug, s.run, resumes, launcher, s.now, reset)
 }
 
 // pauseCall is the run's own report that it has saved: the /pause POST under the
@@ -283,6 +296,28 @@ func TestTheActionIsTheServices(t *testing.T) {
 		}
 	})
 
+	t.Run("a service account's run halts", func(t *testing.T) {
+		// The launcher is the run's own slip's, and a service account's run is
+		// never resumed: a slip's owner is a launcher's verified numeric account
+		// id and a service account has none (noGrantForTheOrchestrator), so a
+		// pause recorded for one is a record the resume grant refuses. The
+		// decision halts it rather than stranding the chain.
+		s := newPauses(t, nil)
+		sa := routing.Principal{Kind: routing.PrincipalServiceAccount, ID: testJobSA}
+		a, at := s.answerPauseAs(t, sa, "", s.now.Add(2*time.Hour))
+		if a != runstore.ActionHalt {
+			t.Errorf("the action is %q, want %q: a service account's run has no owner a resumed run's slip could record", a, runstore.ActionHalt)
+		}
+		if !at.IsZero() {
+			t.Errorf("a halt names the instant %v, want none", at)
+		}
+		// A reset the run would wait out is still a wait: it needs nothing of
+		// this service and nothing of a resume.
+		if a, _ := s.answerPauseAs(t, sa, "", s.now.Add(3*time.Minute)); a != runstore.ActionWait {
+			t.Errorf("the action is %q, want %q: a near reset is waited out wherever the run was launched from", a, runstore.ActionWait)
+		}
+	})
+
 	t.Run("a reset beyond max_pause halts", func(t *testing.T) {
 		s := newPauses(t, nil) // defaults: 5m, 30m, 6h
 		a, at := s.answerPause(t, "", s.now.Add(7*time.Hour))
@@ -348,6 +383,45 @@ func TestTheActionIsTheServices(t *testing.T) {
 			t.Errorf("the unstaged answer carries action %q and the instant %v, want neither", unstaged.Action, unstaged.ResumeAt)
 		}
 	})
+}
+
+// TestTheInstantsMemberRidesWithTheAction is the answer's own body: resume_at
+// is written for a pause and for nothing else. A wait, a halt and the
+// actionless answer that carried the member would be a body this release's own
+// gateway refuses ("only a pause carries a resume instant"), which halts a run
+// the service meant to hold in its job, and, for the actionless answer, one a
+// gateway of a release behind refuses too — its reader decodes the refusal
+// strictly, so the member is exactly what R24 and F57 are about. The zero
+// time's milliseconds are a large negative number, which omitempty does not
+// drop, so the member is written only where the decision has an instant.
+func TestTheInstantsMemberRidesWithTheAction(t *testing.T) {
+	instant := time.UnixMilli(1800000000000).UTC()
+	for _, tc := range []struct {
+		name string
+		ans  ExhaustedUntil
+		want string
+	}{
+		{"a pause carries it", ExhaustedUntil{ResetAt: instant, Action: runstore.ActionPause, ResumeAt: instant.Add(30 * time.Minute)},
+			`"resume_at":1800001800000`},
+		{"a wait carries none", ExhaustedUntil{ResetAt: instant, Action: runstore.ActionWait}, ""},
+		{"a halt carries none", ExhaustedUntil{ResetAt: instant, Action: runstore.ActionHalt}, ""},
+		{"the actionless answer carries none", ExhaustedUntil{ResetAt: instant}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			WriteExhaustedUntil(rec, tc.ans, instant)
+			body := rec.Body.String()
+			if got := strings.Contains(body, `"resume_at"`); got != (tc.want != "") {
+				t.Fatalf("the body carries resume_at: %v, want %v: %s", got, tc.want != "", body)
+			}
+			if tc.want != "" && !strings.Contains(body, tc.want) {
+				t.Errorf("the body is %s, want it to carry the instant %s", body, tc.want)
+			}
+			if _, ok, err := ReadExhaustedUntil(rec.Code, rec.Body.Bytes()); err != nil || !ok {
+				t.Errorf("the answer this service wrote is not one its own reader reads (ok %v): %v %s", ok, err, body)
+			}
+		})
+	}
 }
 
 // TestAPauseIsNeverShorterThanTheMinimum is D3190 as amended: a pause is the

@@ -1035,13 +1035,25 @@ func (e ExhaustedUntil) Wire(now time.Time) (status int, hdr http.Header, body [
 	if d := e.ResetAt.Sub(now); d > 0 {
 		hdr.Set("Retry-After", strconv.Itoa(int(math.Ceil(d.Seconds()))))
 	}
+	// The instant rides with a pause and with nothing else, and it is left at
+	// the zero value rather than rendered from a zero time: the zero time's
+	// milliseconds are a large negative number, which omitempty does not drop,
+	// so a wait, a halt and the actionless answer would each carry a resume_at
+	// member — one a gateway of a release behind refuses outright (it decodes
+	// the refusal strictly) and one this release's own gateway refuses as half
+	// of a pause. checkAction admits a pause and only a pause with an instant,
+	// so the guard and the writer say the same thing.
+	var resumeAt int64
+	if e.ResumeAt.UnixMilli() > 0 {
+		resumeAt = e.ResumeAt.UnixMilli()
+	}
 	body, err = json.Marshal(WireError{
 		Error:    ErrorExhaustedUntil,
 		Message:  clipRefusalMessage(e.Error()),
 		ResetAt:  e.ResetAt.UnixMilli(),
 		Tried:    e.Tried,
 		Action:   string(e.Action),
-		ResumeAt: e.ResumeAt.UnixMilli(),
+		ResumeAt: resumeAt,
 	})
 	if err != nil {
 		return 0, nil, nil, fmt.Errorf("credsvc: encoding the exhausted answer: %w", err)

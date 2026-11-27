@@ -1843,7 +1843,7 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 			// posts /pause is honoured against the answer this call gave it and
 			// not against a second decision taken later (pause.go's take).
 			if b, ok := callSlipOf(ctx); ok && b.slip != nil {
-				ans.Action, ans.ResumeAt = s.answerExhausted(ctx, id.Slug, id.Run, b.slip.Resumes, now, reset)
+				ans.Action, ans.ResumeAt = s.answerExhausted(ctx, id.Slug, id.Run, b.slip.Resumes, b.slip.Launcher, now, reset)
 			}
 		}
 		// The selection's refusal is a refusal like every other and leaves the
