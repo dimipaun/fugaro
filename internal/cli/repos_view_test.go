@@ -168,6 +168,32 @@ func TestReposViewImageSourceIsNamedOnce(t *testing.T) {
 	}
 }
 
+// TestReposViewImageReadsRepoImagesByProvider is the reader half of the member
+// `project repos add` writes (R2, R8): a project whose map is repo_images has
+// its row resolved under the repository's own key — provider/owner/name — and
+// under no bare name, so `ls` and `status` name the image a launch of that
+// repository would run. A reader left on lc.ImageMapEffective answers the
+// catalog's default for a repository the command has just mapped, which is the
+// file's own "cannot drift" promise broken the moment the command returns.
+//
+// Mutation (verified, run and restored): resolve the row through
+// lc.ImageMapEffective(p.ImageMap) again — the row reads "base" from "default"
+// and not "tools" from "map".
+func TestReposViewImageReadsRepoImagesByProvider(t *testing.T) {
+	f := newProjectFixture(t, "repo_images: { github/acme/app: tools }\n")
+	viewCatalogNode(t, f.db, []string{"github/acme/app"})
+
+	v := viewOf(t, f.path, f.db, "")
+	r := viewRow(t, v, "github/acme/app")
+	if r.ImageEntry != "tools" || r.ImageSource != reposViewImageMap {
+		t.Errorf("github/acme/app runs %q from %q, want \"tools\" from %q: its key in repo_images is a catalog entry's",
+			r.ImageEntry, r.ImageSource, reposViewImageMap)
+	}
+	if len(r.Workflows) != 1 || r.Workflows[0].Entry != "tools" {
+		t.Errorf("github/acme/app's workflows are %+v, want the one the map gives it (tools)", r.Workflows)
+	}
+}
+
 // A row's base branch is the branch a run of that repository starts from, which
 // is what config.EffectiveBaseBranch resolves — the one function every layer
 // resolves through, handed the same four arguments as launchBaseBranch — and not

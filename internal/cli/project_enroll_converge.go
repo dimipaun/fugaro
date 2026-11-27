@@ -265,7 +265,7 @@ func reposEnrolmentRead(ctx context.Context, out io.Writer, o *projectReposOptio
 	// repository made of": its workflows with the catalog entry each runs, its
 	// base branch, its image and its accounts. See reposEnrolmentRow for why
 	// it is built by reposViewRowOf rather than by newReposView.
-	row, allow, _, err := reposEnrolmentRow(ctx, lc, db, canonical, plan.localKey)
+	row, allow, err := reposEnrolmentRow(ctx, lc, db, canonical, plan.localKey)
 	if err != nil {
 		return plan, err
 	}
@@ -382,12 +382,12 @@ func reposEnrolmentAnchor(lc *localcfg.Config, checkout string) (*anchorEdit, st
 // operator's name otherwise — which is exactly the key the entry about to be
 // written is stored under — so the checkout's fugaro.yaml and its base branch
 // are read from the same place `ls` reads them.
-func reposEnrolmentRow(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, canonical, localKey string) (reposViewRepo, reposViewAllow, map[string]string, error) {
+func reposEnrolmentRow(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, canonical, localKey string) (reposViewRepo, reposViewAllow, error) {
 	allow, cat, imap, projectBase, err := reposViewAllowOf(ctx, lc, db)
 	if err != nil {
-		return reposViewRepo{}, reposViewAllow{}, nil, err
+		return reposViewRepo{}, reposViewAllow{}, err
 	}
-	return reposViewRowOf(ctx, lc, cat, imap, projectBase, canonical, localKey, allow), allow, imap, nil
+	return reposViewRowOf(ctx, lc, cat, imap, projectBase, canonical, localKey, allow), allow, nil
 }
 
 // configRepoKey is this machine's own key for the repository, which is the
