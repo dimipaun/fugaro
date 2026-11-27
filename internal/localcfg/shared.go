@@ -485,6 +485,13 @@ func MergeSharedOptIn(published, local *Config, optIn string) *Config {
 	}
 	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
+	// The shared-image retention is the project layer's and travels with it:
+	// a machine whose own config names none keeps the published value rather
+	// than erasing it, so every operator's machine prunes on the retention the
+	// owner wrote (design §9).
+	if out.Images == nil {
+		out.Images = published.Images
+	}
 	// The published side is stripped of the new spellings for withoutRepoLocalKeys'
 	// reason, one file over: a shared document carrying cache_read_mult would stop
 	// a teammate whose Fugaro is older than this file with an unknown field, which

@@ -264,6 +264,7 @@ var exemptAnswers = map[string]string{
 	"image add":                  "writes one catalog entry into this machine's project config, and prints the entry",
 	"image map set":              "writes one repository-to-image mapping into this machine's project config",
 	"image promote":              "copies a repository's image definition into the catalog, printing its own account by hand",
+	"image prune":                "removes the shared images no job points at that images.retention_days has outlived, and prints each one as it goes",
 	"image rm":                   "removes one catalog entry from this machine's project config, and prints what it dropped",
 	"issue dismiss":              "marks one issue as not worth filing, and prints the mark it wrote",
 	"issue submit":               "shows the issue it would file on GitHub, and files it under --ask",
