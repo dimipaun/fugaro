@@ -48,13 +48,14 @@ func newModelsUseCmd() *cobra.Command {
 			"to review and commit, which is where agent.recipe and a level's effort\n" +
 			"still live. layer.claude_models, the Claude models a project's routes may\n" +
 			"serve, is written as provider=anthropic/<id> at --layer project alone.\n\n" +
-			"A switch is judged the way a launch judges it: a route of the project config\n" +
-			"must claim the model and its allow_data_to must name the repository (every\n" +
-			"repository the project onboards, for a project-layer write), the model must\n" +
-			"be priced, budget.allowed_models must admit it, and the repository's own\n" +
-			"agent.auth and budget must support a provider model. A failure is a refusal\n" +
-			"with nothing written, and the message names the `fugaro models add` that would\n" +
-			"fix a missing claim or price.\n\n" +
+			"A switch is judged the way a launch judges it: the project's routing table\n" +
+			"must route the model to a source the repository may use, a route of the\n" +
+			"project config must claim the model and its allow_data_to must name the\n" +
+			"repository (every repository the project onboards, for a project-layer\n" +
+			"write), the model must be priced, and budget.allowed_models must admit it.\n" +
+			"A failure is a refusal with nothing written, and the message names the\n" +
+			"`fugaro routing set` or `fugaro models add` that would fix a missing entry,\n" +
+			"claim or price.\n\n" +
 			"The command never commits, pushes or opens a pull request — a repository's\n" +
 			"change reaches runs when the owner's own branch is merged to the base branch,\n" +
 			"which is what every run reads.",
