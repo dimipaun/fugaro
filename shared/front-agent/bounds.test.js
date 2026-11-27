@@ -162,6 +162,37 @@ test('an utterance with no words in it is refused rather than forwarded', () => 
   assert.equal(result.code, 'not-understood');
 });
 
+test('an id that is not a database key is refused, and its own characters are what refuse it', () => {
+  // Three branches of the id reader, each reached by its own value rather than
+  // through another field's refusal: a control character, a lone surrogate (half
+  // of a character JSON cannot encode), and the two line separators.
+  for (const id of ['utt\u0001x', 'utt\u007fx', 'utt\uD800', 'utt x', 'utt x']) {
+    const result = turn({ transcript: [said(id, 'x', T0)], reply: null, now: T0 + MINUTE });
+    assert.equal(result.code, 'bad-key', JSON.stringify(id));
+    assert.equal(result.field, 'transcript[0].id', JSON.stringify(id));
+  }
+});
+
+test('a text carrying a lone surrogate or a line separator is refused, and the brief with it', () => {
+  const lone = 'half a character: \uD800';
+  const separator = `a line separator`;
+  const reply = { id: 'rep_1', text: 'draft', brief: BRIEF };
+  assert.equal(turn({ transcript: [said('utt_1', 'x', T0)], reply: { ...reply, text: lone }, now: T0 + MINUTE }).code, 'bad-character');
+  assert.equal(turn({ transcript: [said('utt_1', 'x', T0)], reply: { ...reply, text: separator }, now: T0 + MINUTE }).code, 'bad-character');
+  assert.equal(turn({ transcript: [said('utt_1', 'x', T0)], reply: { ...reply, brief: `# Task: t\uD800\nx` }, now: T0 + MINUTE }).code, 'bad-character');
+  assert.equal(turn({ transcript: [said('utt_1', 'x', T0)], reply: { ...reply, brief: `# Task: t \nx` }, now: T0 + MINUTE }).code, 'bad-character');
+  // The title is the one the read-back speaks verbatim, so the separator rule is
+  // load-bearing there rather than cosmetic.
+  assert.equal(turn({ transcript: [said('utt_1', 'x', T0)], reply: { ...reply, brief: `# Task: two lines\nx` }, now: T0 + MINUTE }).code, 'bad-character');
+});
+
+test('a brief whose title is empty is refused: a run with no title never leaves', () => {
+  const reply = { id: 'rep_1', text: 'draft', brief: '# Task:   \nMove the guide.' };
+  const result = turn({ transcript: [said('utt_1', 'x', T0, { target: REPO })], reply, now: T0 + MINUTE });
+  assert.equal(result.code, 'bad-brief');
+  assert.equal(result.field, 'reply.brief');
+});
+
 test('an agent reply with nothing to reply to is not a conversation', () => {
   const result = turn({ transcript: [replied('rep_1', T0, 'x', BRIEF)], reply: null, now: T0 + MINUTE });
   assert.equal(result.code, 'invalid-transcript');

@@ -278,6 +278,10 @@ run "the brief's first line must be the run's title" \
   "  if (!line.startsWith(TASK_MARKER)) return { bad: refuse(REFUSAL.BAD_BRIEF, field) };" \
   "  if (false) return { bad: refuse(REFUSAL.BAD_BRIEF, field) };"
 
+run "a brief whose title is empty is refused: a run with no title never leaves" \
+  "  if (line.slice(TASK_MARKER.length).trim() === '') return { bad: refuse(REFUSAL.BAD_BRIEF, field) };" \
+  "  if (false) return { bad: refuse(REFUSAL.BAD_BRIEF, field) };"
+
 run "a repository is owner/name, shaped so neither half can be a flag" \
   "    if (part.length > 100 || !REPO_SEGMENT_PATTERN.test(part)) return { bad: refuse(REFUSAL.BAD_REPO, 'target.repo') };" \
   "    if (part.length > 100) return { bad: refuse(REFUSAL.BAD_REPO, 'target.repo') };"
@@ -311,6 +315,29 @@ run "a field this module does not name is refused" \
 run "an invisible format character is refused, not routed" \
   "  return FORMAT_CHARACTER.test(value);" \
   "  return false;"
+
+# The encoding guards, each reached by its own value rather than through another
+# field's refusal: an id is a database key, and a text or a brief is what a screen
+# shows and the read-back speaks.
+run "an id's control character is refused, not stored" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[index]) || code < 0x20 || code === 0x7f || isSeparator(code)) {" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[index]) || isSeparator(code)) {"
+
+run "an id carrying a line separator is refused" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[index]) || code < 0x20 || code === 0x7f || isSeparator(code)) {" \
+  "    if (FORBIDDEN_KEY_CHARS.has(value[index]) || code < 0x20 || code === 0x7f) {"
+
+run "an id that is half a character is refused" \
+  "  if (hasLoneSurrogate(value)) return { bad: refuse(REFUSAL.BAD_KEY, field) };" \
+  "  if (false) return { bad: refuse(REFUSAL.BAD_KEY, field) };"
+
+run "a text that is half a character is refused" \
+  "  if (hasLoneSurrogate(value)) return true;" \
+  "  if (false) return true;"
+
+run "a line separator in a text or a brief is refused" \
+  "    if (code < 0x20 || code === 0x7f || isSeparator(code)) return true;" \
+  "    if (code < 0x20 || code === 0x7f) return true;"
 
 run "the timeout is bounded on both sides" \
   "  if (!isIntegerInRange(ttlMs, MIN_TTL_MS, MAX_TTL_MS)) return refuse(REFUSAL.INVALID_TIMEOUT, 'options.ttlMs');" \

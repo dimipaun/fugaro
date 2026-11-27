@@ -230,7 +230,7 @@ export const REFUSAL = Object.freeze({
   TOO_LONG: 'too-long',
   /** An id contains a character a database key may not contain. */
   BAD_KEY: 'bad-key',
-  /** A string contains a control character, a lone surrogate or an invisible format character. */
+  /** A string contains a control character, a lone surrogate, an invisible format character or a line separator. */
   BAD_CHARACTER: 'bad-character',
   /** A `now` or an `at` that is not an epoch-millisecond integer in 1 .. TIME_MAX, or an `at` after `now`. */
   INVALID_NOW: 'invalid-now',
@@ -410,6 +410,17 @@ const FORBIDDEN_KEY_CHARS = new Set(['%', '.', '$', '#', '[', ']', '/']);
 
 const FORMAT_CHARACTER = /\p{Cf}/u;
 const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+// U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR are refused where P6.3
+// refuses them (`mailbox-schema`'s own `isSeparator`): Go's `encoding/json`
+// escapes both and JavaScript's `JSON.stringify` leaves them, so a value
+// carrying one has two byte strings across the two ends. This module's reason
+// is the sharper one -- the title is interpolated verbatim into the read-back,
+// the single sentence the person is meant to trust, where either character is a
+// line break inside it.
+function isSeparator(code) {
+  return code === 0x2028 || code === 0x2029;
+}
 
 /**
  * turn answers what one utterance does to a conversation.
@@ -883,7 +894,10 @@ function isIntegerInRange(value, min, max) {
 }
 
 // keyIdField validates a required id: a non-empty string that is a Realtime
-// Database key (P0.2's rule), so the id can be stored under its own node.
+// Database key (P0.2's rule), so the id can be stored under its own node. P6.3's
+// reader refuses the same set -- the forbidden key characters, the control
+// characters, a lone surrogate and the two line separators -- because this id is
+// the one an action record carries, and the two readers must not disagree.
 function keyIdField(value, field) {
   if (value === undefined) return { bad: refuse(REFUSAL.MISSING_FIELD, field) };
   if (typeof value !== 'string') return { bad: refuse(REFUSAL.WRONG_TYPE, field) };
@@ -891,7 +905,7 @@ function keyIdField(value, field) {
   if (value.length > ID_MAX) return { bad: refuse(REFUSAL.TOO_LONG, field) };
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
-    if (FORBIDDEN_KEY_CHARS.has(value[index]) || code < 0x20 || code === 0x7f) {
+    if (FORBIDDEN_KEY_CHARS.has(value[index]) || code < 0x20 || code === 0x7f || isSeparator(code)) {
       return { bad: refuse(REFUSAL.BAD_KEY, field) };
     }
   }
@@ -951,15 +965,17 @@ function firstLine(value) {
 }
 
 // hasBadCharacter reports whether a string carries a control character (a
-// newline only where the field is a block of lines), a lone surrogate, or an
-// invisible format character. P6.1 refuses the last of those for the utterance
-// and for the same reason: what is shown must be what is judged, or
-// "con​firm" reads as "confirm" on a screen and as something else here.
+// newline only where the field is a block of lines), a lone surrogate, an
+// invisible format character or a line separator. P6.1 refuses the format
+// characters for the utterance and for the same reason: what is shown must be
+// what is judged, or "con​firm" reads as "confirm" on a screen and as something
+// else here. The separators are P6.3's rule (see isSeparator), and this is the
+// reader a reply's text and the brief pass through.
 function hasBadCharacter(value, allowsNewline) {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code === 0x0a && allowsNewline) continue;
-    if (code < 0x20 || code === 0x7f) return true;
+    if (code < 0x20 || code === 0x7f || isSeparator(code)) return true;
   }
   if (hasLoneSurrogate(value)) return true;
   return FORMAT_CHARACTER.test(value);

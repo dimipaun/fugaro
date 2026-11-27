@@ -1202,6 +1202,32 @@
       }
     },
     {
+      "name": "a brief with no title",
+      "why": "the marker is there and the title is not: `fugaro watch` and the pull request title come from that line, and a run with no title is refused where it would be launched",
+      "transcript": [
+        {
+          "id": "utt_1",
+          "role": "person",
+          "text": "x",
+          "at": 1700000000000,
+          "target": {
+            "repo": "dimipaun/fugaro"
+          }
+        }
+      ],
+      "reply": {
+        "id": "rep_1",
+        "text": "draft",
+        "brief": "# Task:   \nMove the guide."
+      },
+      "now": 1700000060000,
+      "expect": {
+        "ok": false,
+        "code": "bad-brief",
+        "field": "reply.brief"
+      }
+    },
+    {
       "name": "a repository that is not owner/name",
       "why": "the repository is passed to `gh` as an argument, so a shape that could be read as a flag is refused",
       "transcript": [
