@@ -141,6 +141,16 @@ func TestDocsSharedImagesDesign(t *testing.T) {
 		// The prune's one exception, and its two conditions.
 		"never one a job still points at",
 		"no refresh has placed a repository on",
+		// The prune asks nothing (the no-prompt policy) and prints its list a
+		// second way under --json, whose document is what the command prints.
+		"no per-image judgement is asked of the operator and the command asks nothing (the no-prompt",
+		"\"retention_days\":30,\"dry_run\":false,\"count\":1,\"images\"",
+		"of what `--json` prints: the human lines are what it replaces",
+		// The crash §9's delete order leaves behind is doctor's line: one
+		// warning per entry the registry lost, and an unreadable registry is
+		// not one of them.
+		"`doctor` reads each entry's digest back from the registry and reports the ones it no longer has",
+		"gone, so it is one `info` line naming the entries nobody could read and never a finding",
 		// The retention key, its default, its ruling and its layer.
 		"`images.retention_days`, default 30, is confirmed (ruled 2026-10-29)",
 		"it is shared policy, and only the project layer sets shared policy",

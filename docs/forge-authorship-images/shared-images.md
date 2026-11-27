@@ -610,13 +610,25 @@ An entry is **eligible** when both hold:
    not outlive its task timeout.
 
 The clean-up never removes an image a job still points at — never one a job still points at,
-whatever its age. `fugaro image prune` removes every eligible entry in one pass — the eligibility is
-a rule, so no per-image judgement is asked of the operator — prints each one as it does, asks once
-before the first delete (today's confirmation shape: the owner answers it at their own real terminal, never in a
-coding agent's session), and has `--dry-run`, which prints the list and deletes nothing. The registry image is deleted first and the lock entry second, generation-matched by
+whatever its age. `fugaro image prune` removes every eligible entry in one pass: the eligibility is a
+rule, so no per-image judgement is asked of the operator and the command asks nothing (the no-prompt
+policy) — `--dry-run` prints the list and deletes nothing, `--json` prints it as one document, and a
+plain run prints one line an image and then removes them. The registry image is deleted first and the
+lock entry second, generation-matched by
 the same rule as §3.4's write (`blobx.DeleteIf` for a delete), so a crash between the two leaves an
 entry whose digest the registry no longer has, which
 `doctor` reports and the next `prune` finishes.
+
+Under `--json` the list is
+`{"version":1,"project":"…","retention_days":30,"dry_run":false,"count":1,"images":[{"key":"…full hex…","image":"…","digest":"sha256:…","since":"…"}]}`
+— one row per image, `key` for a lock entry and `record` (the build record's object) for a
+repository's own image (§10), with `since` the date the eligibility was measured from. It is the whole
+of what `--json` prints: the human lines are what it replaces.
+
+`doctor` reads each entry's digest back from the registry and reports the ones it no longer has: one
+warning per entry, naming the entry by the short hash §7 prints and the digest that is gone, whose
+remedy is the `prune` that finishes the removal. A read that did not answer is not a digest that is
+gone, so it is one `info` line naming the entries nobody could read and never a finding.
 
 **`images.retention_days`, default 30, is confirmed (ruled 2026-10-29).** The key belongs to the
 **project layer** — the shared, published part of the operator's local config, beside `base_images`

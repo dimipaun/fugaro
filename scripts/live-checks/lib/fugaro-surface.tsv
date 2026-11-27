@@ -707,6 +707,7 @@ flag	image promote	value		--gcp-project
 flag	image promote	value		--project
 flag	image promote	value		--region
 flag	image prune	bool		--dry-run
+flag	image prune	bool		--json
 flag	image prune	bool	-h	--help
 flag	image prune	value		--config
 flag	image prune	value		--gcp-project
