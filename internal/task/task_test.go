@@ -2396,6 +2396,15 @@ func TestCLIVersionMustBeSemver(t *testing.T) {
 // schema is additionalProperties:false, so a launch that stamped a task
 // would otherwise publish a task.json the schema rejects. Its pattern is
 // releaseVersionRE, the one rule this package applies on read.
+//
+// The key looked up is the one a stamped Spec marshals, so the Go field's
+// own json tag and the schema's property name are held together: renaming
+// the tag writes a key the published schema rejects (and VS5's lenient
+// decode then skips), and renaming the property leaves the marshalled key
+// unread.
+//
+// Mutation (rename json:"cli_version", or the schema's cli_version
+// property): the lookup misses and this test fails.
 func TestSchemaHasCLIVersion(t *testing.T) {
 	data, err := os.ReadFile("../../schemas/task.schema.json")
 	if err != nil {
@@ -2407,21 +2416,34 @@ func TestSchemaHasCLIVersion(t *testing.T) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)
 	}
-	raw, ok := doc.Properties["cli_version"]
-	if !ok {
-		t.Fatal("schemas/task.schema.json has no cli_version property")
+	stamped := Spec{Version: 1, RunID: "20261127-030000-abcd", Repo: "acme/app", Ref: "main", Task: "x", CLIVersion: "0.27.0"}
+	out, err := stamped.Marshal()
+	if err != nil {
+		t.Fatal(err)
 	}
-	var prop struct {
+	var emitted map[string]json.RawMessage
+	if err := json.Unmarshal(out, &emitted); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok := emitted["cli_version"]
+	if !ok || string(raw) != `"0.27.0"` {
+		t.Fatalf("a stamped spec marshalled cli_version as %s, want %q", raw, "0.27.0")
+	}
+	prop, ok := doc.Properties["cli_version"]
+	if !ok {
+		t.Fatal("schemas/task.schema.json has no cli_version property: it is additionalProperties:false and rejects the task the launcher writes")
+	}
+	var rule struct {
 		Type    string `json:"type"`
 		Pattern string `json:"pattern"`
 	}
-	if err := json.Unmarshal(raw, &prop); err != nil {
+	if err := json.Unmarshal(prop, &rule); err != nil {
 		t.Fatal(err)
 	}
-	if prop.Type != "string" {
-		t.Errorf("cli_version type = %q, want string", prop.Type)
+	if rule.Type != "string" {
+		t.Errorf("cli_version type = %q, want string", rule.Type)
 	}
-	if prop.Pattern != releaseVersionRE.String() {
-		t.Errorf("cli_version pattern = %q, want the Go rule %q", prop.Pattern, releaseVersionRE.String())
+	if rule.Pattern != releaseVersionRE.String() {
+		t.Errorf("cli_version pattern = %q, want the Go rule %q", rule.Pattern, releaseVersionRE.String())
 	}
 }
