@@ -287,20 +287,21 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// the registry's nearest-name refusal, and a fixture that stopped there would
 	// call the leaf quiet without the write having begun. The unset needs a value
 	// to remove, which its seed sets.
-	// The three access grants of docs/config-ownership A2 are the same kind of
-	// edit as the pool and alias writes above, and each fixture is what stands
-	// between its run and a refusal rather than a write: the craft pair needs a
-	// credential the set may point at and a craft the rm has to take away, the
-	// grade needs the layer file and a model beside the access it is set on (a
-	// grade written with an access and no model is a document no reader loads),
-	// and the repository write needs the entry the list lives in, provider and
-	// all. Each sentence is the diff line or the naming of the key that was
-	// written, which is the proof the run reached the write with the stdin
-	// closed and asked nothing.
+	// The craft and repository writes of docs/config-ownership A2 are the same
+	// kind of edit as the pool and alias writes above, and each fixture is what
+	// stands between its run and a refusal rather than a write: the removal needs
+	// a craft to take away, and the repository write needs the entry the list
+	// lives in, provider and all. Each sentence is the diff line or the naming of
+	// the key that was written, which is the proof the run reached the write with
+	// the stdin closed and asked nothing. `accounts craft set` and `accounts grade
+	// set` are the other way round — MG4 retired the key each one wrote, so the
+	// body they reach answers with the refusal and names the command that owns the
+	// write (docs/model-credentials-routing) with nothing read on the way, which is
+	// why neither needs a seed: the refusal is the whole of what their body does,
+	// and it is printed on the error rather than on this stream, so the two
+	// fixtures pin the arguments that reach the body and no sentence.
 	"fugaro accounts craft set": {
-		args:    []string{"coder", "--access", "team-b"},
-		reaches: "crafts.coder.access = team-b",
-		seed:    closedStdinCraftSeed,
+		args: []string{"coder", "--access", "team-b"},
 	},
 	"fugaro accounts craft rm": {
 		args:    []string{"coder"},
@@ -308,9 +309,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		seed:    closedStdinCraftSeed,
 	},
 	"fugaro accounts grade set": {
-		args:    []string{"strong", "--access", "vertex", "--layer", "project"},
-		reaches: "defaults.model_grades.strong.access = vertex",
-		seed:    closedStdinGradeLayerSeed,
+		args: []string{"strong", "--access", "vertex", "--layer", "project"},
 	},
 	"fugaro accounts repo add": {
 		args:    []string{"acme/app", "team-a"},
@@ -319,13 +318,13 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	},
 	// The cascade's own write (K1): one member of the credentials cascade into
 	// this installation's own config, which is the carrier the project's
-	// published node is filled from. `oauth-only` is the narrowing value, so
-	// what stands between the bare run and the write is the flag itself and not
-	// the agent session's refusal (D2617); the sentence is the member as the file
-	// spells it.
+	// published node is filled from. The member is a wait, which is neither of
+	// the two directions D142 widens, so what stands between the bare run and
+	// the write is the flag itself and not the agent session's refusal (D2617);
+	// the sentence is the member as the file spells it.
 	"fugaro accounts cascade set": {
-		args:    []string{"--fallback", "oauth-only"},
-		reaches: "write the credentials cascade: fallback = oauth-only",
+		args:    []string{"--backoff-cap", "1h"},
+		reaches: "write the credentials cascade: backoff.cap = 1h",
 	},
 	"fugaro settings set":   {args: []string{"base_branch", "main"}, reaches: "write base_branch in"},
 	"fugaro settings unset": {args: []string{"base_branch"}, reaches: "remove base_branch from", seed: closedStdinSetBaseBranch},
@@ -1068,27 +1067,13 @@ func closedStdinProjectSecretAllowListSeed(repos ...string) func(*testing.T, *bu
 	}
 }
 
-// closedStdinCraftSeed gives the world's own config the two things the craft
-// writes need to reach their own edit: the credentials the set's access may name
-// (one it moves onto, one the craft already holds, so the write is a move and
-// not the "already reads" answer) and a craft for the removal to take away. A
-// craft the config does not state and a credential it does not declare are the
-// two refusals before the write, and a fixture that stopped at either would call
-// the leaf quiet without the write having begun.
+// closedStdinCraftSeed gives the world's own config the craft `craft rm` has to
+// take away, with the credential its access names. A craft the config does not
+// state is the removal's own refusal before its write, and a fixture that
+// stopped there would call the leaf quiet without the write having begun.
 func closedStdinCraftSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\ncrafts:\n  coder:\n    access: team-a\n")
-}
-
-// closedStdinGradeLayerSeed gives the world the file the grade write edits —
-// this machine's own project layer file, carrying the world's own anchors and
-// the model the access is set beside. Without it the run refuses the missing
-// file (D830's step 4, naming `fugaro update`), and without the model it refuses
-// the access a grade cannot be written with alone: both are refusals before the
-// write rather than the write this fixture is for.
-func closedStdinGradeLayerSeed(t *testing.T, _ *budgetFixture) {
-	t.Helper()
-	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  model_grades:\n    strong:\n      model: claude-sonnet-5-5\n")
 }
 
 // closedStdinRepoAddSeed gives the world's own config the account the
