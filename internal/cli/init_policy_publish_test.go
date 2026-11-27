@@ -2442,7 +2442,8 @@ func TestPolicyPublishCarriesACatalogContextMember(t *testing.T) {
 // the node is written with, and the node's own spelling of a repository key is
 // the escaped one (ImageMap), so a comparison done in the config's spelling
 // would report a difference the operator cannot act on and republish the whole
-// node on every run.
+// node on every run. The map rows are the escaping member's (RepoImages); the
+// node's old member keeps one row of its own while a file still states it.
 func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 	file := func(mut func(*localcfg.Config)) *localcfg.Config {
 		lc := &localcfg.Config{Budget: &localcfg.Budget{Mode: "enforce", PerRunUSD: 5}}
@@ -2467,32 +2468,38 @@ func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 	}{
 		{
 			"the config maps a repository the node does not",
-			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{"acme/app": "tools"} }),
+			file(func(lc *localcfg.Config) { lc.RepoImages = map[string]string{"github/acme/app": "tools"} }),
 			node(nil),
-			[]string{"image_map"},
+			[]string{"repo_images"},
 		},
 		{
 			"the config's map is the node's",
-			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{"acme/app": "tools"} }),
-			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "tools"} }),
+			file(func(lc *localcfg.Config) { lc.RepoImages = map[string]string{"github/acme/app": "tools"} }),
+			node(func(p *projectpolicy.Policy) { p.RepoImages = projectpolicy.RepoImages{"github/acme/app": "tools"} }),
 			nil,
 		},
 		{
 			"the config maps a repository onto another entry",
-			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{"acme/app": "tools"} }),
-			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "base"} }),
-			[]string{"image_map"},
+			file(func(lc *localcfg.Config) { lc.RepoImages = map[string]string{"github/acme/app": "tools"} }),
+			node(func(p *projectpolicy.Policy) { p.RepoImages = projectpolicy.RepoImages{"github/acme/app": "base"} }),
+			[]string{"repo_images"},
 		},
 		{
 			"the config is silent about the map and the node carries one",
 			file(nil),
-			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "tools"} }),
+			node(func(p *projectpolicy.Policy) { p.RepoImages = projectpolicy.RepoImages{"github/acme/app": "tools"} }),
 			nil,
 		},
 		{
 			"the config unmaps what the node maps",
-			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{} }),
-			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "tools"} }),
+			file(func(lc *localcfg.Config) { lc.RepoImages = map[string]string{} }),
+			node(func(p *projectpolicy.Policy) { p.RepoImages = projectpolicy.RepoImages{"github/acme/app": "tools"} }),
+			[]string{"repo_images"},
+		},
+		{
+			"the legacy map in the file is a difference of its own",
+			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{"acme/app": "tools"} }),
+			node(nil),
 			[]string{"image_map"},
 		},
 		{

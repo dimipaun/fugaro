@@ -427,22 +427,17 @@ const retiredCredentialsFlag = "provision-credentials"
 // the run creates (markCreated), so the flag itself reaches no project that
 // already exists — on setup by D73's answer and the wizard's own rule, and on
 // update because that door creates nothing.
-//
-// The update branch that used to stand here said update's other half — the
-// self-flag of D1553 — and it was dead text: --managed is declared on the
-// update door, HIDDEN from its help and refused by name at runtime (update.go's
-// foreign list), so no line of its help is rendered on that door. What a user
-// reads about the update door flagging an installation is --budget's own help
-// (budgetFlagHelp), which is where the sentence belongs, because --budget is
-// what triggers that write.
 const managedFlaggingSentence = "and --managed never flags one: it records the budget of a project the run creates"
 
-// budgetFlagHelp is --budget's help, and on `fugaro update` it carries the one
-// thing that door does with the budget besides recording it: given the trio
-// once, the run flags an installation that is not managed as managed, in the
-// same command (D1553, update_selfflag.go), and that write is what takes the
-// installation's typed confirmation away — so the flag that triggers it says
-// so, before the run, rather than only in the run's own output.
+// budgetFlagHelp is --budget's help, and on `fugaro update` it carries the two
+// things that door does with the budget besides recording it: an installation
+// the managed read answers is not managed is refused, with the one command that
+// flags a project (TN1, update_selfflag.go), and on a managed installation the
+// amount replaces the one the creation fact records, printed on both sides of
+// the write, with --budget-currency defaulting to the currency that fact
+// records where nobody named one (D2215, R6). The flag that changes what a
+// project records says so, before the run, rather than only in the run's own
+// output.
 //
 // It is a function of the door for the reason the sentences beside it are: the
 // help of a flag on the door the reader is running must be true of that door.
@@ -455,7 +450,7 @@ func budgetFlagHelp(d convergeDoor) string {
 	if d.name != updateDoor.name {
 		return help
 	}
-	return help + ". On an installation that is not managed, giving " + d.name + " the budget once — --budget, --budget-currency and --billing-account together — flags that installation as managed in the same run: it writes gs://fugaro-runs-<gcp-project>/fugaro/managed.json and the fugaro_managed=true label on the project itself, and from the next run on that project's applies no longer stop for the typed confirmation. The run prints what it writes before it writes it, and the write is refused inside a coding agent's session and inside a Fugaro run's process"
+	return help + ". On an installation that is already there, the amount replaces the one the creation fact records — the run prints the figure it recorded and the one it records afterwards, and --budget-currency defaults to the currency that fact records. An installation that is not managed is refused: `fugaro managed flag`, run by its owner at their own terminal, is the command that flags it"
 }
 
 func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
@@ -903,6 +898,16 @@ type initRun struct {
 	// (update_managed.go). A nil one is every run whose steps keep the
 	// confirmations they always had.
 	gate *initGate
+
+	// gateRead is that same read where the run made one, whatever the door
+	// (update_managed.go's readUpdateGate memoizes it here): the head of every
+	// run that converges an installation reads the marks for its own stop
+	// (requireManagedInstallation, update_selfflag.go), and the run's gate and
+	// every reader of it — the marker step's factVersion — are that read rather
+	// than a second one (D1015). It is kept apart from gate on purpose: a run
+	// whose own arguments shape the installation reads the marks and still has
+	// no gate, so nothing a gate stands in for moves on it.
+	gateRead *initGate
 
 	// accessDerive is the roles step's derive, taken again by the installation
 	// root for itself just before its own tfvars are written (F29a): the step
@@ -2365,8 +2370,16 @@ func (o *initOptions) check() error {
 	// owner change the amount without knowing the account by heart. A run that
 	// reads no cloud has nothing to take it from, so there the three are still
 	// required together.
+	//
+	// The currency has the same answer on `fugaro update` (recordedCurrency, R6
+	// of the same document, D2211): a run that converges an installation which
+	// is already there takes it from the installation's own creation fact, and
+	// from the default where that records none — settled at the head of the
+	// engine, when the run has read the fact
+	// (settleExplicitBudget, update_selfflag.go). Every other run reads no fact
+	// before its own check, so for it the two are still one pair.
 	if o.budget != 0 || o.budgetCurrency != "" || o.billingAccount != "" {
-		if o.budget <= 0 || o.budgetCurrency == "" {
+		if o.budget <= 0 || (o.budgetCurrency == "" && !o.recordedCurrency()) {
 			return userErr("a budget needs --budget (more than 0) and --budget-currency together")
 		}
 		if o.billingAccount == "" && !o.carriesBudget() {
@@ -2383,6 +2396,21 @@ func (o *initOptions) check() error {
 // account out of, and --forget is the rollback, which carries nothing forward
 // at all.
 func (o *initOptions) carriesBudget() bool { return !o.printVars && !o.forget }
+
+// recordedCurrency is whether an explicit --budget without --budget-currency
+// takes its currency from the installation's creation fact instead of being
+// refused (R6, D2211): a run of the update door that converges an installation
+// the door did not create, where that fact is read at the head of the engine
+// whatever the run was given. Every other run reads no fact before its own
+// check, so the amount and the currency stay one pair there — --config-only
+// included, which rewrites the workdir's own document from the config without
+// converging and would write an empty currency into the tfvars.
+func (o *initOptions) recordedCurrency() bool {
+	if o.door != updateDoor.name || o.configOnly || !o.carriesBudget() {
+		return false
+	}
+	return !o.createProject
+}
 
 // budgetFigures is the amount and the currency a creating run's budget is
 // created with and recorded by: what --budget and --budget-currency settled (or
@@ -3565,9 +3593,8 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// lose afterwards. CarriedProjectJobs keeps the job, whole, from the
 	// record the run that deployed it left, so that a project whose last
 	// github repository moves to Bitbucket, or that adds a repository on a
-	// second App, keeps converging instead of stopping on a job's deletion it
-	// cannot undo ("retiring a project job is not supported yet",
-	// RefuseProjectJobDeletes). The names are the ones heldDefaultProfiles
+	// second App, keeps converging instead of stopping on a job's deletion.
+	// The names are the ones heldDefaultProfiles
 	// decided from the same documents, and they are empty on every run that
 	// composes its jobs itself.
 	if len(spec.CarriedProjectJobs) > 0 {
@@ -3581,9 +3608,9 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// on the same records: a name such a credential is declared for gets no job
 	// at all from this release's composer (D1670, the filter ProjectJobs
 	// applies), so a document without the job the state holds is the plan of
-	// that job's destruction — and RefuseProjectJobDeletes stops the whole
-	// update on it, with "restore the profile as it was" as its remedy, which
-	// here is putting back the very name the filter drops the job for.
+	// that job's destruction — refused by RefuseProjectJobDeletes, whose
+	// remedy (restore the profile as it was) is here putting back the very
+	// name the filter drops the job for.
 	// CarriedProjectJobAccounts keeps each of them, whole, from the record the
 	// release behind deployed them in.
 	if len(spec.CarriedProjectJobAccounts) > 0 {
@@ -3879,6 +3906,15 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// the module's prevent_destroy refuses that plan while the state still
 	// holds the instance (U5, IS13).
 	r.removeRetiredCopiesFromState(ctx, t, retiredCopies, spec.ProjectSecrets)
+	// And the shared project jobs the document no longer declares: their job
+	// cannot be deleted by any apply (the module protects it), so the job's
+	// address leaves the state, the API delete removes the job itself, and the
+	// apply below removes what the instance owned beside it (issue #3686,
+	// update_retire_jobs.go).
+	jobsRetired, err := r.retireProjectJobs(ctx, c, t, wd, spec)
+	if err != nil {
+		return outs, false, err
+	}
 	// What the installation already is: its name may not change, and an
 	// unnamed one is named only on request. Before any plan.
 	var prior infra.InstallationOutputs
@@ -3981,7 +4017,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// same way, so a managed project's record names it rather than warning
 		// about an unannounced removal.
 		identity = append(identity, infra.BuildIdentityAccessorAllowDelete(plan)...)
-		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
+		// The addresses of the project jobs this run retired on the way in:
+		// their instances are out of the state, so the plan's own deletes at
+		// them are the service accounts and grants the retired jobs owned, and
+		// those are this run's to make — exactly as the minter rows above are
+		// (infra.RetireAllowDelete reads the plan, so a plan that does anything
+		// else at those addresses is still refused). The gate is handed the
+		// same set apart from the two lists above, because what admitted it has
+		// to read as the retirement it is.
+		retireAllowed := infra.RetireAllowDelete(plan, jobsRetired)
+		allowed := append(append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...), retireAllowed...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
 		// confirmation, and replaces both when it admits it (D1016,
@@ -3989,7 +4034,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade, identity)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade, identity, retireAllowed)
 		if err != nil {
 			return plan, err
 		}
@@ -4742,7 +4787,20 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	}
 	fmt.Fprintf(diff, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
 	if !confirmed {
-		if err := r.confirmOrdinary("writes the local config "+path+" as shown", "the local config was not changed", ""); err != nil {
+		// The gate stands in for this write where the session is a coding
+		// agent's: the file is this machine's own record of what the run
+		// converged and not a cloud write, so the session the gate opened the
+		// run for writes it and reads the sentence for that reader
+		// (initflow.AgentProceeded) — the refusal askOrdinary gives a marked
+		// session is for the cloud writes beside this one. Every other session
+		// keeps the confirmation it has always had: the person at their own
+		// terminal, and the pipe or --json run nobody is at, which the gate
+		// never answers for.
+		what := "writes the local config " + path + " as shown"
+		if c := r.conditions(); r.gateStandsIn() && c.Agent != "" {
+			r.willDo(what)
+			fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.AgentProceeded(c.Agent))
+		} else if err := r.confirmOrdinary(what, "the local config was not changed", ""); err != nil {
 			return err
 		}
 	}
@@ -5745,6 +5803,14 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// jobs go out on and the ones the record below names, so a launch on any of
 	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
 	r.recordCredentialsServiceReady(ctx, lc, outs, cfg, in.Policy, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
+	// Which workflow secrets this installation's record marks copied, read
+	// before the spec so the plan it produces is the one this installation can
+	// serve: a name the record does not hold keeps its mount, its accessors and
+	// its project copy, and the job reads the value itself (IS5's skipped name,
+	// IS6). It is the same reader, and the same record, IS13's retirement is
+	// decided by; a read that could not be made names nothing, so nothing is
+	// dropped — the direction both halves fail in.
+	in.CopiedWorkflowSecrets = r.workflowSecretsCopiedForPlan(ctx, lc)
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -5836,6 +5902,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
 		names, err := infra.NeedsBuild(ctx, c, ready, versions)
+		fmt.Fprintf(os.Stderr, "PROBE-NEEDSBUILD names=%v versions=%v\n", names, versions)
 		if err != nil {
 			return r.retireLeftover(spec, initErr(err))
 		}
@@ -6720,7 +6787,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		// does not admit this plan (D1016, update_managed.go). A repository root
 		// is one of Fugaro's own too, so it is judged by the same cover and the
 		// same guard the installation's roots are.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil, nil)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil, nil, nil)
 		if err != nil {
 			return plan, err
 		}
@@ -6878,9 +6945,10 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	if err != nil {
 		return "", false, err
 	}
-	// A repository the credentials service serves (B4.9, D2076): the build's
-	// credential step fetches the git credential and the workflow's own build
-	// secrets there instead of reading the mounts the apply took away, and the
+	// A repository whose build carries the credentials service's address
+	// (B4.9, D2076, IS6): the build's credential step fetches the git
+	// credential and the workflow's own build secrets there instead of reading
+	// the mounts the apply took away, and the
 	// address is what tells it to. The ID above is the caller's, read back out
 	// of the apply's own spec or resolved live, and a served request names no
 	// secret at all — so it is carried and unused, never looked up here.

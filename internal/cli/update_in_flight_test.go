@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -76,6 +77,12 @@ const (
 // is a fact of its own under the count's line.
 func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	r := newConvergeRig(t, v3Node(nil))
+	// The rig's project is a managed one (newInitRig's own marks, and the
+	// reason TN1's stop — T3 of docs/managed-flag-ergonomics — lets this update
+	// through), and the credentials the gate's own record is written with are
+	// this test's to stub: no shared fixture stubs the person's identity for
+	// the whole package.
+	isolateGateCredentials(t)
 	// IS5's step is one of the writes this run makes while the run is going, so
 	// the fixture carries what it acts on: the operator's workflow_secrets
 	// block and one name's project copy. The copy is a Secret Manager container
@@ -200,6 +207,30 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	if pr := updatedConfig(t).Profiles[projectpolicy.DefaultProfileName]; pr.Provider != "github" {
 		t.Errorf("the update wrote profiles.%s = %+v while a run was in flight, want the default profile of the project's github repositories",
 			projectpolicy.DefaultProfileName, pr)
+	}
+
+	// TN1's stop over the same two runs (T3), and the reason it is placed here:
+	// the installation's own half of the managed fact is taken out of the world
+	// — the project's label — and the same `fugaro update` is refused at the
+	// head while both runs are still in flight. A run in flight is not a reason
+	// to converge a project nobody declared, and the stop is a negative: it asks
+	// neither run to finish first (it is before the first stage, so the note
+	// above is not even reached) and it takes nothing they hold. The writes
+	// below are the two runs' own, made after this refusal as well as after the
+	// update, which is what makes them the reading of both.
+	r.removeManagedInstallation(t)
+	refused, refusedErr, err := executeStdin(t, "aurora\n", "update")
+	if err == nil {
+		t.Fatalf("fugaro update converged an installation that is not managed with runs in flight:\n%s\n%s", refused, refusedErr)
+	}
+	refusal := refused + refusedErr + ErrorText(err)
+	for _, want := range []string{initProject + " is not managed", "fugaro managed flag"} {
+		if !strings.Contains(refusal, want) {
+			t.Errorf("the refusal over the runs in flight does not say %q:\n%s", want, refusal)
+		}
+	}
+	if strings.Contains(refusal, "runs in flight") {
+		t.Errorf("the stop spoke about the runs in flight, and it asks none of them to finish and changes nothing they hold:\n%s", refusal)
 	}
 
 	run.laterWrites(t, r)
@@ -370,7 +401,7 @@ func TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch(t *testing.T) {
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
-	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRefAt(convergeRelease))...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
 		"intake":              intakeServiceOutput(),
@@ -485,6 +516,11 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		// (bitbucketProxyFlip).
 		extra   string
 		release string
+		// live is the shared project jobs the installation RUNS, as the Cloud
+		// Run fake answers a listing: the triples the retirement of issue #3686
+		// reads out of the jobs' own labels. A row with none gets no cloud at
+		// all, which is the engine every other row's door speaks to.
+		live    []liveProjectJob
 		want    []string
 		notWant []string
 	}{
@@ -558,6 +594,33 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			want:    []string{"1 run in flight", "bitbucket proxy switch", "the address is set", "mount drops next update"},
 			notWant: []string{"budget mode", "policy:", "retirement"},
 		},
+		{
+			// The shared project jobs issue #3686 retires: the installation
+			// stage deletes the job of a (profile, provider, account) this
+			// machine's config declares no more, and the delete takes the
+			// executions running on it with it. The fixture's config declares
+			// no profile at all — the same fact from the other side — and the
+			// job the cloud runs wears the labels modules/project/job.tf
+			// writes, so the clause reads it out of the CLOUD rather than out
+			// of the document this run is about to write.
+			name: "the shared project job a profile no longer names", mode: budget.ModeEnforce,
+			live:    []liveProjectJob{{profile: "standard", provider: "github", account: "team-a"}},
+			want:    []string{"1 run in flight", "shared jobs:", "no profile names", "a run's job is kept"},
+			notWant: []string{"budget mode", "policy:", "retirement"},
+		},
+		{
+			// The other direction, and the one a clause that fired on every
+			// live job would get wrong: the profile is declared and it names
+			// the job's own triple, so this installation owes no retirement at
+			// all. Without this row a line printed over every live job would
+			// read as the feature.
+			name: "the shared project job a profile still names", mode: budget.ModeEnforce,
+			extra: "claude_accounts:\n  team-a: { allow_data_to: [acme/app] }\n" +
+				"profiles:\n  standard: { provider: github, allow_repos: [github/acme/app], claude_accounts: [team-a] }\n",
+			live:    []liveProjectJob{{profile: "standard", provider: "github", account: "team-a"}},
+			want:    []string{"1 run in flight", "no step reaches them"},
+			notWant: []string{"shared jobs", "budget mode", "policy:", "retirement"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newProjectFixture(t, tc.extra)
@@ -575,6 +638,9 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			h := newMigrationRig(t, f, &initOptions{retire: tc.retire})
 			if tc.managed {
 				h.managedGate()
+			}
+			if len(tc.live) > 0 {
+				h.s.e.c = inFlightCloud(t, liveProjectJobs(t, tc.live...))
 			}
 			h.s.e.announceRunsInFlight(context.Background())
 
@@ -618,6 +684,60 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			}
 		})
 	}
+}
+
+// liveProjectJob is one shared project job an installation runs, as the
+// retirement reads it out of the job's own labels: the triple the name is
+// derived from and the labels carry, and nothing about whether the config
+// declares it.
+type liveProjectJob struct{ profile, provider, account string }
+
+// liveProjectJobs is the Cloud Run fake holding those jobs, labelled the way
+// modules/project/job.tf labels them — the managed mark, the profile, and the
+// provider and account beside it — and with the triple registered as the
+// shared job a launcher selects (AddProjectJob).
+func liveProjectJobs(t *testing.T, jobs ...liveProjectJob) *gcpfake.Run {
+	t.Helper()
+	run := gcpfake.NewRun(t)
+	run.Project, run.Region = "proj-1234", "us-east5"
+	for _, j := range jobs {
+		name := gcp.ProjectJobName(j.profile, j.provider, j.account)
+		run.AddProjectJob(name, j.profile, j.provider, j.account, "2", "8Gi")
+		run.SetJob(name, map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProfile: j.profile,
+			"fugaro_provider": j.provider, "fugaro_account": jobAccountLabel(j.account),
+		}, "image")
+	}
+	return run
+}
+
+// jobAccountLabel is what a job's account label says for an axis account: the
+// label of a job that runs as none is "none" (a label cannot be empty), and
+// every other account is its own name. It is the writing side of
+// projectJobAxisAccount.
+func jobAccountLabel(account string) string {
+	if account == "" {
+		return "none"
+	}
+	return account
+}
+
+// inFlightCloud is that fake wrapped in the clients the door's own read of the
+// installation's jobs is made through (infra.LiveProjectJobs). The rig builds
+// none of its own — the migration stage reaches no cloud — so a row that turns
+// the shared-jobs clause on hands the engine one, and every endpoint
+// infra.NewClients insists on with no_auth has to be here: one left empty
+// would send a call to Google itself.
+func inFlightCloud(t *testing.T, jobs *gcpfake.Run) *infra.Clients {
+	t.Helper()
+	c, err := infra.NewClients(t.Context(), gcp.Options{GCPProject: "proj-1234",
+		Endpoints: gcp.Endpoints{Run: jobs.URL + "/", SecretManager: gcpfake.NewSecrets(t).URL + "/", Logging: gcpfake.NewLogging(t).URL + "/", NoAuth: true}},
+		infra.Endpoints{IAM: gcpfake.NewIAM(t).URL + "/", ArtifactRegistry: gcpfake.NewArtifactRegistry(t).URL + "/",
+			Storage: gcpfake.NewGCS(t).URL + "/storage/v1/", ResourceManager: gcpfake.NewCRM(t).URL + "/", Scheduler: gcpfake.NewScheduler(t).URL + "/"})
+	if err != nil {
+		t.Fatalf("the row's cloud could not be built: %v", err)
+	}
+	return c
 }
 
 // TestUpdateInFlightLineCountsTheRunsOnTheOldRecord is MG3's own line under the
@@ -723,7 +843,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 		r.script["show -json"] = r.script["show"]
 		r.script["plan@installation"] = map[string]any{"exit": 2}
-		r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+		r.setPlanAt(t, "installation", installationCredentialsPlan("update", r.credentialsRefAt(convergeRelease))...)
 		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 			"credentials_service": credentialsServiceOutput(),
 			"intake":              intakeServiceOutput(),
@@ -752,10 +872,22 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		// update writes its block and the service takes the revision that names
 		// the daemon's account: the one step that does reach the run, and the
 		// line says it is served by either revision rather than refused.
-		// The old access record's own step (MG3) is named beside it when the run
-		// resolves from that record, and is not the credentials service's window.
-		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ")-strings.Count(got, "old access record:") {
-			t.Errorf("the note names more or less than the orchestrator's revision over a run this update otherwise leaves where it is:\n%s", got)
+		//
+		// Two other lines are not this row's business and are named beside it:
+		// the old access record's own step (MG3), when the run resolves from
+		// that record, and the retirement, which a plain update of a managed
+		// project names whatever this run goes on to delete (retireTakesExecutions
+		// errs towards naming a step that may do nothing). The orchestrator's is
+		// the only other one there is.
+		if !strings.Contains(got, "resident orchestrator:") {
+			t.Errorf("the note does not name the orchestrator's revision over a run this update otherwise leaves where it is:\n%s", got)
+		}
+		for _, named := range strings.Split(got, "\n  ")[1:] {
+			if strings.HasPrefix(named, "resident orchestrator:") || strings.HasPrefix(named, "retirement:") ||
+				strings.HasPrefix(named, "old access record:") {
+				continue
+			}
+			t.Errorf("the note names a step of its own over a run this update leaves where it is: %q\n%s", named, got)
 		}
 	})
 }
@@ -773,32 +905,27 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 // The second case is the negative half: the same run over a fact this build
 // already writes, where the step leaves the object exactly where it is and the
 // line names no such thing. The third is the other gate: a version-3 object on a
-// project nothing has labelled is not a fact the read believes, so the step has
-// nothing to converge and says nothing.
+// project nothing has labelled is not a fact the read believes, and TN1's stop
+// is what meets it now — a run that converges an installation is a managed
+// project's own, so that run is refused at its first act and the door never
+// speaks about the runs at all.
 //
 // All three are read off the line the door really printed, over a run really in
 // flight and over the real marker read — the bucket's project number, the
 // bucket's own label and the project's label — rather than off the question the
 // clause is gated on.
 func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
-	line := func(t *testing.T, fact string, isManaged bool) string {
+	line := func(t *testing.T, fact string) string {
 		t.Helper()
 		// The rig is the marker's own (convergeRigWithMarker), so this test reads
 		// the line the door prints over the very installation
 		// TestPreviousMarkerVersionConvergesOnUpdate converges.
-		var r *convergeRig
-		if isManaged {
-			r = convergeRigWithMarker(t, fact)
-		} else {
-			r = newConvergeRig(t, v3Node(nil))
-			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
-			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
-		}
+		r := convergeRigWithMarker(t, fact)
 		startRunInFlight(t, r)
 		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "repo-plugin-pin"}))
 	}
 	t.Run("a version-3 fact is rewritten", func(t *testing.T) {
-		got := line(t, markerBuildsFact, true)
+		got := line(t, markerBuildsFact)
 		for _, want := range []string{"creation fact:", "stops taking the gate"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the note does not say %q over a run whose installation still carries a version-3 creation fact:\n%s", want, got)
@@ -809,18 +936,30 @@ func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
 		}
 	})
 	t.Run("a fact this build already writes is left alone", func(t *testing.T) {
-		got := line(t, markerNowFact, true)
+		got := line(t, markerNowFact)
 		if strings.Contains(got, "creation fact") {
 			t.Errorf("the note names the marker's convergence over a fact that is already this build's:\n%s", got)
 		}
 	})
 	t.Run("a version-3 object the read does not believe", func(t *testing.T) {
-		got := line(t, markerBuildsFact, false)
-		if strings.Contains(got, "creation fact") {
-			t.Errorf("the note names the marker's convergence over an object the managed read does not believe, so the step has nothing to converge:\n%s", got)
+		// The object is there and the bucket is the project's own; what is
+		// missing is the project's label, which is the other half of what the
+		// read believes about a fact.
+		r := newConvergeRig(t, v3Node(nil))
+		r.unmarkedInstallation(t)
+		r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(markerBuildsFact))
+		startRunInFlight(t, r)
+
+		currentRelease(t)
+		fakeTerminal(t)
+		isolateGateCredentials(t)
+		out, _, err := executeStdin(t, "aurora\n", "update")
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not managed") {
+			t.Fatalf("exit %d, err %v; want TN1's stop over an object the managed read does not believe\n%s", ExitCode(err), err, out)
 		}
-		if !strings.Contains(got, "no step reaches them") {
-			t.Errorf("the note names a step over a run this update leaves where it is:\n%s", got)
+		if strings.Contains(out, "update waits for none") {
+			t.Errorf("the update spoke about the runs in flight over a run it refused at its first act:\n%s", out)
 		}
 	})
 }

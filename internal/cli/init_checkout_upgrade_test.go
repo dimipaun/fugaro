@@ -1128,8 +1128,12 @@ func TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked(t *testing.T) {
 				s.base = func(context.Context) error { return nil }
 				s.checkJob = func(context.Context, *refreshTarget) error { return nil }
 				s.reload = func(context.Context) (*refreshTarget, error) {
+					// The account is the project's own, as infra.Repo derives it
+					// (serviceAccountEmail): this run's project is a managed one,
+					// and the refresh's own gate admits a build only as the
+					// account that project runs (image_refresh_managed.go).
 					return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
-						RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+						RegistryPath: "r", BuildServiceAccountEmail: "fugaro-build@" + initProject + ".iam.gserviceaccount.com",
 						Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
 				}
 				return s
@@ -1205,7 +1209,7 @@ func TestUpdateCheckoutBuildLinesAreNeverDrawnOver(t *testing.T) {
 		s.checkJob = func(context.Context, *refreshTarget) error { return nil }
 		s.reload = func(context.Context) (*refreshTarget, error) {
 			return &refreshTarget{lc: p.lc, cfg: p.cfg, spec: infra.RepoSpec{Name: p.repo, Slug: p.slug,
-				RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+				RegistryPath: "r", BuildServiceAccountEmail: "fugaro-build@" + initProject + ".iam.gserviceaccount.com",
 				Workflows: map[string]infra.WorkflowSpec{"app": {}, "api": {}}}}, nil
 		}
 		return s

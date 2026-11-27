@@ -1003,6 +1003,31 @@ func (e *cloudEnv) vaultGate(ctx context.Context, slug string, spec *task.Spec, 
 	return checkImageSince(ctx, e, slug, spec, kind, vaultSince, subject, knows, "", warn)
 }
 
+// vaultNameGate refuses a launch of a repository whose workflow secrets the
+// credentials service fetches (B3.8's flip, and IS6's drop) on a job image
+// whose runner predates the BY-NAME fetch (vaultNameSince, IS2): the job such a
+// root deploys mounts none of the workflow's own `secrets:`, and the container
+// a version-1 fetch reads — the project copy a per-repository record maps the
+// variable to — is one this release no longer derives, so a runner that only
+// knows the version-1 way asks for a container that is gone or on its way out
+// and stops at bootstrap over a declared secret.
+//
+// The condition is vaultGate's own (switchedVaultSecrets), read from the same
+// documents and the same functions, and the two gates stand together in that
+// order: an image below vaultSince is refused there, with the sentence that
+// names the fetch itself, and every image the first gate admits — 0.26.0 up to
+// this release — is judged here, so a runner that knows the fetch but not the
+// name meets this sentence and no other.
+func (e *cloudEnv) vaultNameGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
+	if !e.switchedVaultSecrets(ctx, spec) {
+		return nil
+	}
+	if clone {
+		return checkCloneImageSince(e.lc, spec, vaultNameSince, vaultNameSubject, vaultNameKnows, "", warn)
+	}
+	return checkImageSince(ctx, e, slug, spec, kind, vaultNameSince, vaultNameSubject, vaultNameKnows, "", warn)
+}
+
 // switchedVaultSecrets is whether this launch starts a run whose job holds no
 // mounted value for its workflow's own secrets, which is the run whose image
 // has to know the fetch: the S3 flip is on (config.VaultFetchesClass, which the

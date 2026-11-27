@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -440,6 +441,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.sharedRootRetires(ctx) {
 		steps = append(steps, inFlightStep{
 			line: "retirement: takes a migrated repository's root apart; a job with a run waits"})
+	}
+	if e.projectJobRetires(ctx) {
+		steps = append(steps, inFlightStep{
+			line: "shared jobs: a job no profile names is deleted; a run's job is kept"})
 	}
 	return steps
 }
@@ -1044,4 +1049,57 @@ func (e *initEngine) sharedRootRetires(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+// projectJobRetires is whether this update can retire a shared project job —
+// the job of a (profile, provider, account) this machine's config declares no
+// more (issue #3686), which the installation stage deletes through the Cloud
+// Run API before its plan. It is named because the delete takes the executions
+// on the job with it, and the job a run in flight is on is the one this step
+// must not destroy.
+//
+// The read is the CLOUD's, and it is the retirement's own
+// (infra.LiveProjectJobs): a project job carries its triple in its own labels,
+// and which jobs the installation runs is not a fact of any file this machine
+// holds. It is asked of every job the listing answers, not of the config the
+// plan will read, so a job a carry keeps is one this clause may name over a
+// step that then does nothing — the direction every clause here errs in.
+//
+// A read that could not be made names no line: the clause would otherwise fire
+// on every update of a project whose jobs cannot be listed, and what a
+// retirement does with a job it cannot read is said by the step itself, with
+// the fix.
+func (e *initEngine) projectJobRetires(ctx context.Context) bool {
+	lc := e.lc
+	if lc == nil || e.c == nil {
+		return false
+	}
+	jobs, answered, _ := infra.LiveProjectJobs(ctx, e.c, lc.GCPProject, lc.Region)
+	if !answered {
+		return false
+	}
+	for _, j := range jobs {
+		pr, declared := lc.Profiles[j.Profile]
+		if !declared || pr.Provider != j.Provider {
+			return true
+		}
+		if !slices.Contains(config.ProjectJobAccounts(pr), projectJobAxisAccount(j.Account)) {
+			return true
+		}
+	}
+	return false
+}
+
+// projectJobAxisAccount is the account a live job's own label names, as the
+// axis config.ProjectJobAccounts lists it: the label spells the axis's empty
+// point two ways and this is where they come back together. modules/project's
+// job writes "none" for a job that runs as no Claude account at all (a label
+// cannot be empty), and a review-only variant of that job carries the policy's
+// own spelling of the same account (config.ReviewVariantAccount, "default").
+// Every other label is the account's own name and is read as it stands.
+func projectJobAxisAccount(label string) string {
+	if label == "none" || label == config.DefaultClaudeAccount {
+		return ""
+	}
+	return label
 }

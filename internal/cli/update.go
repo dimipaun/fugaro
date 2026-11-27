@@ -191,7 +191,7 @@ func (e *initEngine) writeAdminList(ctx context.Context) {
 		return
 	}
 	// Then the session, for the rule the three steps beside it keep
-	// (pinCredentialsImage, fillCredentialsAudience, selfFlagUnmanaged): this
+	// (pinCredentialsImage, fillCredentialsAudience, the budget rewrite): this
 	// object is authorization data — who the intake admits to the shared
 	// prefix — and a coding agent's session is not the act that publishes it.
 	// `--yes`'s help says as much: under one of these markers the door "changes

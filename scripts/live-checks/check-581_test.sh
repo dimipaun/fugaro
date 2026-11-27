@@ -247,10 +247,10 @@ JSON
 JSON
   # The map the check picks the entry from: web serves two repositories, data one.
   cat >"$json/survey.json" <<'JSON'
-{"version":1,"project":"fugaro-chk581-test","repos":[
+{"version":2,"project":"fugaro-chk581-test","repos":[
  {"repo":"acme/sandbox","provider":"github","signals":[{"kind":"lockfile","path":"package-lock.json"}]},
  {"repo":"acme/data","provider":"github","signals":[{"kind":"dockerfile","path":"Dockerfile"}]}],
- "setup":{"catalog":[{"name":"web"},{"name":"data"}],"image_map":{"acme/sandbox":"web","acme/data":"web","acme/solo":"data"},"bake_repos":true}}
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{"github/acme/sandbox":"web","github/acme/data":"web","github/acme/solo":"data"},"bake_repos":true}}
 JSON
   # The build's own record of itself: the steps a catalog build runs, with B3's
   # scan between the smoke and the promote.
@@ -426,6 +426,7 @@ test_happy_path() {
   expect_contains "$out" "web(tags=node,digest=sha256:1111111111)" "happy path: the entries it read"
   expect_contains "$out" "FACT map: PASS" "happy path: the map"
   expect_contains "$out" "the entry web is over 2 repositories — acme/data,acme/sandbox" "happy path: the entry it picked, and why"
+  expect_contains "$out" "read from the project's own map (setup.repo_images)" "happy path: the map is read from the version-2 member"
   expect_contains "$out" "FACT build: PASS" "happy path: the build"
   expect_contains "$out" "built through Cloud Build as build fake-build-1" "happy path: the build it read back"
   expect_contains "$out" "FACT baked: PASS" "happy path: the bake note"
@@ -449,6 +450,39 @@ test_happy_path() {
   expect_absent "$calls" "image map set" "happy path: the check writes no mapping"
   expect_absent "$calls" "fugaro run" "happy path: no run is launched"
   assert_scratch_removed "$dir" "happy path"
+}
+
+test_a_legacy_map_is_read_from_its_own_member() {
+  local dir=$work/legacymap
+  prepare "$dir"
+  # A project whose map an update has not migrated yet: `image survey` prints
+  # the bare-name legacy_image_map and no repo_images entry (R4), and the entry
+  # this check builds is picked from the map the document holds.
+  cat >"$dir/json/survey.json" <<'JSON'
+{"version":2,"project":"fugaro-chk581-test","repos":[
+ {"repo":"acme/sandbox","provider":"github","signals":[{"kind":"lockfile","path":"package-lock.json"}]}],
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{},"legacy_image_map":{"acme/sandbox":"web","acme/data":"web"},"bake_repos":true}}
+JSON
+  run_check "$dir"
+  expect_status "$status" 0 "a legacy map"
+  expect_contains "$out" "FACT map: PASS" "a legacy map: the map row"
+  expect_contains "$out" "read from the project's own map (setup.legacy_image_map)" "a legacy map: the member read"
+}
+
+test_one_repository_at_two_providers_is_one_repository() {
+  local dir=$work/twoproviders
+  prepare "$dir"
+  # D3373 maps one owner/name at two providers with two keys. That is one
+  # repository, and the build's own note names it once, so an entry serving it
+  # twice is not the entry over two repositories this check is about.
+  cat >"$dir/json/survey.json" <<'JSON'
+{"version":2,"project":"fugaro-chk581-test","repos":[
+ {"repo":"acme/sandbox","provider":"github","signals":[{"kind":"lockfile","path":"package-lock.json"}]}],
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{"github/acme/sandbox":"web","bitbucket/acme/sandbox":"web","github/acme/data":"web"},"bake_repos":true}}
+JSON
+  run_check "$dir"
+  expect_status "$status" 0 "one repository at two providers"
+  expect_contains "$out" "the entry web is over 2 repositories — acme/data,acme/sandbox" "one repository at two providers: the keys of one name are one repository"
 }
 
 test_doctor_exit_1_is_an_answer() {
@@ -573,8 +607,8 @@ test_a_map_with_no_entry_over_two_repositories_is_a_finding() {
   local dir=$work/map-one-each
   prepare "$dir"
   cat >"$dir/json/survey.json" <<'JSON'
-{"version":1,"project":"fugaro-chk581-test","repos":[],
- "setup":{"catalog":[{"name":"web"},{"name":"data"}],"image_map":{"acme/sandbox":"web","acme/data":"data"},"bake_repos":true}}
+{"version":2,"project":"fugaro-chk581-test","repos":[],
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{"github/acme/sandbox":"web","github/acme/data":"data"},"bake_repos":true}}
 JSON
   run_check "$dir"
   expect_status "$status" 1 "a map that puts one repository on every entry"
@@ -606,8 +640,8 @@ test_a_project_that_bakes_nothing_says_so() {
   local dir=$work/nobake
   prepare "$dir"
   cat >"$dir/json/survey.json" <<'JSON'
-{"version":1,"project":"fugaro-chk581-test","repos":[],
- "setup":{"catalog":[{"name":"web"},{"name":"data"}],"image_map":{"acme/sandbox":"web","acme/data":"web"},"bake_repos":false}}
+{"version":2,"project":"fugaro-chk581-test","repos":[],
+ "setup":{"catalog":[{"name":"web"},{"name":"data"}],"repo_images":{"github/acme/sandbox":"web","github/acme/data":"web"},"bake_repos":false}}
 JSON
   run_check "$dir"
   expect_status "$status" 1 "bake_repos=false"
@@ -948,6 +982,8 @@ t() {
 t test_help
 t test_dry_run
 t test_happy_path
+t test_a_legacy_map_is_read_from_its_own_member
+t test_one_repository_at_two_providers_is_one_repository
 t test_doctor_exit_1_is_an_answer
 t test_a_missing_sandbox_is_refused
 t test_a_path_that_is_not_a_checkout_stops_the_check

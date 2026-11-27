@@ -2787,6 +2787,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.vaultGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// And the same run's second half (IS6): the fetch that job depends on is
+	// version 2's, by name, from the project record — a runner that knows the
+	// version-1 way asks for the project copy this release stops deriving. Read
+	// after the gate above and on its own condition, so an image below vaultSince
+	// meets that sentence and one between the two meets this.
+	if err := env.vaultNameGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}

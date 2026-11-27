@@ -30,6 +30,10 @@ func catalogUpdateRig(t *testing.T) *imagesRig { return catalogUpdateRigAt(t, co
 func catalogUpdateRigAt(t *testing.T, version string) *imagesRig {
 	t.Helper()
 	r := newImagesRig(t, version)
+	// The installation is a managed one (newInitRig's marks), so every step of
+	// these runs is the gate's and leaves a record naming who ran it (D1014): a
+	// hermetic world has no credentials to answer with.
+	isolateGateCredentials(t)
 	// Every root matches its plan, so the run is about the pin and the job
 	// alone: what the installation root plans is scripted per pass below.
 	r.script["plan"] = map[string]any{"exit": 0}
@@ -58,7 +62,9 @@ func TestUpdatePinsTheCatalogBaseAndDeploysTheCheckJob(t *testing.T) {
 		{"exit": 0},
 		{"exit": 2},
 	}
-	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.catalog_check", "create"))}
+	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, installationJobPlan(
+		"module.installation.google_cloud_run_v2_job.catalog_check",
+		r.pinnedBase(config.BaseKind, convergeRelease), "image", "check", "--job", "--catalog")...)}
 	r.save(t)
 	// The owner's own terminal, which is what confirms the steps the run asks
 	// about now the flag that stood in for it is gone (T11).
@@ -165,7 +171,9 @@ func TestUpdateDeploysTheReportsJobFromTheBaseItPins(t *testing.T) {
 		{"exit": 0},
 		{"exit": 2},
 	}
-	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.reports", "create"))}
+	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, installationJobPlan(
+		"module.installation.google_cloud_run_v2_job.reports",
+		r.pinnedBase(config.BaseKind, convergeRelease), "runs", "reports", "--job")...)}
 	r.save(t)
 	fakeTerminal(t)
 
@@ -302,7 +310,9 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 	// The two passes of the installation root: the first has nothing to deploy
 	// (the config records no base image yet), the second deploys the job.
 	r.script["plan@installation"] = []map[string]any{{"exit": 0}, {"exit": 2}}
-	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.catalog_check", "create"))}
+	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, installationJobPlan(
+		"module.installation.google_cloud_run_v2_job.catalog_check",
+		r.pinnedBase(config.BaseKind, convergeRelease), "image", "check", "--job", "--catalog")...)}
 	// An owned project asks once, by the project's name — the confirmation the
 	// review screen is printed for.
 	r.markedRuns(t, initProjectName, initProject)

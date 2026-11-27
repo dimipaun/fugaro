@@ -131,6 +131,7 @@ func newInitRig(t *testing.T) *initRig {
 	r.sm.AllowAccess()
 	r.crm.AddProject(initProject, initProjectNumber)
 	r.gcs.AddProject(initProject, initProjectNumber)
+	r.managedInstallation(t)
 	for _, k := range []string{"XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "HOME"} {
 		t.Setenv(k, filepath.Join(r.dir, strings.ToLower(k)))
 	}
@@ -235,6 +236,22 @@ func planJSON(t *testing.T, changes ...planChange) string {
 // stateBucket makes the state bucket exist, marked, in the project.
 func (r *initRig) stateBucket() {
 	r.gcs.AddBucket(initStateBucket, initProjectNumber, map[string]string{"fugaro": "tfstate"})
+}
+
+// forgetRig is the world the rollback's own tests are about: the installation
+// this machine has, in a project nothing marks. `--forget` and `--config-only`
+// write no step at all — runInit returns out of its own door and never enters
+// the converge — so TN1's stop is not in their way, and taking the default
+// fixture's marks back out is what makes this the installation of a project
+// that is not managed, which is the only one that has a rollback. What a
+// managed project's rollback is refused by is a test of its own
+// (managedForgetRefusal).
+func forgetRig(t *testing.T) *initRig {
+	t.Helper()
+	r := newInitRig(t)
+	r.unmarkedInstallation(t)
+	r.stateBucket()
+	return r
 }
 
 const initLogView = "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
@@ -459,19 +476,30 @@ func TestInitRefusesDeletePlan(t *testing.T) {
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("a plan the guard refused was applied")
 	}
-	// A budget exists only through its flags: the refusal says to pass
-	// them again.
-	r.setPlan(t, change("module.installation.google_billing_budget.this[0]", "delete"))
-	_, _, err = executeStdin(t, "", "setup")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--budget, --budget-currency and --billing-account") {
+	// A budget exists only through its flags: the refusal says to pass them
+	// again. That line is a hint, and a managed project's refusal carries none
+	// (the owner's own sentence stands in for them), so it is read off the
+	// preview of a project nothing flags — the run TN1's stop does not take.
+	p := newInitRig(t)
+	p.unmarkedInstallation(t)
+	p.stateBucket()
+	p.setPlan(t, change("module.installation.google_billing_budget.this[0]", "delete"))
+	if _, _, err := executeStdin(t, "", "setup", "--plan-only"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "--budget, --budget-currency and --billing-account") {
 		t.Fatalf("budget delete: exit %d, err %v", ExitCode(err), err)
 	}
-	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
-	// Naming the address lets it through.
+	// Naming the address lets it through. It is a rig of its own, like the
+	// preview above: the world of a rig is the one built last — FUGARO_CONFIG
+	// and PATH both name it — so an arm that means to run the first rig's plan
+	// builds its own.
+	q := newInitRig(t)
+	q.stateBucket()
+	fakeTerminal(t)
+	q.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
 	if _, _, err := executeStdin(t, "", "setup", "--allow-delete", "module.installation.google_storage_bucket.runs"); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.ran(t, "apply")) != 1 {
+	if len(q.ran(t, "apply")) != 1 {
 		t.Fatal("the allowed delete was not applied")
 	}
 }
@@ -589,6 +617,13 @@ func fakeTerminal(t *testing.T) {
 	stdinIsTerminal = func(io.Reader) bool { return true }
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
+
+// askYes is what a run with --ask reads at a rig's fake terminal: a yes for
+// every question it puts, and one more than any run asks, because the input a
+// run leaves unread is nothing. --ask is the flag that puts back the
+// confirmations a managed project's gate stands in for (U3b), so a test whose
+// subject is one of those confirmations runs the command with it.
+const askYes = "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"
 
 // noTerminal is the other half: a run with no terminal on stdin, whatever the
 // test binary's own stdin is. A test that has to be sure of it says so rather
@@ -996,8 +1031,7 @@ func forgetPlan() []planChange {
 }
 
 func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	out, _, err := executeStdin(t, "", "update", "--forget")
@@ -1029,8 +1063,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	}
 
 	// Any other delete is refused, and nothing is applied or removed.
-	r = newInitRig(t)
-	r.stateBucket()
+	r = forgetRig(t)
 	r.setPlan(t, append(forgetPlan(), change("module.installation.google_service_account.scheduler", "delete"))...)
 	_, _, err = executeStdin(t, "", "update", "--forget")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "google_service_account.scheduler") {
@@ -1040,8 +1073,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
 	// So is a plan that creates anything.
-	r = newInitRig(t)
-	r.stateBucket()
+	r = forgetRig(t)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	if _, _, err := executeStdin(t, "", "update", "--forget"); ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a create: exit %d, err %v", ExitCode(err), err)
@@ -1057,8 +1089,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 // Mutation (run, restored): pass false for asFound at the rollback's two
 // prepare calls and the member is gone from the rewritten tfvars.
 func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	if err := os.MkdirAll(r.root(), 0o700); err != nil {
@@ -1084,8 +1115,7 @@ func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
 // An installation that adopted the legacy registry keeps it declared in
 // the rollback's plan, which would otherwise delete it.
 func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"legacy_registry": infra.LegacyRegistry})}
@@ -1108,8 +1138,7 @@ func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
 }
 
 func TestInitForgetRefusesWithRepoStates(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	b := r.gcs.Bucket(t, initStateBucket)
 	if err := b.WriteAll(t.Context(), infra.StatePrefixRepos+"bitbucket-acme-sandbox/default.tfstate", []byte("{}"), nil); err != nil {
 		t.Fatal(err)
@@ -1156,8 +1185,7 @@ func (r *initRig) runInitTfvars(t *testing.T) map[string]any {
 // --forget deletes only *.tfstate objects, so the installation's rollback
 // counts only those too, and a leftover lock doesn't block it.
 func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	b := r.gcs.Bucket(t, initStateBucket)
@@ -1173,8 +1201,7 @@ func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
 }
 
 func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
+	r := forgetRig(t)
 	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	// The installation's bucket is in `global`, where an installation made
@@ -1229,7 +1256,10 @@ func TestInitJSON(t *testing.T) {
 
 // createOnApply makes the fake terraform's apply create the runs bucket
 // in the GCS fake, as the real apply does on a fresh project: with GCS's
-// convenience bindings, the project Viewers' included.
+// convenience bindings, the project Viewers' included. An apply in a world
+// where the bucket is already there (the default rig's installation) is not a
+// failure of the apply — Google answers the create 409 and terraform goes on
+// with the bucket it has — so that code is the apply standing.
 func (r *initRig) createOnApply(t *testing.T) {
 	t.Helper()
 	curl, err := exec.LookPath("curl")
@@ -1242,8 +1272,8 @@ func (r *initRig) createOnApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"` + initRunsBucket + `","labels":{"fugaro":"managed"}}`
-	create := `if [ "$1" = apply ]; then '` + curl + `' -sf -o /dev/null -X POST -H 'Content-Type: application/json' -d '` + body + `' '` +
-		r.gcs.URL + `/storage/v1/b?project=` + initProject + `' || exit 9; fi` + "\n"
+	create := `if [ "$1" = apply ]; then code=$('` + curl + `' -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '` + body + `' '` +
+		r.gcs.URL + `/storage/v1/b?project=` + initProject + `'); case "$code" in 200|409) ;; *) exit 9 ;; esac; fi` + "\n"
 	lines := strings.SplitN(string(old), "\n", 2)
 	if err := os.WriteFile(path, []byte(lines[0]+"\n"+create+lines[1]), 0o755); err != nil {
 		t.Fatal(err)
@@ -1311,6 +1341,9 @@ func capturedApplies(t *testing.T, dir, root string) []map[string]any {
 func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	// The bucket this test is about carries the convenience bindings a create
+	// adds, which the run is to take away.
+	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
 	r.createOnApply(t)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")
@@ -2314,7 +2347,7 @@ func TestInitRefusesAProjectJobDeleteWhateverAllowDeleteNames(t *testing.T) {
 	grant := mod + `.google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"]`
 	r.setPlan(t, change(grant, "delete"), change(job, "delete", "create"))
 	_, _, err := executeStdin(t, "", "setup", "--allow-delete", job, "--allow-delete", grant)
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "retiring a project job is not supported yet") {
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "this run did not retire") {
 		t.Fatalf("exit %d, err %v; want the project-job refusal", ExitCode(err), err)
 	}
 	if len(r.ran(t, "apply")) != 0 {

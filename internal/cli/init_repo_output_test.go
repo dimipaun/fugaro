@@ -50,6 +50,11 @@ func readOut(out, errOut string, err error) string {
 func repoOutputRig(t *testing.T) *initRig {
 	t.Helper()
 	r := newInitRig(t)
+	// The repository door converges nothing (runInitRepo, and not the engine's
+	// converge), so TN1's stop is not in its way and this test's subject is the
+	// refusal of a project nothing flags: the guard's own sentence, hints and
+	// all, which a managed project replaces with the owner's.
+	r.unmarkedInstallation(t)
 	r.repoReady(t)
 	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", "")))
 	fakeTerminal(t)
@@ -113,7 +118,11 @@ func TestUpdateRepoKeepsTerraformsOutputInTheLog(t *testing.T) {
 // sends nobody to the project's owner — the reader is the owner (the owner's
 // feedback of 2026-11-24).
 func TestUpdateRepoGuardRefusalIsShortAtTheTerminal(t *testing.T) {
-	newRetireRig(t, retireOpts{protection: false})
+	// An installation of a project nothing flags, for repoOutputRig's reason:
+	// this door converges nothing, and the block a person reads is the one the
+	// guard writes for a project that is not managed.
+	r := newRetireRig(t, retireOpts{protection: false})
+	r.unmarkedInstallation(t)
 	before := logNames(t, "update")
 	out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError {
