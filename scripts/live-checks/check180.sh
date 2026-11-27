@@ -891,24 +891,28 @@ step_store() {
 }
 
 # D462's second half: with the name covered, `fugaro update --repo` asks
-# NOTHING. The reading is the absence of the prompt AND the absence of the
-# "still missing" lines the update prints for a repository it has no token for,
-# with stdin closed so a prompt could not be answered from the token file.
+# NOTHING. The reading is the transcript: the update must print no `fugaro
+# secrets set bitbucket-token` line and no "still missing" line for a repository
+# the allow-list covers. It runs at YOUR terminal, the way the rest of the check
+# does: a step the update needs confirmed is answered by the person sitting
+# here, and no flag stands in for them.
 update_one() { # update_one NAME PATH
   local name=$1 path=$2 rc=0 out="$SCRATCH/update.log"
   : >"$out"
   [ -d "$path/.git" ] || [ -f "$path/.git" ] || stop "the checkout ${path} for ${name} is not a git work tree: pass --repo ${name}=<path to the checkout> and run again"
-  ( cd "$path" && fugaro update --repo --project "$INSTALLATION" --yes </dev/null >"$out" 2>&1 ) || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    printf 'FAILED (exit %s): %s\n' "$rc" "$(last_line "$out")"
-    return 0
-  fi
+  ( cd "$path" && fugaro update --repo --project "$INSTALLATION" >"$out" 2>&1 ) || rc=$?
+  # The two readings come before the exit code: a run that named a token to
+  # store asked for it whatever it exited with.
   if grep -q 'secrets set bitbucket-token' "$out"; then
     printf 'ASKED-FOR-A-TOKEN: %s\n' "$(grep 'secrets set bitbucket-token' "$out" | head -n 1 | tr -d '\r' | head -c 200)"
     return 0
   fi
   if grep -qE 'Still missing|not covered' "$out"; then
     printf 'MISSING: %s\n' "$(last_line "$out")"
+    return 0
+  fi
+  if [ "$rc" -ne 0 ]; then
+    printf 'FAILED (exit %s): %s\n' "$rc" "$(last_line "$out")"
     return 0
   fi
   printf 'OK\n'
@@ -923,7 +927,7 @@ step_update() {
     fact update FAIL "fugaro update --repo did not come out clean on both repositories: ${REPO_A} → $(printf '%s' "$a" | cut -c1-140), ${REPO_B} → $(printf '%s' "$b" | cut -c1-140). It has to ASK NOTHING for a repository the allow-list covers, and a run that names a token to store means the name is not covered (D462). This is the reading the whole project-wide store exists for"
     ;;
   *)
-    fact update PASS "fugaro update --repo ran to completion on both repositories with the project-wide token in place and named no missing secret and no 'fugaro secrets set bitbucket-token' line for either: with the name covered the update asks NOTHING, which is the second half of D462. Both ran with stdin at /dev/null, so a prompt could not have been answered by the token file"
+    fact update PASS "fugaro update --repo ran to completion on both repositories with the project-wide token in place and named no missing secret and no 'fugaro secrets set bitbucket-token' line for either: with the name covered the update asks NOTHING, which is the second half of D462. Both ran at your own terminal, and neither asked it for anything"
     ;;
   esac
 }
@@ -1326,20 +1330,20 @@ step_second_machine() {
   [ -z "$GCLOUD_CONFIG" ] || env+=("GOOGLE_APPLICATION_CREDENTIALS=")
   [ -z "$adc" ] || env+=("$adc")
   # The seed is a WRITE, not a read: it writes the scratch home's local config
-  # from the installation's outputs, and the CLI confirms that write
-  # (internal/cli/init.go: writeLocalConfig -> confirmOrdinary) — a terminal, or
-  # --yes. This step has no terminal (stdin is /dev/null), so without --yes the
-  # command refuses on EVERY run and the second-machine row could never be
-  # anything but UNVERIFIED: the whole all-PASS the check exists for, and U5's
-  # reading with it, would be unreachable. --yes is safe here because the write
-  # lands in the scratch home's own config, which this check created and removes;
-  # the owner's config is never the target. `--plan-only` below is the opposite:
-  # it creates nothing, so it takes no --yes.
+  # from the installation's outputs, and the CLI confirms that write at a real
+  # terminal (internal/cli/init.go: writeLocalConfig -> confirmOrdinary). This
+  # check runs at YOUR terminal, so it is the person sitting here who answers
+  # it, and the step inherits that terminal rather than closing it: with stdin at
+  # /dev/null the write would be left for you and the seed would refuse on every
+  # run, so the second-machine row could never be anything but UNVERIFIED. The
+  # write lands in the scratch home's own config, which this check creates and
+  # removes; the owner's config is never the target. `--plan-only` below is the
+  # opposite: it creates nothing, so it confirms nothing and keeps stdin closed.
   local rc=0
-  env "${env[@]}" fugaro update --gcp-project "$GCP_PROJECT" --region "$REGION" --name "$INSTALLATION" --config-only --yes \
-    </dev/null >"$SCRATCH/second-seed.log" 2>&1 || rc=$?
+  env "${env[@]}" fugaro update --gcp-project "$GCP_PROJECT" --region "$REGION" --name "$INSTALLATION" --config-only \
+    >"$SCRATCH/second-seed.log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
-    fact second-machine UNVERIFIED "the second machine was NOT seeded (fugaro update --gcp-project ... --config-only --yes exited ${rc}): $(last_line "$SCRATCH/second-seed.log"). U5 is NOT measured by this run, and the block's last line says so, so this settles nothing about the token either way. The seed is both a READ and a WRITE. The read takes the installation's outputs, and it needs the owner's own Application Default Credentials: this step hands them to it by path (${adc:-none was found in this environment}), and if yours are somewhere else, pass --gcloud-config <dir> or set CLOUDSDK_CONFIG or GOOGLE_APPLICATION_CREDENTIALS. The write is the scratch home's local config, which the CLI confirms and for which this step passes --yes, because it has no terminal to confirm with: a refusal that names the typed confirmation means this CLI will not take --yes for that write, and a refusal that names credentials or the state bucket is the read. Nothing was copied into the scratch home either way"
+    fact second-machine UNVERIFIED "the second machine was NOT seeded (fugaro update --gcp-project ... --config-only exited ${rc}): $(last_line "$SCRATCH/second-seed.log"). U5 is NOT measured by this run, and the block's last line says so, so this settles nothing about the token either way. The seed is both a READ and a WRITE. The read takes the installation's outputs, and it needs the owner's own Application Default Credentials: this step hands them to it by path (${adc:-none was found in this environment}), and if yours are somewhere else, pass --gcloud-config <dir> or set CLOUDSDK_CONFIG or GOOGLE_APPLICATION_CREDENTIALS. The write is the scratch home's local config, which the CLI confirms at a real terminal: run the check in your own terminal window, and a refusal naming credentials or the state bucket is the read. Nothing was copied into the scratch home either way"
     return 0
   fi
   # The paths the seeded machine is asked about are the two checkouts this run
@@ -1467,7 +1471,7 @@ What the run will do, in this order:
   4. GET /2.0/user with the token (U2, U7);
   5. 'fugaro secrets set bitbucket-token --project-wide' with the token on stdin (the store, and
      the allow-list entry behind it) — a value write, which takes no --yes (D1171);
-  6. 'fugaro update --repo' in ${PATH_A} and ${PATH_B} with stdin at /dev/null, expecting NO prompt;
+  6. 'fugaro update --repo' in ${PATH_A} and ${PATH_B} at your terminal, expecting NO token line;
   7. one run in ${REPO_A} and one in ${REPO_B} — each launch returns at once, so the check then
      polls 'fugaro runs ls' until that run reached a final status (up to ${RUN_SECONDS}s) rather
      than reading an in-flight row — then each pull request's author and an approve
@@ -1478,7 +1482,7 @@ What the run will do, in this order:
      to revoke the OLD token in the workspace's settings — the check re-reads ${REPO_A} with the old
      value every ${ROTATION_POLL_SECONDS}s until Bitbucket refuses it (up to ${ROTATION_WAIT_SECONDS}s,
      then the rotation's row reads UNVERIFIED and no run is launched) — and one more run;
- 11. a scratch home seeded with 'fugaro update --gcp-project ... --config-only --yes', then
+ 11. a scratch home seeded with 'fugaro update --gcp-project ... --config-only', then
      'fugaro update --repo --plan-only' there, expecting a per-repository token (U5, D467).
      Both commands are given the owner's own Application Default Credentials by path
      (--gcloud-config, else GOOGLE_APPLICATION_CREDENTIALS, else CLOUDSDK_CONFIG, else

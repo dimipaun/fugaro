@@ -726,24 +726,23 @@ expect_store_argv() {
 # argument for argument, from the fake `fugaro`'s own log.
 #
 # The seed writes the scratch home's local config, and the CLI CONFIRMS that
-# write (internal/cli/init.go: writeLocalConfig -> confirmOrdinary): a terminal,
-# or --yes. This step's stdin is /dev/null and it has no terminal, so a seed
-# without --yes is refused on every run — the second-machine row could then never
-# be anything but UNVERIFIED, criteria_unmet would force exit 3, and the all-PASS
-# this check exists for (and U5's reading with it) would be unreachable. The fake
-# cannot model that refusal, because it is the CLI that makes it; the argv is the
-# only place the test can hold it, which is why it is pinned here. The second
-# command is the opposite case: `--plan-only` creates nothing, so it never takes
-# --yes, and the plan is about the allow-listed checkout rather than the current
-# directory.
+# write at a real terminal (internal/cli/init.go: writeLocalConfig ->
+# confirmOrdinary). No flag stands in for the person any more, so the seed runs
+# at the check's own terminal and its argv carries nothing for the write: a
+# `--yes` on it would be a flag the CLI refuses, and the check's row would read
+# FAIL instead of PASS. The fake cannot model the terminal, because it is the
+# CLI that reads it; the argv is the only place the test can hold the seed, which
+# is why it is pinned here. The second command is the opposite case:
+# `--plan-only` creates nothing, so it confirms nothing, and the plan is about
+# the allow-listed checkout rather than the current directory.
 expect_seed_argv() { # dir what checkout
   local dir=$1 what=$2 checkout=$3 seed plan
   seed=$(grep '^update .*--config-only' "$dir/fugaro.log" 2>/dev/null || true)
-  [ "$seed" = "update --gcp-project sandbox-p --region us-east5 --name sandbox --config-only --yes" ] \
-    || fail "$what: the seed ran as '${seed:-nothing at all}', want exactly 'update --gcp-project sandbox-p --region us-east5 --name sandbox --config-only --yes': the seed WRITES the scratch home's local config, the CLI confirms that write, and this step has no terminal — without --yes the CLI refuses it (init.go's writeLocalConfig -> confirmOrdinary) and the second machine is never seeded"
+  [ "$seed" = "update --gcp-project sandbox-p --region us-east5 --name sandbox --config-only" ] \
+    || fail "$what: the seed ran as '${seed:-nothing at all}', want exactly 'update --gcp-project sandbox-p --region us-east5 --name sandbox --config-only': the seed WRITES the scratch home's local config, the CLI confirms that write at a real terminal (init.go's writeLocalConfig -> confirmOrdinary), and no flag stands in for the person — the check runs at the owner's terminal, so the seed inherits it"
   plan=$(grep '^update --repo .*--plan-only' "$dir/fugaro.log" 2>/dev/null || true)
   [ "$plan" = "update --repo $checkout --plan-only" ] \
-    || fail "$what: the plan ran as '${plan:-nothing at all}', want exactly 'update --repo $checkout --plan-only': --plan-only creates nothing so it never takes --yes, and the plan has to be about the allow-listed checkout rather than the directory the check was launched from"
+    || fail "$what: the plan ran as '${plan:-nothing at all}', want exactly 'update --repo $checkout --plan-only': --plan-only creates nothing so it confirms nothing, and the plan has to be about the allow-listed checkout rather than the directory the check was launched from"
 }
 
 # expect_runs_polled DIR WHAT LAUNCHES — how the check read each run's row.
@@ -806,7 +805,8 @@ test_happy_path() {
   expect_store_argv "$work/happy" "happy path: the store" 2
   expect_runs_polled "$work/happy" "happy path" 3
   # The run only reaches an all-PASS if the second machine really was seeded: the
-  # seed's own argv is what says so, --yes included.
+  # seed's own argv is what says so, and it carries no flag that would stand in
+  # for the person at the terminal.
   expect_seed_argv "$work/happy" "happy path: the second machine's commands" "$work/happy/checkout-a"
 
   assert_no_secret "$work/happy" "happy path"
