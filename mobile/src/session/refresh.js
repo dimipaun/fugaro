@@ -30,7 +30,10 @@
 // whatever the service sends next into a store. A refusal is a code from C1's
 // closed set (`shared/mobile-session/index.js`'s `REFUSAL_CODES`), never a
 // sentence and never a value -- `refresh.test.js` asserts that no refusal
-// carries the token.
+// carries the presented token. The one value a refusal does carry is the
+// successor of a rotation whose exchange failed, and that is deliberate: the
+// presented token is dead by then, so the successor is the only one the phone
+// can present next (see `refreshSession`).
 //
 // **The network is opened here and in one other file.** The `fetch` this module
 // calls is handed in by the caller (`src/session/index.js`, whose own caller is
@@ -369,6 +372,13 @@ async function signValue({ purpose, value, sign }) {
  * `ProjectSessionStore`'s, and a function that both rotated and wrote would
  * make a failed write indistinguishable from a failed rotation -- which are two
  * different answers for the caller, one of them recoverable.
+ *
+ * **A rotation whose exchange failed still carries its successor**, because the
+ * rotation has already happened by then: the presented token is dead whatever
+ * Firebase answered, so the successor travels with the refusal and the caller
+ * writes it before it reports the failure. Dropping it would leave the phone
+ * holding a burned token and presenting it on the next call, which the service
+ * answers `device_revoked` -- a replay the phone inflicted on itself (D2783).
  */
 export async function refreshSession({ endpoint, refreshToken, sign, apiKey, fetch }) {
   if (typeof sign !== 'function') return refuse(REFRESH_CODES.SIGN_FAILED, 'sign');
@@ -384,7 +394,7 @@ export async function refreshSession({ endpoint, refreshToken, sign, apiKey, fet
     return parsed;
   }
   const exchanged = await exchangeCustomToken({ apiKey, customToken: parsed.customToken, fetch });
-  if (!exchanged.ok) return exchanged;
+  if (!exchanged.ok) return Object.freeze({ ...exchanged, refreshToken: parsed.refreshToken });
   return Object.freeze({
     ok: true,
     refreshToken: parsed.refreshToken,

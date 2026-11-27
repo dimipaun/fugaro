@@ -154,6 +154,50 @@ test('a refresh the project refuses as revoked signs the project out first', asy
   assert.equal((await store.get(PROJECT)).code, 'absent');
 });
 
+test('concurrent idToken() calls share one rotation rather than burning the token twice', async () => {
+  let refreshes = 0;
+  const fetch = async (url) => {
+    if (url.includes('/mobile/v1/refresh')) {
+      refreshes += 1;
+      // A real rotation is a round trip: the second caller arrives while the
+      // first is still in flight, which is what the app returning to the
+      // foreground after an hour does to six surfaces at once.
+      await new Promise((resolve) => setImmediate(resolve));
+      return { status: 200, text: async () => refreshAnswer() };
+    }
+    return {
+      status: 200,
+      text: async () => JSON.stringify({ idToken: 'not-a-credential-test-id-token', refreshToken: 'not-a-credential-test-firebase-refresh', expiresIn: '3600' }),
+    };
+  };
+  const { built } = await build({ fetch });
+  const tokens = await Promise.all([built.session.idToken(), built.session.idToken()]);
+  // One rotation, not two: a second would present the token the first burned
+  // and be answered `device_revoked`, costing the phone a QR re-pair.
+  assert.equal(refreshes, 1);
+  assert.deepEqual(tokens, ['not-a-credential-test-id-token', 'not-a-credential-test-id-token']);
+});
+
+test('a rotation whose exchange failed keeps the successor rather than the burned token', async () => {
+  let refreshes = 0;
+  const fetch = async (url) => {
+    if (url.includes('/mobile/v1/refresh')) {
+      refreshes += 1;
+      return { status: 200, text: async () => refreshAnswer() };
+    }
+    return { status: 500, text: async () => JSON.stringify({ code: 'device_revoked' }) };
+  };
+  const { built, store } = await build({ fetch });
+  await assert.rejects(() => built.session.idToken());
+  // The rotation happened, so the successor is what the phone holds; keeping
+  // the presented token would make the next call a replay.
+  assert.equal((await store.get(PROJECT)).token, 'not-a-credential-test-next-refresh-token');
+  // ... and the session is still live, so the next call presents the live
+  // token rather than the session having ended itself.
+  await assert.rejects(() => built.session.idToken(), (error) => error.code !== PORT_CODES.SIGNED_OUT);
+  assert.equal(refreshes, 2);
+});
+
 test('a network failure does not sign the project out', async () => {
   const { built } = await build({
     fetch: async () => {

@@ -88,6 +88,7 @@ class ProjectSession {
   #refreshToken;
   #idToken;
   #expiresAt;
+  #pending = null;
   #signedOut = false;
   #listeners = new Set();
 
@@ -142,13 +143,45 @@ class ProjectSession {
 
   /**
    * The access token, refreshed through the project when the held one is near
-   * its hour. A refusal that ends the session signs out first (see the header)
-   * and is then thrown, so the caller's `catch` sees a session that is already
-   * over rather than one it has to remember to end.
+   * its hour.
+   *
+   * **One rotation at a time, and that is a correctness property and not an
+   * optimisation.** The port hands six surfaces one session value, so the app
+   * returning to the foreground after an hour makes them all call this on the
+   * same tick -- and the token rotates on every use (D2783), so a second
+   * rotation presenting the token the first has already burned is answered
+   * `device_revoked`: the service revokes the whole family and deletes the
+   * device node, and the phone's own concurrency has cost it a QR re-pair. So
+   * concurrent callers are handed the one pending rotation, and a caller that
+   * arrives while it is in flight waits for its answer rather than starting a
+   * second one.
+   *
+   * A refusal that ends the session signs out first (see the header) and is
+   * then thrown, so the caller's `catch` sees a session that is already over
+   * rather than one it has to remember to end -- and a caller that waited on a
+   * rotation which ended the session is refused the same way, which is what the
+   * re-check after it settles is for.
    */
   async idToken() {
     this.#assertLive('idToken');
     if (this.#idToken !== null && this.#now() < this.#expiresAt - REFRESH_SKEW_MS) return this.#idToken;
+    if (this.#pending === null) this.#pending = this.#rotate();
+    const pending = this.#pending;
+    try {
+      await pending;
+    } finally {
+      // Released whichever way it went: a refresh that failed for a reason the
+      // next call may not meet (the network) must be retryable.
+      if (this.#pending === pending) this.#pending = null;
+    }
+    // The rotation the caller waited on may have ended the session (it is the
+    // one that fires `signedOut`), and a token from it would be stale.
+    this.#assertLive('idToken');
+    return this.#idToken;
+  }
+
+  /** One rotation: sign, present, store the successor, exchange the custom token. */
+  async #rotate() {
     const refreshed = await refreshSession({
       endpoint: this.#endpoint,
       refreshToken: this.#refreshToken,
@@ -165,7 +198,22 @@ class ProjectSession {
       fetch: this.#fetch,
     });
     if (!refreshed.ok) {
-      if (refreshed.revoked === true) await this.#signOut();
+      if (refreshed.revoked === true) {
+        await this.#signOut();
+        this.#refuse(refreshed.code, 'idToken');
+      }
+      // A rotation whose exchange failed still rotated (see `refreshSession`),
+      // so the successor it carries is the live token and the one in hand is
+      // dead: it is written before the refusal, because a phone that kept the
+      // dead one would present it next time and be told `device_revoked`. The
+      // write's own failure is the refusal then -- a rotated token that is not
+      // written is the same broken phone -- and it is reported rather than
+      // swallowed.
+      if (typeof refreshed.refreshToken === 'string' && refreshed.refreshToken !== '') {
+        this.#refreshToken = refreshed.refreshToken;
+        const stored = await this.#store.put(this.#projectId, refreshed.refreshToken);
+        if (!stored.ok) this.#refuse(stored.code, 'idToken');
+      }
       this.#refuse(refreshed.code, 'idToken');
     }
     // The successor is stored before it is cached: a token the phone has

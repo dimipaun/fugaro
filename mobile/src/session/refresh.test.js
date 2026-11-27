@@ -148,6 +148,25 @@ test('a refresh that the project refuses as revoked signs the project out', asyn
   assert.deepEqual(Object.keys(seen[0]).sort(), ['refresh_token', 'signature']);
 });
 
+test('a rotation whose exchange failed still hands back the successor', async () => {
+  const fetchPort = async (url) => {
+    if (url.includes('/mobile/v1/refresh')) return { status: 200, text: async () => answer() };
+    return { status: 500, text: async () => JSON.stringify({ code: 'device_revoked' }) };
+  };
+  const result = await refreshSession({
+    endpoint: ENDPOINT,
+    refreshToken: TOKEN,
+    sign: async () => new Uint8Array(64).fill(1),
+    apiKey: 'not-a-credential-test-api-key',
+    fetch: fetchPort,
+  });
+  assert.equal(result.ok, false);
+  // The rotation already happened, so the successor is the live token and the
+  // caller must write it: presenting the presented one again is a replay the
+  // service answers `device_revoked`.
+  assert.equal(result.refreshToken, 'not-a-credential-test-next-refresh-token');
+});
+
 test('a rotation hands back the successor and the exchanged ID token', async () => {
   const fetchPort = async (url) => {
     if (url.includes('/mobile/v1/refresh')) return { status: 200, text: async () => answer() };
