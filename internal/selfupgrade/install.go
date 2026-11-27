@@ -22,6 +22,8 @@ import (
 var (
 	errDownload = errors.New("the download failed")
 	errTooBig   = errors.New("the download is too large")
+	errNoSum    = errors.New("the checksums do not name the archive")
+	errMismatch = errors.New("the checksum does not match")
 	errArchive  = errors.New("the archive is not a fugaro binary")
 )
 
@@ -38,8 +40,20 @@ func upgrade(ctx context.Context, want, have string) (string, error) {
 	if !ok {
 		return "", nil
 	}
-	archive, err := fetchBytes(ctx, assetURL(version, archiveName(version)), maxArchiveBytes)
+	name := archiveName(version)
+	checksums, err := fetchBytes(ctx, assetURL(version, "checksums.txt"), maxChecksumsBytes)
 	if err != nil {
+		return "", failed(version, err)
+	}
+	sum, ok := checksumFor(checksums, name)
+	if !ok {
+		return "", failed(version, errNoSum)
+	}
+	archive, err := fetchBytes(ctx, assetURL(version, name), maxArchiveBytes)
+	if err != nil {
+		return "", failed(version, err)
+	}
+	if err := verifyChecksum(archive, sum); err != nil {
 		return "", failed(version, err)
 	}
 	exe, err := install(archive, version)
