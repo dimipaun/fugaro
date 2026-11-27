@@ -53,11 +53,10 @@ func layerName(i int) string {
 // project's credentials and pools and narrows a pool. A grade of the escalation
 // ladder is the one block only the first layer carries: the project owns the
 // model choice, and a repository's own names are lifted before a layer is built
-// (tightenGrades). A key a layer leaves
-// unset passes the earlier layers through. A value a later layer sets that does
-// not tighten is dropped and recorded in Ignored (equal values are not ignored;
-// the ceiling is never ignored). Later layers are compared to the running
-// effective value.
+// (tightenGrades). A key a layer leaves unset passes the earlier layers through.
+// A value a later layer sets that does not tighten is dropped and recorded in
+// Ignored (equal values are not ignored; the ceiling is never ignored). Later
+// layers are compared to the running effective value.
 func Merge(ceiling Layer, tighten ...Layer) Effective {
 	e := Effective{Sources: map[string]string{}}
 	layers := append([]Layer{ceiling}, tighten...)
