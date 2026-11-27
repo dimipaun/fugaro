@@ -1021,6 +1021,10 @@ func planRowOf(out, stage string) string {
 // both and what the marker changes is the sentence the step prints. (The step
 // the marker does keep out of a session is the one no gate judges and a person
 // answers for: the project layer's own write, managed_owner_terminal_test.go.)
+//
+// The account is compared where each run keeps it: the agent's session is one
+// `fugaro update` has --json in, so its steps are the stderr half of the rule
+// and stdout is the run's document (D3437, agent_json_test.go).
 func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	clearAgentMarkers(t)
 	person := applyingRig(t)
@@ -1035,6 +1039,9 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	agent := applyingRig(t)
 	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update")
+	if !json.Valid([]byte(strings.TrimSpace(outAgent))) {
+		t.Fatalf("an agent's session did not print the run's document on stdout (D3437):\n%s", outAgent)
+	}
 
 	// The marker changes what the run may do, not which stages it reached: every
 	// stage the agent's account names is one the person's names, in the same
@@ -1045,10 +1052,10 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	// stop and is named after it. So the agent's steps are the person's, less
 	// the ones that only waited.
 	personStages := stepNames(outPerson)
-	agentStages := stepNames(outAgent)
+	agentStages := stepNames(errAgentOut)
 	if len(agentStages) == 0 || len(personStages) < len(agentStages) {
 		t.Fatalf("the runs' accounts name %v and %v, want the agent's the person's own less the stages that waited:\nperson:\n%s\nagent:\n%s",
-			personStages, agentStages, outPerson, outAgent)
+			personStages, agentStages, outPerson, errAgentOut)
 	}
 	rest := personStages
 	for _, name := range agentStages {
@@ -1065,7 +1072,7 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	if !slices.Contains(agentStages, initflow.Plugin) || !slices.Contains(personStages, initflow.Plugin) {
 		t.Errorf("an account does not name the machine-local plugin stage:\nperson: %v\nagent: %v", personStages, agentStages)
 	}
-	for _, out := range []string{outPerson, outAgent} {
+	for _, out := range []string{outPerson, errAgentOut} {
 		lines := reportLines(out)
 		if last := lines[len(lines)-1]; !strings.HasPrefix(last, "Done in ") && !strings.HasPrefix(last, "Left for you in ") {
 			t.Errorf("the run does not end in the reporter's closing line: %q", last)
