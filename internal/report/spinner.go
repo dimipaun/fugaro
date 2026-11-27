@@ -14,6 +14,11 @@ var spinFrames = []string{"|", "/", "-", "\\"}
 // constant so a test can put the ticker out of its own way.
 var spinInterval = 100 * time.Millisecond
 
+// heartbeatInterval is how often a step with no line in flight says it is
+// still running: a minute, which is how long silence takes to read as a hang
+// (D3436). A variable for the same reason spinInterval is.
+var heartbeatInterval = time.Minute
+
 // startSpinner draws the step in flight on the terminal's own line and keeps
 // redrawing it until the step ends. This is the whole of the spinner: a
 // carriage-return writer of our own, and nothing at all where the rules
@@ -73,3 +78,8 @@ func (r *Reporter) stopSpinner() {
 	r.spinStop = nil
 	fmt.Fprint(r.o.Out, "\r\x1b[K")
 }
+
+// elapsedText is how long a step has been running, as its own line reads it.
+// It is the stub CO2's red step needs: the tests name it, and nothing draws
+// its answer yet.
+func elapsedText(time.Duration) string { return "" }
