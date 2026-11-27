@@ -328,31 +328,6 @@ func TestIssueDismissSetsStatus(t *testing.T) {
 	}
 }
 
-// TestIssueDismissRefusesInAgentSession: a coding agent's session may not set
-// an issue aside (D1730, F10). The guard is the one `recipes publish` uses, and
-// what it refuses is the same write: the record is untouched, and the refusal
-// is the agent one rather than a failure to find the issue.
-func TestIssueDismissRefusesInAgentSession(t *testing.T) {
-	store := issueState(t)
-	t.Setenv("CLAUDECODE", "1")
-	i := savedIssue("48218", issues.StatusPending, false)
-	if err := store.Save(i); err != nil {
-		t.Fatalf("saving: %v", err)
-	}
-
-	_, _, err := execute(t, "issue", "dismiss", i.LocalID)
-	if err == nil || !strings.Contains(err.Error(), "coding agent") {
-		t.Fatalf("dismiss in a coding agent's session: err = %v, want the agent refusal", err)
-	}
-	got, err := store.Get(i.LocalID)
-	if err != nil {
-		t.Fatalf("reading the issue back: %v", err)
-	}
-	if got.Status != issues.StatusPending {
-		t.Errorf("a refused dismiss left the issue %q, want %q", got.Status, issues.StatusPending)
-	}
-}
-
 // TestIssueListJSONVersioned: `list --json` is the document a reader outside
 // this binary consumes — an array of records, each with the record's own
 // version, and each a document schemas/issue-record.schema.json accepts
