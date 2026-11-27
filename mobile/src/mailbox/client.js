@@ -154,7 +154,7 @@ import {
 } from '../../../shared/presence/index.js';
 import { UNWIRED_CONNECTION } from './connection.js';
 import { evaluateConnection, evaluateGate, offlineSpeech } from './gate.js';
-import { macOf, sigOf, verifyMac } from './mac.js';
+import { macOf, sigOf, verifyMac, verifySig } from './mac.js';
 import { isDatabaseKey, mailboxPaths } from './paths.js';
 import { outboundRedactor } from './redact.js';
 import { STORE_CODES } from './store.js';
@@ -514,6 +514,8 @@ export function createMailboxClient(options = {}) {
     connection = UNWIRED_CONNECTION,
     licence = UNENFORCED_LICENCE,
     session = null,
+    consumerKey = null,
+    verifySignature = null,
     speaker,
     now,
     newId,
