@@ -93,9 +93,7 @@ init.go	run fugaro image build
 init.go	run fugaro setup --provision-batch for the installation, then fugaro update
 init.go	run fugaro setup with it, then fugaro update
 init.go	run fugaro update
-init_anchor.go	rerun fugaro update
 init_anchor.go	run fugaro update
-init_anchor.go	then rerun fugaro update
 init_firebase.go	next fugaro update
 init_firebase.go	then run fugaro update
 init_images.go	then fugaro update

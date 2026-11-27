@@ -3354,7 +3354,7 @@ fugaro update --repo . --project fugaro
 fugaro image refresh --project fugaro
 ```
 
-⚠ **`update --repo` also writes the checkout's own `gcp_project:` line, and this check puts it back.** The repository stage is not the job environment alone: its `Apply` ends by writing the checkout's `gcp_project:` line — the trust anchor shared config is found from (`internal/cli/init_repo_stage.go` → `internal/cli/init_fugaroyaml.go`, `repositoryStage.anchor`; the `--plan-only` run above prints that line and writes nothing, `:143`). When the sandbox checkout's `fugaro.yaml` does not already carry it, the command prints a diff of the file and then writes it (`:248`, `writeFileAtomic`): a person at their own terminal is asked nothing any more — the no-prompt policy removed the `Write this to <path>? [y/N]:` confirmation this line used to be behind, and a person being there is the whole of what confirms it — and `fugaro update --ask` is the flag that puts the question back — where the project's managed marks answered, which is the only place the flag has a question to restore (`confirmNow`'s own read of the marks: with no managed answer `--ask` moves nothing and the person at the terminal writes as they do without it). It leaves `gcp_project: fugaro-dev` in the checkout, uncommitted. **It is not this check's edit and must not be committed or merged.** It is a real change to a committed file of the sandbox repository and not what this step is for (this step moves the job environment and the image), and it has a rollout rule of its own that this check does not run: every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on a release that knows the key before the line is merged, because older versions refuse it as unknown. It is also the one edit to that file this check can make at all, which is what step 8's revert is about — **step 8 runs the same command and then puts the file back.** Step 1's `git show HEAD:fugaro.yaml | grep -E '^(project|gcp_project):'` is where you see whether the sandbox's committed copy carries the line; the copy this repository commits carries no `gcp_project:` (`deploy/sandbox/fugaro.yaml`), so expect the write. Only a run with no terminal at its input — a pipe or `--json` — prints the line to add and writes nothing; and a second run over a file that already carries the line has nothing to change, so it writes nothing either.
+⚠ **`update --repo` writes no file in this checkout, and there is nothing to put back.** The repository stage converges the job environment and the image and nothing else: the checkout's `gcp_project:` line is written by `fugaro project repos add` and by no other command, so the anchor left the converge and the applied run makes no edit to `fugaro.yaml` (the `--plan-only` run above prints none either). Step 1's `git show HEAD:fugaro.yaml | grep -E '^(project|gcp_project):'` is still where you see whether the sandbox's committed copy carries the line — the copy this repository commits does not (`deploy/sandbox/fugaro.yaml`) — and step 8's `git diff -- fugaro.yaml` is a confirmation that it is unchanged: **a diff there is the operator's own working-tree change, not this check's, and it must not be reverted by the check.**
 
 ```bash
 # What the job carries now: the NAMES of its environment variables and the
@@ -3459,27 +3459,12 @@ Re-run the block. Put the installation back to what step 1 recorded, and leave t
 cp "$C.before-49" "$C"
 # the job environment: back to step 1's, through the only path that writes it
 fugaro update --repo . --project fugaro
-# the sandbox's own file. This check makes no edit to it that it keeps: step 6
-# says why an un-enrollment cannot be made by editing it, and step 3 says why
-# the ONE edit `update --repo` makes — the checkout's gcp_project: line, which a
-# person at the terminal no longer answers a question for — is not this check's.
-# The revert below is for it: the line is a real change to a committed file, and
-# the `update --repo` above wrote nothing to it this time (there is nothing left
-# to change, so the anchor's edit has nothing to write)
+# the sandbox's own file. This check makes no edit to it: step 6 says why an
+# un-enrollment cannot be made by editing it, and step 3 says why `update --repo`
+# writes no file in this checkout at all — the gcp_project: line is `fugaro
+# project repos add`'s and not the converge's — so this is a confirmation too,
+# and a diff here is the operator's own change, left alone
 git diff -- fugaro.yaml
-# The revert, only when there is something of the anchor's to revert: step 1
-# recorded the checkout's own project:/gcp_project: lines, and a HEAD without a
-# gcp_project: line is exactly the case the anchor writes in, so a diff in the
-# file there is the line the anchor wrote. A checkout whose committed copy
-# already carries the line was never written to — an edit with nothing to change
-# writes nothing — so an unrelated working-tree change in it is the operator's
-# and is left alone.
-if ! grep -q '^gcp_project:' /tmp/chk49-sandbox-yaml-before.txt; then
-  if ! git diff --quiet -- fugaro.yaml; then
-    git checkout -- fugaro.yaml
-    echo "fugaro.yaml: reverted — the gcp_project: line update --repo wrote is not this check's edit"
-  fi
-fi
 # nothing writes this one any more — the plugin stage installs at user scope
 # and takes a leftover pin out, and `fugaro image refresh` leaves it alone — so
 # this is a confirmation too

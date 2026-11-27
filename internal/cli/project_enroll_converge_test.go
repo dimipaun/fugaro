@@ -138,8 +138,15 @@ func enrolLanded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testutil.Git(t, dir, "add", "fugaro.yaml")
-	testutil.Git(t, dir, "commit", "-q", "-m", "the anchor the enrolment wrote")
+	// A converge writes nothing in the checkout any more (U9b: the anchor is
+	// `fugaro project repos add`'s, and the repository stage stopped calling
+	// it), so a run that only converged leaves `fugaro.yaml` the default
+	// branch's already and there is nothing to land. A run that really wrote the
+	// line — `repos add`'s — still takes this commit.
+	if dirty := testutil.Git(t, dir, "status", "--porcelain", "--", "fugaro.yaml"); dirty != "" {
+		testutil.Git(t, dir, "add", "fugaro.yaml")
+		testutil.Git(t, dir, "commit", "-q", "-m", "the anchor the enrolment wrote")
+	}
 	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
 }
 

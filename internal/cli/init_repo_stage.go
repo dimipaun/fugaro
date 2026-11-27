@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -178,10 +177,6 @@ func (s *repositoryStage) Plan(ctx context.Context, env initflow.Env) (initflow.
 	if p.Detail == "" && s.e.r.enrolmentNote != "" {
 		p.Detail = s.e.r.enrolmentNote
 	}
-	// What the checkout's gcp_project: line would be, printed and not written.
-	if err := s.anchor(ctx, env, true); err != nil {
-		return initflow.Plan{}, err
-	}
 	return p, nil
 }
 
@@ -196,11 +191,6 @@ func (s *repositoryStage) Apply(ctx context.Context, env initflow.Env) (initflow
 	out, err := s.engineStage.Apply(ctx, env)
 	if err != nil {
 		return out, err
-	}
-	// The engine has onboarded the repository (and may have built its first
-	// image, with this binary): now the checkout's gcp_project: line.
-	if err := s.anchor(ctx, env, s.e.r.o.planOnly); err != nil {
-		return initflow.Outcome{}, fmt.Errorf("the repository is onboarded; only the gcp_project line of fugaro.yaml was not written (%w): rerunning "+s.e.r.o.doorProgram()+" is safe", err)
 	}
 	return out, nil
 }

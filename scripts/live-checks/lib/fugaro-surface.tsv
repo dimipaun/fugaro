@@ -1430,7 +1430,6 @@ flag	settings unset	value		--layer
 flag	settings unset	value		--project
 flag	settings unset	value		--repo
 flag	setup	bool		--allow-job-delete
-flag	setup	bool		--anchor
 flag	setup	bool		--ask
 flag	setup	bool		--bake-repos
 flag	setup	bool		--check
@@ -1506,7 +1505,6 @@ flag	troubleshoot	bool	-h	--help
 flag	troubleshoot	value		--max-budget-usd
 flag	troubleshoot	value		--max-turns
 flag	update	bool		--allow-job-delete
-flag	update	bool		--anchor
 flag	update	bool		--ask
 flag	update	bool		--bake-repos
 flag	update	bool		--check

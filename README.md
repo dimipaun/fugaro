@@ -117,7 +117,7 @@ Each repository carries a `fugaro.yaml`. `/fugaro:setup` writes it with you; `fu
 ```yaml
 version: 1
 project: aurora               # the Fugaro project this repository belongs to
-gcp_project: my-gcp-project   # written by fugaro update --anchor, run in the checkout
+gcp_project: my-gcp-project   # written by fugaro project repos add, run in the checkout
 git:
   provider: github            # github | bitbucket
   base_branch: main

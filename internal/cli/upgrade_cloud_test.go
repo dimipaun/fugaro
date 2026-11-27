@@ -82,8 +82,8 @@ func TestCloudCheckOnTheBaseKind(t *testing.T) {
 
 // TestCloudCheckReadsOnlyLocalFilesWhenAnchored is
 // TestCloudCheckReadsOnlyLocalFiles for a checkout that already has
-// gcp_project: (an anchored repository, the common case once the converge
-// --anchor has run): cloudCheck resolves the project layer too now (Task
+// gcp_project: (an anchored repository, the common case once `fugaro project
+// repos add` has written the line): cloudCheck resolves the project layer too now (Task
 // 10), and must still never read its bucket or need credentials.
 //
 // Mutation (run, restore): revert cloudCheck's loadCheckoutResolved call
