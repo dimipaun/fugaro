@@ -477,7 +477,7 @@ merge needs positive evidence (commits, a green CI, **a whole changed-path set i
 security path) and **fails closed** without it — into the **recommend-only** outcome, tried before the two outcomes that act, which merges, cancels and restarts nothing, so an input nobody could
 read is a print and never a cancel (D1245, D1247); and every triage is readable twice — in the audit log (O3) and in the read-only `fugaro runs watch`. All four decisions are the recommendation;
 what the owner ruled on 2026-11-08 are the two defaults the rule rests on: **merge as-is with follow-ups** (D1245) and **split the work into follow-up
-sub-tasks** (D1246). One input was external to this repository and is not any more: **BF1's writer landed 2026-11-25** (U10, `internal/runner/findings.go`), so the triage's third read is a read for every run from that release on, and the fail-closed path is left to the run that finalized before it or whose write did not land.
+sub-tasks** (D1246). One input was external to this repository and is not any more: **BF1's writer landed 2026-11-25** (U10, `internal/runner/findings.go`), so the triage's third read is a read for every run from that release on, and the fail-closed path is left to the run that finalized before it, to one whose write did not land, and to a finding whose severity word the triage does not know.
 
 ## 5. UNVERIFIED
 
@@ -643,8 +643,8 @@ is one place**: `unitMayNameThisBinary` in `internal/cli/init_orchestrator_stage
 
 **Open items BF2's triage rule leaves (2026-11-08; reported, not decided).** (1) **The findings file is BF1's, and the writer half of BF1 landed 2026-11-25**
 (U10, `internal/runner/findings.go`): the rule's third input is a read for every run from that release on, so what remains fail-closed is the run that
-finalized before it or whose write did not land — it cancels nothing, merges nothing and recommends
-only, which is the rule's own fourth outcome (D1247), tried before the two outcomes that act on the run — so the fail-closed reading is the fixed order's, not a promise about them. That is the safe reading, and no longer the only one. The other half of BF1 is still missing: **no run ends at 80% of its budget with open findings**, so no run reaches the file by the route the rule was designed around. (2) **The automatic merge is the first merge this design takes away from a person.** It is bounded
+finalized before it, one whose write did not land, and a finding whose severity word the triage does not know — nothing merged, cancelled or restarted,
+which is the rule's own fourth outcome (D1247), tried before the two outcomes that act on the run — so the fail-closed reading is the fixed order's, not a promise about them. That is the safe reading, and no longer the only one. The other half of BF1 is still missing: **no run ends at 80% of its budget with open findings**, so no run reaches the file by the route the rule was designed around. (2) **The automatic merge is the first merge this design takes away from a person.** It is bounded
 to a **finished** run (the record's status terminal, never one still in flight) with **a ready pull request** (not a draft), commits, green CI, **a diff wholly inside the routine allowlist**, no critical finding and none high in a security path, but the CI it reads is the check that ran, not the
 review a person would have given: a green build over a diff nobody read is merged by code. That residual is why the escalation cases are code, why the
 diff gate does not rest on the findings file at all (item (6)), and why the audit log carries the reasons. (3) **Two ticks, or two daemons, must not merge twice.** The pull request's own merged state and the `<run>:triage`
