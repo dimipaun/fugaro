@@ -21,6 +21,20 @@ import (
 // cannot be fetched. Nothing here reads FUGARO_CHECKOUT: what decides is the
 // tree the image holds.
 
+// symlinksResolved is p with every symlink on the way resolved, which is how
+// the run's own stages see a path: t.TempDir() is under /var/folders on macOS,
+// itself a symlink to /private/var/folders, so a directory the test named and
+// the same directory as the run was handed differ by that link alone. Both
+// sides of a path comparison here go through it (review L2).
+func symlinksResolved(t *testing.T, p string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
 // jobHarness is a harness whose run is in a per-repository Cloud Run job, the
 // class whose image may hold a baked checkout. The harness's own run is a local
 // invocation (Deps.Local), and a local invocation has no image and so no baked
@@ -152,11 +166,7 @@ func TestForeignBakeRemovedAndCloned(t *testing.T) {
 	if _, err := os.Stat(foreign); err == nil {
 		t.Errorf("the unusable tree at %s is still there after the run", foreign)
 	}
-	want, err := filepath.EvalSymlinks(h.deps.WorkDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := h.agent.calls[0].Dir; got != want {
+	if got, want := symlinksResolved(t, h.agent.calls[0].Dir), symlinksResolved(t, h.deps.WorkDir); got != want {
 		t.Errorf("the run worked in %q, want the checkout it cloned into %q", got, want)
 	}
 	if got := testutil.Git(t, h.deps.WorkDir, "config", "remote.origin.url"); got != computed {
@@ -202,11 +212,7 @@ func TestBrokenBakeClonesFresh(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "feature.txt")); err != nil {
 				t.Errorf("the run did not work in the checkout it cloned: %v", err)
 			}
-			want, err := filepath.EvalSymlinks(h.deps.WorkDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := h.agent.calls[0].Dir; got != want {
+			if got, want := symlinksResolved(t, h.agent.calls[0].Dir), symlinksResolved(t, h.deps.WorkDir); got != want {
 				t.Errorf("the run worked in %q, want the checkout it cloned into %q", got, want)
 			}
 			if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
@@ -248,11 +254,7 @@ func TestUsableBakeFetches(t *testing.T) {
 			if err != nil || rec.Status != runstore.StatusSucceeded {
 				t.Fatalf("rec = %+v, err = %v", rec, err)
 			}
-			want, err := filepath.EvalSymlinks(baked)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := h.agent.calls[0].Dir; got != want {
+			if got, want := symlinksResolved(t, h.agent.calls[0].Dir), symlinksResolved(t, baked); got != want {
 				t.Errorf("the run worked in %q, want the checkout the image holds %q", got, want)
 			}
 			if _, err := os.Stat(filepath.Join(baked, "moved-on.txt")); err != nil {
