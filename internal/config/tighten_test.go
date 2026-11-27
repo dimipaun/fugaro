@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // tightenLayer is a project layer whose defaults block is defaults, with the
@@ -346,5 +347,43 @@ func TestProjectRaiseKeepsRepoFileValid(t *testing.T) {
 	}
 	if !slices.Equal(res.Ignored, want) {
 		t.Errorf("ignored = %+v, want %+v", res.Ignored, want)
+	}
+}
+
+// TestSilentProjectCriticalRunKeepsL3 is R20 (RT2): where RT1 kept a
+// repository's value because the project layer says nothing about the key, the
+// baseline is where the defaults are applied — for a review level's own
+// switch, the mode's row (rigor.DefaultLevels). A critical run's row turns
+// level 3 on, so a silent project does not let the repository turn it off, and
+// the level runs; a mode whose row leaves the level off has no baseline for
+// the key, and the repository's off is the only answer there is.
+func TestSilentProjectCriticalRunKeepsL3(t *testing.T) {
+	silent := tightenLayer(t, "{ git: { provider: github } }")
+	c, res, ps := Resolve([]byte(minimalRepo+"agent:\n  levels:\n    l3: { none: true }\n"), silent)
+	if len(ps) > 0 {
+		t.Fatalf("a silent project: %s", problemsText(ps))
+	}
+	if l3 := c.Agent.Levels.L3; l3 == nil || !l3.Off {
+		t.Fatalf("a silent project: l3 = %+v, want the repository's own off in the resolved config", l3)
+	}
+	if !slices.Contains(res.Unchecked, "agent.levels.l3.none") {
+		t.Fatalf("a silent project: unchecked = %v, want it to name agent.levels.l3.none", res.Unchecked)
+	}
+
+	recipe := levelRecipe(t, "default")
+	got, _, err := ResolveLevels(LevelInputs{Config: c, Mode: rigor.Critical, Recipe: recipe, CatalogDefault: true})
+	if err != nil {
+		t.Fatalf("a critical run under a silent project: %v", err)
+	}
+	if !got.L3.On {
+		t.Errorf("l3 = %+v at critical under a silent project; want it on: the mode's own row is the baseline the repository's off is judged against (R20)", got.L3)
+	}
+
+	got, _, err = ResolveLevels(LevelInputs{Config: c, Mode: rigor.Pro, Recipe: recipe, CatalogDefault: true})
+	if err != nil {
+		t.Fatalf("a pro run under a silent project: %v", err)
+	}
+	if got.L3.On {
+		t.Errorf("l3 = %+v at pro under a silent project; want it off: the mode's row sets no level 3", got.L3)
 	}
 }
