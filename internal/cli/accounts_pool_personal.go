@@ -190,7 +190,7 @@ func exitCodeFor(status int) int {
 func personalPoolServiceURL(lc *localcfg.Config) (string, error) {
 	raw := configuredCredentialsServiceURL(lc)
 	if raw == "" {
-		return "", userErr("no credentials service in this installation's local config, so there is no address to keep a pool of your own at: `fugaro update` deploys it")
+		return "", userErr("no credentials service in this installation's local config: there is no address to keep a pool of your own at, and `fugaro update` deploys one")
 	}
 	return raw, nil
 }
