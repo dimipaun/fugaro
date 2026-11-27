@@ -135,13 +135,14 @@ bucket, no database and no host.
 each pool's members, with the state, the next reset, the usage and the headroom
 of each member. The figures are the credentials service's own — the calls and
 tokens each member has served in the window it counts, the instant a mark frees
-a member, and what is left of its limit — so this half reads the project's
-database as the person running it, and a project with no database, or one whose
-read fails, prints the pools with the figures absent and says why. The read
-writes nothing: it never reads the leases, whose own read prunes them. Headroom
-is there only where a provider reported a utilisation figure: it is never
-guessed. No token, no key and no secret appears in the document, for anyone: it
-carries names and figures and never a value (F19).`,
+a member, or the time its leases lapse, and what is left of its limit — so this
+half reads the project's database as the person running it, and a project with
+no database, or one whose read fails, prints the pools with the figures absent
+and says why. The read writes nothing, the leases included: they are read
+without the prune their own read makes. Headroom is there only where a provider
+reported a utilisation figure: it is never guessed. No token, no key and no
+secret appears in the document, for anyone: it carries names and figures and
+never a value (F19).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runAccountsPoolLs(cmd, o) },
 	}
@@ -181,8 +182,8 @@ func runAccountsPoolLs(cmd *cobra.Command, o accountsPoolReadOptions) error {
 }
 
 // accountsPoolFigures is what the service holds about one member: the state its
-// mark is in, the instant that mark frees it, and the usage of the window the
-// service counts.
+// mark is in, the instant that mark — or the member's leases — frees it, and the
+// usage of the window the service counts.
 type accountsPoolFigures struct {
 	state     creds.State
 	nextReset time.Time
@@ -235,12 +236,16 @@ func accountsPoolFiguresOf(ctx context.Context, lc *localcfg.Config, pools []con
 	if err != nil {
 		return nil, figuresUnread(err), nil
 	}
-	// Nothing else is read, and in particular the leases are not: reading them
-	// sweeps the lapsed ones (creds.RTDBStore.Leases), and a listing that writes
-	// the database is not the read this command is — the service is that node's
-	// only writer. The reset is therefore the mark's own instant, which is the
-	// member's reset whenever a mark holds it; a member held by nothing but a
-	// run's lease prints no reset.
+	// The leases are read without the prune their own read makes
+	// (creds.RTDBStore.LeasesUnpruned, and not Leases): this command is a read,
+	// and the service is the credentials database's only writer. They are read
+	// because the reset the contract promises is a mark's own instant, or the
+	// time the member's leases lapse.
+	leases, err := store.LeasesUnpruned(ctx)
+	if err != nil {
+		return nil, figuresUnread(err), nil
+	}
+	now := time.Now()
 	out := make(map[string]accountsPoolFigures, len(members))
 	for _, name := range members {
 		f := accountsPoolFigures{state: creds.StateAvailable}
@@ -250,12 +255,34 @@ func accountsPoolFiguresOf(ctx context.Context, lc *localcfg.Config, pools []con
 				f.nextReset = m.Until
 			}
 		}
+		if f.nextReset.IsZero() {
+			if at, ok := earliestLeaseLapse(leases, name, now); ok {
+				f.nextReset = at
+			}
+		}
 		if u, ok := usage[name]; ok {
 			f.usage, f.counted = u, true
 		}
 		out[name] = f
 	}
 	return out, "", nil
+}
+
+// earliestLeaseLapse is when a member's live leases lapse: the earliest of
+// them, which is the first instant one of its holders lets go, and whether any
+// holds it at all. A lapsed lease holds nothing (creds.Lease.Live), so it is
+// not a reset to wait for.
+func earliestLeaseLapse(leases []creds.Lease, name string, now time.Time) (time.Time, bool) {
+	var best time.Time
+	for _, l := range leases {
+		if l.Credential != name || !l.Live(now) {
+			continue
+		}
+		if best.IsZero() || l.Until.Before(best) {
+			best = l.Until
+		}
+	}
+	return best, !best.IsZero()
 }
 
 // figuresUnread is the note a read that could not be made answers with: the

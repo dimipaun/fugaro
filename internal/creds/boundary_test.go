@@ -524,23 +524,29 @@ var slipStoreTypes = []string{"RTDBStore", "SlipStore"}
 // store: the marks read and the marks write, which is what `fugaro accounts`
 // does (C1.21); the Bitbucket tokens' status read and status write, which is
 // what `creds ls` and `doctor` present and what the add-time check writes
-// (TokenStatusStore: R12, T6); and the usage read, which is what
-// `fugaro accounts pool ls --json` presents (UsageStore, PL10). The three
-// subtrees are one thing to this rule — the non-secret state of a credential,
-// name-keyed, read and written by the operator's CLI — and every other method
-// the store carries is the selection's or the slip half's.
+// (TokenStatusStore: R12, T6); the usage read, which is what
+// `fugaro accounts pool ls --json` presents (UsageStore, PL10); and the lease
+// read that does not prune, which is that same listing's own — the reset it
+// prints is a mark's instant or the time a member's leases lapse, and it may
+// not make the sweeping read (LeasesUnpruned). The four subtrees are one thing
+// to this rule — the non-secret state of a credential, name-keyed, read and
+// written by the operator's CLI — and every other method the store carries is
+// the selection's or the slip half's.
 //
-// The usage read is a READ alone: the write half of the capability
-// (creds.UsageCounter) is the service's, and a file outside that called
-// UpdateUsage would be writing the figures a member's calls are counted into,
-// which is the service's own.
+// Two of these are READS alone, and each for its own reason. The usage read's
+// write half (creds.UsageCounter) is the service's: a file outside that called
+// UpdateUsage would be writing the figures a member's calls are counted into.
+// And Leases — the sweeping read — is not on this list at all, because it
+// deletes: a caller that took it would write the credentials database, which
+// only the service does (C2). The listing reads the leases through
+// LeasesUnpruned and never through Leases.
 //
 // The list is a widening of what a file outside may do with a store it holds and
 // not a hole in the slip half: a slip method called on a name this list exempts
 // is a finding of its own (slipMethods, on the bound name and on the store built
 // inline alike), so a file that reads a token's status and then claims a slip
 // through the same value is reported twice over.
-var nonSlipMethods = []string{"Marks", "UpdateMark", "TokenStatuses", "UpdateTokenStatus", "Usages"}
+var nonSlipMethods = []string{"Marks", "UpdateMark", "TokenStatuses", "UpdateTokenStatus", "Usages", "LeasesUnpruned"}
 
 // servicePackage is the one package a file outside may hand a creds store to: the
 // service, which is the operator's CLI building the state the service serves
@@ -718,6 +724,21 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 		{
 			name: "a store whose usage is updated, which is not a read the CLI makes",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.UpdateUsage(ctx, \"n\", nil) }\n",
+			want: true,
+		},
+		{
+			name: "a store's unpruned lease read, which is not a slip",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { (&creds.RTDBStore{}).LeasesUnpruned(ctx) }\n",
+			want: false,
+		},
+		{
+			name: "a store's unpruned lease read through a local, which is not a slip",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.LeasesUnpruned(ctx) }\n",
+			want: false,
+		},
+		{
+			name: "a store's sweeping lease read, which writes the database and is not the CLI's",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.Leases(ctx, now) }\n",
 			want: true,
 		},
 		{

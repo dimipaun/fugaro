@@ -591,7 +591,8 @@ func (s *RTDBStore) UpdateTokenStatus(ctx context.Context, name string, f func(p
 
 // Leases implements Store. The lease nodes are keyed by slug and run id, and
 // the reader fills both back into the value, so a caller gets the whole lease
-// and not just its half.
+// and not just its half. It is LeasesUnpruned plus the sweep the rest of this
+// comment is about; a caller that must not write takes that read instead.
 //
 // Both keys have to be the canonical spelling of what they unescape to
 // (budget.Key of it again), the test Marks applies and for the same reasons:
@@ -638,6 +639,34 @@ func (s *RTDBStore) UpdateTokenStatus(ctx context.Context, name string, f func(p
 //     failing a selection because a sweep of another run's dead node did not
 //     land would let the sweep decide the call.
 func (s *RTDBStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) {
+	out, err := s.LeasesUnpruned(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var lapsed []Lease
+	for _, l := range out {
+		if !l.Live(now) {
+			lapsed = append(lapsed, l)
+		}
+	}
+	s.sweepLeases(ctx, now, lapsed)
+	return out, nil
+}
+
+// LeasesUnpruned is Leases' read without its sweep: the same leases, and no
+// delete. The validation is Leases' own; see there for what it refuses and why.
+//
+// It is the read a caller that must not write takes. `fugaro accounts pool ls
+// --json` prints the pools as the person running it, and the service is this
+// database's only writer (C2), so a listing that pruned the nodes it read past
+// would make that command a writer — which is what it was before this read
+// existed. It reads the subtree because the reset the contract promises is "a
+// mark's own instant, or the time its leases lapse" (routing.PoolMember's
+// NextReset), and a lease's lapse is in this subtree and nowhere else.
+//
+// The bound Leases keeps is not kept here: this caller may not be the one the
+// subtree grows past 16 MiB on, and the service's own read is a call away.
+func (s *RTDBStore) LeasesUnpruned(ctx context.Context) ([]Lease, error) {
 	raw := json.RawMessage{}
 	if _, _, err := s.db().GetETag(ctx, pathLeases, &raw); err != nil {
 		return nil, fmt.Errorf("creds: reading the leases: %w", err)
@@ -650,7 +679,6 @@ func (s *RTDBStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) 
 		return nil, fmt.Errorf("creds: reading the leases: %w", err)
 	}
 	out := make([]Lease, 0, len(read))
-	var lapsed []Lease
 	for sk, runs := range read {
 		slug, err := budget.Unkey(sk)
 		if err != nil {
@@ -700,12 +728,8 @@ func (s *RTDBStore) Leases(ctx context.Context, now time.Time) ([]Lease, error) 
 			}
 			l.Slug, l.Run = slug, id
 			out = append(out, l)
-			if !l.Live(now) {
-				lapsed = append(lapsed, l)
-			}
 		}
 	}
-	s.sweepLeases(ctx, now, lapsed)
 	return out, nil
 }
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -446,10 +447,10 @@ func TestPoolLsJSONHasNoValue(t *testing.T) {
 // and what a provider's own figure leaves of its limit — and it still carries no
 // value (F19). Headroom is there only where a figure was reported and is never
 // guessed, a member nothing was counted for keeps the absent figures the other
-// test pins, and the read WRITES nothing: the leases are not read at all, so a
-// member held by a run's own lease prints no reset and the lease node is still
-// there afterwards (creds.RTDBStore.Leases sweeps, and the service is the only
-// writer of this database).
+// test pins, and the read WRITES nothing even though it reads the leases: the
+// reset of a member no mark holds is the time its leases lapse, and it is read
+// through creds.RTDBStore.LeasesUnpruned — the sweeping read is the service's,
+// and the lapsed nodes seeded below are what tells the two apart.
 func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, accountsPoolCredentials+accountsPoolLsPools)
@@ -466,13 +467,24 @@ func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
 	// oauth-two served one call, and no provider reported a figure for it.
 	f.db.Set(credsUsagePath("oauth-two"), map[string]any{
 		"calls": 1, "tokens": 40, "window": now.Add(-time.Minute).Format(time.RFC3339Nano)})
-	// router-one is held by a run's own lease, and nothing was counted for it: the
-	// listing reads no lease, so the reset is absent and the usage stays absent.
+	// router-one is held by a run's own lease and by no mark, and nothing was
+	// counted for it: the reset is the time that lease lapses, and the usage
+	// stays absent.
 	f.db.Set("creds/leases/gh-acme-app/r1", map[string]any{
 		"credential": "router-one", "until": until.Format(time.RFC3339Nano)})
 	lease := f.db.Value("creds/leases/gh-acme-app/r1")
 	if lease == nil {
-		t.Fatal("the lease node was not seeded: the assertion below that the listing left it alone would pass vacuously")
+		t.Fatal("the lease node was not seeded: the assertions below would pass vacuously")
+	}
+	// More lapsed leases than creds.RTDBStore.Leases keeps as residue, all of
+	// them older than the live hold above: the sweeping read would delete some of
+	// these, so their survival is what tells LeasesUnpruned from Leases.
+	dead := make([]string, 0, creds.DefaultLeaseResidue+1)
+	for i := 0; i <= creds.DefaultLeaseResidue; i++ {
+		path := fmt.Sprintf("creds/leases/gh-acme-app/dead-%03d", i)
+		f.db.Set(path, map[string]any{
+			"credential": "oauth-two", "until": now.Add(-time.Hour).Format(time.RFC3339Nano)})
+		dead = append(dead, path)
 	}
 
 	out, errOut, err := execute(t, "accounts", "pool", "ls", "--json")
@@ -527,8 +539,8 @@ func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
 	if held.State != string(creds.StateAvailable) {
 		t.Errorf("a member held by a run's lease reads %q; want the available state, which is what a member no mark holds has", held.State)
 	}
-	if held.NextReset != nil {
-		t.Errorf("a member held by a run's lease carries the reset %v; want none: the listing reads no lease, so it cannot know one", held.NextReset)
+	if held.NextReset == nil || !held.NextReset.Equal(until) {
+		t.Errorf("a member held by a run's lease carries the reset %v; want the instant its lease lapses, %v", held.NextReset, until)
 	}
 	if held.Usage != nil || held.Headroom != nil {
 		t.Errorf("a member nothing was counted for carries usage %+v and headroom %v; want both absent", held.Usage, held.Headroom)
@@ -536,12 +548,18 @@ func TestPoolLsPrintsUsageAndNoValue(t *testing.T) {
 	if free := routes.Members[1]; free.NextReset != nil || free.Usage != nil || free.Headroom != nil {
 		t.Errorf("a member nothing holds and nothing counted carries a figure: %+v", free)
 	}
-	// The listing wrote nothing: the lease is where it was, and the service stays
-	// the only writer of the nodes this command reads.
+	// The listing wrote nothing: the live lease is where it was, and the lapsed
+	// ones a sweeping read would have taken are all still there. The service
+	// stays the only writer of the nodes this command reads.
 	if after := f.db.Value("creds/leases/gh-acme-app/r1"); after == nil {
-		t.Error("the listing deleted the lease node it read past: a read that sweeps is a write, and the service is this database's only writer")
+		t.Error("the listing deleted the live lease it read: a read that sweeps is a write, and the service is this database's only writer")
 	} else if !reflect.DeepEqual(after, lease) {
 		t.Errorf("the listing changed the lease node: %v became %v", lease, after)
+	}
+	for _, path := range dead {
+		if f.db.Value(path) == nil {
+			t.Fatalf("the listing swept the lapsed lease %s: it reads the leases through LeasesUnpruned, and the sweep is the service's", path)
+		}
 	}
 
 	// No value, for anyone: a member is the five names of the contract and a
