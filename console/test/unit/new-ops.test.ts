@@ -195,7 +195,7 @@ describe('the fixtures answer every operation with a value that decodes', () => 
     expect(refusalOf('setup.plan', plan)).toBe(`lines[${String(last)}].type: unknown-value`)
   })
 
-  it('accepts a heartbeat event and ignores it', () => {
+  it('heartbeat events are accepted and ignored', () => {
     // D3453: the feed carries a `heartbeat` line a minute for a step still
     // running, and the console accepts it and draws nothing -- it is liveness
     // and not a stage of the run. The unknown kind above is still refused, so
