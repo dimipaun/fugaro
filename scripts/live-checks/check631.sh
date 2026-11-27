@@ -415,18 +415,17 @@ for path in walk(paths):
     except OSError:
         continue
     scanned += 1
-    found = False
+    found = 0
     if what == "shape":
         for line in data.split(b"\n"):
             if KEY_SHAPE.search(line.decode("utf-8", "replace")):
-                found = True
-                break
+                found += 1
     else:
         sys.stderr.write("sweep.py: unknown query %s\n" % what)
         sys.exit(2)
     if found:
         hits += 1
-        print("hit\t%s" % path)
+        print("hit\t%s\t%d" % (path, found))
 print("scanned=%d" % scanned)
 print("hits=%d" % hits)
 PY
@@ -444,6 +443,42 @@ sweep() { # sweep QUERY DEST PATH...
   shift 2
   [ $# -gt 0 ] || return 0
   python3 "$SCRATCH/sweep.py" "$KEY_SHAPE" "$query" "$@" >"$dest" 2>"$dest.err"
+}
+
+# history_files lists the shell history files this machine has, one per line.
+history_files() {
+  local f
+  for f in "${HISTFILE:-}" "${HOME:-}/.bash_history" "${HOME:-}/.zsh_history" "${HOME:-}/.sh_history" "${HOME:-}/.history" "${HOME:-}/.histfile" "${HOME:-}/.local/share/fish/fish_history"; do
+    [ -n "$f" ] || continue
+    [ -f "$f" ] || continue
+    printf '%s\n' "$f"
+  done
+}
+
+# baseline_sweeps reads the config directory and the histories BEFORE this check
+# declares anything: a key-shaped line already there (an old export in a history,
+# a backup) is not what a hidden prompt wrote, and only a file that gained a line
+# since is a finding.
+baseline_sweeps() {
+  if [ -n "$FUGARO_CONFIG_DIR" ] && [ -d "$FUGARO_CONFIG_DIR" ]; then
+    sweep shape "$SCRATCH/base-config.txt" "$FUGARO_CONFIG_DIR"
+  fi
+  local files=() f
+  while IFS= read -r f; do files+=("$f"); done < <(history_files)
+  if [ "${#files[@]}" -gt 0 ]; then
+    sweep shape "$SCRATCH/base-history.txt" "${files[@]}"
+  fi
+}
+
+# new_hits BASE NOW: the files of NOW (a sweep's output) that hold more
+# key-shaped lines than BASE (an earlier sweep's, which may not exist) did.
+new_hits() {
+  local base=$1
+  [ -f "$base" ] || base=/dev/null
+  awk -F'\t' '
+    FILENAME == ARGV[1] { if ($1 == "hit") before[$2] = $3; next }
+    $1 == "hit" && !(($2 in before) && before[$2] + 0 >= $3 + 0) { printf "%s ", $2 }
+  ' "$base" "$2"
 }
 
 field() { # field FILE KEY
@@ -1158,15 +1193,19 @@ step_no_file() {
     return 0
   fi
   sweep shape "$SCRATCH/config-sweep.txt" "$FUGARO_CONFIG_DIR"
-  local scanned hits names
+  local scanned hits names before note
   scanned=$(field "$SCRATCH/config-sweep.txt" scanned)
   hits=$(field "$SCRATCH/config-sweep.txt" hits)
-  names=$(awk -F'\t' '$1 == "hit" { printf "%s ", $2 }' "$SCRATCH/config-sweep.txt")
-  if [ "${hits:-1}" != 0 ]; then
-    fact no-file FAIL "a line shaped like a provider key is in ${hits} file(s) under ${FUGARO_CONFIG_DIR}: ${names} — the acceptance's clause is that the declaration holds the credential's type and its name and never its value, and this check holds no value to look for, so the shape is what it reads. The files are named and never printed, and no line of them is in this block"
+  names=$(new_hits "$SCRATCH/base-config.txt" "$SCRATCH/config-sweep.txt")
+  before=$(field "$SCRATCH/base-config.txt" hits)
+  note=""
+  if [ "${before:-0}" != 0 ]; then note=" — INFO: ${before} file(s) already held such a line before this check ran, and none gained one"; fi
+  if [ -n "$names" ]; then
+    hits=$(printf '%s\n' "$names" | wc -w | tr -d ' ')
+    fact no-file FAIL "a line shaped like a provider key appeared in ${hits} file(s) under ${FUGARO_CONFIG_DIR} while this check ran: ${names} — the acceptance's clause is that the declaration holds the credential's type and its name and never its value, and this check holds no value to look for, so the shape is what it reads. The files are named and never printed, and no line of them is in this block"
     return 0
   fi
-  fact no-file PASS "no line of the ${scanned} file(s) under ${FUGARO_CONFIG_DIR} (the declaration, the project layer and every .bak-<UTC> backup among them) is shaped like a provider key: the config carries the credential's type and its name, and the values went to Secret Manager"
+  fact no-file PASS "no line of the ${scanned} file(s) under ${FUGARO_CONFIG_DIR} (the declaration, the project layer and every .bak-<UTC> backup among them) was added shaped like a provider key: the config carries the credential's type and its name, and the values went to Secret Manager${note}"
 }
 
 # step_no_history: and in no shell history.
@@ -1176,25 +1215,25 @@ step_no_history() {
     return 0
   fi
   local files=() f
-  for f in "${HISTFILE:-}" "${HOME:-}/.bash_history" "${HOME:-}/.zsh_history" "${HOME:-}/.sh_history" "${HOME:-}/.history" "${HOME:-}/.histfile" "${HOME:-}/.local/share/fish/fish_history"; do
-    [ -n "$f" ] || continue
-    [ -f "$f" ] || continue
-    files+=("$f")
-  done
+  while IFS= read -r f; do files+=("$f"); done < <(history_files)
   if [ "${#files[@]}" = 0 ]; then
     fact no-history INFO "this machine has no shell history file this check can read (it looked at HISTFILE, ~/.bash_history, ~/.zsh_history, ~/.sh_history, ~/.history, ~/.histfile and fish's): the acceptance's clause is read against the histories that exist, and a value read at a hidden prompt never reached the shell's command line"
     return 0
   fi
   sweep shape "$SCRATCH/history-sweep.txt" "${files[@]}"
-  local scanned hits names
+  local scanned hits names before note
   scanned=$(field "$SCRATCH/history-sweep.txt" scanned)
   hits=$(field "$SCRATCH/history-sweep.txt" hits)
-  names=$(awk -F'\t' '$1 == "hit" { printf "%s ", $2 }' "$SCRATCH/history-sweep.txt")
-  if [ "${hits:-1}" != 0 ]; then
-    fact no-history FAIL "a line shaped like a provider key is in ${hits} shell history file(s): ${names} — a value read at a hidden prompt never reaches the shell's command line, so a history holding the shape means it was typed at a prompt that echoes and records. The files are named and never printed"
+  names=$(new_hits "$SCRATCH/base-history.txt" "$SCRATCH/history-sweep.txt")
+  before=$(field "$SCRATCH/base-history.txt" hits)
+  note=""
+  if [ "${before:-0}" != 0 ]; then note=" — INFO: ${before} file(s) already held such a line before this check ran, and none gained one"; fi
+  if [ -n "$names" ]; then
+    hits=$(printf '%s\n' "$names" | wc -w | tr -d ' ')
+    fact no-history FAIL "a line shaped like a provider key was added to ${hits} shell history file(s) while this check ran: ${names} — a value read at a hidden prompt never reaches the shell's command line, so a history holding the shape means it was typed at a prompt that echoes and records. The files are named and never printed"
     return 0
   fi
-  fact no-history PASS "no line of the ${scanned} shell history file(s) this machine has (${files[*]}) is shaped like a provider key: the hidden prompt reads the terminal directly, so the shell that started this check never saw a keystroke of it"
+  fact no-history PASS "no line of the ${scanned} shell history file(s) this machine has (${files[*]}) was added shaped like a provider key: the hidden prompt reads the terminal directly, so the shell that started this check never saw a keystroke of it${note}"
 }
 
 # step_serving_path: the acceptance's "fugaro accounts ls naming the serving path".
@@ -1883,6 +1922,7 @@ main() {
   step_installation
   step_declaration
   step_agent_refusal
+  baseline_sweeps
   step_add_anthropic
   step_add_openrouter
   step_prompt_hidden

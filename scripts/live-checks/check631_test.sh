@@ -305,6 +305,12 @@ accounts_add() { # accounts_add NAME TYPE
     # literal in this repository is shaped like a credential.
     printf 'fugaro: storing the value sk-ant-%s now\n' "not-a-real-key" >&2
   fi
+  if [ "$mode" = add-writes-history ]; then
+    printf 'fugaro accounts add x sk-ant-%s\n' "not-a-real-key" >>"$HOME/.bash_history"
+  fi
+  if [ "$mode" = add-writes-config ]; then
+    printf '{"note":"sk-ant-%s"}\n' "not-a-real-key" >>"$HOME/.config/fugaro/cache.json"
+  fi
   if [ "$mode" = add-openrouter-echoes-shape ]; then
     printf 'fugaro: the value sk-or-v1-%s was accepted\n' "not-a-real-key" >&2
   fi
@@ -493,9 +499,12 @@ GCLOUD_EOF
 
 write_feeder() { # dir — the pty the two declarations run at
   cat >"$1/feeder.py" <<'PY'
+import fcntl
 import os
 import pty
+import select
 import sys
+import termios
 import time
 
 # A terminal for the two declarations, for this test only. The slave's path is
@@ -510,10 +519,39 @@ err_path = sys.argv[1]
 answers = list(zip(sys.argv[2::2], sys.argv[3::2]))
 
 master, slave = pty.openpty()
+# The slave is made this process's own controlling terminal. A terminal with no
+# session is taken as the controlling terminal of the first session leader that
+# holds it, which is what each declaration's runner is, and the terminal is then
+# hung up for everyone when that command exits: the second declaration would find
+# its terminal gone. A person's terminal already belongs to their shell's session,
+# which is why only this test needs it.
+try:
+    os.setsid()
+except OSError:
+    pass
+try:
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+except OSError:
+    pass
 sys.stdout.write(os.ttyname(slave) + "\n")
 sys.stdout.flush()
 
+# What the terminal echoes comes back through the master, and a person's terminal
+# reads it: a master nobody reads keeps the echo queued, and the command that
+# closes its end of the slave waits, past the check's bound, for it to drain. The
+# feeder reads and drops it, the whole time it holds the terminal.
 deadline = time.time() + float(os.environ.get("PTY_HOLD", "120"))
+
+
+def drain(seconds):
+    ready, _, _ = select.select([master], [], [], seconds)
+    if ready:
+        try:
+            os.read(master, 65536)
+        except OSError:
+            time.sleep(seconds)
+
+
 for needle, value in answers:
     while time.time() < deadline:
         try:
@@ -523,9 +561,10 @@ for needle, value in answers:
             seen = ""
         if needle in seen:
             break
-        time.sleep(0.02)
+        drain(0.02)
     os.write(master, (value + "\n").encode())
-time.sleep(max(0.0, deadline - time.time()))
+while time.time() < deadline:
+    drain(0.2)
 PY
 }
 
@@ -822,30 +861,42 @@ test_no_key_shape_reaches_a_file_or_a_history() {
   expect_absent "$err" "$value_two" "the sweeps: the second value is in no line of the progress output"
 }
 
-test_a_key_shape_in_the_config_directory_is_a_finding() {
+test_a_key_shape_the_check_adds_to_the_config_directory_is_a_finding() {
   local dir=$work/config-holds
   prepare "$dir"
-  # The key-shaped line this case is about is built here, from parts: no literal
-  # in this repository is shaped like a credential.
-  printf '{"note":"sk-ant-%s"}\n' "not-a-real-key" >"$dir/home/.config/fugaro/cache.json"
   need_pty || return 0
-  run_check_with_terminal "$dir"
-  expect_status "$status" 1 "a key shape in the config directory"
-  expect_contains "$out" "FACT no-file: FAIL" "a key shape in the config directory: the row"
-  expect_contains "$out" "is in 1 file(s) under" "a key shape in the config directory: the row says how many"
-  expect_contains "$out" "cache.json" "a key shape in the config directory: the file is named"
-  expect_absent "$out" "sk-ant-not-a-real-key" "a key shape in the config directory: the line itself is never printed"
+  run_check_with_terminal "$dir" FAKE_MODE=add-writes-config
+  expect_status "$status" 1 "a key shape added to the config directory"
+  expect_contains "$out" "FACT no-file: FAIL" "a key shape added to the config directory: the row"
+  expect_contains "$out" "appeared in 1 file(s) under" "a key shape added to the config directory: the row says how many"
+  expect_contains "$out" "cache.json" "a key shape added to the config directory: the file is named"
+  expect_absent "$out" "sk-ant-not-a-real-key" "a key shape added to the config directory: the line itself is never printed"
 }
 
-test_a_key_shape_in_a_shell_history_is_a_finding() {
+test_a_key_shape_the_check_adds_to_a_shell_history_is_a_finding() {
   local dir=$work/history-holds
   prepare "$dir"
-  printf 'fugaro accounts add %s --type anthropic sk-ant-%s\n' "$anthropic" "not-a-real-key" >>"$dir/home/.bash_history"
+  need_pty || return 0
+  run_check_with_terminal "$dir" FAKE_MODE=add-writes-history
+  expect_status "$status" 1 "a key shape added to a shell history"
+  expect_contains "$out" "FACT no-history: FAIL" "a key shape added to a shell history: the row"
+  expect_contains "$out" ".bash_history" "a key shape added to a shell history: the file is named"
+}
+
+# A key shape that was there before this check ran is an old export or a backup,
+# not what a hidden prompt wrote: the rows pass and say what they found.
+test_a_key_shape_there_before_the_check_is_not_a_finding() {
+  local dir=$work/shape-before
+  prepare "$dir"
+  printf '{"note":"sk-ant-%s"}\n' "not-a-real-key" >"$dir/home/.config/fugaro/cache.json"
+  printf 'export ANTHROPIC_API_KEY=sk-ant-%s\n' "not-a-real-key" >>"$dir/home/.bash_history"
   need_pty || return 0
   run_check_with_terminal "$dir"
-  expect_status "$status" 1 "a key shape in a shell history"
-  expect_contains "$out" "FACT no-history: FAIL" "a key shape in a shell history: the row"
-  expect_contains "$out" ".bash_history" "a key shape in a shell history: the file is named"
+  expect_status "$status" 0 "a key shape there before the check"
+  expect_contains "$out" "FACT no-file: PASS" "a key shape there before the check: the config row passes"
+  expect_contains "$out" "FACT no-history: PASS" "a key shape there before the check: the history row passes"
+  expect_contains "$out" "already held such a line before this check ran" "a key shape there before the check: the rows say so"
+  expect_absent "$out" "sk-ant-not-a-real-key" "a key shape there before the check: the line itself is never printed"
 }
 
 test_a_command_that_echoes_a_key_shape_is_a_finding() {
@@ -1383,8 +1434,9 @@ t test_help
 t test_dry_run_needs_no_terminal
 t test_the_happy_path_at_a_terminal
 t test_no_key_shape_reaches_a_file_or_a_history
-t test_a_key_shape_in_the_config_directory_is_a_finding
-t test_a_key_shape_in_a_shell_history_is_a_finding
+t test_a_key_shape_the_check_adds_to_the_config_directory_is_a_finding
+t test_a_key_shape_the_check_adds_to_a_shell_history_is_a_finding
+t test_a_key_shape_there_before_the_check_is_not_a_finding
 t test_a_command_that_echoes_a_key_shape_is_a_finding
 t test_the_second_command_echoing_a_key_shape_is_a_finding
 t test_a_command_that_prints_no_prompt_is_a_finding

@@ -23889,8 +23889,10 @@ check launches a real run.
 - **No key shape in a file, and none in a history.** Every file under the fugaro config directory
   (`~/.config/fugaro/`, the `.bak-<UTC>` backups included) and every shell history file this machine has is
   scanned for a line shaped like a provider key (`sk-ant-…`, `sk-or-v1-…`) — by a child that is given no
-  value to look for and prints **file names only**. The hidden prompt reads the terminal directly, so the
-  shell that started the check never saw a keystroke of it.
+  value to look for and prints **file names only**. The sweeps run once before the first declaration and once
+  after: a line already there (an old export, a backup) is reported as INFO, and only a file that gained a
+  line while the check ran fails. The hidden prompt reads the terminal directly, so the shell that started
+  the check never saw a keystroke of it.
 - **A coding agent's session is refused by name.** The same `accounts add`, run with `CLAUDECODE` set, is
   refused — the release answers `--type` with the credential's own refusal, which names the narrower step the
   session can take (`Declare the account without --type, or run this in your own terminal.`) rather than the
