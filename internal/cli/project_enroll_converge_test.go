@@ -729,6 +729,36 @@ func TestReposAddNeverWritesImageMap(t *testing.T) {
 	}
 }
 
+// TestReposAddMigratesTheFileImageMap is the other half of the clearing write:
+// the map this machine's config holds ITSELF is the legacy one (R2 reads the
+// file's own member before the node's), and the step must migrate it into
+// repo_images and take image_map away — a file that kept the old member would
+// state the map twice, and the readers would serve the copy the write did not
+// touch.
+func TestReposAddMigratesTheFileImageMap(t *testing.T) {
+	r := enrolRigOver(t, enrolRigLocal+"image_map: { owner/repo-a: base }\n")
+	if got := r.addLocal(t).ImageMap; got["owner/repo-a"] != "base" {
+		t.Fatalf("the fixture's local config does not hold the legacy map: %v", got)
+	}
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileString(t, r.cfg); strings.Contains(got, "image_map") {
+		t.Errorf("the run left the legacy member in this machine's project config:\n%s", got)
+	}
+	after := r.addLocal(t)
+	if after.ImageMap != nil {
+		t.Errorf("this machine's config still names image_map: %v", after.ImageMap)
+	}
+	m := after.RepoImages
+	if m["github/owner/repo-a"] != "base" {
+		t.Errorf("repo_images = %v: the mapping the file itself served as a bare name was not migrated into it", m)
+	}
+	if m[enrolImageKey] != "base" {
+		t.Errorf("repo_images = %v, want this repository's own key beside it", m)
+	}
+}
+
 // TestReposAddAllowListOnlyWritesOnlyTheList is D2404: the behaviour the
 // command had before it converged survives as one flag, because a pattern has
 // no checkout, no fugaro.yaml and no image to converge — and it asks nothing.
