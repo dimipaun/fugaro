@@ -1,6 +1,7 @@
 package mailbox
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -88,6 +89,36 @@ const (
 	directionOutbox    = "outbox"
 	directionHeartbeat = "heartbeat"
 )
+
+// The two record fields a tag lands in (J5r): `mac` is D171's HMAC and `sig` is
+// O6's device signature. **Which one a value carries is its signer's and never
+// the caller's** — a writer that could choose per value could downgrade itself,
+// and the schema accepts exactly one of the two (message.go's tagFields) — so
+// these names are read off the signer (`Field`) and never written by a caller.
+const (
+	tagFieldMAC = "mac"
+	tagFieldSig = "sig"
+)
+
+// TagFields is every field a tag can land in, in the module's own order. It is
+// the closed vocabulary J5r's rules are written against: a record carries
+// exactly one of these and nothing else, and the two are `mac` and `sig` on
+// every node the mailbox has.
+var TagFields = []string{tagFieldMAC, tagFieldSig}
+
+// unsignedRefusal is the refusal a value that carries no tag earns: the schema's
+// code and the field of the scheme its signer writes in — `bad-sig` at `sig` for
+// O6's signature, `bad-mac` at `mac` for D171's HMAC (J5r). A refusal that named
+// the other scheme's field would point an operator at a field their value never
+// had. A signer that named no field at all is answered as the MAC, which is the
+// field the schema refuses a record carrying neither tag at (message.go's
+// tagFields): an absent scheme is not a reason to name the newer one.
+func unsignedRefusal(field string) *Refusal {
+	if field == tagFieldSig {
+		return refuse(CodeBadSig, tagFieldSig)
+	}
+	return refuse(CodeBadMAC, tagFieldMAC)
+}
 
 // MacOf is the tag a record carries: HMAC-SHA-256 over
 // CanonicalBytes(record, direction), lowercase hex (§3.5, D171). It is
@@ -210,6 +241,18 @@ func (s *Signer) Direction() string {
 	return s.direction
 }
 
+// Field is the record field this signer's tag lands in: `mac`, which is the
+// scheme D171 gave the consumer and the only one this signer can write. It is
+// what a writer reads to place the tag and to name the right field in a refusal
+// (J5r) — the KMS signer beside this one answers `sig` — so a caller never
+// spells either field itself.
+func (s *Signer) Field() string {
+	if s == nil {
+		return ""
+	}
+	return tagFieldMAC
+}
+
 // String is what a log line about the signer says: what it is, and never a byte
 // of the key — the same belt and braces Gate.String is, for the one shape the
 // Key's own redaction cannot cover (`%s` of the signer itself).
@@ -222,7 +265,7 @@ func (s *Signer) String() string {
 
 // Tag is the tag the value is written with: MacOf over the value's canonical
 // bytes in this signer's direction (§8.2.1 — the value is built first, signed
-// second, and `mac` is added last, so what the tag covers is exactly what
+// second, and the tag is added last, so what the tag covers is exactly what
 // lands).
 //
 // A value the canonical serialisation refuses is an error rather than a tag, for
@@ -230,7 +273,12 @@ func (s *Signer) String() string {
 // the canonical form exists to prevent. Every error here is ErrUnsignable's —
 // the per-write refusal — so a caller never has to guess which of M4's three
 // rows it is looking at.
-func (s *Signer) Tag(value Record) (string, error) {
+//
+// **The context is the interface's and not this signer's.** An HMAC needs no
+// clock, no store and no call out, and this one uses the context for nothing;
+// `KMSSigner.Tag` beside it is the signer that does, and one signature for both
+// is what lets a writer hold either without knowing which (J5c).
+func (s *Signer) Tag(ctx context.Context, value Record) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("%w: there is no signer", ErrUnsignable)
 	}
@@ -241,33 +289,40 @@ func (s *Signer) Tag(value Record) (string, error) {
 	return tag, nil
 }
 
-// Heartbeat is the heartbeat's signature, and it is `LeaseSigner`'s own shape
-// (`func(Heartbeat) (string, error)`) so that the lease's writer takes a
-// function and never a key: `lease.go` computes no tag and holds no keychain
-// (§13 — one implementation of the covered field set, so the two halves cannot
-// drift).
-//
-// It signs `{at, boot}` **and, when the consumer advertises one, the `agents`
-// list** — the record `lease.go` writes, field for field, which is what one
-// implementation of the covered field set means: `canonicalBytes` covers every
-// field but `mac` and `acked`, so a tag over a list the stored heartbeat did not
-// carry would verify nowhere, with no error, and because the write is the lease
-// there would be no lease either. The list is built here from the caller's own
-// agents, in the order it advertises them (the array's order is covered), and
-// `mac` is the field being computed.
-//
-// It refuses a signer built for another node: a heartbeat signed in the
-// `outbox` direction is a heartbeat nothing verifies, so the node is not
-// something a caller can get wrong (T2a's red step (d)).
-func (s *Signer) Heartbeat(hb Heartbeat) (string, error) {
-	if s == nil || s.direction != directionHeartbeat {
-		return "", fmt.Errorf("%w: a heartbeat is signed in the %s direction, and this signer signs for another node", ErrUnsignable, directionHeartbeat)
-	}
+// heartbeatValue is the record a heartbeat is signed over and the record that is
+// written: `{at, boot}` plus the advertised `agents` list when there is one
+// (D161). **One function builds it for both halves** — the signer that covers it
+// and the lease that writes it — because `canonicalBytes` covers every field but
+// the tag, so a tag over a list the stored record did not carry would verify
+// nowhere, with no error, and because the write is the lease there would be no
+// lease either.
+func heartbeatValue(hb Heartbeat) Record {
 	value := Record{"at": hb.At, "boot": hb.Boot}
 	if len(hb.Agents) > 0 {
 		value["agents"] = AgentList(hb.Agents)
 	}
-	return s.Tag(value)
+	return value
+}
+
+// Heartbeat is the heartbeat's signature, and it is `LeaseSigner`'s own shape
+// (`Heartbeat(context.Context, Heartbeat) (string, error)`) so that the lease's
+// writer takes a signer and never a key: `lease.go` computes no tag and holds no
+// keychain (§13 — one implementation of the covered field set, so the two halves
+// cannot drift).
+//
+// It signs `heartbeatValue` — the record `lease.go` writes, field for field,
+// built by the one function both halves call — and the list it carries is the
+// caller's own agents in the order it advertises them (the array's order is
+// covered).
+//
+// It refuses a signer built for another node: a heartbeat signed in the
+// `outbox` direction is a heartbeat nothing verifies, so the node is not
+// something a caller can get wrong (T2a's red step (d)).
+func (s *Signer) Heartbeat(ctx context.Context, hb Heartbeat) (string, error) {
+	if s == nil || s.direction != directionHeartbeat {
+		return "", fmt.Errorf("%w: a heartbeat is signed in the %s direction, and this signer signs for another node", ErrUnsignable, directionHeartbeat)
+	}
+	return s.Tag(ctx, heartbeatValue(hb))
 }
 
 // Gate is the inbound gate: the pairing's key, and §8.1's order, applied to

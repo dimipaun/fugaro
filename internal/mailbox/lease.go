@@ -428,11 +428,26 @@ type HeartbeatStore interface {
 }
 
 // LeaseSigner signs the heartbeat a take writes, in the `heartbeat` direction,
-// and answers the tag (M4b). It is the caller's — T2a's `Sign`, with the key
-// read from the OS keychain by item name — because this package holds no key.
-// A signer that fails means **no write and therefore no lease**: the heartbeat
+// and answers the tag (M4b). It is the caller's — `NewHeartbeatSigner`'s, with
+// the key read from the OS keychain by item name, or `NewKMSSigner`'s for a
+// phone paired the new way (J5c, O12) — because this package holds no key. A
+// signer that fails means **no write and therefore no lease**: the heartbeat
 // write IS the lease, so a consumer that cannot sign acts on nothing.
-type LeaseSigner func(hb Heartbeat) (string, error)
+//
+// **It is an interface and not a function** because the field the tag lands in
+// is the signer's (J5r): `Field` answers `mac` or `sig`, and the lease writes
+// the value the one function `heartbeatValue` builds with the tag in that field.
+// A function type could carry the tag but not the field, and a lease that
+// spelled `mac` itself would write a phone paired the new way a heartbeat it
+// cannot verify — and, since the heartbeat write IS the lease, one it cannot
+// renew either.
+type LeaseSigner interface {
+	// Field is the record field the tag lands in: `mac` or `sig` (J5r).
+	Field() string
+	// Heartbeat is the tag over exactly the fields heartbeatValue builds, in
+	// the `heartbeat` direction. A signer built for another node refuses.
+	Heartbeat(ctx context.Context, hb Heartbeat) (string, error)
+}
 
 // LeaseVerdict is what a take, a renewal check or a re-read answered, in the
 // words the command reports them in: held, taken over, lost — or none, when
@@ -592,7 +607,7 @@ func Take(ctx context.Context, store HeartbeatStore, opts LeaseOptions) (LeaseRu
 			return lostRun(*taken.Existing, ttl, attempt), nil
 		}
 
-		value, err := signedHeartbeat(opts)
+		value, err := signedHeartbeat(ctx, opts)
 		if err != nil {
 			return LeaseRun{}, err
 		}
@@ -670,7 +685,7 @@ func Renew(ctx context.Context, store HeartbeatStore, opts LeaseOptions) (LeaseR
 			return lostRun(*claim, ttl, attempt), nil
 		}
 
-		value, err := signedHeartbeat(opts)
+		value, err := signedHeartbeat(ctx, opts)
 		if err != nil {
 			return LeaseRun{}, err
 		}
@@ -793,23 +808,26 @@ func readHeartbeat(ctx context.Context, store HeartbeatStore, path string, ttl i
 	return stateRecord(&claim, ttl), etag, &claim, nil
 }
 
-// signedHeartbeat is the value a take writes: `{at, boot, mac}`, the three
-// fields the merged rules allow on the heartbeat and no fourth, plus `agents`
-// when this consumer advertises a list (D161). It is signed **before** it is
-// written (M4b) and validated against the schema after signing (M10: every value
-// this consumer writes is validated first), so a value that cannot be signed, or
-// that the schema would refuse, is never written — and therefore never becomes a
-// lease.
+// signedHeartbeat is the value a take writes: `{at, boot, mac}` — or
+// `{at, boot, sig}` for a phone paired the new way (J5r), which is the field the
+// signer names — the fields the merged rules allow on the heartbeat and no
+// fourth, plus `agents` when this consumer advertises a list (D161). It is
+// signed **before** it is written (M4b) and validated against the schema after
+// signing (M10: every value this consumer writes is validated first), so a value
+// that cannot be signed, or that the schema would refuse, is never written — and
+// therefore never becomes a lease.
 //
 // The signature covers the list, so the list cannot be changed in the store
 // without the phone noticing: `agents` is in the covered set whenever it is
 // present, which is why the signer is handed the list rather than the list being
-// added to the record afterwards.
-func signedHeartbeat(opts LeaseOptions) (Record, error) {
+// added to the record afterwards. The record and the covered bytes are one
+// function's (heartbeatValue, mac.go) for exactly that reason.
+func signedHeartbeat(ctx context.Context, opts LeaseOptions) (Record, error) {
 	if opts.Sign == nil {
 		return nil, ErrLeaseNoSigner
 	}
-	mac, err := opts.Sign(Heartbeat{At: opts.At, Boot: opts.Holder, Agents: opts.Agents})
+	hb := Heartbeat{At: opts.At, Boot: opts.Holder, Agents: opts.Agents}
+	tag, err := opts.Sign.Heartbeat(ctx, hb)
 	if err != nil {
 		// M4's third row in ErrUnsignable's shape (T2a): the key is loaded and
 		// it is **this value** the signer errored on, so nothing is written and
@@ -820,10 +838,11 @@ func signedHeartbeat(opts LeaseOptions) (Record, error) {
 		// and never a key.
 		return nil, fmt.Errorf("%w: the heartbeat could not be signed, so nothing is written and no lease is taken: %w", ErrUnsignable, err)
 	}
-	value := Record{"at": opts.At, "boot": opts.Holder, "mac": mac}
-	if len(opts.Agents) > 0 {
-		value["agents"] = AgentList(opts.Agents)
-	}
+	// The record and the covered bytes come from one function (heartbeatValue,
+	// mac.go), and the field the tag lands in is the signer's: `mac` for a phone
+	// paired the old way, `sig` for one paired the new way (J5r).
+	value := heartbeatValue(hb)
+	value[opts.Sign.Field()] = tag
 	if _, refusal := ValidateHeartbeat(value); refusal != nil {
 		return nil, fmt.Errorf("mailbox: the signed heartbeat is not a heartbeat this schema accepts (%s), so nothing is written", refusal.Code)
 	}
