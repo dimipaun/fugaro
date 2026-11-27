@@ -13,7 +13,7 @@ import test from 'node:test';
 import { PORT_CODES, SESSION_EVENTS, assertSessionPort } from '../../../shared/mobile-session/port.js';
 import { MemorySecureStore } from '../accounts/secure-store.js';
 
-import { DeviceKeyStore } from './devicekey.js';
+import { DEVICE_KEY_CODES, DeviceKeyStore } from './devicekey.js';
 import * as session from './index.js';
 import { REFRESH_CODES, REFRESH_SKEW_MS, ProjectSessionStore } from './refresh.js';
 
@@ -62,12 +62,13 @@ function fetchOf(refresh = { status: 200, body: refreshAnswer() }) {
   };
 }
 
-/** A fetch that counts rotations and answers a token numbered by them. */
+/** A fetch that counts rotations, records the token presented, and answers a token numbered by them. */
 function countingFetch() {
-  const state = { refreshes: 0 };
-  const fetch = async (url) => {
+  const state = { refreshes: 0, presented: [] };
+  const fetch = async (url, options) => {
     if (url.includes('/mobile/v1/refresh')) {
       state.refreshes += 1;
+      state.presented.push(JSON.parse(options.body).refresh_token);
       return { status: 200, text: async () => refreshAnswer({ custom_token: `not-a-credential-test-custom-token-${state.refreshes}` }) };
     }
     return {
@@ -176,6 +177,9 @@ test('a successor that cannot be written is a refusal, and no token is cached', 
   locked.on = false;
   assert.equal(await built.session.idToken(), 'not-a-credential-test-id-token-2');
   assert.equal(state.refreshes, 2);
+  // ... and it presents the successor, not the token the first rotation burned:
+  // presenting that one again is a replay the service answers `device_revoked`.
+  assert.deepEqual(state.presented, [TOKEN, 'not-a-credential-test-next-refresh-token']);
 });
 
 test('signMessage() signs with the device key and refuses bytes it is not given', async () => {
@@ -186,7 +190,7 @@ test('signMessage() signs with the device key and refuses bytes it is not given'
 });
 
 test('a refresh the project refuses as revoked signs the project out first', async () => {
-  const { built, store } = await build({
+  const { built, store, deviceKey, port } = await build({
     fetch: fetchOf({ status: 403, body: JSON.stringify({ code: 'device_revoked' }) }),
   });
   let fired = 0;
@@ -202,8 +206,11 @@ test('a refresh the project refuses as revoked signs the project out first', asy
   // A second failure does not fire the event again: signed out stays signed out.
   await assert.rejects(() => built.session.idToken());
   assert.equal(fired, 1);
-  // The dead token is not left on the phone.
-  assert.equal((await store.get(PROJECT)).code, 'absent');
+  // The dead token is not left on the phone, and neither is the device key: a
+  // seed left behind refuses the next pairing as already held.
+  assert.equal((await store.get(PROJECT)).code, REFRESH_CODES.ABSENT);
+  assert.equal((await deviceKey.publicKey(PROJECT)).code, DEVICE_KEY_CODES.ABSENT);
+  assert.deepEqual(port.keys(), []);
 });
 
 test('concurrent idToken() calls share one rotation rather than burning the token twice', async () => {
@@ -299,4 +306,43 @@ test('a project that refuses the revoke is named, and the identities still go', 
   assert.deepEqual(result.revoked, []);
   assert.deepEqual(result.failed, [{ endpoint: ENDPOINT, code: 'device_revoked' }]);
   assert.equal(signedOut, 1);
+});
+
+test('signing out everywhere ends a live session, and leaves nothing of it on the phone', async () => {
+  const { built, port, store, deviceKey } = await build();
+  let fired = 0;
+  built.session.on(SESSION_EVENTS.SIGNED_OUT, () => {
+    fired += 1;
+  });
+  const result = await session.signOutEverywhere({
+    projects: [{ endpoint: ENDPOINT, session: built.session }],
+    identities: async () => {},
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.revoked, [ENDPOINT]);
+  // The surfaces that mounted it stop rather than serving a token for up to the
+  // hour it had left ...
+  assert.equal(fired, 1);
+  await assert.rejects(() => built.session.idToken(), (error) => error.code === PORT_CODES.SIGNED_OUT);
+  // ... and the keychain holds neither the token nor the device key, so the
+  // next pairing is not refused as already held.
+  assert.deepEqual(port.keys(), []);
+  assert.equal((await store.get(PROJECT)).code, REFRESH_CODES.ABSENT);
+  assert.equal((await deviceKey.publicKey(PROJECT)).code, DEVICE_KEY_CODES.ABSENT);
+});
+
+test('a session this module did not build is revoked and not ended', async () => {
+  const fetch = async (url) => {
+    if (url.includes('/mobile/v1/revoke-self')) return { status: 200, text: async () => '{}' };
+    return { status: 200, text: async () => refreshAnswer() };
+  };
+  const result = await session.signOutEverywhere({
+    projects: [{ endpoint: ENDPOINT, refreshToken: TOKEN, sign: async () => new Uint8Array(64).fill(1) }],
+    identities: async () => {},
+    fetch,
+  });
+  // A project whose live session the app no longer holds is revoked with what
+  // the paired list kept: there is nothing on the phone to end.
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.revoked, [ENDPOINT]);
 });

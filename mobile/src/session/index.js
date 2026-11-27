@@ -7,7 +7,8 @@
 // `assertSessionPort` describes -- the project's id and endpoint, the roster's
 // role, the policy, an `idToken()` that refreshes, a `signMessage(bytes)` that
 // signs with the device key, and one event -- and `signOutEverywhere` is
-// D2794's other half: revoke every live project's family and sign the
+// D2794's other half: end every live project's session (revoke its family,
+// forget its stored token and its device key, fire `signedOut`) and sign the
 // identities out.
 //
 // **What a screen can and cannot reach.** The door exports the factory, the
@@ -28,10 +29,10 @@
 // **A refusal that ends the session ends it first.** A refresh the project
 // answers `device_revoked` -- the token another device rotated out, an admin
 // revoke, a membership that went away -- is not a failure the phone retries:
-// the token is dead, so the session signs the project out (delete the stored
-// token, fire `signedOut` once) and *then* rejects. That order is the whole
-// point of the red step: a caller that catches the rejection finds a session
-// already refusing rather than one that still looks live.
+// the token is dead, so the session ends itself (delete the stored token and
+// the device key, fire `signedOut` once) and *then* rejects. That order is the
+// whole point of the red step: a caller that catches the rejection finds a
+// session already refusing rather than one that still looks live.
 //
 // **A role here is a display claim, never an authorisation** (F14, D2791), and
 // this module is where that is easy to get wrong: a refresh rewrites the role
@@ -53,6 +54,19 @@ export { DEVICE_KEY_ALGORITHM };
  * respelled. The two sets do not overlap, so one name is one code.
  */
 export const SESSION_CODES = Object.freeze({ ...REFRESH_CODES, ...PORT_CODES });
+
+/**
+ * The live sessions this module built, keyed by the port value it handed back.
+ *
+ * `signOutEverywhere` is given live sessions -- D2794's sign-out ends the
+ * projects the phone is signed in to -- and a port value is a frozen set of
+ * seven members with no way to end itself, deliberately: a surface must not be
+ * able to end a session, only to learn that it ended. So the module keeps its
+ * own map from the value it returned to the instance behind it, which is the
+ * only thing that holds the store, the key and the token. A value this module
+ * did not build is not in it, and is revoked without being ended.
+ */
+const LIVE_SESSIONS = new WeakMap();
 
 function refuse(code, field) {
   return Object.freeze({ ok: false, code, field });
@@ -199,7 +213,7 @@ class ProjectSession {
     });
     if (!refreshed.ok) {
       if (refreshed.revoked === true) {
-        await this.#signOut();
+        await this.#end();
         this.#refuse(refreshed.code, 'idToken');
       }
       // A rotation whose exchange failed still rotated (see `refreshSession`),
@@ -216,12 +230,17 @@ class ProjectSession {
       }
       this.#refuse(refreshed.code, 'idToken');
     }
-    // The successor is stored before it is cached: a token the phone has
-    // rotated but not written is a phone that cannot refresh again, and the
-    // caller must see that as a failure rather than as a working session.
+    // The rotated token is held **before** it is written, and the order is the
+    // point: the presented token is dead the moment the project answered, so a
+    // write that failed while the dead one stayed in hand would present it
+    // again on the next call and be answered `device_revoked` -- a replay the
+    // phone inflicted on itself, costing the family and a QR re-pair (D2783).
+    // The ID token is not cached until the write lands, so a rotation the phone
+    // could not persist is still a refusal the caller sees rather than a token
+    // it thinks it holds.
+    this.#refreshToken = refreshed.refreshToken;
     const stored = await this.#store.put(this.#projectId, refreshed.refreshToken);
     if (!stored.ok) this.#refuse(stored.code, 'idToken');
-    this.#refreshToken = refreshed.refreshToken;
     this.#idToken = refreshed.idToken;
     this.#expiresAt = this.#now() + refreshed.expiresIn * 1000;
     // The roster's role and the project's policy are rewritten at every
@@ -253,23 +272,61 @@ class ProjectSession {
   }
 
   /**
-   * End the session: forget the stored token, then tell every listener once.
+   * End the session: revoke the family at the project when asked, forget the
+   * stored token and the device key, then tell every listener once.
    *
-   * **The token is deleted first and the event fires after**, so a listener
-   * that reads the store when it is told finds nothing rather than the
-   * credential it is being told about. A delete that fails is deliberately not
-   * a reason to keep the session alive -- the session is over either way, and
-   * the token's item is reached by no code path once the project is gone.
+   * **The seed is deleted with the token, and that is not tidiness.** The token
+   * is the credential a sign-out exists to remove; a device key left behind is
+   * worse than useless, because the next pairing's `create` refuses the project
+   * it already holds (`already-held`) and a person who signed out could not
+   * pair again without wiping the app.
+   *
+   * **The deletes run whichever way the revoke went**, and on the
+   * `device_revoked` path too: what is on the phone is this module's to remove
+   * whatever a project answered. The token is deleted first and the event fires
+   * after, so a listener that reads the store when it is told finds nothing
+   * rather than the credential it is being told about. A delete that fails is
+   * deliberately not a reason to keep the session alive -- the session is over
+   * either way, and neither item is reached by any code path once the project
+   * is gone.
+   *
+   * The revoke's answer is returned, so a caller can name the families it could
+   * not end; the local teardown does not depend on it.
    */
-  async #signOut() {
-    if (this.#signedOut) return;
+  async #end({ revoke = false } = {}) {
+    if (this.#signedOut) return Object.freeze({ ok: true });
     this.#signedOut = true;
     this.#idToken = null;
     this.#expiresAt = 0;
+    let ended = Object.freeze({ ok: true });
+    if (revoke) {
+      ended = await revokeSelf({
+        endpoint: this.#endpoint,
+        refreshToken: this.#refreshToken,
+        sign: async (message) => {
+          const signed = await this.#deviceKey.sign(this.#projectId, message);
+          if (!signed.ok) this.#refuse(signed.code, 'end');
+          return signed.signature;
+        },
+        fetch: this.#fetch,
+      });
+    }
+    this.#refreshToken = null;
     await this.#store.delete(this.#projectId);
+    await this.#deviceKey.delete(this.#projectId);
     const listeners = [...this.#listeners];
     this.#listeners.clear();
     for (const listener of listeners) listener();
+    return ended;
+  }
+
+  /**
+   * End this session and revoke its family: what a sign-out everywhere does to
+   * one live project. Not a port member -- a surface ends nothing on its own --
+   * and reached by `signOutEverywhere`, which is handed the live sessions.
+   */
+  async end() {
+    return this.#end({ revoke: true });
   }
 
   /** The roster's role as of the last refresh. A display claim (D2791). */
@@ -334,22 +391,30 @@ export function createProjectSession(options = {}) {
     if (error instanceof SessionPortError) return refuse(error.code, error.member);
     throw error;
   }
+  LIVE_SESSIONS.set(members, built);
   return Object.freeze({ ok: true, session: Object.freeze(members) });
 }
 
 /**
- * Sign out everywhere (D2794): revoke each live project's own family, then sign
- * the identities out.
+ * Sign out everywhere (D2794): end each live project's session, then sign the
+ * identities out.
  *
  * **The projects are the caller's.** Which projects are live is the paired
  * list's (K3), and this module holds no such list: what it is handed is one
- * `{ endpoint, refreshToken, sign }` per live project, and what it returns is
- * which of them were revoked and which were not, so a caller can keep the ones
- * that failed rather than pretend the sign-out was complete. A project that
- * refuses the revoke is not an error the phone retries into a loop: the family
- * it could not end is named, and the identity sign-out runs regardless, because
- * a person who asked to sign out is signed out of the phone whatever a project
- * answered.
+ * entry per project, `{ endpoint }` with either the live `session` this module
+ * built or `{ refreshToken, sign }` for a project whose session the app no
+ * longer holds. A live session is ended by its own path -- it revokes its
+ * family, deletes its stored token and its device key and fires `signedOut`,
+ * so no surface keeps serving a token from a session the person has ended; a
+ * project with no live session is revoked server-side, which is all there is
+ * left to do to it.
+ *
+ * What comes back is which projects were revoked and which were not, so a
+ * caller can keep the ones that failed rather than pretend the sign-out was
+ * complete. A project that refuses the revoke is not an error the phone retries
+ * into a loop: the family it could not end is named, and the identity sign-out
+ * runs regardless, because a person who asked to sign out is signed out of the
+ * phone whatever a project answered.
  *
  * `identities` is the identity half (M1's store) and is called last: it is a
  * function rather than a list for the same reason, so this module needs no
@@ -359,14 +424,19 @@ export async function signOutEverywhere({ projects = [], identities, fetch } = {
   const revoked = [];
   const failed = [];
   for (const project of projects) {
-    const done = await revokeSelf({
-      endpoint: project.endpoint,
-      refreshToken: project.refreshToken,
-      sign: project.sign,
-      fetch,
-    });
-    if (done.ok) revoked.push(project.endpoint);
-    else failed.push(Object.freeze({ endpoint: project.endpoint, code: done.code }));
+    const endpoint = project.endpoint ?? project.session?.endpoint;
+    const live = LIVE_SESSIONS.get(project.session);
+    const done =
+      live === undefined
+        ? await revokeSelf({
+            endpoint: project.endpoint,
+            refreshToken: project.refreshToken,
+            sign: project.sign,
+            fetch,
+          })
+        : await live.end();
+    if (done.ok) revoked.push(endpoint);
+    else failed.push(Object.freeze({ endpoint, code: done.code }));
   }
   let signedOutIdentities = true;
   if (typeof identities === 'function') {
