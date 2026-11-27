@@ -470,18 +470,30 @@ func TestMineAgentSessionReadsTheProject(t *testing.T) {
 	rig.save(pending)
 	t.Setenv("CLAUDECODE", "1")
 
-	out := rig.mine()
-	if !strings.Contains(out, "coding agent's session") {
-		t.Errorf("a coding agent's session does not say what it read:\n%s", out)
+	// A session is one `issue mine` has --json in (D3437): stdout is the
+	// listing's document and the notes are the stderr half. The retry line the
+	// human view carries (F8, O4) is not a field of this document.
+	out, errOut, err := rig.run("issue", "mine")
+	if err != nil {
+		t.Fatalf("issue mine: %v\n%s%s", err, out, errOut)
 	}
-	if !strings.Contains(out, pending.LocalID) {
+	if !strings.Contains(errOut, "coding agent's session") {
+		t.Errorf("a coding agent's session does not say what it read:\n%s", errOut)
+	}
+	var doc struct {
+		Issues []struct {
+			LocalID string `json:"local_id"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("a session's listing is not the listing's document: %v\n%s", err, out)
+	}
+	own := false
+	for _, row := range doc.Issues {
+		own = own || row.LocalID == pending.LocalID
+	}
+	if !own {
 		t.Errorf("a coding agent's session drops the local rows:\n%s", out)
-	}
-	if !strings.Contains(out, "retry: fugaro update") {
-		t.Errorf("a coding agent's session drops the retry on a cli_only row (F8, O4):\n%s", out)
-	}
-	if strings.Contains(out, "fugaro doctor") {
-		t.Errorf("a coding agent's session suggested the shared record's command:\n%s", out)
 	}
 	// The read lifts and the upload does not: the issue this machine just
 	// diagnosed is still its own file, and the store holds only what was

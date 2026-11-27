@@ -31,6 +31,91 @@ import (
 // by the root (newCoreRoot).
 const verboseFlag = "verbose"
 
+// jsonFlag is the flag that makes a command print its result document instead
+// of its human view. Every command that has one declares it itself, in its own
+// flag set, so no persistent flag carries this name.
+const jsonFlag = "json"
+
+// jsonNeedsFlag names the commands whose --json is the document of one of their
+// own modes, and the flag that mode is asked for: --dry-run for the writes,
+// whose --json is the dry run's document, and --local for image build, whose
+// --json is the local build's report.
+//
+// Alone, --json makes every one of them refuse, before anything of theirs is
+// read, so turning it on for an agent would answer a command with a sentence
+// about a flag the agent never passed — and would answer the writes' own
+// refusal in a coding agent's session (D1552) with the dry run's sentence
+// instead. So the flag is turned on there only when the mode it belongs to was
+// asked for, which is the run an agent gets a document out of anyway.
+//
+// Every entry earns its place, refusal and all (agent_json_test.go). A command
+// whose --json does stand on its own beside a --dry-run — image check, mailbox
+// sweep — is not here, and an agent reads its document as it reads any other's.
+var jsonNeedsFlag = map[string]string{
+	"fugaro image build":    "local",
+	"fugaro image add":      "dry-run",
+	"fugaro models add":     "dry-run",
+	"fugaro secrets rm":     "dry-run",
+	"fugaro secrets set":    "dry-run",
+	"fugaro settings set":   "dry-run",
+	"fugaro settings unset": "dry-run",
+}
+
+// jsonRefusedWith names the flags --json is refused beside, per command: there
+// the two are two answers to one question. An agent that passed one asked for
+// that answer, so the flag is left alone and the run reads what was asked for
+// rather than a complaint about a flag nobody gave (agent_json_test.go).
+//
+// A command that already declares its own list keeps it: run's is
+// changeSetExcludes, which an ee build refuses --json from, and the entry here
+// is that list's own fact rather than a second copy of it (agent_json_test.go
+// pins the two together).
+var jsonRefusedWith = map[string][]string{
+	"fugaro logs":        {"url"},
+	"fugaro run":         {"change-set"},
+	"fugaro runs digest": {"stdout", "submit-draft"},
+	"fugaro update":      {"check"},
+	"fugaro watch":       {"plain"},
+}
+
+// agentJSON turns --json on for a coding agent's session (D3437, spec §4: "when
+// an agent runs a command, give it structured detail to work from"). The agent
+// reads the document and the person it works for reads the lines, so a command
+// that carries the flag behaves exactly as if it had been passed: the result
+// document on stdout and the short lines on stderr, which is where the reporter
+// already puts them under --json. An explicit --json is unchanged, and so is
+// every other session — a person's own terminal, with or without the IDE
+// extension's marker (agentMarker).
+//
+// It is called at the start of the root's PersistentPreRunE, before any command
+// reads its own flags or builds a reporter, because it is nothing but the flag
+// being set: a command that reads it after — boolFlag, its own options struct,
+// the reporter's Options.JSON — reads what it reads when a person passes --json.
+func agentJSON(cmd *cobra.Command) {
+	if cmd.Flags().Lookup(jsonFlag) == nil {
+		return
+	}
+	if agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) == "" {
+		return
+	}
+	changed := func(names []string) bool {
+		for _, name := range names {
+			if cmd.Flags().Changed(name) {
+				return true
+			}
+		}
+		return false
+	}
+	if flag, paired := jsonNeedsFlag[cmd.CommandPath()]; paired && !cmd.Flags().Changed(flag) {
+		return
+	}
+	if changed(jsonRefusedWith[cmd.CommandPath()]) {
+		return
+	}
+	// Set cannot fail: Lookup found the flag, and a bool parses "true".
+	_ = cmd.Flags().Set(jsonFlag, "true")
+}
+
 // reporterFor builds the reporter for one command's run and opens the log its
 // full output is kept in (D1352): the persistent --verbose (a command's own
 // --verbose of the same name shadows it, which is `recipes ls`'s), the
