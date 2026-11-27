@@ -691,7 +691,7 @@ func cancelPauseRefusal(resp *http.Response) error {
 		return userErr("%s", msg)
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
-		return userErr("the installation's credentials service does not serve the pause cancel route (%d): the route ships with `fugaro update`, which is the whole upgrade — run it and try again", resp.StatusCode)
+		return userErr("the credentials service lacks the pause cancel route (%d): run `fugaro update` and try again", resp.StatusCode)
 	}
 	return remote(fmt.Errorf("the installation's credentials service refused this call (%d) and its answer is not one this release reads", resp.StatusCode))
 }
@@ -732,12 +732,11 @@ func cancelPauseServiceURL(ctx context.Context, o cloudOptions) (string, error) 
 		return "", err
 	}
 	if sel.From == "shared config" {
-		return "", userErr("nothing was cancelled: this command sends your own Google ID token to the address it reads out of %s's own config file, and the config selected here is the one published to its runs bucket — a document anyone who can write that bucket can edit, credentials_service.url included, and that key is the whole of where your token goes. Ask the project's owner for its config file (for a workspace's project, the workspace's owner, who has it from that installation's own `fugaro update`) and select it with `--config <file>`",
-			pluginwire.Printable(sel.Name))
+		return "", userErr("nothing was cancelled: the shared config is bucket-editable and routes your token; select the owner's config with `--config <file>`")
 	}
 	raw := configuredCredentialsServiceURL(lc)
 	if raw == "" {
-		return "", userErr("this installation has no credentials service in its local config, so the pause of a run cannot be cancelled: the service is deployed by `fugaro update`, which is the whole upgrade — run it and try again")
+		return "", userErr("no credentials service in the local config, so no pause can be cancelled: run `fugaro update` and try again")
 	}
 	return raw, nil
 }
