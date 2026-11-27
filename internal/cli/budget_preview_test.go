@@ -426,7 +426,7 @@ func TestBudgetPreviewTypicalExcludesSubscriptionRuns(t *testing.T) {
 	if strings.Contains(out, "typical:") {
 		t.Errorf("notional costs printed a real-dollar typical line:\n%s", out)
 	}
-	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
+	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (every call went out on a subscription source, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
 	if !strings.Contains(errOut, only) {
 		t.Errorf("the oauth runs are not explained:\n%s", errOut)
 	}
@@ -441,7 +441,7 @@ func TestBudgetPreviewTypicalExcludesSubscriptionRuns(t *testing.T) {
 	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 5 runs of the last 30 days)") {
 		t.Errorf("the notional runs are mixed into the figure:\n%s", out)
 	}
-	const mixed = "6 of the 11 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
+	const mixed = "6 of the 11 runs of acme/app in the last 30 days ran on a subscription (every call went out on a subscription source, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
 	if !strings.Contains(errOut, mixed) {
 		t.Errorf("the excluded oauth runs are not counted:\n%s", errOut)
 	}
@@ -499,7 +499,7 @@ func TestBudgetPreviewTypicalCountsAnAllNotionalCascadeRunAsNotional(t *testing.
 	if strings.Contains(out, "typical:") {
 		t.Errorf("a plan-paid cascade window printed a real-dollar typical line:\n%s", out)
 	}
-	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
+	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (every call went out on a subscription source, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure"
 	if !strings.Contains(errOut, only) {
 		t.Errorf("the plan-paid cascade runs are not explained:\n%s", errOut)
 	}

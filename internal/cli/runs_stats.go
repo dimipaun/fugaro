@@ -174,8 +174,9 @@ func newRunsStatsCmd() *cobra.Command {
 			"The money is model dollars, counted the way the budget screens count them. COUNTED\n" +
 			"$ is the model spend that counts toward the caps: the money part of a run's model\n" +
 			"figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of\n" +
-			"that figure a subscription paid -- a run on agent.auth oauth whole, and a cascade\n" +
-			"run's tier-A calls, whose run is otherwise an api-key one -- which counts toward\n" +
+			"that figure a subscription paid -- a run whose every call went out on a\n" +
+			"subscription source, and a cascade run's tier-A calls, whose run is otherwise\n" +
+			"a paid one -- which counts toward\n" +
 			"the plan's limits and is no one's bill. The spend basis decides only a record\n" +
 			"written before that breakdown existed, which is what says a figure was never\n" +
 			"billed. They are separate columns and are never summed. Compute is not attributed\n" +

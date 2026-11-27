@@ -36,7 +36,8 @@ import (
 // and, when the repository has recorded enough runs, what one run of the
 // recipe typically costs, from the real-dollar cost each stage of those runs
 // recorded (a run whose model_usd was a subscription's rather than a bill is
-// left out: agent.auth oauth, or a cascade run the plan served in full).
+// left out: every call went out on a subscription source, or a cascade run the
+// plan served in full).
 //
 // Nothing here is written and no run is started: the caps and today's
 // counters are read as budget show reads them, the recipe is resolved as
@@ -113,7 +114,8 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"pricing the pinned model with what another one cost. Runs the figure\n" +
 			"cannot use are said to be left out, never counted as runs that cost\n" +
 			"nothing: a run whose model_usd was a subscription's rather than a bill\n" +
-			"(agent.auth oauth, or a cascade run the plan served in full), a\n" +
+			"(every call went out on a subscription source, or a cascade run the plan\n" +
+			"served in full), a\n" +
 			"result.json that is missing or unreadable, and a record with no\n" +
 			"per-stage cost at all (one from before the runner kept it, or\n" +
 			"stages that all cost nothing).\n\n" +
@@ -527,7 +529,7 @@ type previewTypical struct {
 	Runs int `json:"runs"`
 	// Skipped is the runs the figure left out, the sum of the three below.
 	Skipped    int `json:"skipped"`
-	Notional   int `json:"notional"`   // runs whose model_usd was a subscription's: oauth, or a cascade run the plan served in full
+	Notional   int `json:"notional"`   // runs whose model_usd was a subscription's: every call on a subscription source, or a cascade run the plan served in full
 	Unreadable int `json:"unreadable"` // runs with no readable result.json
 	Unpriced   int `json:"unpriced"`   // runs whose record held no per-stage cost
 }
@@ -708,7 +710,7 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 	// without saying why.
 	total := h.total()
 	if h.notional > 0 {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days ran on a subscription (agent.auth oauth, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure",
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days ran on a subscription (every call went out on a subscription source, or a cascade run the plan served in full): their model_usd is notional and is not averaged into a real-dollar figure",
 			h.notional, total, repo))
 	}
 	if h.unreadable > 0 {
@@ -745,10 +747,10 @@ type previewHistory struct {
 	// cost at all (a result.json from before the runner kept one, or a run
 	// whose stages all cost nothing); unreadable the runs with no readable
 	// result.json; and notional the runs whose model_usd was a subscription's
-	// whole (agent.auth oauth, or a cascade run the plan served in full --
-	// design §10.1, C1.16/P12), which counts against the plan's limits and is
-	// no one's bill. Each is counted and said, and none is ever averaged in as
-	// a run that cost nothing.
+	// whole (every call went out on a subscription source, or a cascade run the
+	// plan served in full -- design §10.1, C1.16/P12), which counts against the
+	// plan's limits and is no one's bill. Each is counted and said, and none is
+	// ever averaged in as a run that cost nothing.
 	unpriced, unreadable, notional int
 	// means is the mean cost of the stages seen per (stage kind, model).
 	means map[previewKind]previewMean

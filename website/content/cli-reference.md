@@ -2085,7 +2085,8 @@ for on that model leaves the line out and names the model, rather than
 pricing the pinned model with what another one cost. Runs the figure
 cannot use are said to be left out, never counted as runs that cost
 nothing: a run whose model_usd was a subscription's rather than a bill
-(agent.auth oauth, or a cascade run the plan served in full), a
+(every call went out on a subscription source, or a cascade run the plan
+served in full), a
 result.json that is missing or unreadable, and a record with no
 per-stage cost at all (one from before the runner kept it, or
 stages that all cost nothing).
@@ -6235,13 +6236,14 @@ to review and commit, which is where agent.recipe and a level's effort
 still live. layer.claude_models, the Claude models a project's routes may
 serve, is written as provider=anthropic/<id> at --layer project alone.
 
-A switch is judged the way a launch judges it: a route of the project config
-must claim the model and its allow_data_to must name the repository (every
-repository the project onboards, for a project-layer write), the model must
-be priced, budget.allowed_models must admit it, and the repository's own
-agent.auth and budget must support a provider model. A failure is a refusal
-with nothing written, and the message names the `fugaro models add` that would
-fix a missing claim or price.
+A switch is judged the way a launch judges it: where the project's routing table
+governs the repository it must route the model to a source the repository may
+use, a route of the project config must claim the model and its allow_data_to
+must name the repository (every repository the project onboards, for a
+project-layer write), the model must be priced, and budget.allowed_models must
+admit it. A failure is a refusal with nothing written, and the message names
+the `fugaro routing set` or `fugaro models add` that would fix a missing entry,
+claim or price.
 
 The command never commits, pushes or opens a pull request — a repository's
 change reaches runs when the owner's own branch is merged to the base branch,
@@ -9088,7 +9090,7 @@ Flags:
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
 | `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and one whose chain names nothing and which has no task of its own is refused, naming --title |
-| `--token` | string | "" | no | retired: name the pool this run should draw on with --pool. It still names the Claude account a workflow whose agent.auth is oauth runs as where no chain of the run's models names the launcher's pool — the account pools an oauth chain is made of — and is refused where one does; default: agent.oauth_token in fugaro.yaml, else the repository's default account, and a follow-up (--pr) keeps its previous run's account unless this is given explicitly |
+| `--token` | string | "" | no | retired: name the pool this run should draw on with --pool. It still names the Claude account a run draws on where no chain of the run's models names the launcher's pool — the accounts a pool is made of — and is refused where one does; default: agent.oauth_token in fugaro.yaml, else the repository's default account, and a follow-up (--pr) keeps its previous run's account unless this is given explicitly |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--used-review-rounds` | string | "" | no | state that the chain has already spent N review rounds, such as 2: tighten-only like --used-usd |
 | `--used-time` | string | "" | no | state that the chain has already used this much wall time, as a duration such as 45m: tighten-only like --used-usd |
@@ -9546,8 +9548,9 @@ Attribution, as the records themselves state it:
 The money is model dollars, counted the way the budget screens count them. COUNTED
 $ is the model spend that counts toward the caps: the money part of a run's model
 figure (model_usd minus model_notional_usd, C1.16/P12). NOTIONAL $ is the part of
-that figure a subscription paid -- a run on agent.auth oauth whole, and a cascade
-run's tier-A calls, whose run is otherwise an api-key one -- which counts toward
+that figure a subscription paid -- a run whose every call went out on a
+subscription source, and a cascade run's tier-A calls, whose run is otherwise
+a paid one -- which counts toward
 the plan's limits and is no one's bill. The spend basis decides only a record
 written before that breakdown existed, which is what says a figure was never
 billed. They are separate columns and are never summed. Compute is not attributed
