@@ -30,7 +30,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -73,11 +72,11 @@ func newImageCheckCmd() *cobra.Command {
 			"workflow's decision: it never submits a build (--dry-run is accepted, and is what\n" +
 			"it always does). Start a rebuild with fugaro image build.\n\n" +
 			"With --job, as the repository's daily check job runs it (it refuses to submit\n" +
-			"unless CLOUD_RUN_JOB or CLOUD_RUN_EXECUTION is set, as Cloud Run sets them, and\n" +
-			"in a coding agent's session; --dry-run is always allowed), it reads the job's\n" +
-			"spec from " + infra.CheckSpecEnv + ", submits a Cloud Build rebuild when a trigger fires\n" +
-			"(not with --dry-run), writes builds/<slug>/<workflow>/check.json, and logs one\n" +
-			"JSON line per workflow. It exits 2 when the check itself failed.\n\n" +
+			"unless CLOUD_RUN_JOB or CLOUD_RUN_EXECUTION is set, as Cloud Run sets them;\n" +
+			"--dry-run is always allowed), it reads the job's spec from " + infra.CheckSpecEnv + ",\n" +
+			"submits a Cloud Build rebuild when a trigger fires (not with --dry-run), writes\n" +
+			"builds/<slug>/<workflow>/check.json, and logs one JSON line per workflow. It exits\n" +
+			"2 when the check itself failed.\n\n" +
 			"With --job --catalog it is the project's catalog check job instead (D1148): one\n" +
 			"run of the project's own job, reading its spec from " + catalogCheckSpecEnv + ",\n" +
 			"deciding every entry of the project's image catalog and submitting at most one\n" +
@@ -660,20 +659,19 @@ func checkGitCredential(ctx context.Context, service string, s infra.CheckJobSpe
 
 // refuseJobSubmission is the guard both check jobs answer to, before either
 // reads anything: they submit billable builds with no one to type, so they run
-// in Cloud Run, where CLOUD_RUN_JOB (or CLOUD_RUN_EXECUTION) is set and no
-// coding agent's marker is. Anywhere else, or in a session with an agent
-// marker, they submit nothing (--dry-run still decides). Not a barrier: an
-// environment can be set by hand. what names the job the refusal is about
-// ("the repository's" check job, "the project's catalog" one).
+// in Cloud Run, where CLOUD_RUN_JOB (or CLOUD_RUN_EXECUTION) is set. Anywhere
+// else they submit nothing (--dry-run still decides). Not a barrier: an
+// environment can be set by hand. A coding agent's session is admitted as any
+// other session is (D3425): a build asks no session for an answer, and what
+// bounds every submission is the lease it takes first (T4, D1543). what names
+// the job the refusal is about ("the repository's" check job, "the project's
+// catalog" one).
 func refuseJobSubmission(o imageCheckOptions, what string) error {
 	if o.dryRun {
 		return nil
 	}
-	if m := agentMarker(os.Getenv, processTerminal()); m != "" {
-		return userErr("%s", initflow.AgentRefusal(m))
-	}
 	if os.Getenv("CLOUD_RUN_JOB") == "" && os.Getenv("CLOUD_RUN_EXECUTION") == "" {
-		return userErr("fugaro image check --job submits billable rebuilds and runs only as %s Cloud Run job (CLOUD_RUN_JOB is not set here); from a checkout, fugaro image check only prints the decision, and fugaro image build starts a rebuild, which you confirm by typing", what)
+		return userErr("fugaro image check --job submits billable rebuilds and runs only as %s Cloud Run job (CLOUD_RUN_JOB is not set here); from a checkout, fugaro image check only prints the decision, and fugaro image build starts a rebuild, which asks nothing", what)
 	}
 	return nil
 }

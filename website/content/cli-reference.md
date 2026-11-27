@@ -4391,11 +4391,11 @@ workflow's decision: it never submits a build (--dry-run is accepted, and is wha
 it always does). Start a rebuild with fugaro image build.
 
 With --job, as the repository's daily check job runs it (it refuses to submit
-unless CLOUD_RUN_JOB or CLOUD_RUN_EXECUTION is set, as Cloud Run sets them, and
-in a coding agent's session; --dry-run is always allowed), it reads the job's
-spec from FUGARO_CHECK_SPEC, submits a Cloud Build rebuild when a trigger fires
-(not with --dry-run), writes builds/<slug>/<workflow>/check.json, and logs one
-JSON line per workflow. It exits 2 when the check itself failed.
+unless CLOUD_RUN_JOB or CLOUD_RUN_EXECUTION is set, as Cloud Run sets them;
+--dry-run is always allowed), it reads the job's spec from FUGARO_CHECK_SPEC,
+submits a Cloud Build rebuild when a trigger fires (not with --dry-run), writes
+builds/<slug>/<workflow>/check.json, and logs one JSON line per workflow. It exits
+2 when the check itself failed.
 
 With --job --catalog it is the project's catalog check job instead (D1148): one
 run of the project's own job, reading its spec from FUGARO_CATALOG_CHECK_SPEC,
