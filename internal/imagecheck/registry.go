@@ -94,6 +94,47 @@ func (r *Registry) Digest(ctx context.Context, ref string) (string, error) {
 	return headManifest(ctx, hc, u, token, ref)
 }
 
+// HasManifest reports whether the registry still holds ref's manifest. ref
+// must be pinned by digest: the lock entry's own digest is what a caller has,
+// and a tag answers a different question. It is the read Digest cannot make —
+// Digest hands a digest-pinned ref straight back, because the digest is what
+// its caller wanted, and this asks whether that digest is still there.
+//
+// A registry that answers 404 is (false, nil): the manifest is gone, which is
+// the state a crash between §9's two deletes leaves (design §9, the lock entry
+// doctor reports). Every other failure is an error, because a read that did
+// not answer is not the same fact as a manifest that is not there.
+func (r *Registry) HasManifest(ctx context.Context, ref string) (bool, error) {
+	host, name, digest, err := parseImageRef(ref)
+	if err != nil {
+		return false, err
+	}
+	if !gcp.IsDigest(digest) {
+		return false, fmt.Errorf("reading %s: it is not pinned by digest, and whether a digest is still there is this read's question", ref)
+	}
+	base := "https://" + host
+	if r.Endpoint != nil {
+		base = strings.TrimSuffix(r.Endpoint(host), "/")
+	}
+	u := base + "/v2/" + name + "/manifests/" + digest
+	hc := r.HTTP
+	if arHostRE.MatchString(host) {
+		if hc, err = r.googleClient(ctx); err != nil {
+			return false, err
+		}
+	} else if hc == nil {
+		hc = &http.Client{}
+	}
+	_, err = headManifest(ctx, hc, u, "", ref)
+	switch {
+	case errors.Is(err, ErrManifestUnknown):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
+}
+
 // DeleteManifest removes the manifest ref names from its registry, which is
 // how `fugaro image prune` takes a shared image away (design §9).
 //

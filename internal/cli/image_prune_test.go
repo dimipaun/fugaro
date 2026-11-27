@@ -52,23 +52,32 @@ func writeSharedLock(t *testing.T, f *cloudFixture, images map[string]imagecheck
 	writeBucketFile(t, f, imagecheck.LockKey, string(data))
 }
 
+// imageRegistryFake starts a registry fake holding each entry's image at the
+// digest the entry names, and returns it with the client that reads it: the
+// command's own seam (pruneRegistry, doctorRegistry) is what a caller installs
+// it into, since prune's delete and doctor's read share the fake.
+func imageRegistryFake(t *testing.T, images ...imagecheck.LockedImage) (*gcpfake.Registry, *imagecheck.Registry) {
+	t.Helper()
+	reg := gcpfake.NewRegistry(t)
+	for _, img := range images {
+		name, ok := strings.CutPrefix(img.Image, "us-east5-docker.pkg.dev/")
+		if !ok {
+			t.Fatalf("the image %q is not on the fake's host", img.Image)
+		}
+		reg.SetManifest(name, img.Digest, img.Digest)
+	}
+	client := &imagecheck.Registry{Google: reg.Client(), Endpoint: func(string) string { return reg.URL }}
+	return reg, client
+}
+
 // pruneRig points `image prune`'s registry at a fake and returns it, with
 // each image of the lock registered as a manifest the registry holds, so a
 // delete of one is a delete the fake answers 202 to.
 func pruneRig(t *testing.T, images ...imagecheck.LockedImage) *gcpfake.Registry {
 	t.Helper()
-	reg := gcpfake.NewRegistry(t)
-	for _, img := range images {
-		name, digest := strings.CutPrefix(img.Image, "us-east5-docker.pkg.dev/")
-		if !digest {
-			t.Fatalf("the image %q is not on the fake's host", img.Image)
-		}
-		reg.SetManifest(name, img.Digest, img.Digest)
-	}
+	reg, client := imageRegistryFake(t, images...)
 	old := pruneRegistry
-	pruneRegistry = func() *imagecheck.Registry {
-		return &imagecheck.Registry{Google: reg.Client(), Endpoint: func(string) string { return reg.URL }}
-	}
+	pruneRegistry = func() *imagecheck.Registry { return client }
 	t.Cleanup(func() { pruneRegistry = old })
 	return reg
 }
