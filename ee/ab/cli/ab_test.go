@@ -12,6 +12,7 @@ import (
 	"time"
 
 	report "github.com/dimipaun/fugaro/ee/report"
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -37,6 +38,12 @@ func TestMain(m *testing.M) {
 	// repository's own fugaro.yaml.
 	if wd, err := os.Getwd(); err == nil {
 		os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(filepath.Dir(wd)))
+	}
+	// A coding agent's session now gets the --json document from every command
+	// that has the flag (CO4, D3437), and these tests read the tree as a person
+	// does; internal/cli's TestMain clears the same markers, for the same reason.
+	for _, k := range agentenv.Markers {
+		os.Unsetenv(k)
 	}
 	os.Exit(m.Run())
 }
