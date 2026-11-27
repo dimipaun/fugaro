@@ -29,10 +29,12 @@ user: someone@example.com
 endpoints: { no_auth: true }
 `
 
-// switchChoiceTail is the tail every case that needs all five keys shares: two
-// accounts that cover the one repository, and the default, a stage, a craft, the
+// switchChoiceTail is the tail every case that needs the choice keys shares:
+// two accounts that cover the one repository, and the default, a stage, the
 // repository's own list and a profile's list all naming team-a — the whole of
-// what the owner moved by hand.
+// what the owner moved by hand. The craft beside them is the leftover a
+// migrated installation holds: the switch may not move it (MG4), and every case
+// here is one where it stays where it is.
 const switchChoiceTail = `claude_accounts:
   team-a: { allow_data_to: [acme/app] }
   team-b: { allow_data_to: [acme/app] }
@@ -55,28 +57,47 @@ repos:
       - team-a
 `
 
-// switchKeys are the five keys that tail names team-a in, as the command prints
+// switchKeys are the four keys that tail names team-a in, as the command prints
 // them: the whole of what a switch is for, and the reason it is one command
 // rather than nine edits.
 var switchKeys = []string{
 	"default_claude_account",
 	"stages.review.claude_account",
-	"crafts.coder.access",
 	"repos.acme/app.claude_accounts",
 	"profiles.standard.claude_accounts",
 }
 
 // switchRigKeys is the same list for the converge rig, whose repository is
-// owner/repo-a and which sets two crafts' access — the profile of a key is what
-// a switch is judged on, and the rig's own file is the one an installation
-// really holds.
+// owner/repo-a — the profile of a key is what a switch is judged on, and the
+// rig's own file is the one an installation really holds.
 var switchRigKeys = []string{
 	"default_claude_account",
 	"stages.review.claude_account",
-	"crafts.coder.access",
-	"crafts.review.access",
 	"repos.owner/repo-a.claude_accounts",
 	"profiles.standard.claude_accounts",
+}
+
+// switchCraftTail is the two crafts the converge rig's config leaves naming
+// team-a, in the order the switch's own line names them.
+var switchCraftTail = []string{"coder", "review"}
+
+// switchNode is the node `fugaro setup` would have published for a config whose
+// crafts name team-a: the fixture's own members plus the craft block the local
+// config carries. The publish carries the crafts from the local config, so a
+// node without them is a node no installation of this shape holds, and the
+// publish of one would read the leftover craft as a grant the owner has to
+// confirm by name.
+func switchNode(crafts ...string) map[string]any {
+	node := addPolicyNode()
+	if len(crafts) == 0 {
+		return node
+	}
+	block := map[string]any{}
+	for _, name := range crafts {
+		block[name] = map[string]any{"access": "team-a"}
+	}
+	node["crafts"] = block
+	return node
 }
 
 // switchFixture writes this machine's local project config, hermetic in the
@@ -122,7 +143,7 @@ func switchFile(t *testing.T) string {
 // standing.
 func TestAccountsSwitchWritesEveryKeyAndConverges(t *testing.T) {
 	r := newAddRigWith(t, switchRigLocal)
-	node := addPolicyNode()
+	node := switchNode(switchCraftTail...)
 	node["default_claude_account"] = "team-a"
 	node["claude_account_stages"] = map[string]any{"review": "team-a"}
 	r.db.Set(projectpolicy.PathShared(), node)
@@ -138,8 +159,14 @@ func TestAccountsSwitchWritesEveryKeyAndConverges(t *testing.T) {
 	if got := lc.ClaudeAccountStages["review"].ClaudeAccount; got != "team-b" {
 		t.Errorf("stages.review.claude_account = %q, want team-b", got)
 	}
-	if got := lc.Crafts.Coder.Access; got != "team-b" {
-		t.Errorf("crafts.coder.access = %q, want team-b", got)
+	// The crafts are the one key of that shape this command may not move (MG4):
+	// what a craft's calls go out on is the project's routing table's, and the
+	// leftover the migration derived the table from is left exactly as it is —
+	// the line below the plan is what tells a person which crafts those are.
+	for _, craft := range switchCraftTail {
+		if got := lc.Crafts.Of(craft).Access; got != "team-a" {
+			t.Errorf("crafts.%s.access = %q, want team-a left alone", craft, got)
+		}
 	}
 	if got := lc.Repos["owner/repo-a"].ClaudeAccounts; !slices.Equal(got, []string{"team-b"}) {
 		t.Errorf("repos.owner/repo-a.claude_accounts = %v, want [team-b]", got)
@@ -166,6 +193,24 @@ func TestAccountsSwitchWritesEveryKeyAndConverges(t *testing.T) {
 		if !strings.Contains(out, key+": team-a -> team-b") {
 			t.Errorf("the run does not print the line for %s:\n%s", key, out)
 		}
+	}
+	// The crafts are named beside them, and not as a move: a person whose crafts
+	// still name the account they switched off has to be told, because the
+	// publish carries that leftover to the node and no key of this command's
+	// moves it (MG4).
+	for _, craft := range switchCraftTail {
+		want := "crafts." + craft + ".access names team-a and stays where it is"
+		if !strings.Contains(out, want) {
+			t.Errorf("the run does not say %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "fugaro routing set") {
+		t.Errorf("the line about the crafts does not name the command that moves them:\n%s", out)
+	}
+	// The node keeps the craft it had: this command moves no craft key, so the
+	// publish carries the leftover exactly as the config holds it.
+	if got := p.Crafts.Coder.Access; got != "team-a" {
+		t.Errorf("the node's crafts.coder.access = %q, want team-a: the switch moves no craft key", got)
 	}
 	if !strings.Contains(out, "Nothing else to run") {
 		t.Errorf("the run does not close on the one thing left to do, which is nothing:\n%s", out)
@@ -714,6 +759,7 @@ func TestAccountsSwitchRefusesWhenTheInstallationsJobsCannotBeRead(t *testing.T)
 // assertion is on the delete.
 func TestAccountsSwitchAdmitsAJobItCanRetire(t *testing.T) {
 	r := newAddRigWith(t, switchRigLocal)
+	r.db.Set(projectpolicy.PathShared(), switchNode(switchCraftTail...))
 	job := gcp.ProjectJobName("standard", "github", "team-a")
 	r.run.AddProjectJob(job, "standard", "github", "team-a", "2", "8Gi")
 	r.run.SetJob(job, projectJobStateLabels("standard", "github", "team-a"), "image")
