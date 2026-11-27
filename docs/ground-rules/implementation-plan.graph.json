@@ -5,7 +5,7 @@
  "nodes": [
   {
    "id": "DG0",
-   "title": "the delete classes, on the existing table",
+   "title": "the delete classes, per change",
    "run": null,
    "version": null,
    "tier": "small",
@@ -102,7 +102,9 @@
      "plugin/skills/setup/SKILL.md",
      "plugin/skills/images/SKILL.md",
      "plugin/skills/setup/reference/*.md",
-     "plugin/setup_skill_test.go"
+     "plugin/skills/working/reference/status.md",
+     "plugin/setup_skill_test.go",
+     "plugin/skills_lint_test.go"
     ]
    }
   },
@@ -145,7 +147,7 @@
   },
   {
    "id": "UO4b",
-   "title": "no message names update --repo",
+   "title": "no message names update --repo; help says what agents may do",
    "run": null,
    "version": null,
    "tier": "large",
@@ -153,7 +155,25 @@
    "footprint": {
     "prediction": true,
     "paths": [
-     "internal/**/*.go"
+     "internal/**/*.go",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "UO6",
+   "title": "the per-repository Terraform goes",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "deploy/terraform/gcp/roots/repo/**",
+     "deploy/terraform/gcp/modules/repo/**",
+     "internal/infra/roots.go",
+     "deploy/terraform/terraform_test.go"
     ]
    }
   },
@@ -205,7 +225,8 @@
      "internal/cli/init_fugaroyaml.go",
      "internal/cli/recipes_skew_test.go",
      "internal/cli/run.go",
-     "internal/cli/init.go"
+     "internal/cli/init.go",
+     "website/content/cli-reference.md"
     ]
    }
   },
@@ -221,26 +242,47 @@
     "paths": [
      "internal/infra/tf/managed_cover.go",
      "internal/infra/tf/managed_cover_test.go",
+     "internal/infra/tf/guard.go",
      "internal/cli/managed_gate.go"
     ]
    }
   },
   {
    "id": "DG1b",
-   "title": "the delete list retires",
+   "title": "the delete-list command retires",
    "run": null,
    "version": null,
-   "tier": "large",
-   "size": 3,
+   "tier": "medium",
+   "size": 2,
    "footprint": {
     "prediction": true,
     "paths": [
      "internal/cli/allow_delete.go",
-     "internal/infra/managed/deletelist.go",
      "internal/cli/managed_apply.go",
      "internal/cli/restore.go",
+     "internal/cli/root.go",
+     "website/content/cli-reference.md"
+    ]
+   }
+  },
+  {
+   "id": "DG1c",
+   "title": "the delete list leaves the libraries",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/managed/deletelist.go",
      "internal/managed/inventory.go",
-     "internal/cli/root.go"
+     "internal/managed/plan.go",
+     "internal/managed/apply.go",
+     "internal/managed/audit.go",
+     "internal/infra/identity_allow_delete.go",
+     "internal/infra/build_identity.go",
+     "internal/infra/tf/identity.go"
     ]
    }
   },
@@ -264,15 +306,17 @@
   },
   {
    "id": "DG3",
-   "title": "what update never destroys",
+   "title": "prevent_destroy follows the classes",
    "run": null,
    "version": null,
-   "tier": "small",
-   "size": 1,
+   "tier": "medium",
+   "size": 2,
    "footprint": {
     "prediction": true,
     "paths": [
      "deploy/terraform/terraform_test.go",
+     "deploy/terraform/gcp/modules/repo/registry.tf",
+     "deploy/terraform/gcp/modules/installation/registry.tf",
      "internal/cli/update_member_secrets_test.go"
     ]
    }
@@ -303,8 +347,7 @@
     "paths": [
      "internal/initflow/stage.go",
      "internal/initflow/loop.go",
-     "internal/cli/testdata/update_*.golden",
-     "internal/cli/testdata/setup_*.golden"
+     "internal/cli/testdata/init_commands.golden"
     ]
    }
   },
@@ -376,8 +419,8 @@
    }
   },
   {
-   "id": "AG2",
-   "title": "an agent's update runs every stage",
+   "id": "AG2a",
+   "title": "an agent's update reaches every stage",
    "run": null,
    "version": null,
    "tier": "large",
@@ -388,9 +431,24 @@
      "internal/initflow/loop.go",
      "internal/cli/update_managed.go",
      "internal/cli/init.go",
-     "internal/cli/init_stages.go",
+     "internal/cli/init_stages.go"
+    ]
+   }
+  },
+  {
+   "id": "AG2b",
+   "title": "each stage's own refusal lifts",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
      "internal/cli/initsecrets.go",
-     "internal/cli/init_compute.go"
+     "internal/cli/init_compute.go",
+     "internal/cli/init_orchestrator_stage.go",
+     "internal/cli/init_checkout_upgrade.go"
     ]
    }
   },
@@ -405,6 +463,7 @@
     "prediction": true,
     "paths": [
      "internal/cli/settings_managed.go",
+     "internal/cli/settings_write.go",
      "internal/cli/rigor.go",
      "internal/cli/rigor_floor.go",
      "internal/cli/accounts_switch.go",
@@ -415,8 +474,8 @@
    }
   },
   {
-   "id": "AG4",
-   "title": "project, image and publish commands lift",
+   "id": "AG4a",
+   "title": "project commands lift",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -425,10 +484,27 @@
     "prediction": true,
     "paths": [
      "internal/cli/project_enroll.go",
+     "internal/cli/project_enroll_converge.go",
      "internal/cli/project_repos_rm.go",
-     "internal/cli/image_catalog.go",
-     "internal/cli/config_publish.go",
+     "internal/cli/project_cmd.go",
      "internal/cli/project_policy_managed.go"
+    ]
+   }
+  },
+  {
+   "id": "AG4b",
+   "title": "image and publish commands lift",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_catalog.go",
+     "internal/cli/image_map_managed.go",
+     "internal/cli/image_refresh.go",
+     "internal/cli/config_publish.go"
     ]
    }
   },
@@ -471,7 +547,7 @@
   },
   {
    "id": "AG5c",
-   "title": "applies and builds lift",
+   "title": "applies lift",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -483,8 +559,23 @@
      "internal/cli/orchestrator_install.go",
      "internal/cli/apply.go",
      "internal/cli/managed_apply.go",
-     "internal/cli/image_build_catalog.go",
      "internal/cli/upgrade_cloud.go"
+    ]
+   }
+  },
+  {
+   "id": "AG5d",
+   "title": "builds lift",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/image_build_catalog.go",
+     "internal/cli/image_build_managed.go",
+     "internal/cli/imagecheck.go"
     ]
    }
   },
@@ -634,7 +725,7 @@
     "paths": [
      "internal/cli/init_images_catalog.go",
      "internal/cli/init_stages.go",
-     "internal/cli/init_images_catalog_test.go"
+     "internal/cli/update_catalog_background_test.go"
     ]
    }
   },
@@ -700,8 +791,13 @@
   },
   {
    "task": "DOC1",
-   "needs": "AG2",
+   "needs": "AG2a",
    "reason": "kept: behaviour: the text describes shipped behaviour"
+  },
+  {
+   "task": "DOC1",
+   "needs": "AG2b",
+   "reason": "kept: behaviour"
   },
   {
    "task": "DOC2",
@@ -710,7 +806,7 @@
   },
   {
    "task": "DOC2",
-   "needs": "AG2",
+   "needs": "AG2a",
    "reason": "kept: behaviour"
   },
   {
@@ -732,6 +828,51 @@
    "task": "UO4b",
    "needs": "UO4a",
    "reason": "kept: the sweep follows the flag's removal"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG3",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG4a",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG4b",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG5a",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG5b",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG5c",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG5d",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO4b",
+   "needs": "AG2b",
+   "reason": "kept: the help sweep follows every lift"
+  },
+  {
+   "task": "UO6",
+   "needs": "UO2",
+   "reason": "kept: behaviour: no installation applies a per-repository root after UO2; external: one release later"
   },
   {
    "task": "CV2",
@@ -771,17 +912,27 @@
   {
    "task": "DG1b",
    "needs": "DG1a",
-   "reason": "kept: behaviour: nothing reads the list once the rule changed"
+   "reason": "kept: behaviour: nothing needs the list once the rule changed"
   },
   {
-   "task": "AG2",
+   "task": "DG1c",
+   "needs": "DG1b",
+   "reason": "kept: build: the library leaves once no command reads it"
+  },
+  {
+   "task": "AG2a",
    "needs": "DG0",
    "reason": "kept: the class table"
   },
   {
-   "task": "AG2",
+   "task": "AG2a",
    "needs": "DG1a",
-   "reason": "kept: behaviour: the gate admits recreatable deletes before agents run every stage"
+   "reason": "kept: behaviour: the gate admits recreatable deletes first"
+  },
+  {
+   "task": "AG2a",
+   "needs": "DG2",
+   "reason": "kept: behaviour: --allow-delete is gone before agents run every stage"
   },
   {
    "task": "AG5c",
@@ -790,7 +941,7 @@
   },
   {
    "task": "DG4",
-   "needs": "DG1b",
+   "needs": "DG1c",
    "reason": "kept: behaviour: the end-to-end test"
   },
   {
@@ -800,12 +951,22 @@
   },
   {
    "task": "DG4",
+   "needs": "DG3",
+   "reason": "kept: behaviour: the registry can be destroyed"
+  },
+  {
+   "task": "DG4",
    "needs": "UO2",
    "reason": "kept: behaviour: the end-to-end test"
   },
   {
    "task": "DG4",
-   "needs": "AG2",
+   "needs": "AG2a",
+   "reason": "kept: behaviour: the end-to-end test"
+  },
+  {
+   "task": "DG4",
+   "needs": "AG2b",
    "reason": "kept: behaviour: the end-to-end test"
   },
   {
@@ -816,7 +977,7 @@
   {
    "task": "CF2a",
    "needs": "VS3b",
-   "reason": "kept: behaviour: release A's eager rebuild puts CF1's runner in every image"
+   "reason": "kept: behaviour: release A's eager rebuild puts CF1's runner in every image; external: release A shipped"
   },
   {
    "task": "CF2a",
@@ -879,19 +1040,169 @@
    "reason": "kept: the operator line describes it"
   },
   {
+   "task": "REL1",
+   "needs": "DG1b",
+   "reason": "kept: the operator line describes it"
+  },
+  {
+   "task": "UO4b",
+   "needs": "VS0",
+   "reason": "kept: one file: internal/task/task.go"
+  },
+  {
+   "task": "CF2b",
+   "needs": "UO3",
+   "reason": "kept: one file: internal/config/retired.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "UO3",
+   "reason": "kept: one file: internal/config/retired.go"
+  },
+  {
+   "task": "CF2b",
+   "needs": "CV1",
+   "reason": "kept: one file: internal/config/config.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CV1",
+   "reason": "kept: one file: internal/config/versions.go"
+  },
+  {
+   "task": "AG2a",
+   "needs": "CO1",
+   "reason": "kept: one file: internal/initflow/loop.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CO2",
+   "reason": "kept: one file: internal/report/spinner.go"
+  },
+  {
+   "task": "UO2",
+   "needs": "CO3",
+   "reason": "kept: one file: init.go"
+  },
+  {
+   "task": "DG2",
+   "needs": "CO3",
+   "reason": "kept: one file: init.go"
+  },
+  {
+   "task": "CF2c",
+   "needs": "CO3",
+   "reason": "kept: one file: init.go"
+  },
+  {
+   "task": "DG1b",
+   "needs": "CO4",
+   "reason": "kept: one file: root.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CO4",
+   "reason": "kept: one file: report_flags.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CO5",
+   "reason": "kept: one file: laconic_census_test.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CF1",
+   "reason": "kept: one file: internal/runner/runner.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "VS1",
+   "reason": "kept: one file: internal/selfupgrade/fetch.go"
+  },
+  {
+   "task": "AG5d",
+   "needs": "VS3a",
+   "reason": "kept: one file: image_build_catalog.go"
+  },
+  {
    "task": "DG2",
    "needs": "UO2",
    "reason": "kept: one file: init.go"
   },
   {
-   "task": "CV3",
-   "needs": "UO4a",
+   "task": "CF2a",
+   "needs": "UO2",
+   "reason": "kept: one file: internal/infra/spec.go"
+  },
+  {
+   "task": "DG2",
+   "needs": "DG1a",
+   "reason": "kept: one file: internal/infra/tf/guard.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "DG3",
+   "reason": "kept: one file: update_member_secrets_test.go"
+  },
+  {
+   "task": "UO6",
+   "needs": "DG3",
+   "reason": "kept: one file: deploy/terraform/terraform_test.go"
+  },
+  {
+   "task": "CF2c",
+   "needs": "VS2",
+   "reason": "kept: one file: run.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "VS2",
+   "reason": "kept: one file: run.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "VS5",
+   "reason": "kept: one file: exec.go"
+  },
+  {
+   "task": "AG2a",
+   "needs": "VS3b",
+   "reason": "kept: one file: init_stages.go"
+  },
+  {
+   "task": "CF2b",
+   "needs": "VS4",
+   "reason": "kept: one file: internal/config/layer.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "VS4",
+   "reason": "kept: one file: internal/config/layer.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CV2",
+   "reason": "kept: one file: doctor_config_version.go"
+  },
+  {
+   "task": "DG1b",
+   "needs": "DG2",
+   "reason": "kept: one file: website/content/cli-reference.md"
+  },
+  {
+   "task": "AG3",
+   "needs": "DG2",
+   "reason": "kept: one file: website/content/cli-reference.md"
+  },
+  {
+   "task": "CF2c",
+   "needs": "DG2",
    "reason": "kept: one file: init.go"
   },
   {
-   "task": "CV3",
-   "needs": "UO4b",
-   "reason": "kept: one file: internal/**/*.go"
+   "task": "AG3",
+   "needs": "DG1b",
+   "reason": "kept: one file: website/content/cli-reference.md"
   },
   {
    "task": "AG5c",
@@ -899,14 +1210,84 @@
    "reason": "kept: one file: managed_apply.go"
   },
   {
-   "task": "AG2",
-   "needs": "DG2",
+   "task": "UO4a",
+   "needs": "DG1b",
+   "reason": "kept: one file: website/content/cli-reference.md"
+  },
+  {
+   "task": "CV3",
+   "needs": "DG1b",
+   "reason": "kept: one file: website/content/cli-reference.md"
+  },
+  {
+   "task": "UO4b",
+   "needs": "DG1c",
+   "reason": "kept: one file: internal/infra/managed/deletelist.go"
+  },
+  {
+   "task": "CF2c",
+   "needs": "AG2a",
    "reason": "kept: one file: init.go"
   },
   {
    "task": "CF2c",
-   "needs": "AG2",
+   "needs": "AG2b",
+   "reason": "kept: one file: init_checkout_upgrade.go"
+  },
+  {
+   "task": "UO4a",
+   "needs": "AG3",
+   "reason": "kept: one file: website/content/cli-reference.md"
+  },
+  {
+   "task": "CV3",
+   "needs": "AG3",
+   "reason": "kept: one file: website/content/cli-reference.md"
+  },
+  {
+   "task": "CF2c",
+   "needs": "AG4b",
+   "reason": "kept: one file: image_refresh.go"
+  },
+  {
+   "task": "CF2c",
+   "needs": "AG5d",
+   "reason": "kept: one file: imagecheck.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "DG4",
+   "reason": "kept: one file: update_ground_rules_test.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CF2a",
+   "reason": "kept: one file: internal/infra/spec.go"
+  },
+  {
+   "task": "UO4a",
+   "needs": "CF2c",
    "reason": "kept: one file: init.go"
+  },
+  {
+   "task": "UO4b",
+   "needs": "CF2b",
+   "reason": "kept: one file: internal/config/config.go"
+  },
+  {
+   "task": "CV3",
+   "needs": "UO4a",
+   "reason": "kept: one file: init.go"
+  },
+  {
+   "task": "UO6",
+   "needs": "UO4b",
+   "reason": "kept: one file: internal/**/*.go"
+  },
+  {
+   "task": "CV3",
+   "needs": "UO4b",
+   "reason": "kept: one file: internal/**/*.go"
   }
  ],
  "decoupling": [],

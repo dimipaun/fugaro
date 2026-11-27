@@ -1,6 +1,6 @@
 # Ground rules: reconciliation
 
-The spec ([spec.md](spec.md)) checked against `origin/main` at `ad84f51c5`, on 2026-11-26. **Where this
+The spec ([spec.md](spec.md)) checked against `origin/main` at `a067bd0fa`, on 2026-11-26. **Where this
 document and the spec disagree, this document wins.** The spec itself says its rules win over any design
 choice they conflict with; this document records which earlier designs that reaches (§5).
 
@@ -92,7 +92,8 @@ What the repository already has, against the spec's concepts:
   - catalog build leases and records keyed by repository (RC44, RC55);
   - slug-scoped IAM conditions (RC57).
 
-  All of these are written from the project side already, and none needs a checkout. The plan keeps them
+  All of these are written from the project side already, and none needs a checkout. Since the base,
+  #4102 (IS6) took workflow secrets out of every job spec; `creds/workflowsecrets/<slug>` is still written. The plan keeps them
   and states that they are project data.
 - **F7. Exists, partly.** `config.Config.Version` is refused unless it is 1 (`internal/config/validate.go`),
   and `schemas/fugaro.schema.json` holds `"const": 1`. There is no reader keyed on the version. The in-memory
@@ -138,7 +139,7 @@ What the repository already has, against the spec's concepts:
   refuses only a lowering, "the sensitive direction" (`rigor.go`); `rigor floor` and `rigor security rm`
   refuse the same way. (Corrected after review: the first text said rigor was wholly refused.)
 - **F14. Exists, since the base.** T3 of `docs/managed-flag-ergonomics/` (#4045) merged after this
-  document's base (`e1c86a3e4`): `update` now stops on an unmanaged installation, naming
+  document's base, as `e1c86a3e4`: `update` now stops on an unmanaged installation, naming
   `fugaro managed flag`. The "nothing is implemented" status lines of `docs/managed-flag-ergonomics/`,
   `docs/update-from-anywhere/` and `docs/required-version-stamp/` are stale.
 
@@ -156,7 +157,10 @@ What the repository already has, against the spec's concepts:
   - `--retire`: the refusal prints `fugaro update --repo . --retire` (`init_refusal.go` `retireNextCommand`);
   - `--allow-delete ADDR`;
   - `--allow-job-delete`, which lowers `deletion_protection`;
-  - `--yes` on `accounts alias` and `accounts switch`, which the no-prompt policy's T11 missed.
+  - `--yes` on `accounts alias` and `accounts switch`, which the no-prompt policy's T11 missed;
+  - `--executable-changes` on `config publish` and `workflow` (`config_publish.go`, `workflow.go`), the
+    opt-in to publishing command or image-step changes for every repository. D3425's second amendment
+    keeps it a person's.
 
   `--forget` edits only Terraform state. It is a repair tool, not a normal operation, and stays.
 - **F17. Exists.** Nothing irreplaceable can be destroyed by `update`:
@@ -222,8 +226,9 @@ What the repository already has, against the spec's concepts:
   the CLI, so every release makes every entry stale. `joinCatalogBuilds` then blocks the run's end. The
   builds run one at a time (`catalogBuilds`, a single worker), and no document asks for parallel builds.
 - **F28. Gap.** The nightly rebuild exists, but it is paused by default:
-  `google_cloud_scheduler_job.catalog_check` (`modules/installation/catalogcheck.tf`) has
-  `paused = optional(bool, true)`, and each run makes at most one build (`catalogRunBuildCap = 1`). Its
+  `google_cloud_scheduler_job.catalog_check` (`modules/installation/catalogcheck.tf`) takes its pause from
+  `catalog_check.paused`, which defaults to true (`paused = optional(bool, true)` in
+  `roots/installation/variables.tf` and `modules/installation/variables.tf`, and `jobPaused` in Go, F36), and each run makes at most one build (`catalogRunBuildCap = 1`). Its
   own comment gives this as the reason `update` rebuilds in line.
 - **F29. Rule.** The runner is the image's `fugaro` binary. `images/base/Dockerfile` builds it from
   source, and `images.yml` publishes one base image per release tag. Nothing downloads a `fugaro` binary,
@@ -247,8 +252,9 @@ Found by the first review round, 2026-11-26:
 - **F33. Gap.** `fugaro exec` puts its own binary's directory first on the agent's `PATH` (`exec.go`,
   `PathPrepend`), and the image runs as one non-root user. An upgraded binary therefore lands in a
   directory the agent's user could write to. VS1 makes the directory and the file read-only; the same user
-  could undo that, which is the residual risk, no larger than the agent's existing reach over its own
-  user's files.
+  could undo that and plant other tools there, which would shadow them for the run's later review and
+  finalize stages. VS5 therefore checks, before each later stage, that the directory holds exactly the
+  binary with its checksum.
 - **F34. Gap.** A CLI older than release A reading a stamped `task.json` gets `runstore.ErrCorrupt`:
   - `runs ls` shows the title as `-`;
   - `cancel`, `followup` and the chain raise that rewrites `task.json` fail;
@@ -272,6 +278,27 @@ Found by the first review round, 2026-11-26:
 - **F38. Exists.** Whole-root retirement already waits on `infra.InFlightJobs`
   (`docs/design/update-in-flight.md`). UO2 keeps it when retirement becomes automatic.
 
+Found by the second review round, 2026-11-26:
+
+- **F39. Rule.** The runner's mismatch checks are also security guards. `checkBakedCheckoutOrigin`
+  (`runner.go`) holds the push binding against `pushurl`, `insteadOf` and URL-named remotes, so a push
+  cannot carry the checkpoint and its credential to another repository. `refuseForeignWorkDirCheckout`
+  (`projectjob.go`) keeps another repository's tree from the agent. CF1 keeps both properties while it
+  falls back to a clone.
+- **F40. Gap.** The registries carry `prevent_destroy` in Terraform (`modules/repo/registry.tf`,
+  `modules/installation/registry.tf`), and `TestPreventDestroy` (`deploy/terraform/terraform_test.go`)
+  requires it. Calling them recreatable in the gate changes nothing until the Terraform follows (DG3).
+- **F41. Gap.** `task.Parse` and `runstore.ReadTask` decode strictly, so a runner refuses a task with any
+  field it does not know before it could read `cli_version`. VS5 reads the stamp with a lenient decode
+  first.
+- **F42. Rule.** A Cloud Run job delete takes its executions with it. Whole-root retirement waits on
+  `infra.InFlightJobs` (F38), but the single orphaned-job retirement does not
+  (`docs/design/update-in-flight.md`, "Needs care, named in the line"). Once the gate admits recreatable
+  deletes, any plan could take a running execution with it (D3450).
+- **F43. Wrong (in the first draft of VS3a).** A catalog entry's key (`imagecheck.Key`) hashes packages,
+  tools and the base reference only. `images/derived/Dockerfile.tmpl`, which is embedded in the CLI, and
+  `images/common/finalize-checkout.sh` are not in it, so the epoch covers them too.
+
 ## Decisions
 
 Answered by the owner on 2026-11-26 through `AskUserQuestion`, unless marked **resolution**. A resolution
@@ -285,7 +312,7 @@ request.
 | D3422 | config-versions | How do `fugaro.yaml` versions load? | As recommended. A registry of in-memory upgraders, v1→v2→…. Unknown keys within a known version stay errors. A file newer than the reader is refused in one line naming `brew upgrade`. The per-key image-age gates retire (D3446). |
 | D3423 | config-versions | How long is the deprecation window? | As recommended: two minor releases. Through those releases `doctor` and `update` name the old version, and a later release may refuse it only by its own ruling. |
 | D3424 | update-only | Which commands count as "update operations"? | **Resolution, amended after review (2026-11-26).** A command that edits project data on purpose (`project repos add/rm/sync`, `project policy publish`, `settings`, the after-write hook) is an edit, not an update. It publishes itself, as the owner ruled on 2026-11-26 ("management commands publish themselves"). It needs no checkout and writes no `fugaro.yaml`. `update` already converges an existing compute root (F2). Provisioning it the first time is a creating act, like setup's project-creating run, so `setup --provision-batch` stays. *First text: the compute root became an `update` stage. It was dropped because it would let an agent turn billable infrastructure on.* |
-| D3425 | agent-access | Which agent refusals stay? | As recommended: the minimal keep list in §A. **Amended after review, confirmed by the owner the same day:** the installation-shaping flags of `update` that are on the keep list stay refused to agents (budget, billing, operator and admin lists, `--managed`, `--create-project`, `--state-bucket`, `--allow-delete`), and so do the image-source flags (`--base-image`, `--replace-image`, `--expect-digest`, `--image-source`), because they decide what code every job runs. The `settings` keys that raise a budget or widen `allow_data_to` stay a person's too. Lowering rigor lifts, as answered (F13). These stay refused to agents: a budget raise or resume (D1542); entering any secret or token value; irreplaceable deletes (`secrets rm`, `accounts rm`, `user offboard`, teardown); `managed flag`/`unflag`; membership (`user`/`workspace` add, rm, grant); licence; `restore`; and setup's project-creating run. Every other refusal lifts. |
+| D3425 | agent-access | Which agent refusals stay? | As recommended: the minimal keep list in §A. **Amended after review, confirmed by the owner the same day:** the installation-shaping flags of `update` that are on the keep list stay refused to agents (budget, billing, operator and admin lists, `--managed`, `--create-project`, `--state-bucket`, `--allow-delete`), and so do the image-source flags (`--base-image`, `--replace-image`, `--expect-digest`, `--image-source`), because they decide what code every job runs. The `settings` keys that raise a budget or widen `allow_data_to` stay a person's too. Lowering rigor lifts, as answered (F13). **Amended again after the second review, awaiting confirmation (O3):** on the same reasoning, `shapesTheInstallation` keeps refusing every flag it covers except `--registry-cleanup` and `--scheduler-region`, including `--base` and `--github-app-id`, and `config publish --executable-changes` stays a person's. These stay refused to agents: a budget raise or resume (D1542); entering any secret or token value; irreplaceable deletes (`secrets rm`, `accounts rm`, `user offboard`, teardown); `managed flag`/`unflag`; membership (`user`/`workspace` add, rm, grant); licence; `restore`; and setup's project-creating run. Every other refusal lifts. |
 | D3426 | agent-access | Unmanaged projects | **Resolution.** This is consistent with D2217, and already done: #4045 (T3) merged after the base (F14). |
 | D3427 | deletion-gating | What becomes of the managed gate? | As recommended. The gate stays as the plan check on agent runs. Rule 1 becomes: a recreatable delete passes and an irreplaceable one is refused (D3430). `fugaro/allow-delete.json` and the `fugaro allow-delete` command retire. |
 | D3428 | deletion-gating | `--ask` | **Resolution.** Unchanged. It is the owner-terminal opt-in of D1028, not a safety flag. |
@@ -310,8 +337,11 @@ request.
 | D3447 | all | The standing rules | As recommended. CLAUDE.md's HARD RULE, `.claude/rules/credentials-service.md`, the plugin skills and the how-tos are rewritten to these rules, with a short CLAUDE.md pointer to this folder. |
 | D3448 | version-stamp | Tension T1 | **Not the recommendation:** accept the window. A launch from CLI A before the project's update to A finishes meets an old image that refuses the stamped task. Runs already in flight are untouched, because they parsed their task before the stamp. **Amended after review:** the old runner fails with its own parse error, not a line naming `fugaro update`, because old code cannot be taught a new message. Inside the same window, a teammate's CLI older than A also fails to read a stamped task (F34). Once the update finishes, `required_cli` refuses those CLIs before they read. |
 | D3449 | version-stamp | Development builds | **Resolution.** A runner or a stamp that is a development build (`dev`, or no release version) never upgrades. A runner newer than the stamp never downgrades. |
+| D3450 | deletion-gating | A recreatable delete with a run in flight | **Resolution (second review).** Under the HARD RULE, the gate and the guard defer the delete of a job, or of a service account a job runs as, while an execution of that job is in flight. They name it in one line and leave it for a later update, as whole-root retirement already does (F42). |
+| D3451 | update-only | The per-repository Terraform | **Resolution (second review).** `roots/repo` and `modules/repo` are deleted one release after the release that carries UO2, so an installation one release behind still retires its roots (UO6). |
+| D3452 | deletion-gating | The audit record's `delete_list_generation` | **Resolution (second review).** The field stays and is written as 0, which already means "no list consulted"; removing it would bump the audit format's version for nothing. |
 
-D3450–D3459 are reserved and unused.
+D3453–D3459 are reserved and unused.
 
 ## Open tensions
 
@@ -324,14 +354,16 @@ D3450–D3459 are reserved and unused.
   of the compute root.
 - **O2.** Confirm D3448 as amended after review: the window's failure is the old runner's own parse
   error, and older CLIs fail to read stamped tasks inside the same window.
+- **O3.** Confirm D3425's second amendment: every `shapesTheInstallation` flag except `--registry-cleanup`
+  and `--scheduler-region` stays refused to agents, `--base` and `--github-app-id` included, and
+  `config publish --executable-changes` stays a person's.
 
 ## UNVERIFIED
 
 - **U1.** Release archives on GitHub can be downloaded without credentials from inside a job. The
   repository's releases feed the public brew tap, which suggests they are public. Check 951 settles it.
-- **U2.** Cloud Run's `RunJob` overrides carry a task timeout. The API names `Overrides.Timeout`, but
-  Fugaro sets none today (`backend/gcp/run.go`). This matters only if a profile's timeout ever has to
-  vary per run; D3421 does not need it.
+- **U2. Settled after review.** Fugaro already sets a run's task timeout as an execution override
+  (`backend/gcp/run.go`, `Overrides.Timeout`), so a per-run timeout needs nothing new.
 - **U3.** Whether a Fugaro binary newer than an image's pinned Claude Code, `gh` and `mise` stays
   compatible with them. The epoch rule (D3446) assumes that any such incompatibility comes with a base
   image change. Check 951 runs one upgrade across releases.
@@ -346,7 +378,11 @@ D3450–D3459 are reserved and unused.
 | `--retire`, automatic retirement (`init_retire.go`) | needs a person's terminal | **Goes** (D3421, D3431): retirement is automatic for everyone |
 | Budget self-flag (`update_selfflag.go`) | the marks are the owner's | **Goes** with #4045 (D3426) |
 | `config publish`, `project policy publish` | "changes what every repository runs" | **Lift**; `--delete` stays a person's (it is irreplaceable) |
-| `image refresh`, `image add`, `image map` | cloud changes | **Lift** |
+| `image refresh`, `image add`, `image map` | cloud changes | **Lift** (AG4b) |
+| `config publish --executable-changes` | publishes command or image-step changes for every repository | **Keep** (D3425 as amended again; O3) |
+| `image check`'s job submission | a billable build | **Lift** (AG5d) |
+| `update`'s orchestrator and checkout-upgrade stages | their own `AgentRefusal` | **Lift** (AG2b) |
+| `workspace state` save | a workspace admin's act | **Keep** (membership) |
 | `settings set`/`unset` beyond `settingsManagedKeys` | the registry | **Lift**, except keys that raise a budget or widen `allow_data_to` (D3425 as amended) |
 | `rigor set` lowering, `rigor floor`, `rigor security rm` | the sensitive direction (a raise is already admitted) | **Lift** |
 | `accounts add` (token) | a token is a person's | **Keep** (secret value) |
@@ -362,6 +398,7 @@ D3450–D3459 are reserved and unused.
 | `recipes publish/rm`, `runs reindex`, `issue sync/dismiss`, `orchestrator patch/install`, `stats runs` | "a person's" | **Lift** |
 | `issue submit --ask` | `--ask` | **Keep** (`--ask` is never an agent's, D3428) |
 | `apply`, `managed apply` | `AgentRefusal` | **Lift**, through the reclassified gate |
+| `orchestrator install` | writes a login unit on the person's machine | **Lift**, as answered; the session already runs code on that machine |
 | `image build`, the cloud half of `upgrade` | cloud changes | **Lift** |
 | `issue list/show/mine`, `runs digest`, `followups` | a person's reads | **Lift** |
 | `budget kill --workspace` | a workspace act | **Lift** (a stop); `budget resume` stays kept |

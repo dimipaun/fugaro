@@ -3,7 +3,7 @@
 **Status: plan only; nothing is implemented; no task approved.** Every decision is answered.
 
 **Spec owner:** Dimi Paun. Received, reconciled and planned on 2026-11-26, against `origin/main` at
-`ad84f51c5`.
+`a067bd0fa`.
 
 Six rules that win over any design choice they conflict with:
 - `fugaro update` is the one project-wide update;
@@ -16,12 +16,12 @@ Six rules that win over any design choice they conflict with:
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received |
-| [reconciliation.md](reconciliation.md) | The module map, findings F1–F38, decisions D3420–D3449 with the owner's answers, tension T1, UNVERIFIED U1–U3, and §A, the audit of agent refusals. **It wins over the spec** |
-| [implementation-plan.md](implementation-plan.md) | 39 tasks in seven slices and eight levels, with the critical path, the shared files and Checks 950–953. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | The module map, findings F1–F43, decisions D3420–D3452 with the owner's answers, tension T1, UNVERIFIED U1–U3 (U2 settled), and §A, the audit of agent refusals. **It wins over the spec** |
+| [implementation-plan.md](implementation-plan.md) | 44 tasks in seven slices and eight levels, with the critical path, the shared files and Checks 950–953. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan as `fugaro plan graph` reads it |
 
 **Numbers taken:**
-- decisions D3420–D3459: D3420–D3449 used, D3450–D3459 reserved and unused;
+- decisions D3420–D3459: D3420–D3452 used, D3453–D3459 reserved and unused;
 - Checks 950–959: 950–953 used, 954–959 reserved and unused.
 
 The block starts above D3411, the highest number on `main` (`docs/coordinator/README.md`).
