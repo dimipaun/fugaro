@@ -20,8 +20,12 @@ cmd	accounts grade set
 cmd	accounts ls
 cmd	accounts pool
 cmd	accounts pool add
+cmd	accounts pool contribute
+cmd	accounts pool designate
 cmd	accounts pool ls
 cmd	accounts pool rm
+cmd	accounts pool rm-member
+cmd	accounts pool withdraw
 cmd	accounts repo
 cmd	accounts repo add
 cmd	accounts rm
@@ -330,6 +334,20 @@ flag	accounts pool add	value		--owner
 flag	accounts pool add	value		--rule
 flag	accounts pool add	value		--service-account
 flag	accounts pool add	value		--strategy
+flag	accounts pool contribute	bool		--json
+flag	accounts pool contribute	bool	-h	--help
+flag	accounts pool contribute	value		--config
+flag	accounts pool contribute	value		--gcp-project
+flag	accounts pool contribute	value		--member
+flag	accounts pool contribute	value		--project
+flag	accounts pool contribute	value		--region
+flag	accounts pool contribute	value		--to
+flag	accounts pool designate	bool		--json
+flag	accounts pool designate	bool	-h	--help
+flag	accounts pool designate	value		--config
+flag	accounts pool designate	value		--gcp-project
+flag	accounts pool designate	value		--project
+flag	accounts pool designate	value		--region
 flag	accounts pool ls	bool		--json
 flag	accounts pool ls	bool	-h	--help
 flag	accounts pool ls	value		--config
@@ -338,6 +356,20 @@ flag	accounts pool ls	value		--project
 flag	accounts pool ls	value		--region
 flag	accounts pool rm	bool	-h	--help
 flag	accounts pool rm	value		--layer
+flag	accounts pool rm-member	bool		--json
+flag	accounts pool rm-member	bool	-h	--help
+flag	accounts pool rm-member	value		--config
+flag	accounts pool rm-member	value		--gcp-project
+flag	accounts pool rm-member	value		--member
+flag	accounts pool rm-member	value		--project
+flag	accounts pool rm-member	value		--region
+flag	accounts pool withdraw	bool		--json
+flag	accounts pool withdraw	bool	-h	--help
+flag	accounts pool withdraw	value		--config
+flag	accounts pool withdraw	value		--gcp-project
+flag	accounts pool withdraw	value		--member
+flag	accounts pool withdraw	value		--project
+flag	accounts pool withdraw	value		--region
 flag	accounts repo	bool	-h	--help
 flag	accounts repo	bool	-v	--verbose
 flag	accounts repo add	bool	-h	--help
