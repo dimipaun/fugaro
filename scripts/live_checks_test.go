@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -1279,6 +1280,94 @@ func TestLiveCheck610NamesTheImplicitReviewJobs(t *testing.T) {
 	if github == stem || !strings.HasPrefix(github, stem) {
 		t.Errorf("check610.sh counts jobs of the stem %q, which is not the github implicit review-only job's name %q with its hash taken off", stem, github)
 	}
+}
+
+// TestLiveCheckKeysEscapeAsTheTreeDoes holds every live check's own copy of the
+// database key escaping to internal/budget/model.go's Key. A check that builds an
+// RTDB path from a slug and a run id escapes the two segments itself (key_of in
+// check-831.sh and check-841.sh, rtdb_key in check770.sh) and reads -- and
+// check-841.sh deletes -- the node it names, so the path is the service's only if
+// the copy is the tree's set for every character the two name: a '.' left alone is
+// a name RTDB reads as a node separator, and the check would then read and delete
+// a node nobody wrote. The checks' guard reads the tree's Key and never their own
+// copy of it, so the two can drift with the guard still green, which is what this
+// pins.
+func TestLiveCheckKeysEscapeAsTheTreeDoes(t *testing.T) {
+	for _, tool := range []string{"bash", "python3"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+	scripts, err := filepath.Glob(filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks", "*.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The checks, not their tests: a test's own key_of may read a key out of a
+	// file (check-912-lift-refusal_test.sh) and is not a copy of this escaping.
+	// This is about the paths a check builds against a real database.
+	var checks []string
+	for _, script := range scripts {
+		if !strings.HasSuffix(script, "_test.sh") {
+			checks = append(checks, script)
+		}
+	}
+	// One segment carrying every character the set names, and a plain one, so a
+	// check that escaped everything would be caught too.
+	const segment = `a.b$c#d[e]f/g%h`
+	want := budget.Key(segment)
+	found := 0
+	for _, script := range checks {
+		b, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, fn := range []string{"key_of", "rtdb_key"} {
+			body, ok := shellFunc(string(b), fn)
+			if !ok {
+				continue
+			}
+			found++
+			got, err := runShellFunc(t, body, fn, segment)
+			if err != nil {
+				t.Errorf("%s's %s could not be run: %v", filepath.Base(script), fn, err)
+				continue
+			}
+			if got != want {
+				t.Errorf("%s's %s escapes %q as %q, want budget.Key's %q, so the path it builds is not the path the service writes", filepath.Base(script), fn, segment, got, want)
+			}
+		}
+	}
+	if found == 0 {
+		t.Error("no live check carries key_of or rtdb_key, so nothing here holds a check's own path escaping to the tree's")
+	}
+}
+
+// shellFunc cuts one shell function out of a script, from its `name() {` line to
+// the `}` that closes it at the start of a line.
+func shellFunc(script, name string) (string, bool) {
+	head := name + "() {"
+	i := strings.Index(script, head)
+	if i < 0 {
+		return "", false
+	}
+	rest := script[i:]
+	j := strings.Index(rest, "\n}\n")
+	if j < 0 {
+		return "", false
+	}
+	return rest[:j+len("\n}")] + "\n", true
+}
+
+// runShellFunc sources one function the way the check itself does -- a shell
+// function and not a program -- and calls it with one argument.
+func runShellFunc(t *testing.T, body, name, arg string) (string, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name+".sh")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		return "", err
+	}
+	out, err := exec.Command("bash", "-c", `. "$1"; "$2" "$3"`, "bash", path, name, arg).Output()
+	return string(out), err
 }
 
 // runLiveCheckShard runs one shard of one live check's bash test and returns
