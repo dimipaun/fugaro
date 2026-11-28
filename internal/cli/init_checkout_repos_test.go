@@ -90,6 +90,58 @@ func TestCheckoutStageRefreshesEveryStaleRepository(t *testing.T) {
 	}
 }
 
+// TestCheckoutStageReadsTheGateOnce: the managed gate's read is made once for
+// the whole command, not once per repository (D1015). The converge refreshes
+// every repository of the project, and what the read answers — is this project
+// managed — is a fact about the installation, so the stage reads it for the
+// first repository that runs a step and hands the same answer to the rest.
+//
+// The mutation caught: the loop handing each refresh nothing, so
+// runImageRefresh calls openRefreshManaged once per repository and every one of
+// them re-reads the marks, re-builds the clients and re-opens the budget
+// database.
+func TestCheckoutStageReadsTheGateOnce(t *testing.T) {
+	r := newManagedRefreshRig(t, managedRefreshMarker(1))
+	useVersion(t, "0.5.1")
+	for _, k := range agentMarkers {
+		t.Setenv(k, "") // the owner's own terminal: the session the door reads for
+	}
+	fakeTerminal(t)
+	web := repoCheckout(t, "https://github.com/acme/web.git", refreshYAML)
+	stubEnrolledRepos(t, func(context.Context, enrolledIn) ([]repoView, []string) {
+		return []repoView{viewFrom(t, r.dir, "acme/app"), viewFrom(t, web, "acme/web")}, nil
+	})
+	ran := fakeSteps(t, "", nil)
+
+	e, out := checkoutEngine(t, &initOptions{})
+	e.lc, e.path, e.old = rigConfig(t, r.anchorModeRig, "acme/app", "acme/web")
+	before := markerObjectReads(r)
+	res := stageOutcome(t, e, checkoutStageOf(t, e))
+	if res.Failed != nil || len(res.Left) != 0 {
+		t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+	}
+	if want := []string{"base", "check job", "builds", "base", "check job", "builds"}; !slices.Equal(*ran, want) {
+		t.Fatalf("the refresh ran %q, want %q: both repositories' steps run, which is the premise of the read this test counts\n%s", *ran, want, out)
+	}
+	if got := markerObjectReads(r) - before; got != 1 {
+		t.Errorf("the creation fact was read %d times for two repositories, want 1: the gate's read is one read per command (D1015), and a read per repository is a clients build, a budget database and a marks read per repository too many", got)
+	}
+}
+
+// markerObjectReads is how many times the creation fact object has been read
+// off the rig's own bucket: one per gate read (managed.ReadMarkFacts reads the
+// object once), which is what tells one read per command from one per
+// repository.
+func markerObjectReads(r *managedRefresh) int {
+	n := 0
+	for _, req := range r.gcs.Requests() {
+		if req.Method == "GET" && strings.Contains(req.Path, "managed.json") {
+			n++
+		}
+	}
+	return n
+}
+
 // rigConfig is the rig's own local config as a run reads it, with the
 // repositories named enrolled in this machine's terms (a provider each): the
 // refresh's installation spec is built from the run's config, so a stage handed

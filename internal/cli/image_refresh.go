@@ -116,9 +116,13 @@ type refreshOptions struct {
 	// managed is the gate this run is under: the value openRefreshManaged
 	// returned, set by runImageRefresh and nil for every run the gate has
 	// nothing to answer — one that is neither a coding agent's session nor a
-	// person's own run at a terminal that would be asked. It travels with the options
-	// rather than as another parameter because it is not a flag and because it
-	// is the same value at every step of the run: the plan carries it to step 4
+	// person's own run at a terminal that would be asked. A caller that drives
+	// several refreshes in one command sets it before each of them — the
+	// converge's checkout stage, with the read it made once for the command
+	// (D1015, init_checkout_upgrade.go's refreshGate) — and runImageRefresh
+	// reads only where it is nil. It travels with the options rather than as
+	// another parameter because it is not a flag and because it is the same
+	// value at every step of the run: the plan carries it to step 4
 	// (refreshPlan.managed), and preflight uses the installation the gate
 	// already read instead of selecting one a second time.
 	managed *refreshManaged
@@ -703,6 +707,15 @@ func refreshAnchorNote(ctx context.Context, w io.Writer, root, here string, lc *
 	}
 }
 
+// refreshInitOptions is the run options a refresh's own read and steps are made
+// with, from the options the caller gave: one function so that a caller reading
+// the gate for a refresh it drives (the converge's checkout stage) asks it of
+// the same flags runImageRefresh would have asked it of, and a second copy of
+// this literal cannot drift from it.
+func refreshInitOptions(o refreshOptions) *initOptions {
+	return &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes, ask: o.ask, door: o.door}
+}
+
 func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	ctx := cmd.Context()
 	// A leak first, before anything opens the cloud: GODEBUG is read before
@@ -719,8 +732,16 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// behind r.confirm/r.ask ask the gate beside it: in a managed project's own
 	// terminal the marks are read and the typed name is replaced
 	// (refreshManaged.asksNothing, and r.refresh below).
-	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes, ask: o.ask, door: o.door}
-	o.managed = openRefreshManaged(ctx, cmd, o, iopts)
+	iopts := refreshInitOptions(o)
+	// The gate's read, unless the caller already made it: the converge's
+	// checkout stage refreshes every repository of the project, and D1015's one
+	// read per command is one read for that command, so the stage hands each
+	// refresh the answer it read for the first (init_checkout_upgrade.go's
+	// refreshGate). A caller that made none — the command itself, and every
+	// helper of a test — leaves this nil and pays for its own.
+	if o.managed == nil {
+		o.managed = openRefreshManaged(ctx, cmd, o, iopts)
+	}
 	// --ask answers for the marks, and it answers before the command's own
 	// refusal: the flag's whole rule is that a managed project's confirmations
 	// asked for where nobody can answer them are a refusal and never a
