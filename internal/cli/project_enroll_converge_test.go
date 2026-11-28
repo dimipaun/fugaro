@@ -78,6 +78,12 @@ const (
 // workflow list and its base branch are read from.
 const enrolCheckoutYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
+// enrolCheckoutCloneYAML is enrolCheckoutYAML with the one workflow running the
+// image this project builds for the repository (checkout: clone) rather than a
+// catalog entry: no entry chose the job's image, so step 3 has no mapping to
+// write (reposViewImageBase).
+const enrolCheckoutCloneYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  web: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
 // enrolRig is newAddRigWith over enrolRigLocal, standing in a checkout of
 // enrolRepo: the working directory IS that checkout, which is how checkoutRoot
 // finds one, and it is where the converge reads the workflows and the base
@@ -808,6 +814,50 @@ func TestReposAddMigratesTheFileImageMap(t *testing.T) {
 	}
 	if m[enrolImageKey] != "base" {
 		t.Errorf("repo_images = %v, want this repository's own key beside it", m)
+	}
+}
+
+// TestReposAddWritesNoMapWhenNoCatalogEntryChoseTheImage is the finding the S3
+// review left: the migration rides the write that adds a key and never starts a
+// write of its own. A repository whose job runs no catalog entry has no mapping
+// to write, so a file that names no map keeps naming none even while the project
+// still serves the legacy member — the migration would otherwise copy the node's
+// whole map into this machine's file, which is exactly the D1906 trap
+// TestReposAddLeavesAFileThatNamesNoMapAlone pins for a node already serving
+// repo_images.
+//
+// --no-apply is what makes the step's own write the only one: the policy stage
+// migrates the effective map into this file too (R14), so a run that reaches the
+// stages hides the difference this test is about.
+func TestReposAddWritesNoMapWhenNoCatalogEntryChoseTheImage(t *testing.T) {
+	r := enrolRig(t)
+	// The checkout's workflow runs the image this project builds for the
+	// repository, not a catalog entry: step 3 has nothing to map.
+	if err := os.WriteFile(enrolCheckoutFile(t), []byte(enrolCheckoutCloneYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	enrolLanded(t)
+	// The node holds the project's map in the old form, as an installation that
+	// has not run this release's `update` does.
+	node := addPolicyNode()
+	node["image_map"] = policyMapBlockOn(t, projectpolicy.ImageMap{"owner/repo-a": "base"})
+	r.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := r.enrol(t, enrolRepo, "--no-apply")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "left out: this job's image is not a catalog entry's"; !strings.Contains(out, want) {
+		t.Errorf("the plan does not report the image step as left out (%q):\n%s", want, out)
+	}
+	if strings.Contains(out, "is migrated") {
+		t.Errorf("the run answers a migration it did not make:\n%s", out)
+	}
+	if got := readFileString(t, r.cfg); strings.Contains(got, "repo_images") || strings.Contains(got, "image_map") {
+		t.Errorf("the run wrote a map into a config that named none:\n%s", got)
+	}
+	if after := r.addLocal(t); after.RepoImages != nil || after.ImageMap != nil {
+		t.Errorf("this machine's project config names a map after a run with nothing to write: repo_images=%v image_map=%v", after.RepoImages, after.ImageMap)
 	}
 }
 
