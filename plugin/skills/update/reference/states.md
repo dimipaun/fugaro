@@ -24,7 +24,7 @@ An update stops at the head of its engine when the installation is not managed: 
 fugaro managed flag
 ```
 
-`--plan-only` and `--check` read an unmanaged installation unmoved: neither is stopped.
+`--plan-only` and `--check` are not stopped: both read an unmanaged installation and write nothing.
 
 ## plugin
 
