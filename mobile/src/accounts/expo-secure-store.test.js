@@ -148,8 +148,58 @@ test('the port has no keys(): the device cannot enumerate the Keychain', () => {
   assert.equal('keys' in port, false);
   assert.deepEqual(
     Object.keys(port).sort(),
-    ['deleteItem', 'getItem', 'keychainAccessible', 'platform', 'setItem'],
+    ['deleteItem', 'getItem', 'keychainAccessible', 'keychainAccessibleBackedUp', 'platform', 'setItem'],
   );
+});
+
+// --- the backing-up level: the one item that may leave the device (task K3) ---
+//
+// Mutation for every test below: make `setItem` ignore `synced` (always the
+// device-only level) and the first one goes red. The paired list is then an
+// item that cannot follow its owner to a new phone while the project's sync
+// switch is off, which is the half of K3 that has nothing else to fall back on.
+
+test('a write asks for the level the caller names, and the device-only one by default', async () => {
+  const sdk = fakeSDK({ accessible: 'THIS_DEVICE_ONLY' });
+  const port = expoSecureStorePort(sdk, { platform: 'ios' });
+  // The default is unchanged: every existing caller writes what it always did.
+  await port.setItem('k', 'v');
+  await port.setItem('k', 'v', {});
+  await port.setItem('k', 'v', { synced: false });
+  // ... and `synced: true` is the backing-up level, read from the module the
+  // same way the device-only one is, so a hardcoded literal here is red too.
+  await port.setItem('k', 'v', { synced: true });
+  assert.deepEqual(sdk.calls.map(([, , , options]) => options), [
+    { keychainAccessible: 'THIS_DEVICE_ONLY' },
+    { keychainAccessible: 'THIS_DEVICE_ONLY' },
+    { keychainAccessible: 'THIS_DEVICE_ONLY' },
+    { keychainAccessible: 'WHEN_UNLOCKED' },
+  ]);
+  assert.equal(port.keychainAccessible, 'THIS_DEVICE_ONLY');
+  assert.equal(port.keychainAccessibleBackedUp, 'WHEN_UNLOCKED');
+
+  // The level is the module's, and only `true` names the backing-up one: a
+  // `synced` that is anything else is the safe direction (the item stays).
+  const other = fakeSDK({ accessible: 'SOME_OTHER_PLATFORM_CONSTANT' });
+  const second = expoSecureStorePort(other, { platform: 'ios' });
+  await second.setItem('k', 'v', { synced: true });
+  assert.equal(other.calls[0][3].keychainAccessible, 'WHEN_UNLOCKED');
+  for (const synced of [undefined, null, 0, 1, 'true']) {
+    other.calls.length = 0;
+    await second.setItem('k', 'v', { synced });
+    assert.equal(other.calls[0][3].keychainAccessible, 'SOME_OTHER_PLATFORM_CONSTANT', String(synced));
+  }
+});
+
+test('a module that cannot promise WHEN_UNLOCKED is refused outright', () => {
+  // The backing-up level is as load-bearing as the device-only one on the one
+  // item that may leave the phone, so a rename is a loud refusal rather than a
+  // list written device-only -- which would be a list no new device ever finds.
+  const { WHEN_UNLOCKED: _omitted, ...withoutBackedUp } = fakeSDK();
+  assert.throws(() => expoSecureStorePort(withoutBackedUp, { platform: 'ios' }), /WHEN_UNLOCKED/);
+  // ... while the same module is a usable Android module: the two constants are
+  // the iOS side of the store and are not asked for where there are none.
+  assert.equal(expoSecureStorePort(withoutBackedUp, { platform: 'android' }).keychainAccessibleBackedUp, null);
 });
 
 // --- the Android half: the accessibility levels are iOS's alone -------------
@@ -175,6 +225,16 @@ test('an Android module with no accessibility constant builds a port, and writes
   assert.deepEqual(sdk.calls, [
     ['setItemAsync', 'fugaro.account.laptop.idToken', 'synthetic', undefined],
   ], 'the write carries no keychainAccessible: the Kotlin options record has no such field');
+  // A syncing item is written exactly the same way: there is no synced keychain
+  // on Android to ask for, so `synced` picks between two levels and this
+  // platform has neither (K3, M0's U10).
+  await port.setItem('fugaro.paired-list.someone', '{"v":1,"entries":[]}', { synced: true });
+  assert.deepEqual(sdk.calls[1], [
+    'setItemAsync',
+    'fugaro.paired-list.someone',
+    '{"v":1,"entries":[]}',
+    undefined,
+  ]);
   // ... and the item is still readable through the port, which is the whole
   // point: Android's storage works, it just has no accessibility levels.
   assert.equal(await port.getItem('fugaro.account.laptop.idToken'), 'synthetic');
