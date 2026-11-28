@@ -266,10 +266,9 @@ var yamlMeta = map[string]Row{
 	// D2039): the model each rung runs and the credential or pool its calls go
 	// out on, the pair a craft carries. The MERGE column reads replace and the
 	// rule is stricter than that word: a grade is the project's own model
-	// choice, so a repository's entry never decides the value a run gets —
-	// internal/policy records it in the run's ignored list (tightenGrades) and
-	// the project's stands. What a repository's entry says is which model it
-	// would have run, and the record is where that is kept.
+	// choice, so a repository's entry never decides the value a run gets: its
+	// own reader drops it before a layer is built (config.LiftedKeys) and the
+	// project's stands.
 	"model_grades.strong.model":     {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
 	"model_grades.strong.access":    {Owner: routingOwnerToken, Default: unset("the project's default credential"), Doc: docEscalation},
 	"model_grades.strongest.model":  {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
@@ -845,8 +844,8 @@ var layerRows = []Row{
 	layerRow("defaults.agent.crafts.merge-judge.model", "the coder's model", "models", docCrafts),
 	layerRow("defaults.agent.crafts.merge-judge.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	// The grades' layer rows (E2, D2039): the project layer sets both halves
-	// for every repository of it, and a repository's own entry is recorded
-	// rather than applied (internal/policy's tightenGrades). A grade nobody set
+	// for every repository of it, and a repository's own entry is dropped
+	// rather than applied (config.LiftedKeys). A grade nobody set
 	// is not a model Fugaro chooses for the rung — it refuses and asks.
 	layerRow("defaults.model_grades.strong.model", "none: a rung whose grade the project sets nowhere refuses and asks", "models", docEscalation),
 	layerRow("defaults.model_grades.strong.access", "the project's default credential", routingOwnerToken, docEscalation),
