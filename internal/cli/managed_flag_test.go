@@ -724,11 +724,11 @@ func TestManagedFlagNeedsTheDefaultRunsBucket(t *testing.T) {
 
 // TestManagedFlagNeedsTheDerivedStateBucket: the runs bucket's rule, applied to
 // the other bucket a managed project's objects live in, and the reason a
-// creation refused for --state-bucket cannot be answered with "create it
-// unmanaged and flag it later". An unmanaged creation resolves
-// terraform.state_bucket out of this same config (infra.Installation's firstOf),
-// so flagging that project would be flagging one whose installation state the
-// managed read cannot find — managedAccounted reads gs://fugaro-tfstate-
+// creation refused for --state-bucket cannot be answered with "flag it later":
+// a project resolves terraform.state_bucket out of this same config
+// (infra.Installation's firstOf), so flagging it would be flagging one whose
+// installation state the managed read cannot find — managedAccounted reads
+// gs://fugaro-tfstate-
 // <gcp_project> by that derived name and Inventory.installationCreated
 // recognises the same name — leaving every apply of it on the typed
 // confirmation flagging exists to take away. A project whose state is in
