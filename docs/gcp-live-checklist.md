@@ -25317,7 +25317,7 @@ because a container whose image is still coming cannot have reported), `CHK830_W
 (the wait for the task to end, so its exit status — the second channel — has been written),
 `CHK830_WAIT_AUDIT`, `CHK830_REUSE_BOUND`, `CHK830_LINGER_A`, `CHK830_LINGER_B` — because a slow
 project should be given longer rather than read as a `FAIL`. `CHK830_IMAGE` moves the image the probe
-runs: its container needs python3 and a POSIX shell and nothing else, so the default is the Alpine
+runs: its container needs a POSIX shell and nothing else (it reads the metadata server with python3, then curl, then the server's address, and says which in its `md-tool`, `md-route` and `md-error` lines), so the default is the Alpine
 variant of the Google-hosted gcloud image rather than that image's `slim` SDK one — the pull is what a
 probe that never starts is waiting for, and the two runs of 2026-11-26 were left in exactly that
 state.
@@ -25325,7 +25325,7 @@ state.
 **What it reads, and what the block says.** One block on stdout headed `CHECK 830 RESULT`, whose last
 line is `CHECK 830 RESULT: PASS|FAIL`, with **one row per fact**: `u1-link` (the field, and the
 permission that reads it), `u1-forge` (whether a second job reproduced it, with the per-avenue
-control), `u1-handmade` (`O8`'s plain VM), `u2-token` (the four claims), `u3-marker` (each reading,
+control), `u1-handmade` (`O8`'s plain VM), `u2-token` (the four claims; `INFO`, and still open, when no metadata read of the container answered), `u3-marker` (each reading,
 fail-closed on the audit record), `u8-name` (the seconds) — beside the rows that say what ran: the
 probe job, the container's own readings, the VM, the guards and `restore`. **When no line of the
 container's own arrives**, three rows carry what the block then owes the reader, all read before the
@@ -25450,8 +25450,7 @@ like one that can never finish.
   `privateIpGoogleAccess`, which is what says whether the pull had a path to the registry at all
   rather than no path ever.
 - the probe's image is the **Alpine** variant of the Google-hosted gcloud image: the container needs
-  python3 and a POSIX shell and nothing else, so it no longer uses curl and the image is the
-  smallest of that family's.
+  a POSIX shell and nothing else, and the image is the smallest of that family's.
 - the wait for the container's first line is never shorter than **`CHK830_PULL_BOUND`** (600 s): a
   container whose image is still coming cannot have reported anything.
 
