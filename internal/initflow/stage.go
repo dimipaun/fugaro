@@ -1067,6 +1067,13 @@ func AgentProceeded(marker string) string {
 // variable, no marker a reader could set to reach past the gate — and it names
 // where the verdict was written instead, because an owner who wants to check
 // afterwards is not trying to get past anything.
+//
+// No surface prints it any more (the owner's run of 2026-11-27/28): a step that
+// needs no answer prints one plain line saying what it did, and the sentence
+// accounting for the confirmation the verdict replaced is what made a finished
+// step read as a question. It stays as the owner's half of AgentProceeded and
+// as the design's own vocabulary; cli's gateSentence is where that choice is
+// made, and it answers "" for the owner's own terminal.
 func GateProceeded() string {
 	return "this project is managed and the gate admitted the plan: it recorded the verdict, so nothing is typed here"
 }
