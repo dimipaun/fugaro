@@ -954,7 +954,7 @@ type initRun struct {
 	// It is what the refresh's steps that are not builds — the base pin, the
 	// daily image check job's config and the clone workflow's job move — ask
 	// whether the gate has taken their confirmation
-	// (refreshManaged.asksNothing): they judge no document of the gate's, and
+	// (initRun.asksNothing): they judge no document of the gate's, and
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
@@ -3023,16 +3023,30 @@ func (r *initRun) ask(what string) (bool, error) {
 
 // asksNothing is whether a step of this run takes no confirmation from anybody
 // here: the marks answered "managed" — update's own gate, or the read `fugaro
-// image refresh` makes for itself, the one other gate there is — the person
-// who would have been asked is at their own terminal, and --ask has not put the
+// image refresh` makes for itself, the one other gate there is — the person who
+// would have been asked is at their own terminal, and --ask has not put the
 // question back. It is the one answer every printer of a step's confirmation
 // asks, so the banner and the record cannot both be printed for one step.
+//
+// Why each condition is asked, and what each one keeps out. The gate is the
+// run's own read of the marks, so a mark that could not be read, a project this
+// program cannot prove is managed and a command that never read at all answer
+// false. The marker is inside stepConfirmation: a coding agent's session is NOT
+// answered here — the steps that judge no document of the gate's are refused at
+// it, exactly as they were before the gate (initflow's AgentError, which ask
+// gives before this question is even reached). --yes is asked for because a run
+// with it has answered every step itself ("confirmed by --yes" is the line it
+// reads), and the three ways a run cannot be asked at all — --non-interactive,
+// --json and a pipe — because a step nobody can confirm is not a step the gate
+// replaces. What is NOT here is any verdict about a document: no admission is
+// invented for a step the gate never judged.
 //
 // It is the decision this file's printers share (askBanner, askClass,
 // confirmStageWrite and planBlock), and the reason it is one function: the
 // owner's run of 2026-11-27 read a ⚠ CONFIRM banner, a "⚠ Review these first"
 // block and the sentence saying nothing is typed, all for steps that waited for
-// no answer.
+// no answer (initRun.asksNothing, which this replaced, was the one
+// printer that already asked it).
 func (r *initRun) asksNothing() bool {
 	return (r.gateStandsIn() || r.refresh != nil) && r.stepConfirmation(false) == stepTyped && !r.o.ask
 }
@@ -3210,14 +3224,13 @@ const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never
 // puts back.
 //
 // A step the gate stands in for is not a question at all (asksNothing): the
-// person reads the step's own note under the run's words for exactly that
-// (willDo), and the banner is not printed — under it would stand the sentence
-// saying nothing is answered, which is the contradiction the owner's feedback of
-// 2026-11-28 is about.
+// person reads the step's own line and nothing else — one plain line saying what
+// the step does is the whole of what a step nobody is asked about prints, and
+// the banner stood for a question the run is not putting (the owner's feedback
+// of 2026-11-28).
 func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bool, err error) {
 	if r.asksNothing() {
 		r.willDo(what)
-		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.OwnerProceeded())
 		return true, true, nil
 	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)

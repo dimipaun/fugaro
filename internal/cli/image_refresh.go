@@ -731,7 +731,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// build is bounded by the lease it takes, not by an answer. The steps
 	// behind r.confirm/r.ask ask the gate beside it: in a managed project's own
 	// terminal the marks are read and the typed name is replaced
-	// (refreshManaged.asksNothing, and r.refresh below).
+	// (initRun.asksNothing, and r.refresh below).
 	iopts := refreshInitOptions(o)
 	// The gate's read, unless the caller already made it: the converge's
 	// checkout stage refreshes every repository of the project, and D1015's one
@@ -756,7 +756,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	}
 	r := newInitRun(cmd, iopts)
 	// The steps that are not builds ask the run whether the gate has taken
-	// their confirmation (r.ask, refreshManaged.asksNothing): the read above is
+	// their confirmation (r.ask, initRun.asksNothing): the read above is
 	// the whole of the permission there, and a nil one is every other session.
 	r.refresh = o.managed
 	if o.in != nil {

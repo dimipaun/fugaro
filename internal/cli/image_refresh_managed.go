@@ -45,7 +45,7 @@ import (
 // follow, and they are different for two different readers:
 //
 //   - The owner at their own terminal is asked nothing for any of them, which
-//     is the ruling of 2026-11-01 and what asksNothing below decides. The
+//     is the ruling of 2026-11-01 and what initRun.asksNothing decides. The
 //     gate's read is the whole of the permission there: the marks say the
 //     project is managed, and what the owner would have typed is replaced by
 //     the sentence that says so (initflow.GateOrdinary), printed under the
@@ -149,33 +149,6 @@ func openRefreshManaged(ctx context.Context, cmd *cobra.Command, o refreshOption
 		return nil
 	}
 	return &refreshManaged{gate: gate, lc: lc, lcPath: path, lcOld: old, db: db}
-}
-
-// asksNothing is whether one of this refresh's own steps — the base pin (step
-// 2), the daily image check job's config (step 3) and the checkout: clone
-// workflow's job move (step 4's first half) — takes no confirmation here: the
-// marks the gate read say the project is managed (m is non-nil exactly then),
-// and the person who would have been asked is at their own terminal.
-//
-// Why each condition is asked, and what each one keeps out. m is the gate's
-// own read, so an unreadable mark, a project this program cannot prove is
-// managed and a command that never read at all answer false (openRefreshManaged
-// reads only where the refusal would have been made or the typed name asked).
-// The marker is asked for because a coding agent's session is NOT answered
-// here: these three steps judge no document of the gate's, so a session that
-// reached one with work to do is refused at it, exactly as it was before this
-// row — that is initflow's AgentError, and it is the reply ask gives before
-// this question is even reached. --yes is asked for because a run with it has
-// answered every step itself ("confirmed by --yes" is the line it reads), and
-// the three ways a run cannot be asked at all — --non-interactive, --json and
-// a pipe — because a step nobody can confirm is not a step this replaces.
-//
-// What is NOT here is any verdict about a document: the gate's own narrowing
-// rule is untouched (these are the ordinary steps of their own command, and
-// none of them is money or permanent), and no admission is invented for a step
-// the gate never judged.
-func (m *refreshManaged) asksNothing(r *initRun) bool {
-	return m != nil && r.stepConfirmation(false) == stepTyped && !r.o.ask
 }
 
 // refreshGateFacts is this command's own facts about itself, as M6's helper

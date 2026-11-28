@@ -602,7 +602,7 @@ func managedOrUnproven() []struct {
 // person at the terminal is the whole answer, nothing is typed), but the gate's
 // sentence is not printed, because the gate judged nothing.
 //
-// The mutation caught: refreshManaged.asksNothing answering true whatever it is
+// The mutation caught: initRun.asksNothing answering true whatever it is
 // handed — the unproven project then prints the gate's sentence where no gate
 // judged, and this test fails on its own control. And, on the managed side, the
 // step's note going back under the ⚠ CONFIRM banner: this is the one step of
@@ -676,7 +676,7 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCheckJobQuestion(t *testing.T) {
 // terminal is the whole answer, nothing is typed), but the gate's sentence is
 // not printed, because the gate judged nothing.
 //
-// The mutation caught: refreshManaged.asksNothing answering true whatever it is
+// The mutation caught: initRun.asksNothing answering true whatever it is
 // handed — the control then prints the gate's sentence where no gate judged,
 // and this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
@@ -746,7 +746,7 @@ func TestImageRefreshManagedOwnerTerminalAsksNoCloneJobQuestion(t *testing.T) {
 // answer, nothing is typed), and the gate's own sentence is not printed,
 // because the gate judged nothing.
 //
-// The mutation caught: refreshManaged.asksNothing answering true whatever it is
+// The mutation caught: initRun.asksNothing answering true whatever it is
 // handed — the control then prints the gate's sentence where no gate judged, and
 // this test fails on its own control.
 func TestImageRefreshManagedOwnerTerminalAsksNoBasePinQuestion(t *testing.T) {
