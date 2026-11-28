@@ -116,11 +116,13 @@ func TestUpdateConvergesTheModelFlipOnAProjectThatIsNotManaged(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			addr := modelAccessorAddr(tc.credential)
 			r := modelFlipRig(t, tc.auth, tc.credential, config.BudgetEnforce, true, addr)
+			before := logNames(t, "update")
 			out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
 			if err != nil {
 				t.Fatalf("one plain fugaro update --repo did not converge B2.7's flip for %s, so the one command is not the whole upgrade for it: %v\nstdout:\n%s\nstderr:\n%s", name, err, out, errOut)
 			}
-			text := out + errOut
+			// The summary's addresses are the log's (printRetirements).
+			text := out + errOut + logsAdded(t, before, "update")
 			if !strings.Contains(text, addr) {
 				t.Fatalf("the run does not name %s anywhere, so the state this test scripted was not the state it read and nothing below is about the flip\n%s", addr, text)
 			}

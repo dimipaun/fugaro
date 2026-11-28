@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -349,6 +351,15 @@ func retireClients(t *testing.T, r *initRig) *infra.Clients {
 	return c
 }
 
+// retireText is a retire run's whole account: what the terminal printed, the
+// error a refusal carries, and the log. The terminal gets one line and the log
+// the whole summary (printRetirements, retireLine), so a test about what the
+// summary says reads the log beside the screen.
+func retireText(t *testing.T, before map[string]bool, out, errOut string, err error) string {
+	t.Helper()
+	return readOut(out, errOut, err) + logsAdded(t, before, "setup")
+}
+
 // A retirement without --retire is refused, and the gate is the two cases
 // the design names and no more: the job's own state says
 // deletion_protection = true and its variant has left fugaro.yaml, so no
@@ -357,11 +368,12 @@ func retireClients(t *testing.T, r *initRig) *infra.Clients {
 // deleted.
 func TestInitRepoRetireRefusesWithoutTheFlag(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
+	before := logNames(t, "setup")
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s; want the refusal", ExitCode(err), err, out, errOut)
 	}
-	text := out + errOut
+	text := retireText(t, before, out, errOut, err)
 	for _, want := range []string{
 		"⚠ This change retires", retireJobAddr, retireKeptAddr, retireNextCommand,
 		"no apply can delete", "1 the plan will delete, 1 deleted through the Cloud Run API after it",
@@ -426,11 +438,12 @@ func TestInitRepoRetireGateReadsTheStateNotTheAddressList(t *testing.T) {
 // anything is removed.
 func TestInitRepoUnreadableStateWarnsAndCarriesOn(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, stateUnreadable: true})
+	before := logNames(t, "setup")
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
-	text := out + errOut
+	text := out + errOut + logsAdded(t, before, "setup")
 	if !strings.Contains(text, "could not read") || !strings.Contains(text, "a retirement cannot be predicted") {
 		t.Errorf("the run did not warn that the state could not be read:\n%s", text)
 	}
@@ -510,23 +523,42 @@ func TestInitRepoRetireRunsTheWholeFlowInOrder(t *testing.T) {
 	}
 }
 
-// The confirmation names every secret left in Secret Manager, by logical
-// name and Secret Manager ID -- and the plan is not the only place it is
-// said: both confirmations carry it.
-func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
+// The confirmation names no secret. It is one line saying what remains, and
+// the secrets that stay in Secret Manager are the summary's KEPT list, which
+// the log holds (the owner's run of 2026-11-28: a ~1200-character question
+// that repeated every secret is not a question).
+func TestInitRepoRetireConfirmationNamesNoSecret(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
+	before := logNames(t, "setup")
 	out, errOut, err := executeStdin(t, "aurora\naurora\n", "setup", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
 	text := out + errOut
+	confirmations := 0
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "⚠ CONFIRM") {
+			continue
+		}
+		confirmations++
+		for _, secret := range []string{retireKeptName, retireKeptSecretID(t)} {
+			if strings.Contains(line, secret) {
+				t.Errorf("the confirmation lists %q, a secret it should leave to the log: %s", secret, line)
+			}
+		}
+	}
+	if confirmations != 2 {
+		t.Errorf("%d confirmations, want the first and the second:\n%s", confirmations, text)
+	}
+	// The kept container is still named, with its Secret Manager ID, in the log
+	// the KEPT list is in.
+	log := logsAdded(t, before, "setup")
 	for _, want := range []string{
-		retireKeptName + " (" + retireKeptSecretID(t) + ")",
-		"Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there",
-		"unmanaged",
+		retireKeptName, retireKeptSecretID(t),
+		"KEPT — Fugaro never deletes a secret or a secret version:",
 	} {
-		if n := strings.Count(text, want); n < 2 {
-			t.Errorf("the confirmations say %q %d times, want it in both:\n%s", want, n, text)
+		if !strings.Contains(log, want) {
+			t.Errorf("the log does not name the kept secret %q:\n%s", want, log)
 		}
 	}
 	if d, x := r.sm.Deleted(), r.sm.Destroyed(); len(d) != 0 || len(x) != 0 {
@@ -830,13 +862,17 @@ func TestInitRepoRetireResumeNoChangeNamesOnlyTheDelete(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
 	text := out + errOut
-	// The confirmation's own banner, not the "removed 0" report below it.
-	clean := text[strings.Index(text, "the plan changes nothing"):]
-	if !strings.Contains(clean, "the plan changes nothing, so what remains is the delete of 1 Cloud Run job through the API") {
+	// The confirmation's own line, not the "removed 0" report below it.
+	if !strings.Contains(text, "the plan changes nothing, so what remains is the delete of 1 Cloud Run job through the API") {
 		t.Errorf("the confirmation does not name the delete as what remains:\n%s", text)
 	}
-	if banner := clean[:strings.Index(clean, ". Delete ")]; strings.Contains(banner, "0 addresses") {
-		t.Errorf("the confirmation counts addresses that never left the state:\n%s", text)
+	for _, line := range strings.Split(text, "\n") {
+		if !strings.Contains(line, "the plan changes nothing") {
+			continue
+		}
+		if strings.Contains(line, "0 addresses") {
+			t.Errorf("the confirmation counts addresses that never left the state: %s", line)
+		}
 	}
 	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
 		t.Errorf("JobDeletes = %v, want the orphan the labels named", deletes)
@@ -994,6 +1030,87 @@ func TestRetireSplitIsWhatHappensToEachRow(t *testing.T) {
 	}
 	if want := []string{retireKeptAddr}; !slices.Equal(got(kept), want) {
 		t.Errorf("kept = %v, want %v", got(kept), want)
+	}
+}
+
+// retireLogSink is a log a retirement test can read: the run's own output goes
+// to it (report.Reporter.Stream, whose Sink this is), and Path is what the
+// terminal's one line names.
+type retireLogSink struct {
+	strings.Builder
+	path string
+}
+
+func (s *retireLogSink) Path() string { return s.path }
+func (s *retireLogSink) Close() error { return nil }
+
+// The terminal gets one line for a retirement however many addresses it has,
+// and the log gets the lists (the owner's run of 2026-11-28: a 53-address
+// retirement filled the screen with the Going away, KEPT and Order of
+// operations lists). The one line counts what goes and what is kept and names
+// the log; the confirmation is one line too, without a secret in it.
+func TestRetireTerminalIsOneLineAndTheListsAreInTheLog(t *testing.T) {
+	spec := infra.RepoSpec{Name: "acme-sandbox", GCPProject: initProject, Region: "us-east5"}
+	var rets []infra.Retirement
+	for i := range 45 {
+		rets = append(rets, infra.Retirement{
+			Address: fmt.Sprintf(`module.repo.module.workflow["gone%d"].google_cloud_run_v2_job.this[0]`, i),
+			Kind:    "workflow job", Job: fmt.Sprintf("fugaro-acme-sandbox-gone%d", i),
+			Cause: "the configuration no longer deploys this variant",
+		})
+	}
+	for i := range 8 {
+		rets = append(rets, infra.Retirement{
+			Address: fmt.Sprintf(`module.repo.google_secret_manager_secret.this["token-%d"]`, i),
+			Kind:    "secret container", Kept: infra.KeptSecret, Logical: fmt.Sprintf("token-%d", i),
+		})
+	}
+	log := &retireLogSink{path: "/home/u/.local/state/fugaro/logs/update-20261128061527-4242.log"}
+	var out strings.Builder
+	r := &initRun{w: &out, rep: report.New(report.Options{Sink: log}), repLog: log,
+		projectName: "aurora", gcpProject: initProject, retireSet: rets}
+	if err := r.printRetirements(spec, rets); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if n := len([]rune(text)); n > 300 {
+		t.Errorf("the terminal gets %d characters for a 53-address retirement, want under 300:\n%s", n, text)
+	}
+	for _, want := range []string{"retires 53 addresses", "45 go away", "8 kept", log.path} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the one line does not say %q:\n%s", want, text)
+		}
+	}
+	for _, list := range []string{"Going away", "KEPT —", "Order of operations", "Next command", rets[0].Address} {
+		if strings.Contains(text, list) {
+			t.Errorf("the terminal carries the %q list rather than the log:\n%s", list, text)
+		}
+	}
+	// The log holds the lists whole: every address, the reasons, what is kept
+	// and what to do next.
+	for _, want := range []string{
+		"Going away (45, predicted from the state and the labels)",
+		"KEPT — Fugaro never deletes a secret or a secret version:",
+		"Order of operations:", "Next command:", retireNextCommand,
+		rets[0].Address, rets[44].Address, rets[52].Logical,
+	} {
+		if !strings.Contains(log.String(), want) {
+			t.Errorf("the log does not hold %q:\n%s", want, log.String())
+		}
+	}
+	// The confirmation is one line, and it names no secret: the kept
+	// containers are the log's KEPT list.
+	what := r.retireWhat(spec, rets)
+	if strings.ContainsAny(what, "\r\n") {
+		t.Errorf("the confirmation is not one line: %q", what)
+	}
+	if n := len([]rune(what)); n > 200 {
+		t.Errorf("the confirmation is %d characters, too long to read as a question: %q", n, what)
+	}
+	for _, secret := range []string{rets[52].Logical, rets[52].Address} {
+		if strings.Contains(what, secret) {
+			t.Errorf("the confirmation lists the kept secret %q: %s", secret, what)
+		}
 	}
 }
 
@@ -1520,12 +1637,15 @@ func TestPreventDestroySignatureIsWhitespaceNormalized(t *testing.T) {
 // message, and the stdout the summary owns.
 func TestInitRepoPreventDestroyReframed(t *testing.T) {
 	r := newRetireRig(t, retireOpts{planAbort: fixture(t, "prevent_destroy_wrapped.txt")})
+	before := logNames(t, "setup")
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
-	if !strings.Contains(out, "⚠ This change retires") || !strings.Contains(out, retireJobAddr) {
-		t.Errorf("the summary was not printed:\n%s", out)
+	// The addresses are the log's (printRetirements); the line is the run's.
+	text := out + logsAdded(t, before, "setup")
+	if !strings.Contains(text, "⚠ This change retires") || !strings.Contains(text, retireJobAddr) {
+		t.Errorf("the summary was not printed:\n%s", text)
 	}
 	if strings.Contains(out, "lifecycle.prevent_destroy") {
 		t.Errorf("Terraform's text reached stdout:\n%s", out)
@@ -2035,12 +2155,18 @@ func normaliseRetireTranscript(s string) string {
 	return s
 }
 
-// The whole retirement as one transcript: the summary, both confirmations
-// (nothing is typed for them: the person at the rig's terminal is the
-// confirmation, T7), the state removal, the plan's own counts, the apply and
+// The whole retirement as one transcript: the terminal's one summary line, both
+// confirmations (nothing is typed for them: the person at the rig's terminal is
+// the confirmation, T7), the state removal, the plan's own counts, the apply and
 // the API delete, with no Terraform text anywhere in it (Review Focus 5,
 // design §3.2). The fixture is the origin's own shape -- acme/sandbox losing the
 // named account bmb -- and every identifier in it is the fake's.
+//
+// The summary's lists are the log's and not the terminal's (printRetirements,
+// retireLine), and the log also holds Terraform's own account, which this
+// fixture keeps out: the lists are pinned by the tests that read the log
+// (TestInitRepoRetireConfirmationNamesNoSecret,
+// TestInitRepoRetireSummaryListsAreInTheLog).
 func TestInitRepoRetireTranscriptGolden(t *testing.T) {
 	// The rig chdirs into the checkout, so the golden's path is taken first.
 	wd, err := os.Getwd()

@@ -331,8 +331,11 @@ func TestUpdateUnmanagedStillRefusesTheSameRetirement(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, keptAsNote: true, member: true})
 	r.unmarkedInstallation(t)
 	storedRepoSecrets(t, r)
+	before := logNames(t, "update")
 	out, errOut, err := executeStdin(t, "", "update", "--repo", ".")
-	text := out + errOut
+	// The refusal is the returned error and the summary's own words are the
+	// log's (printRetirements): neither is on the terminal, so both are read.
+	text := readOut(out, errOut, err) + logsAdded(t, before, "update")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s; want the refusal an unmanaged project has always had", ExitCode(err), err, text)
 	}

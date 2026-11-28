@@ -438,15 +438,22 @@ func TestUpdateRetiringARootLeavesItsSecretContainers(t *testing.T) {
 	r := newSharedRetireRig(t, sharedRetireOpts{proxy: true})
 	id := gcp.SecretID(r.slug, sharedOAuthName)
 	r.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte(tokenValue))
+	before := logNames(t, "update")
 	out, err := r.update(t)
 	if err != nil {
 		t.Fatalf("the update did not retire the root: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "KEPT — Fugaro never deletes a secret or a secret version:") {
-		t.Errorf("the retirement does not say what it keeps:\n%s", out)
+	// The KEPT list is the log's: the terminal carries the one line and the
+	// file the lists are in (retireLine).
+	log := logsAdded(t, before, "update")
+	if !strings.Contains(log, "KEPT — Fugaro never deletes a secret or a secret version:") {
+		t.Errorf("the retirement does not say what it keeps:\n%s", log)
 	}
-	if !strings.Contains(out, "leaves Terraform's state, unmanaged; Secret Manager is untouched") {
-		t.Errorf("a secret container is not in the KEPT list, so the retirement claims to destroy one:\n%s", out)
+	if !strings.Contains(log, "leaves Terraform's state, unmanaged; Secret Manager is untouched") {
+		t.Errorf("a secret container is not in the KEPT list, so the retirement claims to destroy one:\n%s", log)
+	}
+	if strings.Contains(out, "KEPT —") {
+		t.Errorf("the terminal carries the KEPT list rather than the log the summary is in:\n%s", out)
 	}
 	var removed []string
 	for _, call := range r.ran(t, "state rm") {
