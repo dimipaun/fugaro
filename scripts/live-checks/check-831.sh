@@ -677,7 +677,7 @@ key_of() { # key_of SEGMENT
   python3 -c 'import sys
 out = []
 for ch in sys.argv[1].encode():
-    if ch in b"%$#[]/" or ch < 0x20 or ch == 0x7f:
+    if ch in b"%.$#[]/" or ch < 0x20 or ch == 0x7f:
         out.append("%%%02X" % ch)
     else:
         out.append(chr(ch))
