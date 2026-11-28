@@ -728,7 +728,10 @@ func defaultBranchConfig(ctx context.Context, root string) *config.Config {
 // The update door asks nothing (D3350): e.repos is the project's own list and
 // an admit-only repository in it is enrolled, so every repository the stage
 // plans for is one the project already admits and a container may be created
-// for it. The gate is the checkout door's.
+// for it. The gate is the checkout door's, and the guard below is the whole of
+// that rule: a list-door run reaches this too, under --ask, where
+// singleCheckout let Apply fall through (U3b), and the gate would stop the run
+// on a repository the project's own list admits.
 func (s *secretsStage) authorize(env initflow.Env) error {
 	if s.listDoor() {
 		return nil
