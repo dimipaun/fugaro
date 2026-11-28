@@ -25354,10 +25354,14 @@ the date and `fugaro version`. If `u1-link` is `FAIL`, or `u1-forge` is `FAIL`, 
 and it is the reason this probe runs before **BR3** is written.
 
 **Restore.** The check deletes everything it made — the probe job, the forging job, the re-created
-job and the plain VM — and its `restore` row names anything an interrupted run left behind with the
-one command that removes it. Two small `e2-standard-4` jobs alive for their linger (300 s and 120 s by
-default), one VM alive for seconds, and a dozen `gcloud` reads: no model call, no build, no run of
-the backend, no image built. The scratch directory always goes, including on a Ctrl-C.
+job, the plain VM (in whichever zone held it) and the throwaway job account — and its `restore` row
+names anything an interrupted run left behind with the one command that removes it. Both jobs run as
+`fugaro-chk830-job@fugaro-dev.iam.gserviceaccount.com`, which the check creates with exactly
+`roles/batch.agentReporter` and `roles/logging.logWriter` on the project and deletes with both
+bindings, read back; on the default compute account a Batch VM cannot report and its job stays
+SCHEDULED. The plain VM is retried in the region's other zones only on a stockout. Two small
+`e2-standard-4` jobs alive for their linger (300 s and 120 s by default), one VM alive for seconds,
+and a dozen `gcloud` reads: no model call, no build, no run of the backend, no image built. The scratch directory always goes, including on a Ctrl-C.
 
 **What waits on it.** **BR3** (**R4**), and through the owner's **O1** answer also **BR5** and
 **BR12**; the plan's critical path starts here, and the row **830** in the implementation plan's

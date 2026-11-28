@@ -60,19 +60,27 @@
 #             never `belong`, EdgeWeb or EdgeServer) and region `us-east5`. The
 #             resources it makes are all labelled `fugaro_chk=830`: the probe
 #             job, a second job that tries to forge the link, and — for O8 —
-#             one plain VM.
+#             one plain VM. Both jobs run as a throwaway service account,
+#             fugaro-chk830-job@fugaro-dev.iam.gserviceaccount.com, holding
+#             exactly roles/batch.agentReporter and roles/logging.logWriter on
+#             the project, as a real run's job account does: a VM running as
+#             the default compute account, which holds no role in `fugaro-dev`,
+#             never reports to Batch and its job stays SCHEDULED.
 # Costs:      two small Batch jobs on e2-standard-4 (2000m/4096MiB, the share
 #             of the type the design measured 57a on; the link is not a
 #             function of the machine type, which is why this is not the
 #             default e2-standard-8), each alive for its linger (300s and 120s
-#             by default), one plain VM alive for seconds, one instance
-#             and a dozen `gcloud` reads. No model call, no build, no
+#             by default), one plain VM alive for seconds (made in the probe's
+#             zone, and in the region's other zones only when Compute answers
+#             a stockout there), the throwaway service account and its two
+#             project bindings, and a dozen `gcloud` reads. No model call, no build, no
 #             run of the backend, no image built.
 # Runs:       by YOU. No agent runs any step of it: the check is the probe the
 #             plan blocks other work on, and its whole value is that a person
 #             reads what it printed before the link is written.
 # Cleanup:    everything it made is deleted — the probe job, the forging job,
-#             the re-created job and the plain VM — and
+#             the re-created job, the plain VM (in whichever zone held it) and
+#             the throwaway service account with its two bindings — and
 #             the scratch directory always goes, including on a Ctrl-C. The
 #             `restore` row names anything an interrupted run left behind, with
 #             the one command that removes it.
@@ -190,6 +198,10 @@ MANUAL_LINE=""
 CREATED_ANYTHING=no
 LEFT_BEHIND=""
 HANDMADE_MADE=""
+HANDMADE_ZONE=""
+HANDMADE_TRIED=""
+SA_MADE=no
+A_VM_SA=""
 # The probe job, its UID, and the VM the container named for itself. All of them
 # are empty until a step reads them, and every row that reads one says "unread"
 # or reports the row as not measured rather than stopping the whole run.
@@ -230,8 +242,8 @@ scratch_up() {
 
 cleanup() {
   CLEANUP_RUNNING=yes
-  FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   sweep_leftovers
+  FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
   remove_scratch
 }
 
@@ -266,11 +278,32 @@ sweep_leftovers() {
     LEFT_BEHIND="${LEFT_BEHIND}${LEFT_BEHIND:+, }the job(s) $(printf '%s' "$names" | oneline)"
   fi
   if [ -n "$HANDMADE_MADE" ]; then
-    gcloud compute instances delete "$HANDMADE_MADE" --project="${P:?}" --zone="${A_VM_ZONE:?}" --quiet >/dev/null 2>&1 || true
-    if gcloud compute instances describe "$HANDMADE_MADE" --project="${P:?}" --zone="${A_VM_ZONE:?}" >/dev/null 2>&1; then
-      LEFT_BEHIND="${LEFT_BEHIND}${LEFT_BEHIND:+, }the instance $HANDMADE_MADE"
+    local hz
+    hz=$(handmade_zone_read)
+    gcloud compute instances delete "$HANDMADE_MADE" --project="${P:?}" --zone="${hz:?}" --quiet >/dev/null 2>&1 || true
+    if gcloud compute instances describe "$HANDMADE_MADE" --project="${P:?}" --zone="${hz:?}" >/dev/null 2>&1; then
+      LEFT_BEHIND="${LEFT_BEHIND}${LEFT_BEHIND:+, }the instance $HANDMADE_MADE (in ${hz})"
     fi
   fi
+  sweep_job_account
+}
+
+# The throwaway account goes last: the VMs that ran as it left with their jobs,
+# and its bindings are removed BEFORE it is, because a binding that outlives
+# its account reads back as deleted:serviceAccount:... and can no longer be
+# removed.
+sweep_job_account() {
+  [ "$SA_MADE" = yes ] || return 0
+  remove_job_account || true
+  local ac pol
+  ac=$(sa_state)
+  pol=$(policy_state)
+  if [ "$ac" = not-there ] && [ "$pol" = clean ]; then
+    fact job-account-removed PASS "${JOB_SA_EMAIL} is gone (read back by a listing) and ${P}'s own IAM policy names it in no binding any more (read back from the policy itself)"
+    return 0
+  fi
+  LEFT_BEHIND="${LEFT_BEHIND}${LEFT_BEHIND:+, }the account ${JOB_SA_EMAIL} (account: ${ac}, project policy: ${pol})"
+  fact job-account-removed FAIL "${JOB_SA_EMAIL} is not clean in ${P}: the account reads ${ac} (there, not-there or unreadable) and the project policy reads ${pol} (named, clean or unread). Remove it by hand: gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${JOB_SA_EMAIL} --role=<each role the policy shows> --condition=None, then gcloud iam service-accounts delete ${JOB_SA_EMAIL} --project=${P}"
 }
 
 remove_scratch() {
@@ -314,9 +347,9 @@ finish() {
       note="${note}, and nothing was created anywhere: no job, no instance"
     elif [ -n "$LEFT_BEHIND" ]; then
       restore=FAIL
-      note="${note}. STILL IN ${P:-fugaro-dev}: ${LEFT_BEHIND}. Remove each by hand — a job with: gcloud batch jobs delete <name> --project=${P:-fugaro-dev} --location=${L:-us-east5} --quiet; an instance with: gcloud compute instances delete <name> --project=${P:-fugaro-dev} --zone=${A_VM_ZONE:-<zone>} --quiet"
+      note="${note}. STILL IN ${P:-fugaro-dev}: ${LEFT_BEHIND}. Remove each by hand — a job with: gcloud batch jobs delete <name> --project=${P:-fugaro-dev} --location=${L:-us-east5} --quiet; an instance with: gcloud compute instances delete <name> --project=${P:-fugaro-dev} --zone=${HANDMADE_ZONE:-${A_VM_ZONE:-<zone>}} --quiet"
     else
-      note="${note}, and every job and every instance this run made are deleted: nothing of this check's is left in ${P:-fugaro-dev}"
+      note="${note}, and every job, every instance and the throwaway service account this run made are deleted: nothing of this check's is left in ${P:-fugaro-dev}"
     fi
   fi
   facts="${facts}"$'\n'"restore|$restore|${note}"
@@ -349,6 +382,19 @@ JOB_B=fugaro-chk830-forge
 # u1-handmade FAILS — which is the finding, not a false pass: what a launcher
 # chooses cannot be what the link rests on.
 HANDMADE_VM=${JOB_A}-handmade
+# The account both jobs run as. Without roles/batch.agentReporter the Batch
+# agent on the VM cannot report, so a job on the project's default compute
+# account stays SCHEDULED and its container never starts (the owner's run of
+# 2026-11-28); a real run's job account holds these two roles
+# (internal/infra/tf/cover.go). The display name is how a leftover of an
+# interrupted run is told from somebody else's account of the same name.
+JOB_SA=fugaro-chk830-job
+JOB_SA_EMAIL=${JOB_SA}@${P}.iam.gserviceaccount.com
+JOB_SA_NAME='Check 830 throwaway job account'
+JOB_SA_ROLES="roles/batch.agentReporter roles/logging.logWriter"
+SA_TRIES=${CHK830_SA_TRIES:-6}
+SA_RETRY=${CHK830_SA_RETRY_SECONDS:-5}
+SA_SETTLE=${CHK830_SA_SETTLE_SECONDS:-15}
 # A container that needs a POSIX shell and python3 and nothing else: the probe
 # reads the metadata server with python3, the same interpreter it decodes the
 # token with, so the image never has to carry curl. It is a Google-hosted public
@@ -760,6 +806,8 @@ job = {
     "logsPolicy": {"destination": "CLOUD_LOGGING"},
     "labels": obj("labels"),
 }
+if params.get("sa"):
+    job["allocationPolicy"]["serviceAccount"] = {"email": params["sa"]}
 with open(params["out"], "w") as fh:
     json.dump(job, fh, indent=2)
     fh.write("\n")
@@ -783,6 +831,162 @@ print(json.dumps(d))
 }
 
 # ----------------------------------------------------------------- the steps
+# sa_state: whether the throwaway account is in the project — `there`,
+# `not-there` or `unreadable`. A failed list is never the answer "not there".
+sa_state() {
+  local listed
+  if ! listed=$(gcloud iam service-accounts list --project="${P:?}" --filter="email:${JOB_SA_EMAIL}" --format='value(email)' 2>/dev/null); then
+    printf 'unreadable'
+    return 0
+  fi
+  if grep -qxF -- "$JOB_SA_EMAIL" <<<"$listed"; then printf 'there'; else printf 'not-there'; fi
+}
+
+# policy_state: whether the project's own IAM policy names the account in any
+# member, a deleted: one included — `named`, `clean` or `unread`.
+policy_state() {
+  if ! gcloud projects get-iam-policy "${P:?}" --format=json >"$SCRATCH/project-policy.json" 2>"$SCRATCH/policy.err"; then
+    printf 'unread'
+    return 0
+  fi
+  if grep -qF -- "serviceAccount:${JOB_SA_EMAIL}" "$SCRATCH/project-policy.json"; then printf 'named'; else printf 'clean'; fi
+}
+
+# member_roles: the roles the project's policy gives one service account
+# directly, one per line. A policy that cannot be read is a failure, not an
+# empty list.
+member_roles() { # member_roles EMAIL
+  gcloud projects get-iam-policy "${P:?}" --format=json >"$SCRATCH/project-policy.json" 2>"$SCRATCH/policy.err" || return 1
+  python3 -c 'import json,sys
+m = "serviceAccount:" + sys.argv[2]
+for b in json.load(open(sys.argv[1])).get("bindings", []):
+    if m in b.get("members", []) and not b.get("condition"):
+        print(b["role"])' "$SCRATCH/project-policy.json" "$1"
+}
+
+# IAM is eventually consistent: a grant made in the second after the account was
+# created is refused as an unknown member, so each write is retried, bounded.
+sa_retrying() { # sa_retrying CMD...
+  local n=0
+  while :; do
+    n=$((n + 1))
+    if "$@" >/dev/null 2>"$SCRATCH/sa.err"; then return 0; fi
+    [ "$n" -lt "$SA_TRIES" ] || return 1
+    sleep "$SA_RETRY"
+  done
+}
+
+remove_job_account() {
+  local role n=0
+  for role in $JOB_SA_ROLES; do
+    gcloud projects remove-iam-policy-binding "${P:?}" --member="serviceAccount:${JOB_SA_EMAIL}" --role="$role" --condition=None --quiet >/dev/null 2>&1 || true
+  done
+  while [ "$n" -lt "$SA_TRIES" ]; do
+    n=$((n + 1))
+    if [ "$(policy_state)" != named ]; then
+      gcloud iam service-accounts delete "$JOB_SA_EMAIL" --project="${P:?}" --quiet >/dev/null 2>&1 || true
+      [ "$(sa_state)" = not-there ] && return 0
+    fi
+    sleep "$SA_RETRY"
+  done
+  return 1
+}
+
+# job-account: the account both jobs run as, made before either is submitted. A
+# leftover of an interrupted run (same name, this check's display name) is
+# removed first; an account of that name that is not this check's is never
+# touched.
+step_job_account() {
+  local state role roles ok n=0 owner_name
+  state=$(sa_state)
+  if [ "$state" = unreadable ]; then
+    fact job-account FAIL "whether ${JOB_SA_EMAIL} is already in ${P} cannot be read (the list failed), and a failed read is not the answer 'it is not there'; nothing was created"
+    stop "the service account list failed, so nothing was created"
+  fi
+  if [ "$state" = there ]; then
+    owner_name=$(gcloud iam service-accounts describe "$JOB_SA_EMAIL" --project="${P:?}" --format='value(displayName)' 2>/dev/null || true)
+    if [ "$owner_name" != "$JOB_SA_NAME" ]; then
+      fact job-account FAIL "${JOB_SA_EMAIL} is already in ${P} and is not this check's (its display name is not '${JOB_SA_NAME}'): it is never adopted or deleted here; nothing was created"
+      stop "an account named ${JOB_SA_EMAIL} exists and is not this check's"
+    fi
+    say "removing ${JOB_SA_EMAIL}, left by an earlier run"
+    CREATED_ANYTHING=yes
+    if ! remove_job_account; then
+      fact job-account FAIL "${JOB_SA_EMAIL}, left by an earlier run, could not be removed: delete it by hand with gcloud iam service-accounts delete ${JOB_SA_EMAIL} --project=${P}"
+      stop "a leftover ${JOB_SA_EMAIL} could not be removed"
+    fi
+  elif [ "$(policy_state)" != clean ]; then
+    fact job-account FAIL "${P}'s own IAM policy names ${JOB_SA_EMAIL} though no such account exists (or cannot be read), and a binding left at a deleted account can no longer be removed: remove it by hand with gcloud projects remove-iam-policy-binding ${P} --member=serviceAccount:${JOB_SA_EMAIL} --role=<the role the policy shows> --condition=None; nothing was created"
+    stop "the project policy names ${JOB_SA_EMAIL} with no account behind it"
+  fi
+  say "creating ${JOB_SA_EMAIL} with ${JOB_SA_ROLES}"
+  CREATED_ANYTHING=yes
+  SA_MADE=yes
+  if ! gcloud iam service-accounts create "$JOB_SA" --project="${P:?}" --display-name="$JOB_SA_NAME" --quiet >/dev/null 2>"$SCRATCH/err"; then
+    fact job-account FAIL "${JOB_SA_EMAIL} could not be created ($(oneline <"$SCRATCH/err")): your account needs iam.serviceAccounts.create; without it the jobs would run as the default compute account and never report"
+    stop "the job service account could not be created"
+  fi
+  for role in $JOB_SA_ROLES; do
+    if ! sa_retrying gcloud projects add-iam-policy-binding "${P:?}" --member="serviceAccount:${JOB_SA_EMAIL}" --role="$role" --condition=None --quiet; then
+      fact job-account FAIL "${JOB_SA_EMAIL} could not be granted ${role} on ${P} ($(oneline <"$SCRATCH/sa.err")): your account needs resourcemanager.projects.setIamPolicy"
+      stop "the job service account could not be granted ${role}"
+    fi
+  done
+  ok=no
+  roles=""
+  while [ "$n" -lt "$SA_TRIES" ]; do
+    n=$((n + 1))
+    roles=$(member_roles "$JOB_SA_EMAIL" | sort | tr '\n' ' ' || true)
+    ok=yes
+    for role in $JOB_SA_ROLES; do
+      case " $roles" in *" $role "*) ;; *) ok=no ;; esac
+    done
+    [ "$ok" = yes ] && break
+    sleep "$SA_RETRY"
+  done
+  if [ "$ok" != yes ]; then
+    fact job-account FAIL "${JOB_SA_EMAIL}'s grants did not read back from ${P}'s IAM policy within ${SA_TRIES} reads: it holds '${roles:-nothing}' where ${JOB_SA_ROLES} are required"
+    stop "the job service account's grants did not read back"
+  fi
+  sleep "$SA_SETTLE"
+  fact job-account PASS "${JOB_SA_EMAIL} was created in ${P} and holds exactly ${JOB_SA_ROLES} there (read back from the project policy): both jobs run as it, the way a real run's job account does, so the Batch agent on their VMs can report and log"
+}
+
+# The plain VM's zone: the probe's own first, then the region's others, tried
+# only while Compute answers a stockout.
+handmade_zones() {
+  local z
+  printf '%s\n' "$A_VM_ZONE"
+  for z in a b c; do
+    [ "${L}-${z}" = "$A_VM_ZONE" ] || printf '%s\n' "${L}-${z}"
+  done
+}
+
+create_handmade() { # create_handmade LABELS META
+  local zone
+  HANDMADE_TRIED=""
+  for zone in $(handmade_zones); do
+    HANDMADE_TRIED="${HANDMADE_TRIED}${HANDMADE_TRIED:+, }${zone}"
+    if gcloud compute instances create "$HANDMADE_VM" --project="${P:?}" --zone="$zone" \
+      --machine-type="$MT" --image-family=debian-12 --image-project=debian-cloud --no-address \
+      --labels="$1" --metadata="$2" >"$SCRATCH/err" 2>&1; then
+      HANDMADE_ZONE=$zone
+      return 0
+    fi
+    grep -Eq 'ZONE_RESOURCE_POOL_EXHAUSTED|STOCKOUT' "$SCRATCH/err" || return 1
+    say "no capacity for ${MT} in ${zone}; trying the region's next zone"
+  done
+  return 1
+}
+
+# handmade_zone_read: the zone the plain VM is in, read back from the project
+# and not assumed to be the probe's.
+handmade_zone_read() {
+  local z
+  z=$(gcloud compute instances list --project="${P:?}" --filter="name=${HANDMADE_VM}" --format='value(zone.basename())' 2>/dev/null | head -n 1 || true)
+  printf '%s' "${z:-${HANDMADE_ZONE:-$A_VM_ZONE}}"
+}
+
 # submit-a: the probe job, shaped like a real run: the same label keys the
 # backend writes, the same `blockProjectSshKeys`, no retry, its logs to Cloud
 # Logging, and a task share the type holds. It is the job every row below is
@@ -794,7 +998,7 @@ step_submit_a() {
     out="$SCRATCH/job-a.json" \
     image="$IMAGE" \
     script="$SCRATCH/container.sh" \
-    machine="$MT" cpu="$CPU_MILLI" mem="$MEMORY_MIB" \
+    machine="$MT" cpu="$CPU_MILLI" mem="$MEMORY_MIB" sa="$JOB_SA_EMAIL" \
     max_run="$((PROBE_LIFE_A + 300))s" \
     labels="$(json_obj "$MANAGED_KEY=$MANAGED_VAL" "$CHK_LABEL=$CHK_VALUE")" \
     alabels="$(json_obj "$MANAGED_KEY=$MANAGED_VAL" "$CHK_LABEL=$CHK_VALUE")" \
@@ -880,7 +1084,9 @@ step_observe_a() {
   list) from="the container did NOT name it (its metadata read answered nothing): the name comes from the instance list taken around the submit, where exactly one instance appeared, and that is a weaker reading — a VM another job of ${P} made in the same window would be this one's by this reading" ;;
   *) from="where this row's name came from was not recorded" ;;
   esac
-  fact vm-a PASS "the probe's VM is ${A_VM_NAME} in ${A_VM_ZONE} (id ${A_VM_ID:-<unread>}, ${A_VM_MT:-<unread>}, running as ${A_VM_SA:-<unread>}): ${from}. Its whole object is what the link is judged on; the job's own object is read beside it"
+  local sa_tag=", NOT the throwaway job account ${JOB_SA_EMAIL}"
+  [ "$A_VM_SA" != "$JOB_SA_EMAIL" ] || sa_tag=", the check's throwaway job account"
+  fact vm-a PASS "the probe's VM is ${A_VM_NAME} in ${A_VM_ZONE} (id ${A_VM_ID:-<unread>}, ${A_VM_MT:-<unread>}, running as ${A_VM_SA:-<unread>}${sa_tag}): ${from}. Its whole object is what the link is judged on; the job's own object is read beside it"
 }
 # redact_stream: nothing that looks like a credential is printed from a reading
 # this check did not write — the serial console, the job's own events and the
@@ -1096,6 +1302,8 @@ step_probe_diag() {
   # value is printed.
   events=$(diag_events | redact_stream 2>/dev/null | oneline)
   tasks_shown=$(printf '%s' "${task_states:-none reported}" | oneline)
+  local sa_note=""
+  sa_note=$(sa_cause_note "$task_states")
   # pull_note is what the wait is read against, and it follows the boot log and
   # nothing else: a container the log shows started was never waiting on its
   # image, and one the log could not be read for leaves the pull UNKNOWN rather
@@ -1134,7 +1342,20 @@ step_probe_diag() {
   [ "${by_label:-0}" -gt 0 ] && found_label=", the first of them \"$(first_lines "$SCRATCH/job-res-lines.txt" 2)\""
   found_any=""
   [ "${by_any:-0}" -gt 0 ] && found_any=", the first of them \"$(first_lines "$SCRATCH/job-any-lines.txt" 2)\""
-  fact probe-diag INFO "no line of the container's own arrived, so this run owes the reader the evidence that says which of the three it was — and reads it before the job is deleted: the job's own state is ${job_state:-<unread>} and its task's state(s) ${task_states:-<unread>}; the job's and the task's own status events read: ${events:-<none>}. The VM's serial console: ${boot}. The VM's own interfaces: ${net}. The wait for the container's first line was ${WAIT_LINES_A}s — the configured ${WAIT_LINES}s raised to the ${PULL_BOUND}s pull bound — ${pull_note}. The same query under the job's own resource type (resource.type=\"batch.googleapis.com/Job\") found ${by_label} line(s) by the runner's label (labels.job_uid=\"${A_UID}\" — the read that catches the container's lines under a log name the runner does not read)${found_label}, and ${by_any} line(s) by the uid alone (any field carrying it — the read that catches a label that is not labels.job_uid)${found_any}. Nothing is printed from the job's own object but these fields, and nothing that looks like a credential is printed at all"
+  fact probe-diag INFO "no line of the container's own arrived, so this run owes the reader the evidence that says which of the three it was — and reads it before the job is deleted: the job's own state is ${job_state:-<unread>} and its task's state(s) ${task_states:-<unread>}; the job's and the task's own status events read: ${events:-<none>}. The VM's serial console: ${boot}. The VM's own interfaces: ${net}. The wait for the container's first line was ${WAIT_LINES_A}s — the configured ${WAIT_LINES}s raised to the ${PULL_BOUND}s pull bound — ${pull_note}. The same query under the job's own resource type (resource.type=\"batch.googleapis.com/Job\") found ${by_label} line(s) by the runner's label (labels.job_uid=\"${A_UID}\" — the read that catches the container's lines under a log name the runner does not read)${found_label}, and ${by_any} line(s) by the uid alone (any field carrying it — the read that catches a label that is not labels.job_uid)${found_any}. Nothing is printed from the job's own object but these fields, and nothing that looks like a credential is printed at all.${sa_note}"
+}
+# sa_cause_note: the sentence that names the service-account cause. A task that
+# never got past SCHEDULED on a VM whose own account lacks
+# roles/batch.agentReporter is a Batch agent that cannot report: the owner's run
+# of 2026-11-28 sat at SCHEDULED for 600s for exactly that, on the default
+# compute account.
+sa_cause_note() { # sa_cause_note TASK_STATES
+  case "$1" in *RUNNING* | *SUCCEEDED* | *FAILED*) return 0 ;; esac
+  [ -n "$A_VM_SA" ] || return 0
+  local held
+  if ! held=$(member_roles "$A_VM_SA" | tr '\n' ' '); then return 0; fi
+  case " $held" in *" roles/batch.agentReporter "*) return 0 ;; esac
+  printf ' The VM runs as %s, which holds no roles/batch.agentReporter in %s (it holds: %s), so the Batch agent on it cannot report and the job stays SCHEDULED with its container never started: this is the service-account cause, not the image pull' "$A_VM_SA" "$P" "${held:-no role}"
 }
 # probe-exit: the probe's second channel. A container that never starts reports
 # no exit status at all; one that starts reports 100 plus a bit per reading it
@@ -1389,7 +1610,7 @@ step_u1_link() {
 }
 
 u1_link_pass() { # u1_link_pass WHERE PATHS WHY
-  fact u1-link PASS "the link is ${1}: $(printf '%s' "$2" | oneline). $(printf '%s' "$3"). The candidate fields are every field of that object whose value carries the other side's identity, which is the whole set the link could be built on"
+  fact u1-link PASS "the link is ${1}: $(printf '%s' "$2" | oneline). $(printf '%s' "$3"). The candidate fields are every field of that object whose value carries the other side's identity, which is the whole set the link could be built on. The probe's VM runs as ${A_VM_SA:-<unread>}"
 }
 # forge_args.py turns the candidates into the writes a second job would make:
 # the label set, the metadata set and the variables, each carrying the probe
@@ -1736,7 +1957,7 @@ print(json.dumps(d))' "$env_json" "$(json_obj "FUGARO_CHK830_LINGER=$PROBE_LIFE_
     out="$SCRATCH/job-b.json" \
     image="$IMAGE" \
     script="$SCRATCH/container.sh" \
-    machine="$MT" cpu="$CPU_MILLI" mem="$MEMORY_MIB" \
+    machine="$MT" cpu="$CPU_MILLI" mem="$MEMORY_MIB" sa="$JOB_SA_EMAIL" \
     max_run="$((PROBE_LIFE_B + 300))s" \
     labels="$labels_b" \
     alabels="$labels_b" \
@@ -1838,11 +2059,13 @@ step_handmade() { # step_handmade LABELS META KEYS_TRIED
   local labels=$1 metadata=$2 keys_tried=$3
   local note=""
   say "creating a plain VM named after the probe job (${HANDMADE_VM}) for O8"
-  if ! gcloud compute instances create "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" \
-    --machine-type="$MT" --image-family=debian-12 --image-project=debian-cloud --no-address \
-    --labels="$labels" --metadata="$metadata" >"$SCRATCH/err" 2>&1; then
+  if ! create_handmade "$labels" "$metadata"; then
     local msg refused rhome rdrop refused_shown retry_labels retry_metadata
     msg=$(oneline <"$SCRATCH/err")
+    if grep -Eq 'ZONE_RESOURCE_POOL_EXHAUSTED|STOCKOUT' "$SCRATCH/err"; then
+      fact u1-handmade INFO "O8's plain VM could not be created: Compute had no capacity for ${MT} in any of ${HANDMADE_TRIED} (${msg}), so this sitting does not say whether a hand-made VM can carry the link's field; run this check again when capacity is back"
+      return 0
+    fi
     refused=$(refused_field "$msg")
     rhome=""
     rdrop=""
@@ -1865,20 +2088,20 @@ step_handmade() { # step_handmade LABELS META KEYS_TRIED
     labels) retry_labels=$(kv_without "$labels" "$rdrop") ;;
     metadata) retry_metadata=$(kv_without "$metadata" "$rdrop") ;;
     esac
-    if gcloud compute instances create "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" \
-      --machine-type="$MT" --image-family=debian-12 --image-project=debian-cloud --no-address \
-      --labels="${CHK_LABEL}=${CHK_VALUE}${retry_labels:+,$retry_labels}" --metadata="$retry_metadata" >"$SCRATCH/err" 2>&1; then
+    if create_handmade "${CHK_LABEL}=${CHK_VALUE}${retry_labels:+,$retry_labels}" "$retry_metadata"; then
       # The refusal is part of this row's answer, so it belongs in the row's own
       # sentence: a fact recorded beside the verdict would be what a reader of
       # the block sees instead of the verdict.
       note="the first attempt, carrying every one of the ${keys_tried} keys, was refused by Compute (${msg}) — a field Compute will not let a hand-made VM carry cannot be forged that way — and ${refused_shown} is the only field the second attempt left out: every other field the first attempt carried was written to the VM this row is about, and is read below; "
     else
-      fact u1-handmade INFO "O8's plain VM could not be created in ${A_VM_ZONE} (${msg}), so this sitting does not say whether a hand-made VM can carry the link's field. The keys it would have carried were ${keys_tried}; a quota or a default-network problem in ${A_VM_ZONE} is the innocent reading, and the run of this check on a quiet project answers it"
+      fact u1-handmade INFO "O8's plain VM could not be created in ${HANDMADE_TRIED} (${msg}), so this sitting does not say whether a hand-made VM can carry the link's field. The keys it would have carried were ${keys_tried}; a quota or a default-network problem there is the innocent reading, and the run of this check on a quiet project answers it"
       return 0
     fi
   fi
   HANDMADE_MADE=$HANDMADE_VM
-  if ! gcloud compute instances describe "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" --format=json >"$SCRATCH/vm-handmade.json" 2>"$SCRATCH/err"; then
+  HANDMADE_ZONE=$(handmade_zone_read)
+  note="the plain VM was held in ${HANDMADE_ZONE}; ${note}"
+  if ! gcloud compute instances describe "$HANDMADE_VM" --project="${P:?}" --zone="${HANDMADE_ZONE:?}" --format=json >"$SCRATCH/vm-handmade.json" 2>"$SCRATCH/err"; then
     fact u1-handmade FAIL "${note}O8's plain VM was created but could not be read ($(oneline <"$SCRATCH/err")): the row the plan asked this check for is unmeasured"
   else
     python3 "$SCRATCH/forge_compare.py" "$A_UID" "$JOB_A" "$A_VM_NAME" "$A_VM_ID" "$SCRATCH/links" "$SCRATCH/forge.keys" \
@@ -1896,8 +2119,8 @@ step_handmade() { # step_handmade LABELS META KEYS_TRIED
       fact u1-handmade PASS "${note}a hand-made VM cannot carry the link's field: a plain instance named after the probe job carries none of the fields the probe's VM carries the probe's identity in (${compared}; control: ${control} of those keys are on it at all). What the link can rest on is therefore written by Batch's own control plane, not by whoever creates the machine"
     fi
   fi
-  gcloud compute instances delete "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" --quiet >/dev/null 2>&1 || true
-  if gcloud compute instances describe "$HANDMADE_VM" --project="${P:?}" --zone="${A_VM_ZONE:?}" >/dev/null 2>&1; then
+  gcloud compute instances delete "$HANDMADE_VM" --project="${P:?}" --zone="${HANDMADE_ZONE:?}" --quiet >/dev/null 2>&1 || true
+  if gcloud compute instances describe "$HANDMADE_VM" --project="${P:?}" --zone="${HANDMADE_ZONE:?}" >/dev/null 2>&1; then
     say "the hand-made VM ${HANDMADE_VM} is still there; the restore row names it"
   fi
 }
@@ -2012,6 +2235,7 @@ print_plan() {
   say "dry run: NOTHING below was run, and no command reached a cloud project. A real run would run, in this order:"
   say "  [local]  guards: no xtrace, the owner marker, the tree this script lives in, and the project refusal"
   say "  [local]  the tree reads: the log filter out of internal/backend/batch/logs.go, the managed label pair out of internal/backend/gcp/names.go, and the wrapped variable's name out of docs/batch-run-identity/"
+  say "  [cloud]  gcloud iam service-accounts create ${JOB_SA}, then gcloud projects add-iam-policy-binding ${P} for each of ${JOB_SA_ROLES}, each read back from the project policy — the account both jobs run as (a leftover of an interrupted run is removed first)"
   say "  [cloud]  gcloud compute instances list — the instance list before the probe, which is how a VM is found if the container cannot name its own"
   say "  [cloud]  gcloud batch jobs submit ${JOB_A} — ONE job (${MT}, ${CPU_MILLI}m/${MEMORY_MIB}MiB, container alive $(probe_life_a)s after its reads) carrying ${CHK_LABEL}=${CHK_VALUE}, the managed label, the marker variable ${MARKER_NAME} with a generated stand-in value, logs to CLOUD_LOGGING and no retry"
   say "  [cloud]  gcloud batch jobs describe ${JOB_A} — its uid, state and create time"
@@ -2021,15 +2245,15 @@ print_plan() {
   say "  [local]  the link walk: every field of the instance, of the job and of the container's own metadata read that carries the other side's identity (U1)"
   say "  [cloud]  gcloud batch jobs submit ${JOB_B} — a second job (${MT}, ${CPU_MILLI}m/${MEMORY_MIB}MiB, container alive $(probe_life_b)s after its reads) with the probe job's uid and name in every launcher-controlled field it has: Job.labels, AllocationPolicy.labels and the task's variables"
   say "  [cloud]  gcloud logging read + gcloud compute instances describe <the second job's VM> — the forge attempt, judged field by field against the first (U1)"
-  say "  [cloud]  gcloud compute instances create ${HANDMADE_VM} — a plain VM named after the probe job, for O8, read and deleted at once"
+  say "  [cloud]  gcloud compute instances create ${HANDMADE_VM} — a plain VM named after the probe job, for O8, read and deleted at once; retried in the region's other zones only when Compute answers a stockout"
   say "  [cloud]  gcloud logging read, three times — the job's own log entries, a search of the whole project for the marker's value, and the CreateJob audit record (waited for, bounded at ${WAIT_AUDIT}s). Its value is compared and never printed (U3)"
   say "  [cloud]  gcloud batch jobs delete ${JOB_A}, then gcloud batch jobs submit ${JOB_A} until the name is accepted — the seconds to reuse, bounded at ${REUSE_BOUND}s (U8), and the re-created job is deleted at once"
-  say "  [local]  the exit trap deletes every job of this check's by its label, and the scratch directory"
+  say "  [local]  the exit trap deletes every job of this check's by its label, the plain VM in the zone it landed in, the throwaway account's bindings and the account, and the scratch directory"
   say "A dry run runs the guards and the tree reads only. It submits nothing, reads no cloud project, and creates no VM"
 }
 
 # ------------------------------------------------------------------- reporting
-BLOCK_KEYS=(xtrace owner tree belong probe-submitted probe-ran probe-diag probe-exit vm-a u1-link u1-forge u1-handmade u2-token u3-marker u8-name restore)
+BLOCK_KEYS=(xtrace owner tree belong job-account probe-submitted probe-ran probe-diag probe-exit vm-a u1-link u1-forge u1-handmade u2-token u3-marker u8-name job-account-removed restore)
 
 verdict_of() {
   if grep -qE '^[a-z0-9-]+\|FAIL\|' <<<"$1"; then
@@ -2131,6 +2355,8 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     print_plan
     fact dry-run PASS "guards and the tree reads only: the commands above were printed, not run, and no cloud project, no credential and no resource was touched"
+    fact job-account INFO "not taken: this is a dry run, so no service account was created and no role granted"
+    fact job-account-removed INFO "not taken: this is a dry run, so no service account was made and none removed"
     fact probe-submitted INFO "not taken: this is a dry run, so no probe job was submitted and no instance list was taken"
     fact probe-ran INFO "not taken: this is a dry run, so no container ran and no line of its own was read"
     fact probe-diag INFO "not taken: this is a dry run, so nothing was read of the job's own state, its events or the VM's serial console"
@@ -2143,6 +2369,7 @@ main() {
     fact u3-marker INFO "not taken: this is a dry run, so no log, no instance metadata and no audit record was read"
     fact u8-name INFO "not taken: this is a dry run, so no job was deleted and no name reused"
   else
+    step_job_account
     step_submit_a
     step_observe_a
     step_probe_diag
