@@ -53,13 +53,23 @@ func TestUpdateSkill(t *testing.T) {
 		"the per-project lease keeps one of those daemons live and the rest on standby",
 		"a run inside a coding agent's session installs no unit and says so in one line, and the user's next run of it at their own terminal installs it",
 		"Nothing in this skill's frontmatter can limit which commands it runs: the three-command rule above is an instruction, not a permission, and the user's own Claude Code permission settings are what bound it.",
+		// TN1 and D2217: on an installation that is not managed the handed-over
+		// command stops at the head of its engine and names the one command that
+		// flags a project, which this session may not run. The skill hands that
+		// command over with the reason it is the user's, in a user-runs block.
+		"it stops first, before it writes anything",
+		"hand them that command, which they run once in their own terminal, not through the agent",
+		"```bash user-runs\nfugaro managed flag\n```",
 	} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("SKILL.md never says %q", want)
 		}
 	}
-	if n := strings.Count(skill, "```bash user-runs"); n != 1 {
-		t.Errorf("SKILL.md hands the user %d commands, want exactly one", n)
+	// Two hand-overs now: the one command that converges the installation and
+	// the checkout, and the one command that flags an installation the first
+	// refuses. Each is an owner's command in its own user-runs block.
+	if n := strings.Count(skill, "```bash user-runs"); n != 2 {
+		t.Errorf("SKILL.md hands the user %d commands, want two (the upgrade, and the flag an unmanaged installation is refused with)", n)
 	}
 	for _, bad := range []string{"claude plugin install", "claude plugin update", "claude plugin marketplace", "--dangerously", "allowed-tools", "needs no credentials"} {
 		if strings.Contains(skill+states, bad) {

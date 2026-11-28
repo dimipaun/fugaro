@@ -16,6 +16,16 @@ A run starts with a line `== ` and the checkout's directory, then one line per s
 | `failed` | the step stopped, and this checkout's later steps did not run | the reason, and the rerun line in the summary |
 | `not run` | a step after a failed one | nothing: it runs on the rerun |
 
+## An installation that is not managed
+
+An update stops at the head of its engine when the installation is not managed: before the first cloud write and before it rewrites this machine's config. It applies no step, leaves no record, and exits 1 with the refusal the head's own read writes — the project, which of the two marks is missing, and the one command that flags a project. Read that refusal to the user and stop: it is not a `failed` step and nothing was written. The flagging command is the user's, and a coding agent's session may not run it in any form; tell them to run it once in their own terminal, not through the agent (it takes no argument — it flags the selected installation's own project — and records 100 USD unless they pass `--budget`/`--budget-currency`):
+
+```bash user-runs
+fugaro managed flag
+```
+
+`--plan-only` and `--check` are not stopped: both read an unmanaged installation and write nothing.
+
 ## plugin
 
 - `installed X.Y.Z` (`current` or `done`): the version Claude Code has installed at user scope on this machine — the one `fugaro update-skills` maintains, and not what a checkout's own settings may have installed there. After `done`, running sessions need a restart.

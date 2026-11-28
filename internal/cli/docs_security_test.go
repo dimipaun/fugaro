@@ -271,6 +271,54 @@ func TestSecurityMdNamesTheDeployersNinthGrant(t *testing.T) {
 	}
 }
 
+// TestSecurityMdStatesTheWriteRefusal (T5 of docs/managed-flag-ergonomics):
+// the document owes a reader two sentences the release makes true, and three
+// it retires.
+//
+// The two: every command that writes into a project refuses a project that is
+// not managed, with the exemptions the fence really carries and the one
+// writer it exempts because that command is what MAKES a project managed
+// (D2217, D2219), and that the refusal names the flagging command to whoever
+// reads it, an agent included -- the capability F2 describes, printed rather
+// than silent, whose only fence is the agent-session marker (a mitigation,
+// not a barrier). The three the release retires are the sentences a reader
+// would take the old model from: that a project that is not managed keeps
+// the confirmations it had, that an installation that never asks for managed
+// gets no conditioned role, and the creating command's `--managed`.
+//
+// Mutations (verified, run and restored): each of the three retired sentences
+// put back into SECURITY.md -> FAIL; either of the two new bullets dropped ->
+// FAIL.
+func TestSecurityMdStatesTheWriteRefusal(t *testing.T) {
+	sec := readDoc(t, "SECURITY.md")
+	for _, want := range []string{
+		"**Every command that writes into a project refuses a project that is not managed.**",
+		"when either is missing it writes nothing, exits 1",
+		"`fugaro managed flag`, run by the project's owner at their own terminal",
+		"`internal/cli/root.go`'s `managedFencedCommands` and `managedExemptCommands`",
+		"`fugaro setup`'s creating run, the fence's one writer, because it is the command that *makes* a project managed",
+		"`fugaro managed unflag`, since a project that is not managed has nothing to unflag",
+		"`fugaro update` is not in the table: it stops at the head of its own engine",
+		"it warns and goes on along the path a project that is not managed took, and it never opens the managed gate (D2218)",
+		"**That refusal is printed to whoever reads it, a coding agent included, and the agent-session marker is the only fence on it.**",
+		"the capability it prints is F2's",
+		"which is a **mitigation and not a barrier**",
+	} {
+		if !strings.Contains(sec, want) {
+			t.Errorf("SECURITY.md never says %q: the write-refusal fence and the capability its refusal prints are what this release ships, and this is where a reader takes them from", want)
+		}
+	}
+	for _, wrong := range []string{
+		"a project that is not managed keeps the confirmations",
+		"an installation that never asks for managed",
+		"--create-project --managed",
+	} {
+		if strings.Contains(sec, wrong) {
+			t.Errorf("SECURITY.md still says %q: the release retired it, and it tells a reader the old model still holds", wrong)
+		}
+	}
+}
+
 // TestSecurityMdNarrowsTheUncomparedRemoteToWhatRemains: the launcher-
 // environment bullet has been narrowed twice, and this pins the second
 // narrowing. It first said a remote naming another repository *on the same
