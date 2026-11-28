@@ -25457,6 +25457,42 @@ like one that can never finish.
 Rerun the same one command. The block now says which of the two it was — a container that never ran,
 or one whose lines did not land — and if it is the pull, which bound it did not finish inside.
 
+### Runs of 2026-11-28 (`fugaro-dev`; `fugaro version` 0.30.1, as the owner reported)
+
+**The owner ran the command three times; no agent ran any step of them.**
+
+1. **The probe on the default compute account** was left SCHEDULED for the whole wait: that account
+   holds no `roles/batch.agentReporter`, so the Batch agent could not report. The probe and the forge
+   job now run as a throwaway account holding `roles/batch.agentReporter` and
+   `roles/logging.logWriter`, created and deleted by the check (#4320).
+2. **As the throwaway account** the container ran, and every metadata read came back `<unreachable>`:
+   no reading of U2. The container now says why a read failed and tries `curl` and the link-local
+   address, and `u2-token` is INFO when no metadata read answered at all (#4321).
+3. **The third run answered every row** (tree `9ea6df5c5`). Its block reads `CHECK 830 RESULT: FAIL`
+   because of the two findings below.
+
+**Answered**
+
+- **U1, the link and its read (O1).** The link is the instance's own object: `labels.batch-job-uid`,
+  `labels.batch-job-id`, `metadata.items.cloudbatch-job-uid` and `name`. Reading it costs
+  `compute.instances.get` on the VM.
+- **`u1-forge` PASS.** A second job carrying the probe job's uid and name in 10 launcher-controlled
+  keys leaves no mark of them in the 13 fields compared.
+- **U2.** The container reached the metadata server, and its identity token in full format carries
+  `instance_id`, `instance_name`, `project_id` and `zone` (issuer `https://accounts.google.com`, life
+  3600 s).
+- **`u8-name`.** A deleted job's name was accepted again after 31 s.
+
+**Findings (R4: they return to the owner)**
+
+- **`u1-handmade` FAIL.** A plain VM made by hand carries every field the link is read from. Whoever
+  holds `compute.instances.create` and actAs on a run account (O8) can forge it, so the link cannot
+  rest on those fields alone.
+- **`u3-marker` FAIL.** The marker's stand-in value appeared in Cloud Logging in `fugaro-dev`: a Batch
+  job variable is published, so R5's wrapped key cannot travel as one.
+
+**BR3, BR5 and BR12 stay blocked** until the owner rules on both findings.
+
 ## Check 831: a Batch run's identity end to end, and four attacks on the claim (the sandbox project `fugaro-dev` only, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **BR13** of
