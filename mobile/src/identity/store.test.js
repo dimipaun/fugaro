@@ -438,3 +438,29 @@ test('a settings object that is not a port is refused at construction, not at ev
     TypeError,
   );
 });
+
+test('a session store that is not the wrapper is refused at construction, not after a record is written', () => {
+  const settings = () => new MemorySettingsStore();
+  for (const missing of ['put', 'get', 'delete']) {
+    const store = new IdentitySessionStore(new MemorySecureStore());
+    store[missing] = undefined;
+    assert.throws(
+      () => new IdentityStore({ settings: settings(), sessions: store, apiKey: 'synthetic-api-key' }),
+      TypeError,
+      missing,
+    );
+  }
+  // The app's own secure-store port (`getItem`/`setItem`/`deleteItem`) is what
+  // `IdentitySessionStore` is built over, and it is one wrap away: handed in
+  // unwrapped it is an object, so the constructor took it and `add` threw after
+  // its record was already written -- a rejection where a refusal was owed, and
+  // a record left behind with no item.
+  assert.throws(
+    () => new IdentityStore({
+      settings: settings(),
+      sessions: new MemorySecureStore(),
+      apiKey: 'synthetic-api-key',
+    }),
+    TypeError,
+  );
+});
