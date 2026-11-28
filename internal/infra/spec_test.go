@@ -6554,3 +6554,63 @@ func TestARepoNoProfileAdmitsIsUnmarked(t *testing.T) {
 		})
 	}
 }
+
+// The GitHub token path a job has, and the one thing the two credential flips
+// may never do: a job either mounts the App key and keeps its own account's
+// accessor on it, or reaches the credentials service that mints its tokens for
+// it — and the second is reachable only through the invoker grant the plan
+// declares per workflow (modules/workflow/sa.tf's
+// google_cloud_run_v2_service_iam_member.credentials, planned from
+// CredentialsServiceAddress). A repository left with neither has no way to get
+// a GitHub token at all, which is what the owner asked to be checked after the
+// run of 2026-11-27 (Part 2 of the task).
+//
+// The invariant is pinned here rather than left to reading, because the half
+// that would break it is not in this tree yet: config.ServiceHeldSecretNames is
+// empty until C2.2's release fills it, and the App key's accessor and mount
+// leave the job in the same plan as that name appears. The day it is filled,
+// the served fixtures must still carry the grant — and this test is what says
+// so, per workflow, over the same address list the retirement set is a
+// difference of.
+func TestRepoKeepsAGitHubTokenPath(t *testing.T) {
+	for _, tc := range []struct {
+		fixture  string
+		served   bool
+		twoFlows bool
+	}{
+		// The service is off: the repository's own path, unchanged (D147).
+		{fixture: "repo_root"},
+		// The service serves: the grant is there, and so is the key it would
+		// replace — the flip is what moves one to the other.
+		{fixture: "repo_root_credentials", served: true},
+		// Two workflows, an installation the service serves: the shape the
+		// owner's own repository has, and the one the five refused addresses
+		// were spread across.
+		{fixture: "repo_root_mixed_served", served: true, twoFlows: true},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			spec := repoRootFixtureSpec(t, tc.fixture)
+			if tc.twoFlows && len(spec.Workflows) < 2 {
+				t.Fatalf("%s deploys %d workflow(s): it no longer stands for a repository with two, which is the shape this test is about", tc.fixture, len(spec.Workflows))
+			}
+			addrs := spec.Addresses()
+			for w := range spec.Workflows {
+				p := `module.repo.module.workflow["` + w + `"].`
+				key := slices.Contains(addrs, p+`google_secret_manager_secret_iam_member.job["github-app-key"]`)
+				invoker := slices.Contains(addrs, p+"google_cloud_run_v2_service_iam_member.credentials[0]")
+				if !key && !invoker {
+					t.Errorf("%s: workflow %q has neither the App key's accessor nor the credentials service's invoker grant, so its job has no way to get a GitHub token", tc.fixture, w)
+				}
+				if !key {
+					t.Errorf("%s: workflow %q lost its App key accessor while config.ServiceHeldSecretNames is empty; the flip that takes it is C2.2's release", tc.fixture, w)
+				}
+				if invoker != tc.served {
+					t.Errorf("%s: workflow %q invoker grant = %v, want %v (CredentialsServiceAddress)", tc.fixture, w, invoker, tc.served)
+				}
+			}
+			if len(spec.Workflows) == 0 {
+				t.Errorf("%s: no workflows, so nothing was checked", tc.fixture)
+			}
+		})
+	}
+}

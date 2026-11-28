@@ -6794,12 +6794,21 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			// fetched class's is infra.VaultAccessorAllowDelete, the S4
 			// flip's are infra.BuildAccessorAllowDelete; CLAUDE.md's HARD
 			// RULE, and the switch in init_retire.go's retireManaged is the
-			// managed path's own). Every other change in this plan is judged
-			// exactly as it was.
+			// managed path's own). The fifth is the same rule for a removal
+			// that is NO flip's and no retirement's — a grant this update
+			// re-points, whose container or service moved under it
+			// (infra.RepointedGrantAllowDelete). It is the one such removal a
+			// plain run could not be told to make: the retirement's list is
+			// bounded to the addresses this spec no longer produces, so
+			// --retire can never name one, and a managed project's refusal
+			// names no flag at all — which is what left the owner's run of
+			// 2026-11-27 holding a command its own guard refused. Every other
+			// change in this plan is judged exactly as it was.
 			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.ModelAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.VaultAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.BuildAccessorAllowDelete(plan, spec)...)
+			allowed = append(allowed, infra.RepointedGrantAllowDelete(plan)...)
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
 				return plan, err
 			}

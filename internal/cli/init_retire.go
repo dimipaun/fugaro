@@ -1191,22 +1191,30 @@ func (r *initRun) retireWhat(spec infra.RepoSpec, rets []infra.Retirement) strin
 // own deletes of the retirement's addresses, intersected with --allow-delete
 // when the user gave one, so naming addresses can only narrow what may be
 // destroyed and never widen it (design §3.3, §4.2d).
+//
+// The re-pointed grants are added on top and are not the flag's to narrow
+// (infra.RepointedGrantAllowDelete): the plan a retirement runs is the
+// repository's own convergence, so it carries the same replaces the ordinary
+// plan does, and a retirement that refused one would end with the summary's
+// own `--retire` refused — the dead end the owner's run of 2026-11-27 read.
+// They are replaces the run still declares on both sides, not
+// retirements, so the set this list is bounded to is untouched.
 func retireAllowDelete(plan *tf.Plan, rets []infra.Retirement, flag []string) []string {
 	computed := infra.RetireAllowDelete(plan, rets)
-	if len(flag) == 0 {
-		return computed
-	}
-	named := make(map[string]bool, len(flag))
-	for _, a := range flag {
-		named[a] = true
-	}
-	var out []string
-	for _, a := range computed {
-		if named[a] {
-			out = append(out, a)
+	out := computed
+	if len(flag) > 0 {
+		named := make(map[string]bool, len(flag))
+		for _, a := range flag {
+			named[a] = true
+		}
+		out = nil
+		for _, a := range computed {
+			if named[a] {
+				out = append(out, a)
+			}
 		}
 	}
-	return out
+	return append(out, infra.RepointedGrantAllowDelete(plan)...)
 }
 
 // deleteList is the plan's deletes, one address a line: what the second
