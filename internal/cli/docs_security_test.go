@@ -677,7 +677,23 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"The launcher's reach",
 		"The replay bounds",
 		"**A shared job's reach is its profile's, and that is the residue this slice accepts (D475, G21):**",
-		"can still mint a run identity naming another repository the profile admits",
+		"can still obtain a run identity naming another repository the profile admits",
+		// The move itself (D3121, LM14): the launcher launches and the service
+		// mints, so the section states what a launcher may still do — launch,
+		// and not mint — and each residual the move leaves. Pinned one by one,
+		// because a reader of the trust model acts on each: the claim race, the
+		// denial of one launch, the bearer token, who writes past the rules, the
+		// class the scope check does not judge, and the issuer as a single point.
+		"**A launcher launches, and the service mints — this is the release that stops a launcher minting a run's identity (D3121, LM14).**",
+		"may launch any repository its launch scope admits and may not mint",
+		"**On Cloud Run a launcher who reads another run's ticket from its execution and runs code as the same job account before that run starts can claim first**",
+		"**And a roster caller who learns a run id before its launcher has asked can ask first and take the record**",
+		"**The caller's token is a bearer (O5):**",
+		"**The issuance record, and who writes past the rules (R3).**",
+		"a database admin, the history account, the coordinator's writer and the public mobile service's account",
+		"**A roster service account is the one class the scope check does not judge (D3137):**",
+		"**The issuer is a single point of every launch (D3121, R1).**",
+		"**And `rb` is still the launcher's own word (R11):**",
 		// The cap is advisory.
 		"ADVISORY",
 		// Egress stays a known limit (D144).

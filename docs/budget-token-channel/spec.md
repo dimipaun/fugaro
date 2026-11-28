@@ -150,6 +150,18 @@ than a proposal for it, and they supersede the pre-seal shape wherever one is na
 premise the four candidates were priced against (the token object under the `runs/` prefix, a
 readable plaintext token, a take that deletes), and it is the premise, not the shipped code.
 
+**Since 0.29.0 these five steps are what a launch does only where it signs the token itself** (LM6
+and LM7 of [docs/launcher-does-not-mint/](../launcher-does-not-mint/implementation-plan.md), the
+release `internal/cli/recipes_skew.go`'s `identitySince` names): where
+the installation's credentials service serves the ticket route, the launcher asks the service for the
+run's identity, puts the ticket it answers on the execution, and **signs nothing and writes no
+object** — the run claims the identity back with its own Google ID token and a nonce. What is left
+of this channel there is the bridge (R7): the three answers on which a launch still signs locally —
+no service configured, the service's own "not served", and a release-behind service's answer — and
+the runner of the release behind, which opens the sealed object an older launch left. The row itself
+moves a release later: `fugaro update` takes it off launchers and operators and gives it to the
+service in 0.30.0 (LM14, D3121), so a bridged launch is what the row is still there for until then.
+
 | step | where |
 | --- | --- |
 | **Mint** | `internal/cli/launch_budget.go`: `mintBudgetToken` (the decision is `budgetMintOn`) mints `token.Claims{Slug, Run, FX, FP, RB}` with `token.Mint` through `token.IAMSigner` built by `tokenSigner` |
@@ -185,9 +197,17 @@ Two properties of that channel are load-bearing and easy to lose in a redesign:
 
 Who may mint: the signer service account holds no roles (`deploy/terraform/gcp/modules/firebase/iam.tf`,
 `google_service_account.signer`), and the custom role `google_project_iam_custom_role.token_minter`
-holds exactly `iam.serviceAccounts.signJwt`, granted to the launchers and operators by
-`google_service_account_iam_member.minter`. So the ability to mint a budget identity for any
-repository is a property of "may launch", which SECURITY.md already states.
+holds exactly `iam.serviceAccounts.signJwt`, bound on that account by
+`google_service_account_iam_member.minter`. **The row is the credentials service's alone since 0.30.0
+(D3121, LM14)**: it was granted to the launchers and operators, so the ability to mint a budget
+identity for any repository was a property of "may launch" — the paragraph SECURITY.md carried — and
+`fugaro update` moves it to the service and to no other principal, only after a stage that makes the
+service sign a fixed payload and discard it (R8). A launcher now asks the issuer for a one-time ticket
+for the run it is launching and signs nothing itself, so a launcher credential is a launch of the
+repositories its scope admits rather than a signing key for the installation. The design behind the
+move, its residuals and what the issuer checks is
+[docs/launcher-does-not-mint/reconciliation.md](../launcher-does-not-mint/reconciliation.md); SECURITY.md
+states them for a reader of the trust model.
 
 ## 2. What phase 3 changes about it
 
@@ -295,9 +315,10 @@ Two failures are in scope and one is not:
   not answer this, because phase 3's grant is per prefix.
 - **Use** (can the peer turn what it reads into an identity): a channel that makes the object
   useless without a second factor answers the theft even where the reach stays.
-- Not in scope: a launcher, or anyone who may launch, minting a token for any repository. That is
-  D10 and SECURITY.md's own paragraph; it is not this channel's boundary, and pretending otherwise
-  would be the mistake §12a item 2 warns about.
+- Not in scope: a launcher, or anyone who may launch, obtaining a token for any repository. That is
+  the issuer's scope check and SECURITY.md's own paragraph — and since 0.30.0 the launcher no longer
+  mints one at all, it asks the service (D3121, above); it is not this channel's boundary, and
+  pretending otherwise would be the mistake §12a item 2 warns about.
 
 ## 5. The four candidates the plan lists, priced
 
