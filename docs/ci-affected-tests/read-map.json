@@ -8068,6 +8068,7 @@
         "internal/cli/testdata/init_commands.golden",
         "internal/cli/testdata/init_review.golden",
         "internal/cli/testdata/laconic_allowlist.txt",
+        "internal/cli/testdata/lifted/fugaro.yaml",
         "internal/cli/testdata/management_commands.golden",
         "internal/cli/testdata/models_add_plan.golden.json",
         "internal/cli/testdata/next_step_allow.golden",
