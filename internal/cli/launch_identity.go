@@ -592,6 +592,7 @@ func (i *launchIssuer) ask(ctx context.Context, req identitywire.TicketRequest) 
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	// The slip's own client, and not a second one: no redirect (the request
 	// carries this launcher's ID token, and a followed 307 would carry it to
 	// whatever host a Location named), no cookie jar, one bound.
