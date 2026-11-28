@@ -54,7 +54,11 @@ If `cloud:` is `stale`, or `rules:` or `policy:` is `stale` or `skipped` in this
 fugaro update
 ```
 
-Before they run it, say what it does. It is the whole upgrade in one run: it prints the state of every step first, then brings the installation and this checkout onto this binary — the job images, the deployed security rules generation the policy is read under, the published policy node an earlier Fugaro wrote, and the local step above — and installs the orchestrator daemon's login unit on this machine when it has none, re-rendering the one already there. It asks for nothing to be typed at those steps, managed or not: a person at their own terminal reads what each step prints and it goes on.
+Before they run it, say what it does. It is the whole upgrade in one run: it prints the state of every step first, then brings the installation and this checkout onto this binary — the job images, the deployed security rules generation the policy is read under, the published policy node an earlier Fugaro wrote, and the local step above — and installs the orchestrator daemon's login unit on this machine when it has none, re-rendering the one already there. It asks for nothing to be typed at those steps: a person at their own terminal reads what each step prints and it goes on. On an installation that is not managed it stops first, before it writes anything — at the head of its engine, before the first cloud write and before it rewrites this machine's own config — and exits 1 with a refusal that names the one command that flags a project, which this session may not run in any form. That refusal is the user's answer, not a failure: hand them that command, which they run once in their own terminal, not through the agent (it needs no argument — it flags the selected installation's own project — and records 100 USD unless they pass `--budget`/`--budget-currency`), then the command above again:
+
+```bash user-runs
+fugaro managed flag
+```
 
 A pin an earlier release committed to a checkout is named by `doctor` and `update`, with the line to delete: nothing writes a pin any more, so the edit is the user's to make and never yours.
 

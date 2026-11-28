@@ -89,7 +89,7 @@ var npPolicyCopies = []struct {
 		"**The managed gate records what it used to refuse, and the record is what a reader has afterwards.**",
 		"The gate belongs to `fugaro update` on a managed project",
 		"`fugaro setup` applies its Terraform with no gate at all",
-		"a project that is not managed keeps the confirmations and the coding agent's refusals it had, and leaves no record",
+		"what a project that is not managed gets is the fence below, not a record",
 		"that gate is audit-only for what a plan *contains*",
 		"a delete or replace of a **data-bearing or unclassified** type refuses",
 		"the identity that applied the plan is the identity that could delete the record",
