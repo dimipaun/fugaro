@@ -7,7 +7,7 @@ Two things make an ordinary `fugaro update --repo` fail at this:
 - A secret container carries `prevent_destroy` in the configuration, so a plan that would destroy one fails before the delete guard sees it.
 - A job carries `deletion_protection = true` in the state, and once its variant has left the configuration no apply can lower it: `--allow-job-delete` reaches only the jobs the configuration still declares.
 
-An ordinary run prints what the change retires before it plans — the addresses going away and why — and names the command that finishes it. That summary is a warning, not a refusal: the run goes on to plan, and exits 1 only in the two cases above.
+An ordinary run prints one warning line before it plans — how many addresses the change retires, how many go away, how many are kept, and the log holding the rest — and names the command that finishes it. The addresses going away and why, the kept secrets and the order of operations are the log's (and `--json`'s), not the terminal's. That warning is not a refusal: the run goes on to plan, and exits 1 only in the two cases above.
 
 ## The one-command form (**per repository**)
 

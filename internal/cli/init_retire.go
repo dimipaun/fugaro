@@ -433,9 +433,10 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 		fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
 	}
 
-	// 1. The prediction, confirmed. Nothing has left the state yet, so this
-	//    banner is the only place the kept secrets and the job delete are
-	//    named before they happen. (A managed project's own retirement has no
+	// 1. The prediction, confirmed. Nothing has left the state yet, so the
+	//    summary on the log is the only place the kept secrets and the job
+	//    delete are named before they happen, and the banner is one line of
+	//    counts. (A managed project's own retirement has no
 	//    confession to ask for at this point: what it consents to is a plan,
 	//    and no plan exists until step 2 has run.)
 	if err := r.retireConsent(ctx, t, rets, spec, "nothing was removed from Terraform's state and nothing was deleted", false, nil, nil); err != nil {
