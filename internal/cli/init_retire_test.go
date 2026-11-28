@@ -145,6 +145,11 @@ type retireOpts struct {
 	// the repository's configuration never produced, of a type the allowlist
 	// allows: the stop it makes is the module bound's and not the type's.
 	foreign bool
+	// repoint adds the grants this release re-points to the plan: a replace
+	// of a grant address whose container or service moved under it, which the
+	// retirement set does not name -- the spec still produces the address on
+	// both sides of the change.
+	repoint []planChange
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -203,6 +208,7 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	if o.foreign {
 		plan = append(plan, retireChange(retireForeignAddr, "google_service_account", "delete"))
 	}
+	plan = append(plan, o.repoint...)
 	b, err := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": plan})
 	if err != nil {
 		t.Fatal(err)

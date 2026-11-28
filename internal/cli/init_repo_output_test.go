@@ -270,3 +270,68 @@ func TestUpdateRepoRefusalJSONKeepsGuardsOwnText(t *testing.T) {
 		t.Errorf("the document's error is not Guard's own sentence:\n%s", doc.Error)
 	}
 }
+
+// repointChange is one grant this release re-points: the same principal bound
+// to the same role, at the same address, with the container or the service
+// under it moved. Terraform plans it as ["delete","create"], which is what the
+// guard refuses and what no `--retire` can admit — the address is one the spec
+// still produces on both sides.
+func repointChange(addr, typ, moved, before, after string) planChange {
+	const member = "serviceAccount:job@proj-1234.iam.gserviceaccount.com"
+	const role = "roles/secretmanager.secretAccessor"
+	return planChange{"address": addr, "type": typ, "change": map[string]any{
+		"actions": []string{"delete", "create"},
+		"before":  map[string]any{"member": member, "role": role, moved: before},
+		"after":   map[string]any{"member": member, "role": role, moved: after},
+	}}
+}
+
+// repointedGrants is the owner's own five, in shape: the job's App key
+// accessor and the credentials service's invoker grant, on the two workflows
+// their repository deploys.
+func repointedGrants() []planChange {
+	var out []planChange
+	for _, w := range []string{"web", "web_belong"} {
+		out = append(out,
+			repointChange(`module.repo.module.workflow["`+w+`"].google_secret_manager_secret_iam_member.job["github-app-key"]`,
+				"google_secret_manager_secret_iam_member", "secret_id",
+				"fugaro-acme-sandbox-github-app-key-9f2", "fugaro-project-acme-github-app-key-3c1"),
+			repointChange(`module.repo.module.workflow["`+w+`"].google_cloud_run_v2_service_iam_member.credentials[0]`,
+				"google_cloud_run_v2_service_iam_member", "location",
+				"us-east5", "europe-west1"),
+		)
+	}
+	return out
+}
+
+// A managed project's update re-points fugaro's own grants with no refusal:
+// the whole of the fix for the owner's run of 2026-11-27, whose summary named
+// `fugaro update --repo . --retire` and whose run then refused the same
+// addresses — a command the owner could type and be refused by, and, on a
+// managed project, the only one the refusal would have named.
+//
+// The rig is a managed installation at a terminal whose retirement set is not
+// empty, which is the run the owner's was: the summary printed, the retirement
+// ran, and the plan under it carried the re-points.
+func TestUpdateRepoRepointedGrantsAreTheUpdatesOwnDecision(t *testing.T) {
+	r := newRetireRig(t, retireOpts{stateEmpty: true})
+	r.setPlanAt(t, "repo", repointedGrants()...)
+	r.script["plan"] = map[string]any{"exit": 2}
+	r.save(t)
+	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
+	text := readOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s; want the re-pointed grants admitted, not refused", ExitCode(err), err, text)
+	}
+	if applies := r.applies(t); len(applies) != 1 {
+		t.Errorf("applies = %v, want the run's one apply", applies)
+	}
+	for _, never := range []string{"this run would delete or replace", managedDeleteAdviceTerminal, initManagedDeleteAdvice} {
+		if strings.Contains(text, never) {
+			t.Errorf("the run carries the refusal %q it must not reach:\n%s", never, text)
+		}
+	}
+	if !strings.Contains(text, retireNextCommand) {
+		t.Errorf("the terminal no longer carries the retirement summary's own next command:\n%s", text)
+	}
+}
