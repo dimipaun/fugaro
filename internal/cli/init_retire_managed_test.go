@@ -215,8 +215,8 @@ func TestUpdateManagedRetiresItsOwnDerivedResources(t *testing.T) {
 	if strings.Contains(text, "addresses of "+initProject+": remove") {
 		t.Errorf("the managed retirement asked its first typed confirmation:\n%s", text)
 	}
-	if !strings.Contains(text, initflow.GateProceeded()) {
-		t.Errorf("the output does not say the verdict is the confirmation here:\n%s", text)
+	if strings.Contains(text, initflow.GateProceeded()) {
+		t.Errorf("a step that needs no answer read the sentence of a confirmation:\n%s", text)
 	}
 	retirementOrder(t, r, text)
 	// The plan, its own counts and its full delete list are still printed.

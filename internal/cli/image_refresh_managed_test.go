@@ -541,8 +541,12 @@ func TestImageRefreshManagedOwnerTerminalAsksNoBuildQuestion(t *testing.T) {
 			if strings.Contains(got, "Type "+initProjectName+" to confirm") || strings.Contains(got, "⚠ CONFIRM") {
 				t.Errorf("the removed prompt is still printed:\n%s", got)
 			}
-			if wantVerdict := tc.managed; strings.Contains(got, initflow.GateProceeded()) != wantVerdict {
-				t.Errorf("the verdict's own sentence is printed=%v, want %v:\n%s", !wantVerdict, wantVerdict, got)
+			// The build's own line is the whole of what the owner reads: the
+			// sentence accounting for the confirmation the verdict replaced is
+			// what made a finished step read as a question (the owner's run of
+			// 2026-11-27/28).
+			if strings.Contains(got, initflow.GateProceeded()) {
+				t.Errorf("a step that needs no answer read the sentence of a confirmation:\n%s", got)
 			}
 		})
 	}

@@ -3052,7 +3052,15 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	}
 	if r.asksNothing() {
 		r.willDo(what)
-		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
+		// The sentence is the arm's own, whichever gate answered: update's gate
+		// stands in for the run's confirmation (OwnerProceeded), the one
+		// `fugaro image refresh` makes for itself announces its own steps
+		// (GateOrdinary) — the same two the arm after the banner prints.
+		sentence := initflow.GateOrdinary()
+		if r.gateStandsIn() {
+			sentence = initflow.OwnerProceeded()
+		}
+		fmt.Fprintf(r.stageDetail(), "  %s\n", sentence)
 		return true, nil
 	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
@@ -3113,6 +3121,7 @@ func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Condi
 	out := cmd.OutOrStdout()
 	if managed && initflow.PersonAtTheTerminal(c) {
 		fmt.Fprintf(out, "note: %s\n", what)
+		fmt.Fprintf(out, "  %s\n", initflow.OwnerProceeded())
 		return nil
 	}
 	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)

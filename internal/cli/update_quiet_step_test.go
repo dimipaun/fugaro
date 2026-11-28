@@ -57,11 +57,11 @@ func TestAStageWriteNothingIsAskedAboutPrintsNoConfirm(t *testing.T) {
 			if !strings.Contains(got, what) {
 				t.Errorf("the step does not name what it writes:\n%s", got)
 			}
-			// A step nothing is asked about carries no warning mark and no
-			// managed sentence either: there is no confirmation to account for.
+			// A step nothing is asked about carries no warning mark either:
+			// there is no confirmation for one to be read under.
 			if !tc.banner {
-				if strings.Contains(got, "⚠ Review these first") || strings.Contains(got, initflow.OwnerProceeded()) {
-					t.Errorf("a step nothing is asked about carried a warning or the managed sentence:\n%s", got)
+				if strings.Contains(got, "⚠ Review these first") || strings.Contains(got, initflow.GateProceeded()) {
+					t.Errorf("a step nothing is asked about carried a warning or the verdict's sentence:\n%s", got)
 				}
 				if strings.Contains(got, "Type ") || strings.Contains(got, "[y/N]") {
 					t.Errorf("a step nothing is asked about put a question:\n%s", got)

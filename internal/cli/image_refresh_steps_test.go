@@ -1073,7 +1073,10 @@ func TestAnnounceBuildAsksNothing(t *testing.T) {
 		want []string
 	}{
 		{name: "no gate at all", g: initflow.Managed{}, want: []string{"do the thing"}},
-		{name: "the gate's verdict", g: initflow.Managed{Managed: true, Admitted: true}, want: []string{"do the thing", initflow.GateProceeded()}},
+		// The gate's verdict adds no sentence: the step's own line is the whole
+		// of what a step nobody is asked about prints (the owner's run of
+		// 2026-11-27/28).
+		{name: "the gate's verdict", g: initflow.Managed{Managed: true, Admitted: true}, want: []string{"do the thing"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newInitRig(t)

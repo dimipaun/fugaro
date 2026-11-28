@@ -774,8 +774,10 @@ func TestManagedAskDoesNotPutTheBuildsNameBack(t *testing.T) {
 			if strings.Contains(out.String(), "to confirm") || strings.Contains(out.String(), "⚠ CONFIRM") {
 				t.Errorf("the removed prompt is still printed:\n%s", out.String())
 			}
-			if got := strings.Contains(out.String(), initflow.GateProceeded()); got != !ask {
-				t.Errorf("the gate's sentence printed=%v, want %v:\n%s", got, !ask, out.String())
+			// Whatever --ask did, the owner reads the build's own line and no
+			// sentence: a step that needs no answer may not read as a question.
+			if strings.Contains(out.String(), initflow.GateProceeded()) {
+				t.Errorf("a step that needs no answer read the sentence of a confirmation:\n%s", out.String())
 			}
 		})
 	}
