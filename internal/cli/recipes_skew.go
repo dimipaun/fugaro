@@ -5971,13 +5971,13 @@ func l8LaunchSkew(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.W
 
 // deadGradeModelPath is one of L13's two dead keys (DK2, R11): a repository's
 // own model_grades.<grade>.model, which the project owns — the ladder's grades
-// are a model choice of the project's (G3, D2039), and a file's entry has been
-// dropped and recorded by the merge since before this release. The two are
-// lifted keys (config.LiftedKeys) and the only model_grades entries on that
-// list: a grade's `.access` is model-credentials-routing's, retired and still
-// honoured until that plan's own release 2 (R11), so the model is named here
-// and the subtree is not: a `.access` row added to the lift one day would be
-// that plan's to refuse, not this one's.
+// are a model choice of the project's (G3, D2039), and a file's entry is
+// dropped and named where it is written. The two are lifted keys
+// (config.LiftedKeys) and the only model_grades entries on that list: a grade's
+// `.access` is model-credentials-routing's, retired and still honoured until
+// that plan's own release 2 (R11), so the model is named here and the subtree
+// is not: a `.access` row added to the lift one day would be that plan's to
+// refuse, not this one's.
 func deadGradeModelPath(path string) bool {
 	return strings.HasPrefix(path, "model_grades.") && strings.HasSuffix(path, ".model")
 }

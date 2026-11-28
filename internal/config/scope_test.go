@@ -193,9 +193,9 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// The escalation ladder's two model grades (docs/outer-loop-escalation
 		// E2, D2039). Both halves of both grades are the project's, and this is
 		// the one key of the crafts' kind whose access the project layer may
-		// name: a repository's entry for a grade is dropped and recorded by the
-		// merge rather than honoured (G3), so the project layer is where a
-		// grade's credential or pool can be chosen at all (whyGrade).
+		// name: no layer of a run's merge reads a repository's entry for a grade
+		// (G3), so the project layer is where a grade's credential or pool can
+		// be chosen at all (whyGrade).
 		"model_grades.strong.model":        InProject | InRepo,
 		"model_grades.strong.access":       InProject | InRepo,
 		"model_grades.strongest.model":     InProject | InRepo,

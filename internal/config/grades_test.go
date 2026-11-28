@@ -9,9 +9,10 @@ import (
 // D2039): `strong` and `strongest`, each the model a rung of the ladder runs
 // and the credential or pool its calls go out on, the pair a craft carries.
 // They are written in the project layer for every repository of the project
-// and in a repository's own file — which the merge drops and records
-// (internal/policy's tightenGrades), so the two spellings here are both keys
-// this package has to admit and validate.
+// and in a repository's own file — which no layer of a run's merge reads (the
+// models are lifted, config.LiftedKeys, and the access rows are
+// model-credentials-routing's) — so the two spellings here are both keys this
+// package has to admit and validate.
 
 const gradeHead = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
 
@@ -76,8 +77,8 @@ func TestModelGradesAreValidatedWhereTheyAreWritten(t *testing.T) {
 	}
 
 	// The repository's own file writes the same key at its top level, and it is
-	// admitted there: the entry is dropped and recorded by the merge, which is
-	// the counterpart of admitting it here (E2's note). Its rules are the same
+	// admitted there: no layer of a run's merge reads the entry, which is the
+	// counterpart of admitting it here (E2's note). Its rules are the same
 	// ones, at the path the file writes.
 	cfg, ps := Parse([]byte(minimalYAML +
 		"model_grades:\n  strong: {model: anthropic/claude-sonnet-5.5, access: openrouter-main}\n"))
