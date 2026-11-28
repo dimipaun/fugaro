@@ -42,39 +42,6 @@ Still missing for acme/sandbox:
     fugaro secrets set claude-oauth-token --repo acme/sandbox
   Then rerun fugaro setup --repo when they are stored.
 deleted the orphaned Cloud Run job fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0])
-The local config <tmp> changes:
-  + version: 3
-  - version: 1
-  + base_images:
-  +     base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0
-  + build:
-  +     service_account: fugaro-build@proj-1234.iam.gserviceaccount.com
-  +     machine_type: E2_HIGHCPU_8
-  - build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
-  + max_parallel: 20
-  + endpoints:
-  +     run: http://127.0.0.1:<port>/
-  +     logging: http://127.0.0.1:<port>/
-  +     secret_manager: http://127.0.0.1:<port>/
-  +     storage: http://127.0.0.1:<port>/storage/v1/
-  +     iam: http://127.0.0.1:<port>/
-  +     artifact_registry: http://127.0.0.1:<port>/
-  +     resource_manager: http://127.0.0.1:<port>/
-  +     cloud_scheduler: http://127.0.0.1:<port>/
-  +     service_usage: http://127.0.0.1:<port>/
-  +     no_auth: true
-  - endpoints: { run: http://127.0.0.1:<port>/, secret_manager: http://127.0.0.1:<port>/, storage: http://127.0.0.1:<port>/storage/v1/, iam: http://127.0.0.1:<port>/, artifact_registry: http://127.0.0.1:<port>/, resource_manager: http://127.0.0.1:<port>/, logging: http://127.0.0.1:<port>/, cloud_scheduler: http://127.0.0.1:<port>/, service_usage: http://127.0.0.1:<port>/, no_auth: true }
-  +     acme/sandbox:
-  +         provider: bitbucket
-  +         base_branch: master
-  +         workflows:
-  +             - app
-  +         credentials_service_ready: false
-  +         provider_keys_served: false
-  +         stage_account_served: false
-  -   acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
-  - base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0}
-backed up the old local config to <tmp>
 wrote <tmp>
 published the shared config to gs://fugaro-runs-proj-1234/fugaro/config.yaml
 project: aurora (GCP proj-1234)

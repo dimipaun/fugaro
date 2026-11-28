@@ -241,13 +241,13 @@ var jobConfigCopyTimeout = 30 * time.Second
 // error past that point (the checkout's origin, a workflow's spec, the
 // cloud connection or a job read itself — any of which could carry a URL
 // or, from an underlying client, a token).
-func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string {
+func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) (line, detail string) {
 	rf, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
 		if v.state == cloudFailed {
 			return couldNotCheckJobConfigCopy(v.reason)
 		}
-		return "" // a U9 skip (cloudNotHere): nothing to check here
+		return "", "" // a U9 skip (cloudNotHere): nothing to check here
 	}
 	repoURL, err := checkoutURL(ctx, root)
 	if err != nil {
@@ -261,10 +261,14 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 // repository read from the project's own list alike (a view, U4/R6), so the two
 // say the same thing about the same job. sets is whether that file writes
 // git.base_branch itself (config.SetsGitBaseBranch, what infra.Inputs carries).
-func jobConfigCopyNoteFor(ctx context.Context, lc *localcfg.Config, repo string, cfg *config.Config, sets *bool, repoURL string) string {
+// It answers a pair: line is the one short sentence a person reads (D1354's
+// one line per step, and the laconic budget), and detail is the whole account
+// of the drift, which goes to the log and to --json and never to the terminal.
+// detail is "" when it would only restate line.
+func jobConfigCopyNoteFor(ctx context.Context, lc *localcfg.Config, repo string, cfg *config.Config, sets *bool, repoURL string) (line, detail string) {
 	names := slices.Sorted(maps.Keys(cfg.Workflows))
 	if len(names) == 0 {
-		return ""
+		return "", ""
 	}
 	// jobConfigCopyNote is an advisory extra on an otherwise-successful
 	// cloud step, not the thing the operator ran for (the same risk
@@ -282,7 +286,7 @@ func jobConfigCopyNoteFor(ctx context.Context, lc *localcfg.Config, repo string,
 		JobFullEnv(ctx context.Context, job string) (map[string]string, bool, error)
 	})
 	if !ok {
-		return ""
+		return "", ""
 	}
 	var now map[string]string
 	var diffs []string
@@ -322,7 +326,7 @@ func jobConfigCopyNoteFor(ctx context.Context, lc *localcfg.Config, repo string,
 		}
 	}
 	if !anyJob {
-		return "" // no workflow has a deployed job here yet
+		return "", "" // no workflow has a deployed job here yet
 	}
 	mount := jobConfigCopyMountNote(slices.Sorted(maps.Keys(projectScopes)))
 	// The credentials clause (C1.20) is orthogonal to both of the halves
@@ -341,26 +345,63 @@ func jobConfigCopyNoteFor(ctx context.Context, lc *localcfg.Config, repo string,
 		// there is nothing this note could tell them and it stays
 		// silent, exactly as it did before the mounts had a clause.
 		if mount == "" && creds == "" {
-			return ""
+			return "", ""
 		}
 		if mount == "" {
-			return "the deployed job's environment matches the local project config, but " + creds
+			return jobConfigCopyCascadeLine,
+				"the deployed job's environment matches the local project config, but " + creds
 		}
-		return "the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount + joinClause(creds)
+		return jobConfigCopyMountLine,
+			"the deployed job's environment matches the local project config, but the mounts are not in that copy: " + mount + joinClause(creds)
 	}
-	stale := fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it",
-		strings.Join(diffs, "; "))
+	// The one line a person reads is the same whichever half of the drift is
+	// the reason to speak: what a person does about it is one command either
+	// way, and which keys the published policy has taken over is the log's
+	// business, not a sentence to read a wall of on the way past (the policy
+	// half below is unchanged and still says it there).
+	full := "the deployed job's copy of the local project config is STALE (" + strings.Join(diffs, "; ") + "): a version upgrade never refreshes it"
 	// The policy half (plan task 1.6 step 5): with a policy published, the
 	// keys it governs are read from the node at run time, so drift in them is
 	// no longer a reason to re-run update --repo — and saying which keys still
 	// are is the difference between a note the operator acts on and one they
 	// learn to ignore.
 	if p := jobConfigCopyPolicyNote(cctx, lc); p != "" {
-		return stale + p + joinClause(mount) + joinClause(creds)
+		return jobConfigCopyStaleLine, full + p + joinClause(mount) + joinClause(creds)
 	}
 	tail := fmt.Sprintf("; runs on %s use the old copy until you run fugaro update --repo . in your own terminal (never run automatically)",
 		pluginwire.Printable(repo))
-	return stale + tail + joinClause(mount) + joinClause(creds)
+	return jobConfigCopyStaleLine, full + tail + joinClause(mount) + joinClause(creds)
+}
+
+// The one line the drift note puts on a terminal, one per shape of drift. Each
+// names the one command that clears it, which is the same command in all three
+// shapes; what differs is only what a person is being told is wrong.
+const (
+	// jobConfigCopyStaleLine: the deployed job's copy of the local project
+	// config differs from the one this checkout computes.
+	jobConfigCopyStaleLine = "the deployed job's config copy is stale: run fugaro update --repo . in your own terminal to refresh it"
+	// jobConfigCopyMountLine: the copy matches, but the mounts (which no env
+	// diff can see) may have moved with a project secret created or deleted
+	// since the last update --repo.
+	jobConfigCopyMountLine = "the deployed job's mounts are not in its config copy: run fugaro update --repo . in your own terminal"
+	// jobConfigCopyCascadeLine: agent.auth is cascade and its owner-run deploy
+	// step has not been taken for this repository yet.
+	jobConfigCopyCascadeLine = "this repository's cascade auth is not deployed yet: run fugaro update --repo . in your own terminal"
+)
+
+// printJobConfigCopyNote puts the note's one line on the terminal and its whole
+// account in the log (detailOut, which is the terminal too where a run has no
+// log): the line is what a person acts on, and the drift it summarizes — which
+// keys differ, which of them the published policy has taken over — is what the
+// log and --json are for.
+func printJobConfigCopyNote(u *stepCtx, line, detail string) {
+	if line == "" {
+		return
+	}
+	if detail != "" && detail != line {
+		fmt.Fprintf(u.detailOut(), "note: %s\n", detail)
+	}
+	fmt.Fprintf(u.w, "note: %s\n", line)
 }
 
 // joinClause is one "; "-separated clause, or nothing when the clause is ""
@@ -468,8 +509,9 @@ func jobConfigCopyPolicyNote(ctx context.Context, lc *localcfg.Config) string {
 // (not "no job yet") stops it from comparing the copies: a fixed, per-step
 // reason, never the error's own text, so nothing it might carry (a bucket or
 // API URL, a client's wrapped token) can reach the terminal through it.
-func couldNotCheckJobConfigCopy(reason string) string {
-	return "could not check the job's config copy (" + reason + "); its providers, model_prices, budget and other owner-only settings may be stale without this saying so"
+func couldNotCheckJobConfigCopy(reason string) (line, detail string) {
+	line = "could not check the job's config copy (" + reason + ")"
+	return line, line + "; its providers, model_prices, budget and other owner-only settings may be stale without this saying so"
 }
 
 // jobConfigDiffs names every way job (the deployed workflow job's whole env)
@@ -721,9 +763,8 @@ func cloudStep(ctx context.Context, u *stepCtx) stepResult {
 	if err := runImageRefresh(u.cmd, ro); err != nil {
 		return stepResult{state: stepFailed, code: ExitCode(err), reason: oneLine(err.Error())}
 	}
-	if note := jobConfigCopyNote(ctx, u.loc.Root, u.o.refresh.cloud); note != "" {
-		fmt.Fprintf(u.w, "note: %s\n", note)
-	}
+	line, detail := jobConfigCopyNote(ctx, u.loc.Root, u.o.refresh.cloud)
+	printJobConfigCopyNote(u, line, detail)
 	if plan != nil && plan.current() {
 		return stepResult{state: stepCurrent, reason: "no base image to pin and no image to rebuild"}
 	}
@@ -787,9 +828,8 @@ func viewCloudStep(ctx context.Context, u *stepCtx) stepResult {
 	if err := runImageRefresh(u.cmd, ro); err != nil {
 		return stepResult{state: stepFailed, code: ExitCode(err), reason: oneLine(err.Error())}
 	}
-	if note := jobConfigCopyNoteFor(ctx, rv.lc, rv.v.Repo, rv.v.Cfg, rv.setsBaseBranch(), repoURL); note != "" {
-		fmt.Fprintf(u.w, "note: %s\n", note)
-	}
+	line, detail := jobConfigCopyNoteFor(ctx, rv.lc, rv.v.Repo, rv.v.Cfg, rv.setsBaseBranch(), repoURL)
+	printJobConfigCopyNote(u, line, detail)
 	if plan != nil && plan.current() {
 		return stepResult{state: stepCurrent, reason: "no base image to pin and no image to rebuild"}
 	}
