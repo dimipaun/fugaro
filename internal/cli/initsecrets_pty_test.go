@@ -615,6 +615,9 @@ func TestUpdateAsksValuesOnlyUnderAsk(t *testing.T) {
 		if got := r.store.latestProject(r.e.lc.Name, "bitbucket-token"); got != "" {
 			t.Fatalf("a value was stored without --ask: %q", got)
 		}
+		if strings.Contains(r.out.String(), initflow.AskValues()) {
+			t.Errorf("the flag's value line printed where nothing is asked: %q", r.out.String())
+		}
 	})
 
 	t.Run("with --ask it asks and stores the value it read about", func(t *testing.T) {
@@ -635,11 +638,37 @@ func TestUpdateAsksValuesOnlyUnderAsk(t *testing.T) {
 		if got := r.store.latestProject(r.e.lc.Name, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
 			t.Fatalf("the project's copy = %q, want the value the prompt took", got)
 		}
+		// And the flag's own line, printed by the stage where it really asks and
+		// not by the gate, which knows neither that a value is missing nor that
+		// this checkout can be asked about (D3347, R18).
+		if !strings.Contains(r.out.String(), initflow.AskValues()) {
+			t.Errorf("--ask did not say that the value is asked for here: %q", r.out.String())
+		}
 		for _, l := range lr.res.Left {
 			if strings.Contains(strings.Join(l.Commands, "\n"), "fugaro update") {
 				t.Fatalf("the run left its own door for a value it took: %v", l.Commands)
 			}
 		}
 		noLeak(t, "bb-secret-value-EXAMPLE", tokenValue, resultJSON(t, lr.res), r.out.String(), r.errOut.String())
+	})
+
+	t.Run("with --ask and every name stored the flag says nothing", func(t *testing.T) {
+		f := newTTY(t)
+		r := rig(t, f)
+		r.e.r.o.ask = true
+		// The one name this rig finds missing is stored where the stage reads
+		// it, so the flag has no value to ask for and its line must not promise
+		// one.
+		r.store.seedProject(r.e.lc.Name, "bitbucket-token", "stored-EXAMPLE")
+		lr := waitLoop(t, r.start(context.Background()))
+		if got := stateOf(lr.res, initflow.Secrets); got != initflow.Done {
+			t.Fatalf("state = %q, want done: every name is stored (stderr %q)", got, r.errOut.String())
+		}
+		if strings.Contains(r.errOut.String(), "(input hidden)") {
+			t.Fatalf("the stage prompted where every name is stored: %q", r.errOut.String())
+		}
+		if strings.Contains(r.out.String(), initflow.AskValues()) {
+			t.Errorf("--ask printed its value line where no value is missing: %q", r.out.String())
+		}
 	})
 }
