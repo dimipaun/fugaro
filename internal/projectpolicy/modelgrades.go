@@ -22,8 +22,8 @@ import (
 // on, is a decision the owner publishes. The project layer's
 // defaults.model_grades is the other home D2039 gives it — the file an owner
 // writes for every repository of the project — and a repository's fugaro.yaml
-// may name one, which the merge drops and records (internal/policy's
-// tightenGrades): a grade is a model choice the project owns (G3). Neither
+// may still name one, which its own reader drops and names
+// (config.LiftedKeys): a grade is a model choice the project owns (G3). Neither
 // home creates a credential: a grade's access names one of the project's own,
 // and the resolver refuses a name no layer holds (MC2).
 //

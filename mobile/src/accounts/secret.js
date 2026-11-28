@@ -34,11 +34,12 @@
 // every other conversion (`String()`, a template literal, `JSON.stringify`,
 // `util.inspect`, `Object.entries`, a spread) prints `[secret <item>]`
 // instead. The boundary scan (`src/boundary.test.js`) then has something to
-// grep for: in production code `reveal(` appears in this module and in
-// `secure-store.js` -- the one place material is handed to a store -- and
-// nowhere else under `mobile/`. That is the shape Voice D54b's clause (3)
-// gives its renderer test, and reconciliation §4 tension (b2) clause (4) asks
-// this task for the same thing.
+// grep for: in production code `reveal(` appears in this module; in
+// `secure-store.js`, the one place material is handed to a store; and in
+// `src/session/devicekey.js`, which hands the device key's seed to Ed25519
+// once -- and nowhere else under `mobile/`. That is the shape Voice D54b's
+// clause (3) gives its renderer test, and reconciliation §4 tension (b2)
+// clause (4) asks this task for the same thing.
 //
 // **The value is printable ASCII, and that is a platform rule.** Both items
 // are ASCII by construction (a JWT is base64url and dots; a MAC key is base64

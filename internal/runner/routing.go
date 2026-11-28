@@ -209,8 +209,8 @@ func (r *run) routeModel(model string) (string, error) {
 // grade runs are the project layer's to say, and the merge's first layer — the
 // ceiling, which is the owner's published policy node or the copy of his
 // project layer this job carries (policyCeiling, and policy.tightenGrades,
-// which records every later layer's attempt instead of taking it) — is the
-// only layer that fills r.policy.Grades. So a repository's file and the task
+// which reads that layer's grades and no later layer's) — is the only layer
+// that fills r.policy.Grades. So a repository's file and the task
 // itself cannot reach a model or a credential through this field even by
 // writing one: the value is looked up in the project's own table or the run
 // refuses, which is what makes the two halves of a grade one choice rather

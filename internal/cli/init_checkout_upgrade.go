@@ -73,6 +73,14 @@ type checkoutStage struct {
 	// does not run is a fact about the plan, and the loop asks for the line
 	// after the stage has answered.
 	planned []repoPlace
+	// gate is the managed gate this command read once and handed to every
+	// repository's refresh, and gateRead is whether that read was made at all:
+	// a nil gate is an answer too — "not managed", a mark that could not be
+	// read, or a session openRefreshManaged reads nothing for — and re-reading
+	// to reach it again is the per-repository cost this memo exists to remove
+	// (refreshGate).
+	gate     *refreshManaged
+	gateRead bool
 }
 
 func newCheckoutStage(e *initEngine) *checkoutStage { return &checkoutStage{e: e} }
@@ -433,6 +441,32 @@ func (s *checkoutStage) placeCtx(env initflow.Env, p repoPlace) *stepCtx {
 	return u
 }
 
+// refreshGate is the managed gate this command reads once and hands to every
+// repository's refresh (openRefreshManaged, D1015). What the read answers — is
+// this project managed — is a fact about the installation and not about one
+// repository, and every place of this stage carries the same installation
+// (placeCtx), so one read answers for all of them: a project of four
+// repositories pays for the config read, the clients, the budget database and
+// the marks once rather than four times.
+//
+// The read is made from the first place that runs a step, through the same
+// options viewCloudStep runs that step with (viewRefreshOptions), and its
+// answer is kept whether or not it opened: "not managed", a mark that could not
+// be read and the sessions openRefreshManaged reads nothing for are one answer
+// each for the whole command, and a second read to reach it again is the
+// per-repository cost this exists to remove.
+//
+// It records nothing itself: the gate's record is the build's, written after
+// the submission the build's own admit was for (refreshBuilds).
+func (s *checkoutStage) refreshGate(ctx context.Context, u *stepCtx) *refreshManaged {
+	if !s.gateRead {
+		s.gateRead = true
+		ro := viewRefreshOptions(u, u.view)
+		s.gate = openRefreshManaged(ctx, u.cmd, ro, refreshInitOptions(ro))
+	}
+	return s.gate
+}
+
 // checkPlace is one repository's step in its check mode: read-only, no prompt,
 // and quiet. The notes and warnings a check prints — the fork warning, the
 // caveat on the deployed job's config copy — belong to the apply that really
@@ -522,6 +556,10 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 		pu := s.placeCtx(env, p)
 		r := stepResult{name: p.step.name, state: stepSkipped, reason: p.skip}
 		if p.skip == "" {
+			// The gate this command reads once, handed to every repository's
+			// refresh (refreshGate): runImageRefresh reads only where the
+			// caller handed it none.
+			pu.o.refresh.managed = s.refreshGate(ctx, pu)
 			r = p.step.run(ctx, pu)
 			r.name = p.step.name
 			s.record(p, r)

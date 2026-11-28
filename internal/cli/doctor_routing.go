@@ -240,22 +240,26 @@ func doctorRoutingBundleChecks(ctx context.Context, lc *localcfg.Config, repos [
 	if err := store.check(ctx); err != nil {
 		return []doctorCheck{{ID: doctorRoutingBundleID, Severity: "warning",
 			Problem: fmt.Sprintf("%s, and this installation has no bundle container (%s): every one of those sources is served nothing, and the call falls to the chain's next source", what, pluginwire.Printable(store.id)),
-			Fix:     selfCommand() + " creds set NAME (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " update (re-applies the installation root with the credentials service on, which creates the container), then " + selfCommand() + " creds set NAME"}}
 	}
 	meta, err := store.newest(ctx)
 	switch {
 	case errors.Is(err, errNoBundleVersion):
 		return []doctorCheck{{ID: doctorRoutingBundleID, Severity: "warning",
 			Problem: fmt.Sprintf("%s, and this installation's bundle (%s) holds no version: every one of those sources is served nothing, and the call falls to the chain's next source", what, pluginwire.Printable(store.id)),
-			Fix:     selfCommand() + " creds set NAME (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " creds set NAME (writes the bundle's first version)"}}
 	case err != nil:
 		return unreadable("the bundle's newest version ("+oneLineCLI(err.Error())+")",
 			"rerun doctor at your own terminal, with the bundle's accessor available, "+readWhat)
 	}
 	if meta.state != "ENABLED" {
+		fix := selfCommand() + " creds set NAME writes a new version"
+		if meta.state == "DISABLED" {
+			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
+		}
 		return []doctorCheck{{ID: doctorRoutingBundleID, Severity: "warning",
 			Problem: fmt.Sprintf("%s, and the newest version of the bundle (%s, version %s) is %s: Secret Manager will not serve it, so every one of those sources is served nothing", what, pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
-			Fix:     selfCommand() + " creds set NAME writes a new version (no update writes a credential)"}}
+			Fix:     fix}}
 	}
 	doc, err := store.access(ctx, meta.number)
 	if err != nil {

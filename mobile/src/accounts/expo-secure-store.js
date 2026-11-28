@@ -79,6 +79,26 @@
 // `options.platform`. An unknown platform is refused -- and that refusal is safe
 // to keep loud because the entry builds this port inside the guarded startup
 // (`src/app/startup.js`), which renders a readable screen instead of closing.
+//
+// **The second level, for the one item that may leave the device (task K3).**
+// `setItem(key, value, { synced })` writes with the level the caller names: the
+// device-only one by default, and `WHEN_UNLOCKED` when `synced` is true. That
+// second level is the phone's paired list and only that list (D2796): with the
+// project's sync switch **off** the identity project holds no copy, so the
+// keychain item is the only thing that can carry the list to a new device of
+// the same person, and `THIS_DEVICE_ONLY` is exactly what keeps it from doing
+// so. M0's U10 read the SDK for the rest of it
+// (`mobile/spike/src/secure/store.js`): `WHEN_UNLOCKED` is the closest this
+// stack gets, because iCloud Keychain synchronisation is `kSecAttrSynchronizable`
+// -- a separate attribute `expo-secure-store` does not expose -- so what the
+// item rides is an encrypted backup rather than a sync. On Android there is
+// neither: the Keystore-backed store takes no accessibility level, the option
+// is not sent, and a `synced` item is written exactly as a device-only one is
+// (Google's Auto Backup restores the app's own data, never a second phone).
+//
+// A `synced` that is not `true` -- absent, undefined, anything else -- is the
+// device-only level, deliberately: that is the safe direction, and it is the
+// level every existing caller already gets.
 
 /** The refusal a caller sees when the module it passed cannot hold an item. */
 const MISSING = (what) =>
@@ -105,20 +125,23 @@ const NO_PLATFORM = (platform) =>
  * Wrap an `expo-secure-store` module as the port `SecretStore` takes.
  *
  * Fail closed at construction **for the platform it is told about**: on iOS, a
- * module without the `THIS_DEVICE_ONLY` constant, or any module without the
+ * module without the `THIS_DEVICE_ONLY` constant or without the backing-up one
+ * (`WHEN_UNLOCKED`, which `setItem`'s `synced` names), or any module without the
  * three async methods, is refused here rather than silently storing an item
  * with the platform's default accessibility (which on iOS is `WHEN_UNLOCKED`
  * and IS backed up to iCloud). That default is exactly the outcome this file
- * exists to prevent, and it is the default a typo would get you. On Android the
- * constant is not asked for, because Android has none (see the header).
+ * exists to prevent, and it is the default a typo would get you -- which is why
+ * the backing-up level is read off the module too, and never assumed. On
+ * Android neither constant is asked for, because Android has none (see the
+ * header).
  *
  * @param {object} SecureStore the `expo-secure-store` module
  * @param {{ platform: string }} options `platform` is `Platform.OS`: `"ios"`
  *   or `"android"`. Required -- the accessibility rule is a function of it.
- * @returns {object} the port, with `platform` and `keychainAccessible` exposed
- *   so a test (and a reviewer) can read the decision above rather than infer it
- *   from a call it has to intercept. `keychainAccessible` is `null` on a
- *   platform that has none.
+ * @returns {object} the port, with `platform`, `keychainAccessible` and
+ *   `keychainAccessibleBackedUp` exposed so a test (and a reviewer) can read the
+ *   decision above rather than infer it from a call it has to intercept. Both
+ *   levels are `null` on a platform that has none.
  */
 export function expoSecureStorePort(SecureStore, options = {}) {
   const platform = options === null || typeof options !== 'object' ? undefined : options.platform;
@@ -135,15 +158,24 @@ export function expoSecureStorePort(SecureStore, options = {}) {
   // accessibility is decided, and on iOS an absent constant must refuse the
   // port rather than write the item with the platform's default.
   let accessible = null;
+  let backedUp = null;
   if (platform === PORT_PLATFORMS.IOS) {
     accessible = SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY;
     if (accessible === undefined || accessible === null) {
       throw MISSING('WHEN_UNLOCKED_THIS_DEVICE_ONLY');
     }
+    // The backing-up level (see the header): required on iOS for the same
+    // reason as the device-only one, so a renamed constant is this throw and
+    // never an item written at whatever the platform defaults to.
+    backedUp = SecureStore.WHEN_UNLOCKED;
+    if (backedUp === undefined || backedUp === null) {
+      throw MISSING('WHEN_UNLOCKED');
+    }
   }
   return {
     platform,
     keychainAccessible: accessible,
+    keychainAccessibleBackedUp: backedUp,
 
     async getItem(key) {
       // No options: accessibility is an attribute set when the item is
@@ -151,13 +183,15 @@ export function expoSecureStorePort(SecureStore, options = {}) {
       // default service -- which is the service every write here used.
       return await SecureStore.getItemAsync(key);
     },
-    async setItem(key, value) {
+    async setItem(key, value, { synced = false } = {}) {
       // The third argument is sent only where the platform has the attribute.
       // On Android the Kotlin `SecureStoreOptions` record has no
       // `keychainAccessible` field; sending one would be sending a setting the
-      // other end does not have.
-      if (accessible === null) await SecureStore.setItemAsync(key, value);
-      else await SecureStore.setItemAsync(key, value, { keychainAccessible: accessible });
+      // other end does not have. `synced` picks between the two levels and
+      // nothing else (see the header): on Android both resolve to none.
+      const level = synced === true ? backedUp : accessible;
+      if (level === null) await SecureStore.setItemAsync(key, value);
+      else await SecureStore.setItemAsync(key, value, { keychainAccessible: level });
     },
     async deleteItem(key) {
       await SecureStore.deleteItemAsync(key);

@@ -52,7 +52,7 @@ A turn arrives as an inbox message of the existing `prompt`/`answer` kinds, **ca
 
 ### 3.4 The "go" it waits for
 
-**The "go" is the confirmation the conversation collects, and it starts exactly one run.** It is **confirmation-shaped** and **reuses P6.2's spoken-confirmation rules rather than writing a second set** (P5.4.4): it must be its **own utterance**, recognised as the fixed phrase; **one "go" authorises exactly one run**; a replayed "go" authorises nothing the second time; a "go" whose turn still holds an unresolved target is refused; and a "go" after the conversation's timeout is refused (D128's amendment of 2026-10-17). **It is carried as the typed `launch` action** (question 5's recommendation), so a "go" is the one way to start a run rather than a second one — the place D162 (a launch needs no confirmation) and D128's amendment meet.
+**The "go" is the confirmation the conversation collects, and it starts exactly one run.** It is **confirmation-shaped** and **reuses P6.2's spoken-confirmation rules rather than writing a second set** (P5.4.4): **D128's amendment of 2026-10-17** gives a spoken confirmation its shape — its **own utterance**, recognised as the fixed phrase, and **one "go" authorises exactly one run** — and P6.2's other rules come with it: a replayed "go" authorises nothing the second time; a "go" whose turn still holds an unresolved target is refused, because only a resolved target is read back; and a "go" after the conversation's timeout is refused. **It is carried as the typed `launch` action** (question 5's recommendation), so a "go" is the one way to start a run rather than a second one — the place D162 (a launch needs no confirmation) and D128's amendment meet.
 
 ### 3.5 The handoff it makes
 

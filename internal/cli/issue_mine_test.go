@@ -209,6 +209,25 @@ func mineURL(number int) string {
 // (issue_mine.go's own mineRef, which takes a row).
 func mineRefOf(number int) string { return fmt.Sprintf("#%04d", number) }
 
+// mineJSONRetry is the `retry` member of the one row the document holds: the
+// command the text listing prints after `retry:` is a field of the document
+// too (F8), and a row that may offer none carries no member at all.
+func mineJSONRetry(t *testing.T, out string) string {
+	t.Helper()
+	var doc struct {
+		Issues []struct {
+			Retry string `json:"retry"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the --json document is not JSON: %v\n%s", err, out)
+	}
+	if len(doc.Issues) != 1 {
+		t.Fatalf("the document holds %d rows, want 1:\n%s", len(doc.Issues), out)
+	}
+	return doc.Issues[0].Retry
+}
+
 // mineBefore asserts that the listing prints first before second.
 func mineBefore(t *testing.T, out, first, second string) {
 	t.Helper()
@@ -310,6 +329,9 @@ func TestMineResolvedBehindShowsUpdateNudge(t *testing.T) {
 		if strings.Contains(out, "retry:") {
 			t.Errorf("a behind row offers a retry beside the update nudge (F5, O4):\n%s", out)
 		}
+		if got := mineJSONRetry(t, rig.mine("--json")); got != "" {
+			t.Errorf("a behind row's document carries a retry beside the update nudge (F5, O4): %q", got)
+		}
 	})
 }
 
@@ -338,6 +360,12 @@ func TestMineResolvedCoveredShowsLocalCommandOnly(t *testing.T) {
 	if strings.Contains(out, "run `fugaro update`") {
 		t.Errorf("a covered row still nudges an update:\n%s", out)
 	}
+	// The document carries the same command the text prints (F8): the text's
+	// sentence around it stays in the text, and the member is the command
+	// alone.
+	if got := mineJSONRetry(t, rig.mine("--json")); got != "fugaro update" {
+		t.Errorf("a covered row's document carries retry %q, want this machine's own command (F8)", got)
+	}
 }
 
 func TestMineNeverPrintsSharedCommand(t *testing.T) {
@@ -354,6 +382,11 @@ func TestMineNeverPrintsSharedCommand(t *testing.T) {
 	out := rig.mine()
 	if strings.Contains(out, "destroy") {
 		t.Errorf("the shared record's own command reached the terminal:\n%s", out)
+	}
+	// Nor does the document: the row has no local file to match, so there is
+	// no retry at all, and the shared record's command is never one (F8).
+	if got := mineJSONRetry(t, rig.mine("--json")); got != "" {
+		t.Errorf("the document carries the shared record's command: %q (F8)", got)
 	}
 }
 
@@ -471,8 +504,10 @@ func TestMineAgentSessionReadsTheProject(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 
 	// A session is one `issue mine` has --json in (D3437): stdout is the
-	// listing's document and the notes are the stderr half. The retry line the
-	// human view carries (F8, O4) is not a field of this document.
+	// listing's document and the notes are the stderr half. The retry hint the
+	// human view carries (F8, O4) is a field of the document too — the session
+	// reads the same rows a person does, and it reads this machine's own file's
+	// command (`fugaro update`), never the shared record's (`fugaro doctor`).
 	out, errOut, err := rig.run("issue", "mine")
 	if err != nil {
 		t.Fatalf("issue mine: %v\n%s%s", err, out, errOut)
@@ -483,17 +518,27 @@ func TestMineAgentSessionReadsTheProject(t *testing.T) {
 	var doc struct {
 		Issues []struct {
 			LocalID string `json:"local_id"`
+			Retry   string `json:"retry"`
 		} `json:"issues"`
 	}
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("a session's listing is not the listing's document: %v\n%s", err, out)
 	}
-	own := false
+	own, retried := false, false
 	for _, row := range doc.Issues {
 		own = own || row.LocalID == pending.LocalID
+		if row.Retry != "" {
+			retried = true
+			if row.Retry != "fugaro update" {
+				t.Errorf("a session's retry is %q, want this machine's own command (F8):\n%s", row.Retry, out)
+			}
+		}
 	}
 	if !own {
 		t.Errorf("a coding agent's session drops the local rows:\n%s", out)
+	}
+	if !retried {
+		t.Errorf("a coding agent's session reads no retry hint from the document (F8):\n%s", out)
 	}
 	// The read lifts and the upload does not: the issue this machine just
 	// diagnosed is still its own file, and the store holds only what was

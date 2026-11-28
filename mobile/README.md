@@ -472,8 +472,8 @@ belong in this file:
 * **The key is reached through `SecretStore.use`**: the material is handed to a
   callback for the duration of one call and never returned (a result that
   carries it is refused as `leaked`). No module under `src/mailbox/` can read
-  the key itself -- `reveal(`'s allow-list in the boundary scan stays two files
-  -- and that is the reason `use` exists at all.
+  the key itself -- `reveal(`'s allow-list in the boundary scan stays three
+  files -- and that is the reason `use` exists at all.
 
 ## Where the phone's secrets live, and what is not stored
 
@@ -1101,7 +1101,7 @@ the app's source, four rules, each with an allow-list, a self-exemption and a
 | Rule | May appear in | Why |
 | --- | --- | --- |
 | `…ItemAsync(` (the Keychain SDK) | `src/accounts/expo-secure-store.js` | one module reaches the platform store; a direct SDK call bypasses the port, the `Secret` check and the accessibility |
-| `reveal(` | `src/accounts/secret.js`, `src/accounts/secure-store.js` (and tests) | the material is handed to a store in exactly one place; a screen that reveals a token is one refactor from printing it |
+| `reveal(` | `src/accounts/secret.js`, `src/accounts/secure-store.js`, `src/session/devicekey.js` (and tests) | the material is handed to a store in exactly one place, and the device key's seed to Ed25519 once; a screen that reveals a token is one refactor from printing it |
 | `fugaro.account.` | `src/accounts/secure-store.js`, `src/accounts/settings.js` | a second module that knows the namespace can address an item |
 | `console.` | nothing (tests only) | D111's "never logged" is kept by having no logger |
 | an import path that resolves outside `mobile/` | nothing but `shared/` (D119) | the app does not build through the CLI's or the console's tree (D125); tests are scanned too |

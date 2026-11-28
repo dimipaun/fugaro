@@ -680,7 +680,7 @@ That run creates, in the installation's GCP project:
   scheduler account's `fugaroJobRunner` on that one job.
 
 The job, its key grant and its schedule wait until the history image exists and the local config
-records a GitHub App ID (`fugaro update --repo <owner/name> --github-app-id <id>`); until then the
+records a GitHub App ID (`fugaro update --repo --github-app-id <id>`, in a checkout of the repository); until then the
 run creates the account and its two reads, warns, and the next `fugaro update --firebase-project`
 deploys the rest. The opt-in is recorded as `terraform.coordinator: true` in the local config once
 the apply has created the account, and a new machine's config takes it from the installation's

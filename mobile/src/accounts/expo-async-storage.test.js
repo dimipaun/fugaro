@@ -82,6 +82,7 @@ test('the two stores differ in exactly the way the two modules claim', async () 
   // (`expo-secure-store.js`'s header has the Android half of that).
   const keychain = expoSecureStorePort({
     WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'THIS_DEVICE_ONLY',
+    WHEN_UNLOCKED: 'WHEN_UNLOCKED',
     async getItemAsync() { return null; },
     async setItemAsync() {},
     async deleteItemAsync() {},

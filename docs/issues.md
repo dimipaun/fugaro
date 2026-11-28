@@ -270,7 +270,8 @@ and it runs for this command as it does for every other.)
 from (`shared`, `snapshot` or `local`), the time that state was known, the
 installation's release, the number of hidden rows and whether the store's own
 listing was cut short. The rows carry the same display data as the printed ones,
-counts included; no other reporter's name or digest is in the document.
+the retry command a covered row offers and the counts included; no other
+reporter's name or digest is in the document.
 
 ## In a coding agent's session
 

@@ -388,13 +388,14 @@ func TestManagedAskTakesTheGateOutOfTheDecision(t *testing.T) {
 
 // TestAskDecisionIsTheFlagsWholeRule enumerates the decision, by hand: the
 // no-op line wherever the marks did not answer "managed" and the flag turns no
-// value entry on (and a refusal nowhere there), the restored line for the
+// value entry on (and a refusal nowhere there), and the restored line for the
 // owner who can and the refusal wherever a managed project's run cannot
-// prompt, and, for the update door whose --ask also asks for values, the
-// AskValues line at a terminal and its refusal where nobody can answer one.
-// The rows are written out rather than derived, so a rule that answered a line
-// and a refusal at once, or answered a managed project's terminal with a
-// refusal, is a failure here.
+// prompt. The update door's value entry — the one door whose --ask turns it on
+// — answers nothing of its own whatever the session is: whether a value is
+// missing and can be asked for is the secrets stage's fact, and the stage
+// prints AskValues where it asks. The rows are written out rather than derived,
+// so a rule that answered a line and a refusal at once, or answered a managed
+// project's terminal with a refusal, is a failure here.
 func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 	for _, c := range allConditions() {
 		canPrompt := c.Agent == "" && c.Terminal && !c.NonInteractive && !c.JSON
@@ -417,13 +418,9 @@ func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 					if refusal != "" || line != AskUnmanaged() {
 						t.Errorf("AskDecision(%s, managed=false, values=false) = %q, %q, want the no-op line and no refusal", conditionsName(c), line, refusal)
 					}
-				case canPrompt:
-					if refusal != "" || line != AskValues() {
-						t.Errorf("AskDecision(%s, managed=false, values=true) = %q, %q, want the values line and no refusal", conditionsName(c), line, refusal)
-					}
 				default:
 					if line != "" || refusal != "" {
-						t.Errorf("AskDecision(%s, managed=false, values=true) = %q, %q, want nothing from the flag where no terminal can ask a value", conditionsName(c), line, refusal)
+						t.Errorf("AskDecision(%s, managed=false, values=true) = %q, %q, want nothing from the flag: the stage prints its own line where it asks", conditionsName(c), line, refusal)
 					}
 				}
 			}
@@ -467,12 +464,13 @@ func TestAskRefusalNamesNoWayPast(t *testing.T) {
 	}
 }
 
-// TestAskLinesAreOneLineEachAndNotEachOther: the three lines a command may
-// print for the flag say three different things — the prompts are back, there
-// was nothing to restore, the run never had a step for it — and a reader who
-// saw the wrong one would be told something false about their project.
+// TestAskLinesAreOneLineEachAndNotEachOther: the four lines a command or a
+// stage may print for the flag say four different things — the prompts are
+// back, there was nothing to restore, the run never had a step for it, a value
+// is asked for — and a reader who saw the wrong one would be told something
+// false about their project.
 func TestAskLinesAreOneLineEachAndNotEachOther(t *testing.T) {
-	lines := map[string]string{"AskRestored": AskRestored(), "AskUnmanaged": AskUnmanaged(), "AskNoGate": AskNoGate()}
+	lines := map[string]string{"AskRestored": AskRestored(), "AskUnmanaged": AskUnmanaged(), "AskNoGate": AskNoGate(), "AskValues": AskValues()}
 	for name, line := range lines {
 		if strings.Contains(line, "\n") {
 			t.Errorf("%s is not one line: %q", name, line)

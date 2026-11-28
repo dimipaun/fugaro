@@ -1,0 +1,33 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: github, base_branch: main }
+agent:
+  auth: api-key
+  triage: false
+  review_rounds: 2
+  model: repo-9
+  models: { background: repo-9, coder: repo-9, diagnose: repo-9, reviewer: repo-9, vision: repo-9 }
+  crafts:
+    coder: { model: repo-9 }
+    merge-judge: { model: repo-9 }
+    review: { model: repo-9 }
+    security-review: { model: repo-9 }
+    senior-review: { model: repo-9 }
+  levels:
+    l1: { model: repo-9 }
+    l2: { model: repo-9 }
+    l3: { model: repo-9 }
+ab: { rate: 0 }
+model_grades:
+  strong: { model: repo-9 }
+  strongest: { model: repo-9 }
+rigor:
+  default: hotfix
+  areas:
+    - { name: repo-area, match: 'src/**', level: pro }
+workflows:
+  app:
+    commands:
+      build: sh build.sh
+      test: sh test.sh

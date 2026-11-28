@@ -1372,7 +1372,9 @@ steps:
           ;;
         esac
         code="$$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $${tok}" "$${url}" 2>/dev/null || true)"
-        email="$$(printf '%s' "$${tok}" | python3 -c 'import base64,json,sys; p=sys.stdin.read().strip().split(".")[1]; p+="="*(-len(p)%4); print(json.loads(base64.urlsafe_b64decode(p)).get("email",""))' 2>/dev/null || true)"
+        payload="$$(printf '%s' "$${tok}" | cut -d. -f2 | tr '_-' '/+')"
+        case "$$(( $${#payload} % 4 ))" in 2) payload="$${payload}==" ;; 3) payload="$${payload}=" ;; esac
+        email="$$(printf '%s' "$${payload}" | base64 -d 2>/dev/null | sed -n 's/.*"email"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
         line="CHK195 status=$${code:-none} email=$${email:-unread}"
         echo "$${line}"
         put_line "$${line}" || echo "CHK195-OBJECT-NOT-WRITTEN __BUCKET__/__OBJECT__"

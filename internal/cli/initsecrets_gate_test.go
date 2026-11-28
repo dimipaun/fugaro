@@ -131,6 +131,31 @@ func TestSecretsOnboardRepoFlagOptsIn(t *testing.T) {
 	}
 }
 
+// The update door's authorize answers without reading the gate at all: its
+// list is the project's own, so every repository in it is one the project
+// already admits and the hostile-checkout gate has nothing to guard (D3350).
+// The control is the checkout door, which refuses the same repository this
+// machine's config does not list.
+//
+// This is the one thing that says the listDoor guard in authorize is not dead
+// code. Nothing else here reaches it: with C1's stand-in a list-door run gets
+// as far as a prompt only for a repository this machine's config already
+// lists, where the gate's own answer is yes anyway.
+func TestUpdateDoorNeverAsksTheCheckoutGate(t *testing.T) {
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""), func(o *initOptions) { o.door = updateDoor.name })
+	r.unknown()
+	if err := r.stage.authorize(initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("the update door asked the checkout gate about a repository its own list carries: %v", err)
+	}
+
+	setup := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	setup.unknown()
+	setup.stage.resolve(context.Background())
+	if err := setup.stage.authorize(initflow.Env{Interactive: true}); err == nil {
+		t.Fatal("the checkout door does not refuse a repository this machine's config does not list")
+	}
+}
+
 // What the stage asks for comes from the default branch's fugaro.yaml, not
 // the working tree's: an uncommitted edit adds no secret.
 func TestSecretsReadTheDefaultBranchFile(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,7 +75,7 @@ func TestDoctorFlagsASwitchTheRouteShadows(t *testing.T) {
 	if off.ID != workspacePersonalCheckID || !off.OK || off.Severity != "info" {
 		t.Errorf("off = %+v, want the %s info line", off, workspacePersonalCheckID)
 	}
-	for _, want := range []string{creds.PersonSwitchKey, "off", selfCommand() + " settings set " + creds.PersonSwitchKey + " true", selfCommand() + " update", "R9"} {
+	for _, want := range []string{creds.PersonSwitchKey, "off", selfCommand() + " settings set " + creds.PersonSwitchKey + " true", selfCommand() + " update"} {
 		if !strings.Contains(off.Problem+off.Fix, want) {
 			t.Errorf("the off line does not carry %q:\nproblem: %s\nfix: %s", want, off.Problem, off.Fix)
 		}
@@ -96,7 +97,7 @@ func TestDoctorFlagsASwitchTheRouteShadows(t *testing.T) {
 	if shadowed.OK || shadowed.Severity != "warning" {
 		t.Errorf("shadowed = %+v, want a warning", shadowed)
 	}
-	for _, want := range []string{"repo-b", "D3141", creds.PersonSwitchKey} {
+	for _, want := range []string{"repo-b", creds.PersonSwitchKey} {
 		if !strings.Contains(shadowed.Problem+shadowed.Fix, want) {
 			t.Errorf("the shadowed line does not carry %q:\nproblem: %s\nfix: %s", want, shadowed.Problem, shadowed.Fix)
 		}
@@ -135,7 +136,26 @@ func TestDoctorFlagsASwitchTheRouteShadows(t *testing.T) {
 	if !unread.unread || unread.OK {
 		t.Errorf("unread = %+v, want an unread line", unread)
 	}
+
+	// The decision numbers and task names these states are derived from belong
+	// in this file's comments and the design docs, not in what a person reads:
+	// every state above says its fact without one.
+	for _, state := range []doctorCheck{off, served, shadowed, unpinned, unread} {
+		if m := decisionNumberIn(state.Problem + " " + state.Fix); m != "" {
+			t.Errorf("the %s line carries the decision number %q, which a person reads:\nproblem: %s\nfix: %s", state.ID, m, state.Problem, state.Fix)
+		}
+	}
 }
+
+// decisionNumberIn is the first decision number or task name in a person-facing
+// message, or the empty string: the forms this repository writes them in (D3141,
+// R9, WC11) have no place in doctor's output, and the states above are pinned
+// against that rather than only against the numbers they happened to carry.
+func decisionNumberIn(s string) string {
+	return decisionNumberRe.FindString(s)
+}
+
+var decisionNumberRe = regexp.MustCompile(`\b(D[0-9]{3,4}|WC[0-9]{1,3}|R[0-9]{1,3})\b`)
 
 // commandNamedInFix is the path of the command a check's fix names, resolved on
 // the real root: the fix a person acts on has to name a command this CLI has,
@@ -226,10 +246,13 @@ func TestDoctorMemberChecksCarryThePersonalTokenLine(t *testing.T) {
 		if c.OK || c.Severity != "warning" {
 			t.Errorf("%s = %+v, want the D3141 warning: the published node's switch is on and acme/app's model route is this project's own", workspacePersonalCheckID, c)
 		}
-		for _, want := range []string{"acme/app", "D3141", creds.PersonSwitchKey} {
+		for _, want := range []string{"acme/app", creds.PersonSwitchKey} {
 			if !strings.Contains(c.Problem+c.Fix, want) {
 				t.Errorf("%s does not carry %q:\nproblem: %s\nfix: %s", workspacePersonalCheckID, want, c.Problem, c.Fix)
 			}
+		}
+		if m := decisionNumberIn(c.Problem + " " + c.Fix); m != "" {
+			t.Errorf("%s carries the decision number %q, which a person reads:\nproblem: %s\nfix: %s", workspacePersonalCheckID, m, c.Problem, c.Fix)
 		}
 	})
 

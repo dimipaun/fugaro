@@ -103,16 +103,18 @@ type reposEnrolment struct {
 	imageWhy   string
 	// imageMap is the map this machine's file will hold: the project's effective
 	// map, MIGRATED (R13) so every key of it carries its provider, with this
-	// repository's own key written into it. imageNow is the map the file itself
-	// holds today — its repo_images where it writes one, its legacy image_map
-	// otherwise — so the step can say whether the document moves at all: the
-	// write is the difference between the two, and the member it replaces is
-	// named at the write.
+	// repository's own key written into it — and exactly imageNow when the step
+	// writes no key, because a migration rides the write and never starts one.
+	// imageNow is the map the file itself holds today — its repo_images where it
+	// writes one, its legacy image_map otherwise — so the step can say whether
+	// the document moves at all: the write is the difference between the two, and
+	// the member it replaces is named at the write.
 	imageMap map[string]string
 	imageNow map[string]string
-	// imageMigrated is true when the project's map was still the legacy one, so
-	// this step writes it under provider keys for the first time, and
-	// imageDropped is the one line per name the migration could not carry (R1).
+	// imageMigrated is true when the project's map was still the legacy one and
+	// this step's write states it under provider keys for the first time, and
+	// imageDropped is the one line per name that migration could not carry (R1).
+	// Both are set only by that write: a step that wrote no map migrated none.
 	imageMigrated bool
 	imageDropped  []string
 	// imageSeeded is true when the map comes from the published node because
@@ -800,14 +802,6 @@ const imageMapMigratedLine = "note: the repository-to-image map (`repo_images`) 
 // row's answer, which is the same resolution `ls` and `status` print — and the
 // map this machine's file will hold.
 //
-// The map is MIGRATED before anything is written into it (R13, S3): this
-// command writes repo_images, so a project still serving the old member — on
-// this machine or on the published node — has its mappings turned into provider
-// keys first, and the file states the project's WHOLE map under the one rule.
-// That is what keeps a write made before `update` from losing a mapping, and it
-// is U1a's migration, the same one `update` runs, so the two cannot disagree
-// about the provider a name is at.
-//
 // A repository the map already names is left as it is: the mapping is the
 // project's own statement about which entry that repository runs, and a
 // converge that overwrote it with whatever this machine's catalog would choose
@@ -817,18 +811,28 @@ const imageMapMigratedLine = "note: the repository-to-image map (`repo_images`) 
 // localcfg.ImageMapEffective) a file that writes a map states the project's
 // whole map, so a file that names none — the state every machine is in before
 // its first `fugaro image map set` — would publish a one-entry map over the
-// node's and take every other repository's mapping away with it. That is the
-// trap `fugaro image map set` warns about in its own note; here the effective
-// map is what the write starts from, so the node's entries survive.
+// node's and take every other repository's mapping away with it. The write
+// starts from the effective map for that reason, as `fugaro image map set`'s
+// does (imageMapWith, whose note says the project's map is carried into the
+// file), so the node's entries survive.
+//
+// The migration (R13, S3) rides that write and never starts one. A project
+// still serving the old member — on this machine or on the published node — has
+// its mappings turned into provider keys first, so the file states the project's
+// WHOLE map under the one rule: a partial repo_images beside the legacy member
+// would make R2 read only the new one and drop every other mapping to the
+// default (F23). A step with no key to write leaves the map alone, because
+// migrating the node's map into a file that names none would state the project's
+// map as this machine's own (D1906) and the next publish of this machine would
+// serve that copy over a teammate's later mapping.
 func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg.Config, node *projectpolicy.Policy, row reposViewRepo) error {
 	migrated, dropped := migrateImageMap(ctx, lc, node)
-	plan.imageDropped = dropped
 	plan.imageNow = fileImageMap(lc)
 	_, byProvider := lc.RepoImagesEffective(node)
 	// Migrated is what MOVED and not what was read: a project whose effective
 	// map is the legacy one but empty has nothing to carry over, and the plan
 	// must not answer a migration it did not make.
-	plan.imageMigrated = !byProvider && len(migrated) > 0
+	projectLegacy := !byProvider && len(migrated) > 0
 	if migrated == nil && plan.local.ImageMap != nil {
 		// This file writes a map that names nothing, which the keep rule reads
 		// as "nothing is mapped on purpose" — it is how a published map is taken
@@ -837,18 +841,10 @@ func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg
 		// map again, and a mapping someone cleared would come back.
 		migrated = map[string]string{}
 	}
-	// The map the file is left with when this step writes no new key: the one the
-	// file already holds. A file that names no map must stay silent — handing it
-	// the node's map would state the project's map as this machine's own, and a
-	// stated map is the whole one (D1906), so the next publish of this machine
-	// would serve that copy over a teammate's later mapping. A migration that
-	// really moved mappings is the one case a no-new-key write fires: the file's
-	// map comes out under the keys the readers of this release look up (R13).
-	left := plan.imageNow
-	if plan.imageMigrated {
-		left = migrated
-	}
-	plan.imageMap = left
+	// The map the file holds while this step writes no new key: exactly what it
+	// holds now, so a file that names none keeps naming none. Only the write
+	// below moves it.
+	plan.imageMap = plan.imageNow
 	plan.imageSeeded = plan.imageNow == nil && len(migrated) > 0
 	// The provider this command already resolved for the repository
 	// (reposEnrolmentProvider): the key's kind is the allow-list entry's kind,
@@ -862,7 +858,7 @@ func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg
 	}
 	plan.imageKey = key
 	if e, ok := migrated[key]; ok {
-		plan.imageEntry, plan.imageMap = e, left
+		plan.imageEntry = e
 		plan.imageWhy = "already repo_images[" + key + "] = " + pluginwire.Printable(e)
 		return nil
 	}
@@ -872,7 +868,6 @@ func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg
 		// builds for the repository itself (reposViewImageSource). There is
 		// nothing to map, and the step says which of them it is rather than
 		// leaving the line empty.
-		plan.imageMap = left
 		plan.imageWhy = "left out: this job's image is not a catalog entry's (" + string(row.ImageSource) + "), so there is no mapping to write"
 		return nil
 	}
@@ -882,6 +877,11 @@ func reposEnrolmentImage(ctx context.Context, plan *reposEnrolment, lc *localcfg
 	if plan.imageSeeded {
 		plan.imageWhy += " (from the map the published node holds, which this file does not name)"
 	}
+	// The migration's sentence and the names it could not carry belong to the
+	// write that states them, and to no other: a step that wrote no map lost
+	// nothing and migrated nothing.
+	plan.imageMigrated = projectLegacy
+	plan.imageDropped = dropped
 	return nil
 }
 
@@ -1098,7 +1098,9 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) error {
 	} else {
 		fmt.Fprintf(out, "%s is already as this enrolment wants it\n", safetext.Field(plan.path))
 	}
-	if !maps.Equal(plan.imageNow, plan.imageMap) {
+	// A step with no key to write states no map: the migration rides the write
+	// and the file that names no map keeps naming none (reposEnrolmentImage).
+	if plan.imageEntry != "" && !maps.Equal(plan.imageNow, plan.imageMap) {
 		next := *cur
 		next.RepoImages = plan.imageMap
 		// The legacy member goes with the write, which is what "never writes
@@ -1121,9 +1123,7 @@ func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) error {
 		if err := userSave(out, plan.path, data, &next); err != nil {
 			return err
 		}
-		if plan.imageEntry != "" {
-			fmt.Fprintf(out, "repo_images[%s] = %s\n", plan.imageKey, pluginwire.Printable(plan.imageEntry))
-		}
+		fmt.Fprintf(out, "repo_images[%s] = %s\n", plan.imageKey, pluginwire.Printable(plan.imageEntry))
 		if plan.imageMigrated {
 			fmt.Fprintf(out, "%s\n", imageMapMigratedLine)
 		}

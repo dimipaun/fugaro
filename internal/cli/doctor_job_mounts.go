@@ -112,7 +112,7 @@ func doctorJobMountCheck(job string, j *runapi.GoogleCloudRunV2Job) *doctorCheck
 	return &doctorCheck{ID: doctorJobMountID, Severity: "info", OK: true,
 		Problem: fmt.Sprintf("job %s mounts %s: the template names a secret container for each of those variables, and none of them is a variable Fugaro reserves for the git, the model or a provider credential, so they are the job's workflow secrets (T3's class)",
 			job, strings.Join(mounts, ", ")),
-		Fix: "nothing to run for this: it is the reading of what a deployed job still mounts. A vertex repository and one the flip does not serve keep these mounts by design; once the flip has taken them away, a job still carrying one was applied before it, and re-applying its repository (" + selfCommand() + " update --repo OWNER/NAME, in that repository's checkout) deploys its jobs without them"}
+		Fix: "nothing to run for this: it is the reading of what a deployed job still mounts. A vertex repository and one the flip does not serve keep these mounts by design; once the flip has taken them away, a job still carrying one was applied before it, and re-applying its repository (running " + selfCommand() + " update --repo in that repository's checkout) deploys its jobs without them"}
 }
 
 // doctorWorkflowSecretMounts is the variables j mounts a secret as that are not

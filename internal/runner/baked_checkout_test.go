@@ -255,11 +255,7 @@ func TestBakedCheckoutPerSlugPath(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	want, err := filepath.EvalSymlinks(baked) // $PWD is resolved (review L2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := h.agent.calls[0].Dir; got != want {
+	if got, want := realPath(t, h.agent.calls[0].Dir), realPath(t, baked); got != want {
 		t.Errorf("the implement stage ran in %q, want the image's baked checkout %q", got, want)
 	}
 	if got := testutil.Git(t, baked, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/"+runID {

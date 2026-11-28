@@ -740,7 +740,7 @@ func TestReleaseNotesForTheSwitchedModelMounts(t *testing.T) {
 	operators := flattenDoc(docSection(t, typedTokensRelease, readDoc(t, typedTokensRelease), "### For operators"))
 	for _, want := range []string{
 		"**Per repository of an `api-key` or `oauth` workflow whose policy is switched on**",
-		"run `fugaro update --repo <owner/name>` from its checkout",
+		"run `fugaro update --repo` from its checkout",
 		"**a repository that is not switched keeps every mount, before and after this update**",
 		"a job image whose runner reads its model credential from the service — the 0.25.0 base image or newer — and a launch on an older one is refused",
 		"the service serves the Anthropic key and the account's token, never a provider's own key",

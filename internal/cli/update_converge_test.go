@@ -1870,6 +1870,71 @@ func TestRulesConvergeFromThePreviousVersion(t *testing.T) {
 	run.laterWrites(t, r)
 }
 
+// TestUpdateConvergesTheBriefFromThePreviousGeneration: an installation whose
+// deployed rules are the release behind's — generation 11, the mailbox's
+// signature and the typed launch with no `brief` — reaches the shaped task a
+// launch may carry with `fugaro update` alone, in the one rules stage every
+// generation is met through (CLAUDE.md's HARD RULE; mobile plan tasks P5.4.2
+// and P5.4.3).
+//
+// The fixture is the release behind rather than a copy of this binary's
+// document with the `brief` deleted, because the point of the bump is what a
+// shipped binary really deploys: v0.29.0 carries generation 11 and a template
+// with no `brief`, so an installation at 11 is refused the field at the
+// database — a phone's "go" is dropped with no error — and the marker both
+// binaries read as 11 would let the older binary redeploy its own document over
+// one that has it. The assertions below read the deployed document, so what
+// converges is the field and not merely the number: the inbox's `$msg` gains
+// exactly the `brief` child the template writes, gated on the launch and the
+// agent.
+func TestUpdateConvergesTheBriefFromThePreviousGeneration(t *testing.T) {
+	// The fixture is read before the rig is built: newConvergeRig chdirs into
+	// the checkout it makes, and the path below is this package's own.
+	raw, err := os.ReadFile("../budget/rules/testdata/rules.generation11.json")
+	if err != nil {
+		t.Fatalf("reading the generation-11 fixture: %v", err)
+	}
+	r := newConvergeRig(t, currentNode())
+	currentRelease(t)
+	r.db.SetRules(raw)
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion-1) {
+		t.Fatalf("the fixture carries %s = %v, want the previous generation %d: it is not an installation whose rules predate the shaped task",
+			projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion-1)
+	}
+	if infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
+	}
+	// The fixture is genuinely the generation behind: it carries the signature
+	// and the typed launch (generation 11's own shapes, J5r and O10) and no
+	// `brief`, which is what this generation adds.
+	inbox := deployedNodeOf(t, deployedRulesOf(t, r.db.Rules()), "mailbox", "$mb", "inbox", "$msg")
+	if _, ok := inbox["sig"]; !ok {
+		t.Fatalf("the fixture's document has no /mailbox/$mb/inbox/$msg/sig: it is not the generation 11 the release behind deploys")
+	}
+	if _, ok := inbox["brief"]; ok {
+		t.Fatalf("the fixture's document already carries /mailbox/$mb/inbox/$msg/brief, so nothing has to converge")
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "repo-plugin-pin"})
+
+	if got := r.db.Value(projectpolicy.PathRulesMarker()); fmt.Sprint(got) != fmt.Sprint(projectpolicy.RulesVersion) {
+		t.Errorf("after one fugaro update, %s = %v, want %d", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
+	}
+	if !infra.SameJSON(r.db.Rules(), generatedRules(t)) {
+		t.Errorf("the update did not leave this binary's document deployed, so the field below is not under the rules the owner runs:\n%s", r.db.Rules())
+	}
+	// The brief, read back child by child: the deployed inbox admits it on a
+	// launch carrying an agent, bounded by MaxBriefLength, which is what the
+	// phone's "go" needs and what the document behind refuses.
+	after := deployedNodeOf(t, deployedRulesOf(t, r.db.Rules()), "mailbox", "$mb", "inbox", "$msg", "brief")
+	validate, _ := after[".validate"].(string)
+	for _, want := range []string{"'launch'", "child('agent').exists()", fmt.Sprintf("newData.val().length <= %d", rules.MaxBriefLength)} {
+		if !strings.Contains(validate, want) {
+			t.Errorf("the deployed /mailbox/$mb/inbox/$msg/brief .validate = %q, want it to carry %q (the shaped task a launch may carry, bounded by the schema's BRIEF_MAX)", validate, want)
+		}
+	}
+}
+
 // previousGenerationRulesDocument is the document the release before this one
 // deployed: the frozen copy of the golden this generation's leaves were added
 // to (internal/budget/rules/testdata/rules.generation6.json). It is read from

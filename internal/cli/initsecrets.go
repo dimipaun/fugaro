@@ -227,6 +227,10 @@ type secretsStage struct {
 	// same line three times.
 	lines         []initflow.RepoLine
 	linesReported bool
+	// saidValues is the once-per-run guard of the flag's own line, which the
+	// stage prints where it asks for a value (sayValues): Check, Plan and Apply
+	// all reach the decision, and a reader must not read the line three times.
+	saidValues bool
 }
 
 func newSecretsStage(e *initEngine) *secretsStage {
@@ -359,19 +363,6 @@ func allowedHarnessOAuthMounts(lc *localcfg.Config, repo string, mounts []infra.
 // not on a stage flag, because one engine serves both and only the door knows
 // which list is the run's.
 func (s *secretsStage) listDoor() bool { return s.e.r.o.doorName() == updateDoor.name }
-
-// listTargets are the repositories this run works on: the update door's
-// enrolled list, or the one checkout the setup door resolved. A caller that
-// must not guess which of the two a run has asks this.
-func (s *secretsStage) listTargets() []*secretTarget {
-	if s.list != nil {
-		return s.list
-	}
-	if s.tg != nil {
-		return []*secretTarget{s.tg}
-	}
-	return nil
-}
 
 // singleCheckout is whether this run takes a value the way `fugaro update`
 // always has: the list it read is one repository, that repository is the
@@ -737,7 +728,10 @@ func defaultBranchConfig(ctx context.Context, root string) *config.Config {
 // The update door asks nothing (D3350): e.repos is the project's own list and
 // an admit-only repository in it is enrolled, so every repository the stage
 // plans for is one the project already admits and a container may be created
-// for it. The gate is the checkout door's.
+// for it. The gate is the checkout door's, and the guard below is the whole of
+// that rule: a list-door run reaches this too, under --ask, where
+// singleCheckout let Apply fall through (U3b), and the gate would stop the run
+// on a repository the project's own list admits.
 func (s *secretsStage) authorize(env initflow.Env) error {
 	if s.listDoor() {
 		return nil
@@ -1063,7 +1057,9 @@ func (s *secretsStage) checkList(ctx context.Context) (initflow.Status, error) {
 		// not apply, and the value would never be taken -- the door's own line
 		// would leave the run asking itself. What is missing is said by the
 		// lines above, one per repository; this is the same sentence the
-		// checkout door's check gives for its prompt.
+		// checkout door's check gives for its prompt, and --ask's own line is
+		// printed here, where the ask it speaks about really happens.
+		s.sayValues()
 		return initflow.Status{State: initflow.Todo, Detail: strings.Join(needs, "; ") + "; asks for each at a hidden prompt"}, nil
 	case len(needs) > 0:
 		lf := s.Left()
@@ -1072,6 +1068,22 @@ func (s *secretsStage) checkList(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.Skipped, Detail: "no enrolled repository is one this stage takes: each line says why"}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored"}, nil
+}
+
+// sayValues prints --ask's own line, once, at the one point where the run asks
+// for a value: the update door's flag turned value entry on (canPrompt, which
+// singleCheckout has already asked) and a person is at this terminal to answer
+// it. The gate prints none of it, because neither fact is known there, and a
+// line printed ahead of them would promise an ask that never comes (D3347,
+// R18; update_managed.go's gateRun). It is the flag's line and not the step's
+// account, so it goes to the run's own writer, where the gate's other lines go,
+// and the step's sentence about the hidden prompt stays with the step.
+func (s *secretsStage) sayValues() {
+	if s.saidValues || !s.listDoor() || !s.e.r.o.ask {
+		return
+	}
+	s.saidValues = true
+	fmt.Fprintln(s.e.r.w, initflow.AskValues())
 }
 
 // targetNote is the one-report note about a repository: what the stage does

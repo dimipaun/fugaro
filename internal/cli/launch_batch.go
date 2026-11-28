@@ -81,8 +81,8 @@ func batchLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) err
 	if len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, env.policyMode(ctx), deployed, false)) > 0 {
 		return nil
 	}
-	return userErr("a run of %s cannot be launched on cloud-batch: a Batch job mounts no secret at all, so the model credential this run's calls are made with has to come from the credentials service, and this installation's does not serve it (D3104, D3107). The service serves a repository where the installation carries it, that repository's record says a root of it was applied with the switch on, and its agent.auth is one the service serves -- agent.auth: cascade, or agent.auth: api-key or oauth under a project policy whose budget mode observes or enforces. Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on -- or launch this repository's runs on the Cloud Run backend, where its job carries its own model credential ('%s backends use cloud-run')",
-		spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo, selfCommand())
+	return userErr("a run of %s cannot be launched on cloud-batch: a Batch job mounts no secret at all, so the model credential this run's calls are made with has to come from the credentials service, and this installation's does not serve it (D3104, D3107). The service serves a repository where the installation carries it, that repository's record says a root of it was applied with the switch on, and its agent.auth is one the service serves -- agent.auth: cascade, or agent.auth: api-key or oauth under a project policy whose budget mode observes or enforces. Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo' in that repository's checkout to apply its root with the switch on -- or launch this repository's runs on the Cloud Run backend, where its job carries its own model credential ('%s backends use cloud-run')",
+		spec.Repo, selfCommand(), spec.Repo, selfCommand(), selfCommand())
 }
 
 // batchOptInLaunchRefusal is BR1's half of the gate above: the block's opt-in
@@ -289,6 +289,7 @@ func (e *cloudEnv) registerJob(ctx context.Context, req identitywire.JobRequest)
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	// The ticket ask's own client, and not a second one (slipClient).
 	resp, err := slipClient().Do(hreq)
 	if err != nil {

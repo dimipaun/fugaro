@@ -68,7 +68,7 @@ func doctorOwnerCase(t *testing.T) []doctorCheck {
 				"or disable the repository copy's versions (gcloud secrets versions disable) if the project's value is the one this repository should mount"},
 		{ID: "project-secret-extra-accessors", Severity: "warning",
 			Problem: "project-wide secret claude-oauth-token grants a reader to a job of a repository the account no longer lists: a repository removed from an account's allow_data_to keeps its live grant until its own apply runs again, and every reader of a project-wide container can read every version of it",
-			Fix:     "run fugaro update --repo owner/repo-b in that repository's checkout to reapply it"},
+			Fix:     "run fugaro update --repo in owner/repo-b's checkout to reapply it"},
 		{ID: "project-layer", Severity: "info",
 			Problem: "project layer aurora generation 12 (sha256 9f8e7d6c) applies; fugaro config show prints where each value comes from"},
 		{ID: "policy-published", Severity: "info",

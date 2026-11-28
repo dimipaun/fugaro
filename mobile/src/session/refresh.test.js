@@ -13,6 +13,7 @@ import test from 'node:test';
 import { MemorySecureStore } from '../accounts/secure-store.js';
 
 import {
+  COMPACT_THRESHOLD_PERCENT_MAX,
   CUSTOM_TOKEN_ENDPOINT,
   ProjectSessionStore,
   REFRESH_CODES,
@@ -23,6 +24,7 @@ import {
   parseCustomTokenExchange,
   parseRefreshResponse,
   projectSessionItem,
+  readSessionPolicy,
   refreshSession,
   sessionPolicyOf,
 } from './refresh.js';
@@ -85,6 +87,28 @@ test('a refresh answer is read as the successor token, the custom token and the 
   assert.equal(sessionPolicyOf({ compact_threshold_percent: 0 }).compaction_threshold, null);
 });
 
+test('a threshold the port could not carry is refused, not mapped', () => {
+  // The percent is C1's unit and the fraction is C2's, which the port requires
+  // above zero and below one: a percent of 100 or more would install a policy
+  // `assertSessionPort` refuses, and a refresh installs the policy it read.
+  const policy = { costly_modes: ['pro'], biometric_on_costly: false, compact_threshold_percent: 100, crash_reports: true };
+  for (const percent of [100, 101, 1000]) {
+    const refused = parseRefreshResponse({ status: 200, body: answer({ policy: { ...policy, compact_threshold_percent: percent } }) });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, REFRESH_CODES.BAD_RESPONSE);
+    assert.equal(refused.field, 'policy.compact_threshold_percent');
+    // The door's own reader refuses it too, so construction is not the only
+    // path that bounds it.
+    assert.equal(readSessionPolicy({ ...policy, compact_threshold_percent: percent }).code, REFRESH_CODES.BAD_RESPONSE);
+  }
+  // The ceiling is the highest percent the port's fraction has room for: 99 is
+  // carried, and 0 is still the port's "no threshold".
+  const held = parseRefreshResponse({ status: 200, body: answer({ policy: { ...policy, compact_threshold_percent: COMPACT_THRESHOLD_PERCENT_MAX } }) });
+  assert.equal(held.ok, true);
+  assert.equal(held.policy.compaction_threshold, 0.99);
+  assert.equal(readSessionPolicy({ ...policy, compact_threshold_percent: 0 }).policy.compaction_threshold, null);
+});
+
 test('a refusal is the contract’s code, and no value travels in it', () => {
   const refused = parseRefreshResponse({ status: 403, body: JSON.stringify({ code: 'device_revoked', message: 'gone' }) });
   assert.equal(refused.ok, false);
@@ -126,6 +150,21 @@ test('the project session store keeps one rotating token per project', async () 
   assert.equal((await store.get('fugaro-example')).token, TOKEN);
   assert.equal((await store.delete('fugaro-example')).ok, true);
   assert.equal((await store.get('fugaro-example')).code, REFRESH_CODES.ABSENT);
+});
+
+test('a stored token this module could not have written is unreadable, not repaired', async () => {
+  const port = new MemorySecureStore();
+  const store = new ProjectSessionStore(port);
+  const item = projectSessionItem('fugaro-example');
+  // Planted through the port, which is what a future code path with a different
+  // idea of "a token" would do: not a string at all, empty, carrying a space or
+  // a non-ASCII character, or past the platform's own 2048-byte ceiling.
+  for (const planted of [42, '', 'has space', 'café', 'x'.repeat(2049)]) {
+    await port.setItem(item, planted);
+    const read = await store.get('fugaro-example');
+    assert.equal(read.code, REFRESH_CODES.UNREADABLE, JSON.stringify(planted));
+    assert.equal(read.token, undefined);
+  }
 });
 
 test('a refresh that the project refuses as revoked signs the project out', async () => {

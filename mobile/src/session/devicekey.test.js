@@ -104,6 +104,24 @@ test('an absent key is a refusal, and a delete ends it', async () => {
   assert.equal((await store.publicKey('fugaro-example')).code, DEVICE_KEY_CODES.ABSENT);
 });
 
+test('a stored seed this module could not have written is unreadable, not repaired', async () => {
+  const port = new MemorySecureStore();
+  const store = new DeviceKeyStore({ port, ed25519 });
+  const item = deviceKeyItem('fugaro-example');
+  // Planted through the port, which is what a future code path with a different
+  // idea of "a seed" would do. Each is refused before it is decoded: not a
+  // printable-ASCII value at all, not the length of a 32-byte seed, and the
+  // non-canonical last character a lenient decoder would have accepted.
+  for (const planted of ['', 'has space', 'café', 'short', `${'A'.repeat(42)}B`]) {
+    await port.setItem(item, planted);
+    const read = await store.publicKey('fugaro-example');
+    assert.equal(read.code, DEVICE_KEY_CODES.UNREADABLE, JSON.stringify(planted));
+    assert.equal(read.seed, undefined);
+    // Every reader of the seed is refused, not only the public-key one.
+    assert.equal((await store.sign('fugaro-example', new Uint8Array([1]))).code, DEVICE_KEY_CODES.UNREADABLE);
+  }
+});
+
 test('a second create does not replace a key already held', async () => {
   const port = new MemorySecureStore();
   const store = new DeviceKeyStore({ port, ed25519 });

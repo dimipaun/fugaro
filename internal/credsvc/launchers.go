@@ -197,28 +197,6 @@ func foldLauncherServiceAccounts(emails []string) (map[string]string, error) {
 	return accounts, nil
 }
 
-// serviceAccountIs reports whether two spellings name the same service account:
-// the two folded by the same ASCII fold every list of the roster is read by
-// (foldEmail), so a pool an admin wrote that account's address in — its
-// principal, or the principal of one it designates (PL6, D3181) — is the
-// account's own however the case came out on the day it was written.
-//
-// It is here rather than where a pool is read because it is the launcher class's
-// rule and not the lookup's: the class admits the account's own token BY this
-// fold (foldLauncherServiceAccounts), so two spellings that are one caller there
-// are one pool here, and a pool compared any other way would be a second
-// spelling of the same account in the one half that decides. A value that is not
-// printable ASCII is no address at all and is not that account (the fold refuses
-// it), which leaves `seen == false` the answer for it rather than a panic.
-func serviceAccountIs(written, seen string) bool {
-	a, ok := foldEmail(written)
-	if !ok {
-		return false
-	}
-	b, ok := foldEmail(seen)
-	return ok && a == b
-}
-
 // verifyLauncherCaller is the launcher class's whole check, and the one body
 // of it: the service's Authenticator and the intake's Launchers differ in what
 // they hold and not in what they check. It answers the account and the account

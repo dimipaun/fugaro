@@ -2630,12 +2630,17 @@ func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []strin
 		return infra.InstallationSpec{}, initErr(err)
 	}
 	if o.createProject {
-		// Every project this run creates is managed (markCreated records the
-		// fact and the label whichever flags were passed, T2a), so every
-		// creating run is held to the managed project's one rule about the
-		// state bucket, checked on the RESOLVED name: --state-bucket and the
-		// project config are both inputs to it (infra.Installation's firstOf),
-		// so the check is here rather than on the flag alone.
+		// The gate is the run's creation of this installation's project, and
+		// not --create-project's spelling of it: settleCreation sets the same
+		// field on every first run of `setup`, whose creation no flag names,
+		// and every project a creating run makes Fugaro's is managed
+		// (markCreated records the fact and the label whichever flags were
+		// passed, T2a) — so the run that creates without saying so is held to
+		// the managed project's one rule about the state bucket exactly as one
+		// that passes the flag is. The check reads the RESOLVED name:
+		// --state-bucket and the project config are both inputs to it
+		// (infra.Installation's firstOf), so it is here rather than on the
+		// flag alone.
 		if err := checkManagedStateBucket(spec); err != nil {
 			return infra.InstallationSpec{}, err
 		}
@@ -2750,11 +2755,11 @@ func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, 
 // The refusal covers both spellings of the same decision — --state-bucket on
 // the command line and terraform.state_bucket in the project's config — because
 // it reads the resolved spec, which is the value the creation would actually
-// use, and it says so: the fix is where the value comes from, and not
-// "create the project unmanaged instead". An unmanaged creation resolves
-// terraform.state_bucket from the same config, so its state would sit in the
-// same bucket, and the managed flag of it is refused for it (managedFlag's own
-// check, added with this one) — a run told to take the long way round would
+// use, and it says so: the fix is where the value comes from, and not "create
+// the project unmanaged instead" — there is no such creation to take, since
+// every project a run creates is managed now (D2214) — nor "flag it managed
+// later": the flag refuses a project whose config records another bucket for
+// this same reason (managedFlag's own check), so a run sent that way would
 // arrive at the same refusal one command later, with a project created in the
 // meantime. It is the rule the neighbouring managed paths keep: `fugaro managed
 // flag` refuses a project whose runs bucket or whose state bucket is not the
@@ -6058,7 +6063,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 			var drift *driftError
 			if errors.As(err, &drift) {
 				why = drift.short()
-				fix = "\n  fix: run " + selfCommand() + " " + r.o.doorName() + " --repo " + spec.Name + " in its checkout, so the mounts and the grants agree again"
+				fix = "\n  fix: run " + selfCommand() + " " + r.o.doorName() + " --repo in " + spec.Name + "'s checkout, so the mounts and the grants agree again"
 			}
 			fmt.Fprintf(r.w, "GitHub App check for %s was not made: %s%s\n  The first image build is not offered until this is fixed (nothing was billed).\n", spec.Name, why, fix)
 			return why

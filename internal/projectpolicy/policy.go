@@ -312,8 +312,8 @@ type Policy struct {
 	// a rung: which model a rung spends on and whose credential its calls go
 	// out on is a decision the owner publishes, not one a job's environment
 	// carries. The project layer's defaults.model_grades is the other home
-	// D2039 gives them, and a repository's own file may name one, which the
-	// merge drops and records (internal/policy's tightenGrades).
+	// D2039 gives them, and a repository's own file may name one, which its
+	// reader drops and names (config.LiftedKeys).
 	//
 	// It is a pointer so that a project that sets no grade writes no member,
 	// which is what every project is in until it names one: the ladder's rungs

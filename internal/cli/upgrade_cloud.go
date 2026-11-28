@@ -780,8 +780,8 @@ func viewCloudStep(ctx context.Context, u *stepCtx) stepResult {
 	if err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
-	ro := u.o.refresh
-	ro.view, ro.yes, ro.rerun, ro.out = rv, u.o.yes, u.cloudRerun(), u.w
+	ro := viewRefreshOptions(u, rv)
+	ro.rerun, ro.out = u.cloudRerun(), u.w
 	var plan *refreshPlan
 	ro.onPlan = func(p *refreshPlan) { plan = p }
 	if err := runImageRefresh(u.cmd, ro); err != nil {
@@ -794,6 +794,18 @@ func viewCloudStep(ctx context.Context, u *stepCtx) stepResult {
 		return stepResult{state: stepCurrent, reason: "no base image to pin and no image to rebuild"}
 	}
 	return stepResult{state: stepDone, reason: "the repository is on this release's base image"}
+}
+
+// viewRefreshOptions is the refresh viewCloudStep runs for the repository it
+// carries, as far as the options decide anything: the view the caller read and
+// this run's --yes, which is what the step's own copy of them would have been.
+// It is one function because the stage's gate read (refreshGate) has to be made
+// from the same options runImageRefresh would have read it from, and a second
+// copy of these two lines is the copy that drifts.
+func viewRefreshOptions(u *stepCtx, rv *refreshView) refreshOptions {
+	ro := u.o.refresh
+	ro.view, ro.yes = rv, u.o.yes
+	return ro
 }
 
 // cloudAgentRefusal is why the cloud step applies nothing in a coding agent's

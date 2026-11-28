@@ -612,6 +612,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// would read each of them twice for the same facts.
 	repoViews, _ := enrolledRepos(theUpdateLeavesTheRemoval(ctx), enrolledIn{LC: lc, ExtraPaths: repoNoticeExtra})
 	o.Checks = append(o.Checks, doctorRepoNoticeChecks(repoViews)...)
+	// And the version a default branch still writes its fugaro.yaml at, while
+	// the window that version is inside is open (CV2, D3423), off the same read.
+	o.Checks = append(o.Checks, doctorConfigVersionChecks(repoViews)...)
 	o.Checks = append(o.Checks, doctorClaudeGateChecks(lc, repoViews)...)
 	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
@@ -1225,7 +1228,7 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 				problem = drift.short()
 			}
 			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: problem,
-				Fix: "run " + selfCommand() + " update --repo " + quoteWord(repo) + " in its checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
+				Fix: "run " + selfCommand() + " update --repo in " + quoteWord(repo) + "'s checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
 			continue
 		}
 		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: keyID, Notice: notice})
@@ -1696,7 +1699,7 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 	}
 	return &doctorCheck{ID: "project-secret-scope-stale", Severity: "warning",
 		Problem: strings.Join(stale, "; ") + ": the deployed job was applied before the secret's scope changed",
-		Fix:     "run " + selfCommand() + " update --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
+		Fix:     "run " + selfCommand() + " update --repo in " + quoteWord(facts.repo) + "'s checkout, in your own terminal, to reapply the repository, so the next run mounts the copy Fugaro resolves"}
 }
 
 // doctorSecretScopeChecks are doctor's "secret-scope" pair (plan Task 2.3
@@ -1856,7 +1859,7 @@ func doctorProjectSecretAccessorChecks(ctx context.Context, lc *localcfg.Config,
 		slices.Sort(extra)
 		cmds := make([]string, len(extra))
 		for i, repo := range extra {
-			cmds[i] = "re-run " + selfCommand() + " update --repo " + quoteWord(repo) + " and pass --allow-delete"
+			cmds[i] = "re-run " + selfCommand() + " update --repo in " + quoteWord(repo) + "'s checkout and pass --allow-delete"
 		}
 		out = append(out, doctorCheck{ID: "project-secret-extra-accessors", Severity: "warning",
 			Problem: fmt.Sprintf("project secret %s can still be read by %s, which its allow_data_to no longer lists: the grant stays live until each of those repositories is applied again",
@@ -3544,11 +3547,15 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// route a run reads is new to it (workspace-service task WS22), and a
 		// route-generation marker already has that route and only the phone's
 		// stop request and the launch envelope are new to it (mobile plan task
-		// P5.1g), and a launch-generation marker already has those two and only
-		// the tag a signing device carries and the typed launch it sends are new
-		// to it (mobile identity-pairing task J5r).
+		// P5.1g), a launch-generation marker already has those two and only the
+		// tag a signing device carries and the typed launch it sends are new to
+		// it (mobile identity-pairing task J5r), and a signature-generation
+		// marker already has those shapes and only the shaped task a launch may
+		// carry is new to it (mobile plan task P5.4.3).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesSignatureGeneration:
+			adds = "the shaped task a launch may carry"
 		case gen >= rulesLaunchGeneration:
 			adds = "the device's signature and the typed launch"
 		case gen >= rulesRouteGeneration:

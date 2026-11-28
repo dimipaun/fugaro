@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // The installation's state bucket of a managed creation (Task 4.5 of
@@ -73,11 +76,10 @@ func TestManagedCreationRefusesAForeignStateBucket(t *testing.T) {
 			}
 			// And the advice has to be sound. The bucket comes from
 			// --state-bucket or from terraform.state_bucket, so the fix is to
-			// stop recording it in either place — and NOT "create the project
-			// unmanaged and flag it later": an unmanaged creation resolves
-			// terraform.state_bucket from this same config, so it would land
-			// the state in the same bucket, and `fugaro managed flag` refuses
-			// that project for exactly this reason
+			// stop recording it in either place — and NOT "flag it managed
+			// later": there is no unmanaged creation to fall back on any more
+			// (D2214), and `fugaro managed flag` refuses a project whose config
+			// records another bucket for this same reason
 			// (TestManagedFlagNeedsTheDerivedStateBucket). Advice that sends an
 			// operator round that way costs a created project and arrives at
 			// the same refusal.
@@ -116,5 +118,93 @@ func TestManagedCreationAcceptsTheDerivedStateBucket(t *testing.T) {
 	}
 	if _, ok := markerAt(t, r.gcs, bucket); !ok {
 		t.Errorf("the creation wrote no %s in gs://%s:\n%s", "fugaro/managed.json", bucket, refusalText(out, errOut, nil))
+	}
+}
+
+// And the same on the run itself: a first run of `fugaro setup` creates its
+// project without --create-project saying so, and it is held to the rule like
+// any other creating run — the gate is the settled creation and not the flag's
+// spelling of it (D2214, T2c). `--managed` used to be what this case passed,
+// and it is the flag this release retired.
+func TestAFlaglessFirstRunIsRefusedAForeignStateBucket(t *testing.T) {
+	r, bucket := newManagedCreateRig(t)
+	// A first run on this machine: no project config to select.
+	if err := os.Remove(r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := r.run(t, true, "yes\n",
+		"--name", "aurora", "--rigor", "startup", "--region", "us-east5",
+		"--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc,
+		"--state-bucket", "aurora-state")
+	if err == nil {
+		t.Fatalf("a flagless first run put its installation state outside gs://%s and was accepted:\n%s",
+			managedStateBucket(), refusalText(out, errOut, nil))
+	}
+	s := refusalText(out, errOut, err)
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, s)
+	}
+	for _, want := range []string{managedStateBucket(), "aurora-state"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the refusal does not name %q:\n%s", want, s)
+		}
+	}
+	r.nothingDone(t, "a flagless creation refused for its state bucket")
+	noMarker(t, r.gcs, bucket)
+}
+
+// The gate follows the run's creation of the project, not the flag's spelling
+// of it (D2214, T2c). settleCreation sets --create-project's own field on every
+// first run of `setup`, whose creation no flag names, and every project a
+// creating run makes Fugaro's is managed — so a first run that would put the
+// installation's state outside the derived bucket is refused even though it
+// passed no --create-project (and no --managed exists to pass any more, which
+// is what left this case to the settled field).
+func TestTheSettledCreationIsHeldToTheStateBucketRule(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lc, err := localcfg.Parse([]byte(catalogProducerLocal + "terraform: { state_bucket: aurora-state }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: lc.GCPProject}}
+	if err := (&initRun{o: o}).settleCreation(true); err != nil {
+		t.Fatalf("settleCreation: %v", err)
+	}
+	if !o.createProject {
+		t.Fatal("a first run of setup settles no creation: this test's whole point is the field it sets")
+	}
+	_, err = installOptions(o, lc)
+	if err == nil {
+		t.Fatal("a settled creation put the installation's state outside the derived bucket and was accepted")
+	}
+	for _, want := range []string{"fugaro-tfstate-" + lc.GCPProject, "aurora-state"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// And the line the gate does not cross: a run that creates no project installs
+// its state where its own config says, so a bucket of its own is its answer and
+// not a refusal.
+func TestARunThatCreatesNoProjectKeepsItsStateBucket(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	lc, err := localcfg.Parse([]byte(catalogProducerLocal + "terraform: { state_bucket: aurora-state }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &initOptions{door: updateDoor.name, cloud: cloudOptions{gcpProject: lc.GCPProject}}
+	if err := (&initRun{o: o}).settleCreation(true); err != nil {
+		t.Fatalf("settleCreation: %v", err)
+	}
+	if o.createProject {
+		t.Fatal("a run of the update door settled a creation")
+	}
+	spec, err := installOptions(o, lc)
+	if err != nil {
+		t.Fatalf("a run that creates no project was refused for its state bucket: %v", err)
+	}
+	if spec.StateBucket != "aurora-state" {
+		t.Errorf("the state bucket this run would use = %q, want aurora-state", spec.StateBucket)
 	}
 }

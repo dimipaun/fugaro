@@ -5055,11 +5055,11 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 			// profile's repositories carrying the record — `fugaro update
 			// --repo` in THAT checkout — and this launch's own repository
 			// cannot answer it.
-			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, the shared project job of profile %s, which is not switched onto the service: the address is written on a shared project job where the installation carries the service, the profile is one this config declares, and one of the repositories the profile admits is on the switch — agent.auth one the service serves (today agent.auth: cascade alone) with a record saying its root was applied with the service on, which is what '%s update --repo <that repository>' writes — and a run of one without it could read no context repository, so this launch stops before any execution exists. Put one of profile %s's repositories on the switch, or run the task in the repository whose files it needs, with no --context",
+			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, the shared project job of profile %s, which is not switched onto the service: the address is written on a shared project job where the installation carries the service, the profile is one this config declares, and one of the repositories the profile admits is on the switch — agent.auth one the service serves (today agent.auth: cascade alone) with a record saying its root was applied with the service on, which is what '%s update --repo' writes in that repository's checkout — and a run of one without it could read no context repository, so this launch stops before any execution exists. Put one of profile %s's repositories on the switch, or run the task in the repository whose files it needs, with no --context",
 				pluginwire.Printable(jobName), pluginwire.Printable(jobProfile), selfCommand(), pluginwire.Printable(jobProfile))
 		}
-		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on — or drop --context",
-			spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo)
+		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo' in that repository's checkout to apply its root with the switch on — or drop --context",
+			spec.Repo, selfCommand(), spec.Repo, selfCommand())
 	}
 	return nil
 }
@@ -5799,9 +5799,9 @@ func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int, flag stri
 
 // adoptStoredProjectLayer peeks at whatever task is already stored for
 // spec's run ID, without writing anything, and when it is spec's own task
-// (repeatTaskBytes equal, ignoring the layer itself), adopts its project
-// layer into spec before the image gate below runs: a repeat whose earlier
-// attempt stored a task but never launched it must be gated on the layer
+// (repeatTaskBytes equal, ignoring the launcher's own fields), adopts its
+// project layer into spec before the image gate below runs: a repeat whose
+// earlier attempt stored a task but never launched it must be gated on the layer
 // that stored task actually carries, since createTask (below) keeps it
 // either way. No stored task (ErrNotFound), or one for a different
 // request, leaves spec untouched: createTask is still the one that refuses
@@ -5833,6 +5833,16 @@ func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 	if spec.TitleLine() == "" {
 		return userErr("this run has no title (nothing in --title, the brief's first line or the chain names it), and every run has one; pass --title \"<what the run does>\" (at most 100 characters)")
 	}
+	// The stamp (D3441, spec §6): the release this CLI ran as, so the runner
+	// reads it before anything else and upgrades in place to exactly the
+	// release that launched the run (VS5). It is set here rather than by each
+	// launcher — the command, a follow-up, a review, the orchestrator, a
+	// diagnosis — because this is the one place any of them stores a task,
+	// and a path that wrote its own would be the one path the runner could
+	// not upgrade for. A development build names no release and stamps
+	// nothing (D3449), which is what every task written before this field
+	// carries too.
+	spec.CLIVersion = releaseVersion()
 	err := s.CreateTask(ctx, spec)
 	if err == nil {
 		return nil
@@ -5863,17 +5873,21 @@ func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 	return nil
 }
 
-// repeatTaskBytes is spec.Marshal with the project layer left out entirely,
-// so a repeated --run-id is judged on everything the caller actually chose
-// (repo, ref, workflow, task text, overrides, recipe...), never on the
-// project layer: embedProjectLayer re-reads the bucket on every call
-// (decision L13, no fresh window), so its content can legitimately differ
+// repeatTaskBytes is spec.Marshal with the launcher's own fields left out
+// entirely, so a repeated --run-id is judged on everything the caller actually
+// chose (repo, ref, workflow, task text, overrides, recipe...), never on the
+// project layer or the stamp: embedProjectLayer re-reads the bucket on every
+// call (decision L13, no fresh window), so its content can legitimately differ
 // between the first launch and a repeat (a republish, or just a new
-// generation of unchanged bytes); without this, either would make a
+// generation of unchanged bytes), and the stamp is the release that happened
+// to run the repeat, which is no part of the request — a repeated --run-id
+// launched from a later release is the same run, and the stored task keeps
+// the stamp its first launch wrote (D3441); without this, either would make a
 // repeated --run-id spuriously look like "a different task".
 func repeatTaskBytes(spec *task.Spec) ([]byte, error) {
 	clone := *spec
 	clone.ProjectLayer = nil
+	clone.CLIVersion = ""
 	return clone.Marshal()
 }
 
