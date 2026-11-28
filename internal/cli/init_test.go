@@ -824,8 +824,11 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 	if b, _ := os.ReadFile(backups[0]); string(b) != string(before) {
 		t.Error("the backup is not the old config")
 	}
-	if !strings.Contains(out, "+ log_view: "+initLogView) || !strings.Contains(out, "- build:") && !strings.Contains(out, "-   service_account:") {
-		t.Errorf("the diff is not shown:\n%s", out)
+	// The file's diff is the log's and --json's, not a YAML block on the
+	// terminal: a converge's terminal owes one line per step and not the
+	// config's whole account (D1354).
+	if strings.Contains(out, "The local config "+r.cfg+" changes:") || strings.Contains(out, "+ log_view: "+initLogView) {
+		t.Errorf("the terminal carries the config's diff:\n%s", out)
 	}
 	// The deprecation warning was printed, and the launcher reached Terraform.
 	if !strings.Contains(out, "build.service_account is deprecated") {
