@@ -649,12 +649,20 @@ const rulesRouteGeneration = 9
 
 // rulesLaunchGeneration is the rules generation that added the phone's stop
 // request and the launch envelope a paired device reads (mobile plan task
-// P5.1g). It is the generation *below* this binary's, which is why the branch
-// it gates in rulesMarkerOlderText is the one that announces generation 11's
-// two shapes (mobile identity-pairing task J5r): a marker at 10 already has the
-// stop kind and the envelope, and what the deploy adds over it is the tag a
-// signing device carries and the typed launch it sends.
+// P5.1g). It is two generations *below* this binary's, which is why the branch
+// it gates in rulesMarkerOlderText is the one that announces everything
+// generations 11 and 12 add: a marker at 10 has neither the tag a signing
+// device carries, nor the typed launch, nor the shaped task a launch may carry.
 const rulesLaunchGeneration = 10
+
+// rulesSignatureGeneration is the rules generation that added the mailbox's
+// signature and the typed launch (mobile identity-pairing tasks J5r, O6 and
+// O10). It is the generation *below* this binary's, which is why the branch it
+// gates in rulesMarkerOlderText is the one that announces generation 12's
+// addition (mobile plan task P5.4.3): a marker at 11 already has the tag a
+// signing device carries and the typed launch it sends, and what the deploy
+// adds over it is the shaped task a launch may carry.
+const rulesSignatureGeneration = 11
 
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
@@ -683,10 +691,16 @@ const rulesLaunchGeneration = 10
 // the phone's stop request and the launch envelope are new to it (mobile plan
 // task P5.1g), and one at rulesLaunchGeneration already has those two and only
 // the tag a signing device carries and the typed launch it sends are new to it
-// (mobile identity-pairing task J5r).
+// (mobile identity-pairing task J5r), and one at rulesSignatureGeneration
+// already has those shapes and only the shaped task a launch may carry is new
+// to it (mobile plan task P5.4.3).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesSignatureGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model, the paired device's read of a run's outcome, the credential route a run reads, the phone's stop request, the launch envelope and the two shapes a phone of this release writes (the tag a signing device carries in place of the `mac`, and the typed launch), so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the shaped task a launch may carry (mobile plan task P5.4.3): the `brief` field beside an inbox action of the `launch` verb, the text a \"go\" starts a run from, bounded by the shared schema's BRIEF_MAX and carrying the agent it is for; under these rules a launch's brief is refused at the database with no error, so the front agent's start is dropped until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesLaunchGeneration {
-		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model, the paired device's read of a run's outcome, the credential route a run reads, the phone's stop request and the launch envelope, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the two shapes a phone of this release writes (mobile identity-pairing task J5r, O6 and O10): a message and the heartbeat carry `sig` — the base64url Ed25519 signature a device that holds a key signs with — in place of the `mac` tag, exactly one of the two, and an inbox action may be the typed launch, whose `mode` names the rigor mode to start in and which needs no `confirmation` where every other verb carries one; under these rules a device that signs has every message and every heartbeat refused at the database with no error, and a launch is refused at the verb enumeration, so the app can neither speak nor start anything until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model, the paired device's read of a run's outcome, the credential route a run reads, the phone's stop request and the launch envelope, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the two shapes a phone of this release writes (mobile identity-pairing task J5r, O6 and O10) and the shaped task a launch may carry (mobile plan task P5.4.3): a message and the heartbeat carry `sig` — the base64url Ed25519 signature a device that holds a key signs with — in place of the `mac` tag, exactly one of the two, and an inbox action may be the typed launch, whose `mode` names the rigor mode to start in and which needs no `confirmation` where every other verb carries one, and which may carry `brief`, the text a \"go\" starts a run from, bounded and carrying the agent it is for; under these rules a device that signs has every message and every heartbeat refused at the database with no error, a launch is refused at the verb enumeration, and a launch's brief is refused, so the app can neither speak nor start anything until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
 	}
 	if gen >= rulesRouteGeneration {
