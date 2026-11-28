@@ -1106,8 +1106,8 @@ func TestDiscoverCountsAdoptedBindings(t *testing.T) {
 	if got, want := im.Bindings.String(), "IAM: 3 bindings match the live ones (adopted), 2 new"; got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
-	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, legacyBuild) && strings.Contains(n, npm) }) {
-		t.Errorf("notes = %q, want one about %s on %s", im.Notes, legacyBuild, npm)
+	if !slices.ContainsFunc(im.Details, func(n string) bool { return strings.Contains(n, legacyBuild) && strings.Contains(n, npm) }) {
+		t.Errorf("details = %q, want one about %s on %s", im.Details, legacyBuild, npm)
 	}
 }
 
