@@ -16,12 +16,13 @@ import (
 // step that needs no answer prints one plain line saying what it did, with no
 // CONFIRM and no warning mark.
 //
-// The decision is one place — initRun.asksNothing and the gate branch the
-// printers share — so each test below asserts the same fact at the printer it
-// reaches: a managed project's own terminal asks nothing, and a step that asks
-// nothing may not read as a question. The other half of every case is the world
-// where the step IS a question, or is refused: there the wording is unchanged,
-// which is what keeps the fix from taking a confirmation away.
+// The decision is one place at each printer that made the mistake — the gate
+// branch initRun.planBlock and confirmStageWrite share, and the gate's own
+// sentence — so each test below asserts the same fact where it reaches it: a
+// step whose confirmation the gate took is a record, and a step the run's one
+// confirmation does NOT cover keeps its own question. The second half of every
+// case is that control: taking a confirmation away is the failure this fix must
+// not make.
 
 // TestAStageWriteNothingIsAskedAboutPrintsNoConfirm is the policy stage's and
 // the layer stage's write on a managed project at the owner's own terminal: the
@@ -111,21 +112,23 @@ func TestAPlanNobodyConfirmsAsksForNoReview(t *testing.T) {
 	}
 }
 
-// TestAMoneyStepNobodyIsAskedAboutPrintsNoConfirm is the same defect at the
-// steps that are money or permanent (askClass): a managed project's own
-// terminal answers them by being there, so what it reads is the step's note and
-// not a banner nothing follows.
-func TestAMoneyStepNobodyIsAskedAboutPrintsNoConfirm(t *testing.T) {
+// TestAMoneyStepKeepsItsOwnConfirmation is the boundary of the two above, and
+// the control that keeps the fix from taking a real question away: a money or
+// permanent step (askClass, askCovered) is the owner's own, the run's one
+// confirmation does not cover it, and the banner stays whatever the gate's
+// verdict was — it is what says the step is the person's to answer
+// (TestManagedBillableFirstBuildKeepsTheOwnersTerminal, T7).
+func TestAMoneyStepKeepsItsOwnConfirmation(t *testing.T) {
 	_, e, out, _ := managedTerminalUpdate(t, true, true)
 	ok, reachable, err := e.r.askCovered("builds the first image of app")
 	if err != nil || !ok || !reachable {
 		t.Fatalf("a managed project's own terminal did not take the step: %v %v %v\n%s", ok, reachable, err, out)
 	}
 	got := out.String()
-	if strings.Contains(got, "⚠ CONFIRM") {
-		t.Errorf("a step nothing is asked about printed the confirmation banner:\n%s", got)
+	if !strings.Contains(got, "⚠ CONFIRM") {
+		t.Errorf("a money step the run's confirmation does not cover lost its own question:\n%s", got)
 	}
 	if !strings.Contains(got, "builds the first image of app") {
-		t.Errorf("the step's own note does not name it:\n%s", got)
+		t.Errorf("the step's own line does not name it:\n%s", got)
 	}
 }

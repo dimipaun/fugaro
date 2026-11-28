@@ -954,7 +954,7 @@ type initRun struct {
 	// It is what the refresh's steps that are not builds — the base pin, the
 	// daily image check job's config and the clone workflow's job move — ask
 	// whether the gate has taken their confirmation
-	// (initRun.asksNothing): they judge no document of the gate's, and
+	// (refreshManaged.asksNothing): they judge no document of the gate's, and
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
@@ -3021,36 +3021,6 @@ func (r *initRun) ask(what string) (bool, error) {
 	return ok, err
 }
 
-// asksNothing is whether a step of this run takes no confirmation from anybody
-// here: the marks answered "managed" — update's own gate, or the read `fugaro
-// image refresh` makes for itself, the one other gate there is — the person who
-// would have been asked is at their own terminal, and --ask has not put the
-// question back. It is the one answer every printer of a step's confirmation
-// asks, so the banner and the record cannot both be printed for one step.
-//
-// Why each condition is asked, and what each one keeps out. The gate is the
-// run's own read of the marks, so a mark that could not be read, a project this
-// program cannot prove is managed and a command that never read at all answer
-// false. The marker is inside stepConfirmation: a coding agent's session is NOT
-// answered here — the steps that judge no document of the gate's are refused at
-// it, exactly as they were before the gate (initflow's AgentError, which ask
-// gives before this question is even reached). --yes is asked for because a run
-// with it has answered every step itself ("confirmed by --yes" is the line it
-// reads), and the three ways a run cannot be asked at all — --non-interactive,
-// --json and a pipe — because a step nobody can confirm is not a step the gate
-// replaces. What is NOT here is any verdict about a document: no admission is
-// invented for a step the gate never judged.
-//
-// It is the decision this file's printers share (askBanner, askClass,
-// confirmStageWrite and planBlock), and the reason it is one function: the
-// owner's run of 2026-11-27 read a ⚠ CONFIRM banner, a "⚠ Review these first"
-// block and the sentence saying nothing is typed, all for steps that waited for
-// no answer (initRun.asksNothing, which this replaced, was the one
-// printer that already asked it).
-func (r *initRun) asksNothing() bool {
-	return (r.gateStandsIn() || r.refresh != nil) && r.stepConfirmation(false) == stepTyped && !r.o.ask
-}
-
 // askBanner is ask's question, asked between the pause and the resume. The
 // banner is a note now, not a prompt: what answers for the step is the reader
 // of it (confirmNow), and the only arm that reads is --ask's, which asks the
@@ -3059,22 +3029,17 @@ func (r *initRun) asksNothing() bool {
 // The banner is printed only where something follows it that answers for the
 // step: a question, a flag, or a person whose presence is the answer. An arm
 // that asks nothing at all prints the step's note under willDo instead
-// (asksNothing).
+// (refreshManaged.asksNothing) — and it is only the refresh's own document-free
+// steps that reach one: a step carrying a document the gate did not admit keeps
+// its banner, which is what says it is outside what the run announced
+// (TestUpdateManagedRetirementDoesNotCarryALooseningIn).
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	if r.asksNothing() {
+	if r.refresh.asksNothing(r) {
 		r.willDo(what)
-		// The sentence is the arm's own, whichever gate answered: update's gate
-		// stands in for the run's confirmation (OwnerProceeded), the one
-		// `fugaro image refresh` makes for itself announces its own steps
-		// (GateOrdinary) — the same two the arm after the banner prints.
-		sentence := initflow.GateOrdinary()
-		if r.gateStandsIn() {
-			sentence = initflow.OwnerProceeded()
-		}
-		fmt.Fprintf(r.stageDetail(), "  %s\n", sentence)
+		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
@@ -3223,16 +3188,12 @@ const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never
 // confirmNow: the person at the terminal, who types nothing, and the y/N --ask
 // puts back.
 //
-// A step the gate stands in for is not a question at all (asksNothing): the
-// person reads the step's own line and nothing else — one plain line saying what
-// the step does is the whole of what a step nobody is asked about prints, and
-// the banner stood for a question the run is not putting (the owner's feedback
-// of 2026-11-28).
+// The banner stays for every step this reaches, whatever the gate's verdict
+// was: a money or permanent step is the owner's own, and the step that reads it
+// is one the run's one confirmation did not cover
+// (TestManagedBillableFirstBuildKeepsTheOwnersTerminal, and askClass's own
+// ruling of 2026-10-20).
 func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bool, err error) {
-	if r.asksNothing() {
-		r.willDo(what)
-		return true, true, nil
-	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	switch r.stepConfirmation(ownAnswer) {
 	case stepLeave:
