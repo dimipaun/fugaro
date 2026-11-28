@@ -71,7 +71,10 @@ type Project struct {
 	// breaks a tie with (D3290).
 	Prices *pricing.Table
 	// Migrated is the set of slugs whose migration record already exists
-	// (D3305). A planner acts only on a repository absent from it.
+	// (D3305). A planner that would migrate a value acts only on a
+	// repository absent from it; the tighten item moves nothing, so it reads
+	// the set not at all and names its drops for every repository whose file
+	// still writes them.
 	Migrated map[string]bool
 	// Auth is the agent.auth the owner chose where the repositories disagree
 	// (update --ask); empty leaves the planner's majority rule.
