@@ -67,6 +67,17 @@ const PROJECT_ID_RE = new RegExp(`^[A-Za-z0-9_.-]{1,${PROJECT_ID_MAX}}$`);
 /** The characters a stored token may carry: printable ASCII, no space. */
 const PRINTABLE_ASCII_RE = /^[\x21-\x7e]+$/;
 
+/**
+ * The highest `compact_threshold_percent` a policy may carry: 99, and not a
+ * whole window. The percent is C1's unit and `compaction_threshold` is the
+ * port's fraction, which `shared/mobile-session/port.js` requires above zero
+ * and below one -- so 100 or more maps to a fraction the port refuses, and a
+ * refresh installs the policy it read (`index.js`'s `#rotate`) without a second
+ * port check. It is the ceiling the project policy refuses a node above when it
+ * publishes the key (`internal/projectpolicy.MobileCompactionThresholdMax`).
+ */
+export const COMPACT_THRESHOLD_PERCENT_MAX = 99;
+
 /** The prefix every project session key carries, read from C1 rather than spelled again. */
 export const PROJECT_SESSION_PREFIX = SECURE_STORE_ITEMS.PROJECT_SESSION;
 
@@ -205,7 +216,9 @@ function safeJson(body) {
  * threshold's percent becomes the port's fraction and 0 becomes the port's
  * null, and the other three travel unchanged. **The unit is the whole of this
  * function's job** -- the shape is the reader's (`parseRefreshResponse` refuses
- * a policy outside it, and `assertSessionPort` refuses one again at the door).
+ * a policy outside it, and `assertSessionPort` refuses one again at the door),
+ * and the percent's ceiling is the reader's too (`COMPACT_THRESHOLD_PERCENT_MAX`),
+ * so every fraction made here is one the port carries.
  */
 export function sessionPolicyOf(policy) {
   const percent = policy?.compact_threshold_percent;
@@ -224,7 +237,8 @@ function policyDefect(policy) {
     return 'policy.costly_modes';
   }
   if (typeof policy.biometric_on_costly !== 'boolean') return 'policy.biometric_on_costly';
-  if (!Number.isInteger(policy.compact_threshold_percent) || policy.compact_threshold_percent < 0) {
+  const percent = policy.compact_threshold_percent;
+  if (!Number.isInteger(percent) || percent < 0 || percent > COMPACT_THRESHOLD_PERCENT_MAX) {
     return 'policy.compact_threshold_percent';
   }
   if (typeof policy.crash_reports !== 'boolean') return 'policy.crash_reports';
