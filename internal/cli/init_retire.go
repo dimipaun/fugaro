@@ -276,7 +276,7 @@ func (r *initRun) retireSummary(w io.Writer, spec infra.RepoSpec, rets []infra.R
 		for _, k := range kept {
 			switch {
 			case k.SecretID != "":
-				rows = append(rows, fmt.Sprintf("  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched\n", k.Logical))
+				rows = append(rows, fmt.Sprintf("  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched (%s)\n", k.Logical, k.SecretID))
 			case k.Logical != "":
 				rows = append(rows, fmt.Sprintf("  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched (its Secret Manager ID could not be read)\n", k.Logical))
 			default:
