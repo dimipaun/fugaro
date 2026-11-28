@@ -139,7 +139,7 @@ func (r *initRun) coordinatorJob(ctx context.Context, c *infra.Clients, lc *loca
 	case cs.GitHubAppID == "" && coordinatorReadsGitHub(cs.Repos):
 		if !r.coordinatorNoted {
 			r.coordinatorNoted = true
-			r.warn(fmt.Sprintf("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads its GitHub repositories through a token minted from one. Onboarding a GitHub repository records it (fugaro update --repo <owner/name> --github-app-id <id>), and the next fugaro update --firebase-project %s deploys the job.", firebaseProjectIDWord(lc.GCPProject)))
+			r.warn(fmt.Sprintf("the coordinator's aggregation job is not deployed: the local config records no GitHub App ID, and the sweep reads its GitHub repositories through a token minted from one. Onboarding a GitHub repository records it (in a checkout of it, fugaro update --repo --github-app-id <id>), and the next fugaro update --firebase-project %s deploys the job.", firebaseProjectIDWord(lc.GCPProject)))
 		}
 	default:
 		ok, err := infra.CoordinatorImageExists(ctx, c, lc, cs)

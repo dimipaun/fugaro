@@ -242,10 +242,13 @@ func (e *initEngine) gateRun(ctx context.Context) error {
 	// whole (a user error, exit 1), and nothing after it runs — no stage, no
 	// write, no record.
 	//
-	// update is the one door whose --ask turns value entry on (D3347, R18): a
-	// project the marks did not answer "managed" for gets AskValues or its
-	// refusal there, not AskUnmanaged's no-op. `fugaro apply` runs the same
-	// gate but keeps the flag's plain meaning, so it passes values false.
+	// update is the one door whose --ask turns value entry on (D3347, R18), so a
+	// project the marks did not answer "managed" for is not answered with
+	// AskUnmanaged's no-op there. Its own line, AskValues, is not this one's
+	// either: whether a value is missing and a checkout can be asked about is the
+	// secrets stage's fact, and the stage prints the line where it asks
+	// (initsecrets.go's sayValues). `fugaro apply` runs the same gate but keeps
+	// the flag's plain meaning, so it passes values false.
 	return askDecide(r.w, askFlags{ask: r.o.ask, values: r.o.doorName() == updateDoor.name}, r.gateUnderway(), r.conditions())
 }
 

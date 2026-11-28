@@ -687,9 +687,12 @@ nothing, which is what the owner's run of 2026-11-26 got back from them.
 The two ends are knobbed so the step's own EXIT-CODE MAPPING can be read where it
 is written -- the six `exit`s in the step and nowhere else. FAKE_STEP_METADATA is
 `token` (mint the token, the default), `empty` (the metadata server answers
-nothing, which is the step's exit 14) or `error` (it REFUSES with an HTTP 404 and
+nothing, which is the step's exit 14), `error` (it REFUSES with an HTTP 404 and
 a body, which is curl's own `-f` case and the same exit 14, with curl's own words
-about the refusal on stderr, where the step has to keep them); FAKE_STEP_CLAIM is
+about the refusal on stderr, where the step has to keep them) or `unclean` (it
+answers a 200 and a body that is not one clean value, which curl's own `-f` cannot
+catch, so the step's own guard is the only thing between that body and the bearer
+header); FAKE_STEP_CLAIM is
 the `email` claim the minted token carries (the account by default, another
 identity for exit 15); and
 FAKE_STEP_FRONT is what the service's front end answers -- `admit` (the default:
@@ -843,6 +846,17 @@ if "metadata.google.internal" in url:
             sys.stderr.write("curl: (22) The requested URL returned error: 404\n")
             sys.exit(22)
         sys.stdout.write("Not Found: the metadata server refused this request\n")
+        sys.exit(0)
+    if METADATA == "unclean":
+        # The metadata server that answers a 200 and a body that is not one clean
+        # value -- an error page served where the token should be. curl's own `-f`
+        # cannot catch this, because the status was a success and curl exits 0 with
+        # the text on stdout, so the step's own guard is the only thing between such
+        # a body and the Authorization header of the call to the service: without
+        # it that text would be sent as the bearer token, and the front end's 401
+        # would be read as "the front end refused the token" when no token was ever
+        # minted.
+        sys.stdout.write("Not Found: this is not a token\n")
         sys.exit(0)
     # The mint: answered for the request the product's own build steps make and
     # for no other. internal/backend/gcp/catalog_clone.go's grant step and
@@ -1221,7 +1235,8 @@ test_the_step_ends_with_one_exit_code_per_outcome() {
     "FAKE_STEP_FRONT=none|no status at all|13|CHK195 status=none email=fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" \
     "FAKE_STEP_FRONT=granted FAKE_STEP_CLAIM=somebody-else@fugaro-dev.iam.gserviceaccount.com|a 200 earned by another identity|15|CHK195 status=200 email=somebody-else@fugaro-dev.iam.gserviceaccount.com" \
     "FAKE_STEP_METADATA=empty|a metadata server that mints nothing|14|CHK195 status=notoken email=unread" \
-    "FAKE_STEP_METADATA=error|a metadata server that refuses (HTTP 404 and a body, which -f turns into no token)|14|CHK195 status=notoken email=unread"; do
+    "FAKE_STEP_METADATA=error|a metadata server that refuses (HTTP 404 and a body, which -f turns into no token)|14|CHK195 status=notoken email=unread" \
+    "FAKE_STEP_METADATA=unclean|a metadata server that answers a 200 and a body that is not one clean value (a page, not a token)|14|CHK195 status=notoken email=unread"; do
     knobs=${spec%%|*}
     rest=${spec#*|}
     what=${rest%%|*}
@@ -1269,6 +1284,41 @@ test_a_metadata_server_that_mints_nothing_says_why() {
   # And the object the check reads first carries the line, so the outcome reaches
   # the block whether or not the log ever arrives.
   expect_contains "$(cat "$dir/logs/step-upload.txt")" "CHK195 status=notoken email=unread" "the mint that answered nothing: the line is written into the object too"
+}
+
+# The other arm of the same guard, and the one nothing else reaches: the metadata
+# server answers a 200 and a body that is not one clean value. curl's own `-f`
+# cannot catch this -- the status was a success -- so without the guard the body
+# would be sent as the bearer token, and the front end's 401 would be read as "the
+# front end refused the token" when no token was ever minted. The product's own
+# build step holds its token to the same rule
+# (internal/backend/gcp/catalog_clone.go's grant step), and the assertion here is
+# the guard's whole point: the service is never called at all.
+test_a_metadata_answer_that_is_not_one_clean_value_is_never_sent() {
+  local dir=$work/stepunclean
+  prepare "$dir"
+  run195 "$dir"
+  expect_status "$status" 0 "the unclean mint: the run that generates the step"
+  local step=$dir/step.sh
+  lift_step_script "$dir/logs/cloudbuild.yaml" "$step" || {
+    fail "the unclean mint: no script could be lifted out of the generated build config"
+    return 0
+  }
+  write_fake_curl_for_the_step "$dir/stepbin"
+  status=0
+  env PATH="$dir/stepbin:$PATH" FAKE_LOG_DIR="$dir/logs" FAKE_STEP_METADATA=unclean \
+    bash "$step" >"$dir/step.out" 2>"$dir/step.err" || status=$?
+  expect_status "$status" 14 "the unclean mint: the step's own outcome code, the one it exits for no token"
+  expect_contains "$(cat "$dir/step.out")" "CHK195 status=notoken email=unread" "the unclean mint: the one line the check reads"
+  expect_absent "$(cat "$dir/step.out")" "not a token" "the unclean mint: the metadata server's body is not printed as the line"
+  # The body never becomes a bearer token: were the guard absent, the step would
+  # hand this text to curl as `Authorization: Bearer <it>` for the service call, so
+  # the text is in no call the step made -- and the service was never called.
+  expect_absent "$(cat "$dir/logs/step-curl.calls")" "this is not a token" "the unclean mint: the body is never sent to the service as a token"
+  expect_absent "$(cat "$dir/logs/step-curl.calls")" "Bearer Not Found" "the unclean mint: no authorization header is built out of the body"
+  # And the object the check reads first still carries the line, so the outcome
+  # reaches the block whether or not the log ever arrives.
+  expect_contains "$(cat "$dir/logs/step-upload.txt")" "CHK195 status=notoken email=unread" "the unclean mint: the line is written into the object too"
 }
 
 # A knob the header advertises and nothing reads is worse than no knob at all: a
@@ -2205,6 +2255,7 @@ t test_every_advertised_knob_is_read
 t test_the_generated_step_mints_a_token_and_reads_its_own_email_claim
 t test_the_step_ends_with_one_exit_code_per_outcome
 t test_a_metadata_server_that_mints_nothing_says_why
+t test_a_metadata_answer_that_is_not_one_clean_value_is_never_sent
 t test_the_step_retries_the_write_into_the_object
 t test_happy_path
 t test_a_service_already_there_is_a_hard_stop

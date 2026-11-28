@@ -51,12 +51,12 @@ func layerName(i int) string {
 // tighten: the smaller positive cap, the stricter mode (enforce > observe),
 // the intersection of allow-lists, a craft that selects among the
 // project's credentials and pools and narrows a pool. A grade of the escalation
-// ladder is the one block a later layer may not write at all: the project owns
-// the model choice, so its entry is dropped and recorded (tightenGrades). A key a layer leaves
-// unset passes the earlier layers through. A value a later layer sets that does
-// not tighten is dropped and recorded in Ignored (equal values are not ignored;
-// the ceiling is never ignored). Later layers are compared to the running
-// effective value.
+// ladder is the one block only the first layer carries: the project owns the
+// model choice, and a repository's own names are lifted before a layer is built
+// (tightenGrades). A key a layer leaves unset passes the earlier layers through.
+// A value a later layer sets that does not tighten is dropped and recorded in
+// Ignored (equal values are not ignored; the ceiling is never ignored). Later
+// layers are compared to the running effective value.
 func Merge(ceiling Layer, tighten ...Layer) Effective {
 	e := Effective{Sources: map[string]string{}}
 	layers := append([]Layer{ceiling}, tighten...)
@@ -205,9 +205,13 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		e.tightenCraft(l.Craft, src, i == 0)
 
 		// The model grades of the escalation ladder are the project's own
-		// model choice, so they are the one block a layer under the first may
-		// not write at all: its entry is dropped and recorded (G3, D2039).
-		e.tightenGrades(l.Grades, src, i == 0)
+		// model choice, so they are the one block only the first layer
+		// carries: a repository's own grade models are lifted
+		// (config.LiftedKeys), and no other layer's grades are read at all
+		// (G3, D2039).
+		if i == 0 {
+			e.tightenGrades(l.Grades, src)
+		}
 
 		if r := modeRank(l.Mode); r > 0 {
 			cur := modeRank(e.Mode)

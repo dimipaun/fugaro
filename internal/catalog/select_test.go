@@ -526,16 +526,17 @@ func TestJobImageKeepsOwnImageWhenTheDefaultCannotRun(t *testing.T) {
 	}
 }
 
-// TestJobImageUsesImageMap is D1906's map in the resolver, and T1 reading (b)
-// against it: a repository the project maps runs the entry it is mapped to,
-// while a repository that states a reference of its own — a pin or a needed
-// tag — is resolved by that reference and never by the map.
+// TestJobImageUsesImageMap is D1906's map in the resolver, handed over as the
+// legacy member it is read as (R2), and T1 reading (b) against it: a repository
+// the project maps runs the entry it is mapped to, while a repository that
+// states a reference of its own — a pin or a needed tag — is resolved by that
+// reference and never by the map.
 func TestJobImageUsesImageMap(t *testing.T) {
 	cat := testCatalog()
 	cat.Entries[1].Default = true // frontend, the default a mapped repo never reaches
 	imap := map[string]string{"acme/api": "backend"}
 	req := func(w config.Workflow) ImageRequest {
-		return ImageRequest{Catalog: &cat, ImageMap: imap, Workflow: w, Backend: CloudRun, Canonical: "acme/api"}
+		return ImageRequest{Catalog: &cat, LegacyMap: imap, Workflow: w, Backend: CloudRun, Canonical: "acme/api"}
 	}
 	sel := mustImage(t, req(config.Workflow{Checkout: config.CheckoutBaked, Image: config.Image{Apt: []string{"jq"}}}))
 	if sel.Source != SourceCatalog || sel.Entry.Name != "backend" {
@@ -561,7 +562,7 @@ func TestJobImageUsesImageMap(t *testing.T) {
 	// A map that names an entry the catalog does not hold is refused, and the
 	// sentence names the map: that is where the person's fix is.
 	missing := req(config.Workflow{Checkout: config.CheckoutBaked})
-	missing.ImageMap = map[string]string{"acme/api": "nowhere"}
+	missing.LegacyMap = map[string]string{"acme/api": "nowhere"}
 	if _, err := JobImage(missing); err == nil {
 		t.Fatal("a map entry no catalog holds was accepted")
 	} else if !strings.Contains(err.Error(), "repo_images") {
@@ -682,7 +683,7 @@ func TestJobImageCheckoutKindsAreTheInstallationsImages(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			sel := mustImage(t, ImageRequest{
 				Catalog:   &cat,
-				ImageMap:  map[string]string{"acme/api": "backend"},
+				LegacyMap: map[string]string{"acme/api": "backend"},
 				Workflow:  tt.w,
 				Backend:   CloudRun,
 				Canonical: "acme/api",

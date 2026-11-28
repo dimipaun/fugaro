@@ -10,7 +10,11 @@
 #
 #   cfg            key=value knobs — submit_fail, delete_fail, delete_lists,
 #                  create_fail, create_refuse_reserved, create_refuse_blind,
-#                  refuse_reuse, hide_vms
+#                  refuse_reuse, hide_vms, stockout_zones, refuse_other_zones,
+#                  sa_create_fail, sa_grant_fail, sa_delete_fail,
+#                  binding_remove_fail, vm_sa
+#   sas            the service accounts that exist: email <TAB> display name
+#   bindings       the project's IAM bindings: member <TAB> role
 #   uid.map        job name <TAB> its UID, which is what its logs are read by
 #   state.map      job name <TAB> its state
 #   vmjob.map      job name <TAB> the instance it ran on
@@ -249,6 +253,37 @@ def describe_file(name):
     return lookup("vm.map", name)
 
 
+DEFAULT_SA = "1234-compute@developer.gserviceaccount.com"
+
+
+def vm_service_account(vm):
+    """The account a Batch VM runs as is the one its job's configuration named,
+    and the project's default compute account when it named none."""
+    if cfg("vm_sa"):
+        return cfg("vm_sa")
+    job = ""
+    for row in rows("vmjob.map"):
+        if len(row) > 1 and row[1] == vm:
+            job = row[0]
+    d = os.path.join(state, "submits")
+    if job and os.path.isdir(d):
+        for f in sorted(os.listdir(d)):
+            if not f.endswith("-" + job + ".json"):
+                continue
+            try:
+                with open(os.path.join(d, f)) as fh:
+                    email = (json.load(fh).get("allocationPolicy") or {}).get("serviceAccount", {}).get("email")
+            except (OSError, ValueError):
+                continue
+            if email:
+                return email
+    return DEFAULT_SA
+
+
+def sa_exists(email):
+    return any(row[0] == email for row in rows("sas"))
+
+
 argv = sys.argv[1:]
 with open(os.path.join(state, "gcloud.calls"), "a") as fh:
     fh.write(" ".join(argv) + "\n")
@@ -272,6 +307,13 @@ if argv[:2] == ["compute", "instances"]:
     op = argv[2] if len(argv) > 2 else ""
     name = argv[3] if len(argv) > 3 else ""
     if op == "list":
+        if flag("--filter").startswith("name="):
+            want = flag("--filter")[len("name="):]
+            path = os.path.join(state, "mades", want + ".json")
+            if want in read_list("created") and os.path.exists(path):
+                with open(path) as fh:
+                    print(json.load(fh)["zone"].rsplit("/", 1)[-1])
+            sys.exit(0)
         want_zone = "," in flag("--format")
         names = list(read_list("instances.base"))
         if cfg("hide_vms") != "yes":
@@ -289,6 +331,10 @@ if argv[:2] == ["compute", "instances"]:
         # a measurement of what a launcher can write rather than of what this
         # file chose to write.
         path = os.path.join(state, "mades", name + ".json")
+        if os.path.exists(path):
+            with open(path) as fh:
+                if json.load(fh)["zone"].rsplit("/", 1)[-1] != flag("--zone"):
+                    die("ERROR: The resource '%s' was not found in zone %s" % (name, flag("--zone")))
         if not os.path.exists(path):
             f = describe_file(name)
             path = os.path.join(state, f) if f else ""
@@ -306,7 +352,7 @@ if argv[:2] == ["compute", "instances"]:
             print("e2-standard-4")
             sys.exit(0)
         if "serviceAccounts" in fmt:
-            print("1234-compute@developer.gserviceaccount.com")
+            print(vm_service_account(name))
             sys.exit(0)
         die("fake gcloud: unhandled describe format: %s" % fmt)
     if op == "create":
@@ -321,7 +367,11 @@ if argv[:2] == ["compute", "instances"]:
             die("ERROR: Invalid value for field 'resource.labels.%s': the key is reserved" % reserved)
         if cfg("create_fail") == "yes":
             die("ERROR: QUOTA_EXCEEDED: the zone has no capacity for this request")
-        zone = cfg("zone", "us-east5-a")
+        zone = flag("--zone") or cfg("zone", "us-east5-a")
+        if zone in cfg("stockout_zones").split(","):
+            die("ERROR: ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS: the zone does not have enough resources. Consider trying another zone")
+        if zone in cfg("refuse_other_zones").split(","):
+            die("ERROR: PERMISSION_DENIED: this account cannot create instances in %s" % zone)
 
 
         def pairs(arg):
@@ -345,7 +395,7 @@ if argv[:2] == ["compute", "instances"]:
                 "kind": "compute#metadata",
                 "items": [{"key": k, "value": v} for k, v in pairs("--metadata").items()],
             },
-            "serviceAccounts": [{"email": "1234-compute@developer.gserviceaccount.com"}],
+            "serviceAccounts": [{"email": DEFAULT_SA}],
         }
         with open(os.path.join(state, "mades", name + ".json"), "w") as fh:
             json.dump(obj, fh, indent=1)
@@ -362,6 +412,11 @@ if argv[:2] == ["compute", "instances"]:
     if op == "delete":
         if cfg("delete_fail") == "yes":
             die("ERROR: PERMISSION_DENIED: this account cannot delete instances")
+        made = os.path.join(state, "mades", name + ".json")
+        if os.path.exists(made):
+            with open(made) as fh:
+                if json.load(fh)["zone"].rsplit("/", 1)[-1] != flag("--zone"):
+                    die("ERROR: The resource '%s' was not found in zone %s" % (name, flag("--zone")))
         write_list("created", [n for n in read_list("created") if n != name])
         try:
             os.remove(os.path.join(state, "mades", name + ".json"))
@@ -382,6 +437,66 @@ if argv[:2] == ["compute", "instances"]:
             sys.stdout.write("Nov 25 03:51:28 batch-vm systemd[1]: Started Batch task container.\n")
         sys.exit(0)
     die("fake gcloud: unhandled compute call: %s" % " ".join(argv))
+
+if argv[:2] == ["iam", "service-accounts"]:
+    op = argv[2] if len(argv) > 2 else ""
+    name = argv[3] if len(argv) > 3 else ""
+    if op == "list":
+        want = flag("--filter").split(":", 1)[-1]
+        for row in rows("sas"):
+            if row[0] == want:
+                print(row[0])
+        sys.exit(0)
+    if op == "describe":
+        for row in rows("sas"):
+            if row[0] == name:
+                print(row[1] if len(row) > 1 else "")
+                sys.exit(0)
+        die("ERROR: NOT_FOUND: the service account %s does not exist" % name)
+    if op == "create":
+        if cfg("sa_create_fail") == "yes":
+            die("ERROR: PERMISSION_DENIED: the caller does not have iam.serviceAccounts.create")
+        email = "%s@fugaro-dev.iam.gserviceaccount.com" % name
+        with open(os.path.join(state, "sas"), "a") as fh:
+            fh.write("%s\t%s\n" % (email, flag("--display-name")))
+        print("Created service account [%s]." % name)
+        sys.exit(0)
+    if op == "delete":
+        if cfg("sa_delete_fail") == "yes":
+            die("ERROR: FAILED_PRECONDITION: the account is still in use")
+        with open(os.path.join(state, "sas"), "w") as fh:
+            for row in rows("sas"):
+                if row[0] != name:
+                    fh.write("\t".join(row) + "\n")
+        print("Deleted service account [%s]." % name)
+        sys.exit(0)
+    die("fake gcloud: unhandled service-accounts call: %s" % " ".join(argv))
+
+if argv[:2] == ["projects", "add-iam-policy-binding"] or argv[:2] == ["projects", "remove-iam-policy-binding"] or argv[:2] == ["projects", "get-iam-policy"]:
+    op = argv[1]
+    if op == "get-iam-policy":
+        by_role = {"roles/editor": ["serviceAccount:%s" % DEFAULT_SA.replace("1234-compute", "99-other")]}
+        for row in rows("bindings"):
+            by_role.setdefault(row[1], []).append(row[0])
+        print(json.dumps({"bindings": [{"role": r, "members": m} for r, m in sorted(by_role.items())]}))
+        sys.exit(0)
+    member = flag("--member")
+    role = flag("--role")
+    if op == "add-iam-policy-binding":
+        if cfg("sa_grant_fail") == "yes":
+            die("ERROR: PERMISSION_DENIED: the caller does not have resourcemanager.projects.setIamPolicy")
+        if not sa_exists(member.split(":", 1)[-1]):
+            die("ERROR: INVALID_ARGUMENT: Service account %s does not exist." % member)
+        with open(os.path.join(state, "bindings"), "a") as fh:
+            fh.write("%s\t%s\n" % (member, role))
+        sys.exit(0)
+    if cfg("binding_remove_fail") == "yes":
+        die("ERROR: PERMISSION_DENIED: the caller does not have resourcemanager.projects.setIamPolicy")
+    with open(os.path.join(state, "bindings"), "w") as fh:
+        for row in rows("bindings"):
+            if not (row[0] == member and row[1] == role):
+                fh.write("\t".join(row) + "\n")
+    sys.exit(0)
 
 if argv[:2] == ["batch", "jobs"]:
     op = argv[2] if len(argv) > 2 else ""
@@ -585,7 +700,9 @@ MD_EOF
 # write_log: the entries one job's task logs answer with — the container's own
 # C830 lines, which is where the check reads the metadata, the token's claims and
 # the marker's control. MODE bends the token: full, noclaims (the token arrives
-# without the instance claims) or notoken (the metadata server gave no token).
+# without the instance claims), notoken (the metadata server gave no token),
+# mdblocked (no metadata read answered at all) or curlip (python3 absent, the
+# server's address answered through curl).
 write_log() { # write_log FILE UID VM ZONE IID CONTROL ATTRS MODE [EXTRA]
   python3 - "$@" <<'PY'
 import json, sys
@@ -593,24 +710,41 @@ import json, sys
 out, uid, vm, zone, iid, control, attrs, mode = sys.argv[1:9]
 extra = sys.argv[9] if len(sys.argv) > 9 else ""
 md = "projects/123456789/zones/%s" % zone
-lines = [
-    "C830 start host=%s" % vm,
-    "C830 metadata instance/name=%s" % vm,
-    "C830 metadata instance/id=%s" % iid,
-    "C830 metadata instance/zone=%s" % md,
-    "C830 metadata instance/hostname=%s" % vm,
-    "C830 project fugaro-dev",
-    "C830 attrs %s" % attrs,
-    "C830 sa 1234-compute@developer.gserviceaccount.com",
-]
-if mode != "notoken":
+if mode == "mdblocked":
+    lines = [
+        "C830 md-tool python3=present curl=absent",
+        "C830 start host=%s" % vm,
+        "C830 md-error instance/name URLError: <urlopen error [Errno -2] Name does not resolve>",
+        "C830 metadata instance/name=<unreachable>",
+        "C830 metadata instance/id=<unreachable>",
+        "C830 metadata instance/zone=<unreachable>",
+        "C830 metadata instance/hostname=<unreachable>",
+        "C830 project <unreachable>",
+        "C830 attrs <unreachable>",
+        "C830 sa <unreachable>",
+        "C830 token <unreachable>",
+    ]
+else:
+    lines = [
+        "C830 md-tool python3=%s curl=present" % ("absent" if mode == "curlip" else "present"),
+    ] + ["C830 md-route instance/name curl-ip"] * (mode == "curlip") + [
+        "C830 start host=%s" % vm,
+        "C830 metadata instance/name=%s" % vm,
+        "C830 metadata instance/id=%s" % iid,
+        "C830 metadata instance/zone=%s" % md,
+        "C830 metadata instance/hostname=%s" % vm,
+        "C830 project fugaro-dev",
+        "C830 attrs %s" % attrs,
+        "C830 sa 1234-compute@developer.gserviceaccount.com",
+    ]
+if mode not in ("notoken", "mdblocked"):
     lines += [
         "C830 token len=987",
         "C830 token aud=https://fugaro-chk830.invalid/",
         "C830 token iss=https://accounts.google.com",
         "C830 token claims=aud,exp,google.compute_engine,iat,iss,sub",
     ]
-    if mode == "full":
+    if mode in ("full", "curlip"):
         lines += [
             "C830 token instance_id=%s" % iid,
             "C830 token instance_name=%s" % vm,
@@ -783,6 +917,9 @@ run_check() { # run_check [K=V ...] [-- ARGS...]
     CHK830_REUSE_POLL=0
     CHK830_SWEEP_BOUND=2
     CHK830_SWEEP_POLL=0
+    CHK830_SA_TRIES=2
+    CHK830_SA_RETRY_SECONDS=0
+    CHK830_SA_SETTLE_SECONDS=0
   )
   [ "$RUN_OWNER" = yes ] && base+=(CHK830_OWNER_RUN=yes)
   set +e
@@ -866,6 +1003,21 @@ for f in sorted(os.listdir(d)):
     if var is not None:
         print(var)
         break
+PY
+}
+# submitted_sa: the service account that job's VMs run as, read out of the
+# configuration the fake kept. A job submitted with none runs as the project's
+# default compute account, which holds no role in fugaro-dev, and its Batch
+# agent cannot report.
+submitted_sa() { # submitted_sa JOB
+  python3 - "$dir/state/submits" "$1" <<'PY' 2>/dev/null || true
+import json, os, sys
+d, job = sys.argv[1:3]
+for f in sorted(os.listdir(d)):
+    if not f.endswith("-" + job + ".json"):
+        continue
+    print(((json.load(open(os.path.join(d, f))).get("allocationPolicy") or {}).get("serviceAccount") or {}).get("email", ""))
+    break
 PY
 }
 # submitted_image: the image that job's container runs. The probe's pull is what
@@ -1022,6 +1174,12 @@ write_default_case() { # write_default_case DIR [bend...]
       ;;
     notoken)
       write_log "$d/state/log-$uid_a.json" "$uid_a" "$vm_a" "$zone" "$instance_id" present "job_uid=$uid_a" notoken
+      ;;
+    md-blocked)
+      write_log "$d/state/log-$uid_a.json" "$uid_a" "$vm_a" "$zone" "$instance_id" present "job_uid=$uid_a" mdblocked
+      ;;
+    curl-ip)
+      write_log "$d/state/log-$uid_a.json" "$uid_a" "$vm_a" "$zone" "$instance_id" present "job_uid=$uid_a" curlip
       ;;
     metadata-unreachable)
       write_log "$d/state/log-$uid_a.json" "$uid_a" "<unreachable>" "$zone" "$instance_id" present "job_uid=$uid_a" full
@@ -1477,6 +1635,176 @@ test_a_plain_vm_compute_refuses_the_key_on_is_recorded() {
   nothing_left "a refused key"
 }
 
+job_sa=fugaro-chk830-job@fugaro-dev.iam.gserviceaccount.com
+
+# Both jobs run as the throwaway account, which holds exactly the two roles a
+# real run's job account holds: without roles/batch.agentReporter the Batch agent
+# cannot report and the job stays SCHEDULED (the owner's run of 2026-11-28). The
+# account and both bindings are made before the probe is submitted and are gone
+# at the end, each read back.
+test_both_jobs_run_as_a_throwaway_account_that_is_removed() {
+  setup_case job-account
+  write_default_case "$dir"
+  run_check
+  expect_status "$status" 0 "job account"
+  expect_no_unreached "job account"
+  [ "$(submitted_sa "$job_a")" = "$job_sa" ] || fail "job account: the probe job names '$(submitted_sa "$job_a")' as its service account, not ${job_sa}"
+  [ "$(submitted_sa "$job_b")" = "$job_sa" ] || fail "job account: the forging job names '$(submitted_sa "$job_b")' as its service account, not ${job_sa}"
+  expect_verdict job-account PASS "job account: created and granted"
+  expect_row job-account "${job_sa}" "job account: the row names the account"
+  expect_row job-account "roles/batch.agentReporter roles/logging.logWriter" "job account: and exactly the two roles"
+  expect_row vm-a "running as ${job_sa}, the check's throwaway job account" "job account: the VM's own account is the throwaway one"
+  expect_row u1-link "The probe's VM runs as ${job_sa}" "job account: u1-link says whose account the VM ran as"
+  expect_verdict job-account-removed PASS "job account: removed and read back"
+  expect_verdict restore PASS "job account: the restore row"
+  expect_row restore "the throwaway service account" "job account: the restore row says the account went too"
+  expect_call "iam service-accounts create fugaro-chk830-job"
+  [ "$(count_calls "projects add-iam-policy-binding")" = 2 ] || fail "job account: expected two grants"
+  [ "$(count_calls "projects remove-iam-policy-binding")" = 2 ] || fail "job account: expected two binding removals"
+  expect_call "iam service-accounts delete ${job_sa}"
+  local made sub rem del
+  made=$(line_of_call "iam service-accounts create")
+  sub=$(line_of_call "batch jobs submit ${job_a}")
+  rem=$(line_of_call "projects remove-iam-policy-binding")
+  del=$(line_of_call "iam service-accounts delete")
+  [ -n "$made" ] && [ -n "$sub" ] && [ "$made" -lt "$sub" ] || fail "job account: the account is made before the probe is submitted"
+  [ -n "$rem" ] && [ -n "$del" ] && [ "$rem" -lt "$del" ] || fail "job account: the bindings are removed before the account is deleted"
+  [ ! -s "$dir/state/sas" ] || fail "job account: the fake still holds an account: $(cat "$dir/state/sas")"
+  [ ! -s "$dir/state/bindings" ] || fail "job account: the fake still holds a binding: $(cat "$dir/state/bindings")"
+  nothing_left "job account"
+}
+
+test_an_account_that_cannot_be_deleted_fails_the_restore() {
+  setup_case sa-delete-fails
+  write_default_case "$dir"
+  printf 'sa_delete_fail=yes\n' >>"$dir/state/cfg"
+  run_check
+  expect_status "$status" 1 "an account left behind"
+  expect_verdict job-account-removed FAIL "an account left behind: the removal row"
+  expect_row job-account-removed "${job_sa} is not clean" "an account left behind: named"
+  expect_verdict restore FAIL "an account left behind: the restore row"
+  expect_row restore "the account ${job_sa}" "an account left behind: the restore row names it"
+  expect_last_line "CHECK 830 RESULT: FAIL" "an account left behind"
+}
+
+test_a_binding_that_cannot_be_removed_fails_the_restore() {
+  setup_case sa-binding-stays
+  write_default_case "$dir"
+  printf 'binding_remove_fail=yes\n' >>"$dir/state/cfg"
+  run_check
+  expect_status "$status" 1 "a binding left behind"
+  expect_verdict job-account-removed FAIL "a binding left behind: the removal row"
+  expect_row job-account-removed "project policy reads named" "a binding left behind: the policy read-back says so"
+  expect_verdict restore FAIL "a binding left behind: the restore row"
+  [ "$(count_calls "iam service-accounts delete")" = 0 ] \
+    || fail "a binding left behind: the account was deleted while a binding still named it, which leaves a binding no call can remove"
+}
+
+test_a_leftover_account_of_an_earlier_run_is_removed_first() {
+  setup_case sa-leftover
+  write_default_case "$dir"
+  printf '%s\t%s\n' "$job_sa" "Check 830 throwaway job account" >"$dir/state/sas"
+  printf 'serviceAccount:%s\troles/batch.agentReporter\n' "$job_sa" >"$dir/state/bindings"
+  run_check
+  expect_status "$status" 0 "a leftover account"
+  expect_verdict job-account PASS "a leftover account: the run goes on"
+  expect_verdict restore PASS "a leftover account: and leaves nothing"
+  local del made
+  del=$(line_of_call "iam service-accounts delete")
+  made=$(line_of_call "iam service-accounts create")
+  [ -n "$del" ] && [ -n "$made" ] && [ "$del" -lt "$made" ] || fail "a leftover account: the earlier run's account is removed before a new one is made"
+  [ ! -s "$dir/state/sas" ] || fail "a leftover account: an account is still there: $(cat "$dir/state/sas")"
+}
+
+test_an_account_that_is_not_this_checks_is_never_touched() {
+  setup_case sa-foreign
+  write_default_case "$dir"
+  printf '%s\t%s\n' "$job_sa" "somebody else's" >"$dir/state/sas"
+  run_check
+  expect_status "$status" 2 "a foreign account"
+  expect_verdict job-account FAIL "a foreign account: refused"
+  expect_no_call "iam service-accounts delete"
+  expect_no_call "iam service-accounts create"
+  expect_no_call "batch jobs submit"
+}
+
+test_an_account_that_cannot_be_made_stops_before_any_job() {
+  setup_case sa-create-fails
+  write_default_case "$dir"
+  printf 'sa_create_fail=yes\n' >>"$dir/state/cfg"
+  run_check
+  expect_status "$status" 2 "an account that cannot be made"
+  expect_verdict job-account FAIL "an account that cannot be made: the row"
+  expect_row job-account "iam.serviceAccounts.create" "an account that cannot be made: what the owner needs"
+  expect_no_call "batch jobs submit"
+}
+
+test_a_grant_that_is_refused_stops_before_any_job_and_removes_the_account() {
+  setup_case sa-grant-fails
+  write_default_case "$dir"
+  printf 'sa_grant_fail=yes\n' >>"$dir/state/cfg"
+  run_check
+  expect_status "$status" 2 "a refused grant"
+  expect_verdict job-account FAIL "a refused grant: the row"
+  expect_no_call "batch jobs submit"
+  expect_call "iam service-accounts delete ${job_sa}"
+  [ ! -s "$dir/state/sas" ] || fail "a refused grant: the account was left behind"
+}
+
+test_a_stockout_retries_in_the_regions_other_zones_and_deletes_where_it_landed() {
+  setup_case stockout
+  write_default_case "$dir"
+  printf 'stockout_zones=us-east5-a,us-east5-b\n' >>"$dir/state/cfg"
+  run_check
+  expect_status "$status" 0 "a stockout"
+  expect_verdict u1-handmade PASS "a stockout: the row is answered"
+  expect_row u1-handmade "held in us-east5-c" "a stockout: the zone that held the VM is printed"
+  local zs
+  zs=$(grep -F "compute instances create ${handmade}" "$dir/state/gcloud.calls" | sed -n 's/.*--zone=\([^ ]*\).*/\1/p' | tr '\n' ' ')
+  [ "$zs" = "us-east5-a us-east5-a us-east5-b us-east5-c " ] || fail "a stockout: the VM was tried in '${zs}', not a (refused for the reserved key), a, b, c in order"
+  expect_call "compute instances delete ${handmade} --project=fugaro-dev --zone=us-east5-c"
+  expect_verdict restore PASS "a stockout: nothing left"
+  nothing_left "a stockout"
+}
+
+test_a_stockout_everywhere_is_not_a_finding() {
+  setup_case stockout-all
+  write_default_case "$dir" handmade-accepted
+  printf 'stockout_zones=us-east5-a,us-east5-b,us-east5-c\n' >>"$dir/state/cfg"
+  run_check
+  expect_status "$status" 0 "a stockout everywhere"
+  expect_verdict u1-handmade INFO "a stockout everywhere: unmeasured, not failed"
+  expect_row u1-handmade "us-east5-a, us-east5-b, us-east5-c" "a stockout everywhere: every zone tried is named"
+  nothing_left "a stockout everywhere"
+}
+
+test_a_refusal_that_is_not_a_stockout_is_not_retried_in_another_zone() {
+  setup_case no-zone-retry
+  write_default_case "$dir" handmade-accepted
+  printf 'refuse_other_zones=us-east5-a\n' >>"$dir/state/cfg"
+  run_check
+  expect_status "$status" 1 "a refusal that is not a stockout"
+  expect_verdict u1-handmade FAIL "a refusal that is not a stockout: the existing behaviour"
+  [ "$(count_calls "compute instances create ${handmade}")" = 1 ] || fail "a refusal that is not a stockout: the VM was tried more than once"
+  expect_no_call "--zone=us-east5-b"
+  expect_no_call "--zone=us-east5-c"
+}
+
+# The owner's run of 2026-11-28 left the probe SCHEDULED for the whole wait: its
+# VM ran as the default compute account, which holds no roles/batch.agentReporter.
+# The diagnosis names that cause when the VM's own account lacks the role, and
+# does not when it holds it.
+test_a_stuck_probe_on_an_account_without_the_agent_role_names_that_cause() {
+  setup_case stuck-sa
+  write_default_case "$dir" probe-stuck-pull
+  printf 'vm_sa=1234-compute@developer.gserviceaccount.com\n' >>"$dir/state/cfg"
+  write_diag "$dir" "$job_a" SCHEDULED "" ""
+  run_check CHK830_PULL_BOUND=10
+  expect_verdict probe-diag INFO "a stuck probe on the default account: the diagnostics"
+  expect_row probe-diag "1234-compute@developer.gserviceaccount.com, which holds no roles/batch.agentReporter" "a stuck probe on the default account: the cause"
+  expect_row probe-diag "service-account cause" "a stuck probe on the default account: named as such"
+}
+
 test_no_google_made_link_at_all_fails_u1_link() {
   setup_case no-link
   write_default_case "$dir" no-link
@@ -1563,6 +1891,70 @@ test_a_token_that_could_not_be_minted_fails_u2() {
   expect_verdict u2-token FAIL "no token: the row"
   expect_row u2-token "could not obtain an identity token" "no token: what failed"
   expect_row u2-token "R4 applies" "no token: the work returns to the owner"
+}
+
+test_a_container_that_reached_no_metadata_at_all_leaves_u2_open() {
+  setup_case token-md-blocked
+  write_default_case "$dir" md-blocked
+  run_check
+  expect_verdict u2-token INFO "no metadata read answered: the row"
+  expect_row u2-token "could not reach the metadata server at all" "no metadata read answered: what it says"
+  expect_row u2-token "C830 md-error" "no metadata read answered: the evidence is named"
+  expect_row u2-token "stays open" "no metadata read answered: U2 is not answered against the design"
+}
+
+test_metadata_that_answered_without_a_token_keeps_the_fail() {
+  setup_case token-md-answered
+  write_default_case "$dir" notoken
+  run_check
+  expect_verdict u2-token FAIL "answered reads and no token: the row"
+  expect_row u2-token "could not obtain an identity token" "answered reads and no token: what failed"
+}
+
+test_a_container_without_python3_that_read_through_the_address_passes_u2() {
+  setup_case token-curl-ip
+  write_default_case "$dir" curl-ip
+  run_check
+  expect_verdict probe-ran PASS "no python3: the lines parse"
+  expect_verdict u2-token PASS "no python3, the address answered: the row"
+  expect_row u2-token "instance_name=${vm_a}" "no python3, the address answered: the claims are read"
+}
+
+# The container script itself, cut out of the check and run with a python3 that
+# does not run and a curl that answers: it must say so and still read.
+test_the_container_reads_without_python3() {
+  local d=$work/container fakes tok payload code
+  rm -rf "$d"
+  fakes=$d/bin
+  mkdir -p "$fakes"
+  sed -n "/<<'C830CONTAINER'/,/^C830CONTAINER\$/p" "$script" | sed '1d;$d' >"$d/container.sh"
+  [ -s "$d/container.sh" ] || fail "the container: it could not be cut out of the check"
+  payload=$(python3 -c 'import base64, json
+d = {"aud": "a", "iss": "i", "exp": 7200, "iat": 3600, "google.compute_engine": {"instance_id": "42", "instance_name": "vmx", "project_id": "p", "zone": "z"}}
+print(base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("="))')
+  tok="h.${payload}.s"
+  printf '#!/bin/sh\nexit 127\n' >"$fakes/python3"
+  cat >"$fakes/curl" <<EOF
+#!/bin/sh
+case "\$*" in
+*identity*) printf '%s' '$tok' ;;
+*) printf 'val' ;;
+esac
+EOF
+  chmod +x "$fakes/python3" "$fakes/curl"
+  code=0
+  out=$(PATH="$fakes:$PATH" FUGARO_CHK830_LINGER=0 FUGARO_CHK830_AUD=aud FUGARO_CHK830_MARKER=MK MK=1 sh "$d/container.sh" 2>&1) || code=$?
+  expect_contains "$out" "C830 md-tool python3=absent curl=present" "no python3: the tools are named"
+  expect_contains "$out" "C830 md-route instance/name curl" "no python3: the route that answered"
+  expect_contains "$out" "C830 token instance_name=vmx" "no python3: the token is decoded without it"
+  expect_contains "$out" "C830 token life=3600s" "no python3: the life is read"
+  expect_status "$code" 131 "no python3: the exit status keeps its bits"
+
+  printf '#!/bin/sh\ncase "$*" in *169.254.169.254*) printf val ;; *) echo "curl: (6) Could not resolve host" >&2; exit 6 ;; esac\n' >"$fakes/curl"
+  out=$(PATH="$fakes:$PATH" FUGARO_CHK830_LINGER=0 FUGARO_CHK830_AUD=aud sh "$d/container.sh" 2>&1) || true
+  expect_contains "$out" "C830 md-error instance/name curl: curl: (6) Could not resolve host" "no DNS: the reason is named"
+  expect_contains "$out" "C830 md-route instance/name curl-ip" "no DNS: the address answers"
+  [ "$(printf '%s\n' "$out" | grep -c 'C830 md-error')" = 1 ] || fail "no DNS: one reason is named once, got: $out"
 }
 
 test_a_container_that_cannot_name_its_vm_falls_back_to_the_list() {
@@ -1917,6 +2309,7 @@ test_a_probe_that_never_started_is_read_as_a_pull() {
   expect_row probe-diag "a boot log this pattern does not know" "stuck pull: and that a wording it does not know reads the same way"
   expect_row probe-diag "speak of the pull or the agent are: " "stuck pull: what the log says of the pull"
   expect_row probe-diag "pulling image" "stuck pull: the pull's own line is kept as the evidence"
+  expect_absent "$(printf '%s\n' "$out" | grep -m1 '^FACT probe-diag: ' || true)" "service-account cause" "stuck pull: the job account holds the agent role, so that cause is not named"
   expect_row probe-diag "NO external address" "stuck pull: and whether the VM could have pulled at all"
   expect_row probe-diag "privateIpGoogleAccess is False" "stuck pull: the read that says the pull had no path"
   expect_row probe-diag "the configured 0s raised to the 10s pull bound" "stuck pull: the bound the wait was read against"
@@ -1979,12 +2372,27 @@ t test_a_handmade_vm_that_can_carry_the_metadata_field_fails_the_row
 t test_a_refusal_that_names_no_field_ends_the_row
 t test_a_plain_vm_named_after_the_job_forges_the_name_field
 t test_a_plain_vm_compute_refuses_the_key_on_is_recorded
+t test_both_jobs_run_as_a_throwaway_account_that_is_removed
+t test_an_account_that_cannot_be_deleted_fails_the_restore
+t test_a_binding_that_cannot_be_removed_fails_the_restore
+t test_a_leftover_account_of_an_earlier_run_is_removed_first
+t test_an_account_that_is_not_this_checks_is_never_touched
+t test_an_account_that_cannot_be_made_stops_before_any_job
+t test_a_grant_that_is_refused_stops_before_any_job_and_removes_the_account
+t test_a_stockout_retries_in_the_regions_other_zones_and_deletes_where_it_landed
+t test_a_stockout_everywhere_is_not_a_finding
+t test_a_refusal_that_is_not_a_stockout_is_not_retried_in_another_zone
+t test_a_stuck_probe_on_an_account_without_the_agent_role_names_that_cause
 t test_no_google_made_link_at_all_fails_u1_link
 t test_a_link_inside_the_vm_only_is_reported_as_such
 t test_a_link_on_the_job_object_is_reported_as_such
 t test_a_second_job_that_reproduces_a_job_home_link_fails_u1_forge
 t test_a_token_without_the_instance_claims_fails_u2
 t test_a_token_that_could_not_be_minted_fails_u2
+t test_a_container_that_reached_no_metadata_at_all_leaves_u2_open
+t test_metadata_that_answered_without_a_token_keeps_the_fail
+t test_a_container_without_python3_that_read_through_the_address_passes_u2
+t test_the_container_reads_without_python3
 t test_a_container_that_cannot_name_its_vm_falls_back_to_the_list
 t test_a_vm_that_cannot_be_resolved_is_a_failure
 t test_a_marker_that_reaches_the_jobs_own_logs_fails_u3

@@ -51,7 +51,8 @@ export { DEVICE_KEY_ALGORITHM };
 /**
  * The refusals a caller of this door switches on: this module's own
  * (`refresh.js`'s) and the port's, which are read from C2 rather than
- * respelled. The two sets do not overlap, so one name is one code.
+ * respelled. `bad-endpoint` is the one name both sets carry, and both spell it
+ * the same, so the merge leaves one name per code.
  */
 export const SESSION_CODES = Object.freeze({ ...REFRESH_CODES, ...PORT_CODES });
 

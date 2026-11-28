@@ -993,7 +993,7 @@ func projectJobGitHubAppID(lc *localcfg.Config) (string, error) {
 		return "", err
 	}
 	if id == "" {
-		return "", userErr("this project's local config declares a github job profile and records no GitHub App ID: its shared project job therefore cannot be deployed. That job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro update --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro update again",
+		return "", userErr("this project's local config declares a github job profile and records no GitHub App ID: its shared project job therefore cannot be deployed. That job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (in a checkout of it, fugaro update --repo --github-app-id <id>), which writes it to the local config, then run fugaro update again",
 			providers.EnvGitHubAppID)
 	}
 	return id, nil

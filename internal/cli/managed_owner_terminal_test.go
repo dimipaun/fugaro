@@ -140,6 +140,72 @@ func TestManagedOwnerTerminalOrdinaryStepWithNobodyAtTheTerminal(t *testing.T) {
 	}
 }
 
+// TestManagedOwnerTerminalRunCoversNeedsTheGateWhereNobodyIsAt is the pipe
+// branch's own boundary (init_review.go's runCovers, check 292), and the check
+// no other case here draws: a session nobody is at takes the run's one
+// confirmation the way the owner's own terminal does only where the gate's read
+// stands in for the run — a project Fugaro owns. "Nobody is at the session" is
+// not an answer by itself: a pipe carries no marker, so it reads exactly like
+// the owner's own terminal, and a project that is not managed has no mark that
+// answered and no gate to stand in. The covered step of such a run reaches its
+// own confirmation — the banner, and nothing typed — exactly as it does at the
+// owner's terminal, and a run that quietly covered it would be applying a
+// converge's steps on the strength of a pipe alone.
+//
+// The control is the same pipe on the rig's managed marks: the gate stands in,
+// the cover is taken, and the two worlds differ by nothing but the read. The
+// mutation it catches is the tempting one of dropping gateStandsIn() from the
+// branch — reading "nobody at the session" as sufficient on its own — which
+// leaves the managed world green and covers every step of a project that is not
+// managed.
+func TestManagedOwnerTerminalRunCoversNeedsTheGateWhereNobodyIsAt(t *testing.T) {
+	const step = "writes the Terraform state bucket (cents a month)"
+	for _, tc := range []struct {
+		name    string
+		managed bool
+		want    bool
+	}{
+		{"a managed project: the gate's read answers for the pipe", true, true},
+		{"not managed: the pipe has no answer to give", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, e, out, _ := managedTerminalUpdate(t, tc.managed, false)
+			e.r.review = &runReview{state: reviewTaken}
+
+			covered, err := e.r.runCovers()
+			if err != nil {
+				t.Fatalf("runCovers with nobody at the session answered an error: %v\n%s", err, out)
+			}
+			if covered != tc.want {
+				t.Fatalf("runCovers with nobody at the session = %v, want %v:\n%s", covered, tc.want, out)
+			}
+
+			ok, err := e.r.askOrdinary(step, "")
+			if err != nil {
+				t.Fatalf("the step with nobody at the session was refused with an error: %v\n%s", err, out)
+			}
+			if ok != tc.want {
+				t.Fatalf("the ordinary step with nobody at the session = %v, want %v:\n%s", ok, tc.want, out)
+			}
+			if tc.want {
+				if !strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("the covered step with nobody at the session does not say what covers it:\n%s", out)
+				}
+			} else {
+				if !strings.Contains(out.String(), "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): "+step) {
+					t.Errorf("the step of a project that is not managed was not asked its own confirmation:\n%s", out)
+				}
+				if strings.Contains(out.String(), initflow.GateOrdinary()) {
+					t.Errorf("a step no gate judged read the sentence of the ones it did:\n%s", out)
+				}
+			}
+			if strings.Contains(out.String(), "confirmed by --yes") {
+				t.Errorf("a run nobody is at was told a flag it did not pass confirmed the step:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestManagedOwnerTerminalOrdinaryStepTypesNothing: the ordinary steps of the
 // converge — the state bucket, the Viewer-read removal — are the ones the run's
 // one confirmation used to cover, and on a managed project the owner types

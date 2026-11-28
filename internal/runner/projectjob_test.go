@@ -524,11 +524,7 @@ func TestBakedCheckoutOnAProjectJobIsResetBeforeFetch(t *testing.T) {
 	testutil.Git(t, baked, "commit", "--quiet", "--allow-empty", "-m", "baked")
 	head := testutil.Git(t, baked, "rev-parse", "HEAD")
 	rec := projectSucceeded(t, b)
-	want, err := filepath.EvalSymlinks(baked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := b.agent.calls[0].Dir; got != want {
+	if got, want := realPath(t, b.agent.calls[0].Dir), realPath(t, baked); got != want {
 		t.Errorf("the implement stage ran in %q, want the image's baked checkout %q", got, want)
 	}
 	if got := testutil.Git(t, baked, "config", "--local", "--get-regexp", `^remote\.`); got != "remote.origin.url "+computed+"\nremote.origin.fetch +refs/heads/*:refs/remotes/origin/*" {

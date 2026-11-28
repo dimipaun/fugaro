@@ -125,11 +125,13 @@ function readRecord(value) {
  * Constructed over the ports rather than making them: `new IdentityStore({
  * settings, sessions, apiKey, signIn, refresh })`, where `settings` is a raw
  * key/value port (`getItem`/`setItem`/`deleteItem`, the shape
- * `MemorySettingsStore` has) and `sessions` is an `IdentitySessionStore` over
- * the secure-store one. The three methods are required at construction, as
- * `src/licence/store.js` requires its port's. The two exchanges default to
- * `providers.js` and are injectable so that a test (and the plan's own flows)
- * need no network.
+ * `expo-async-storage.js`'s `asyncStoragePort` and its in-memory double
+ * `MemorySettingsStore` have) and `sessions` is an `IdentitySessionStore`
+ * (`put`/`get`/`delete`) over the secure-store port. Both ports' methods are
+ * required at construction, as `src/licence/store.js` requires its port's: a
+ * wiring mistake is a `TypeError` there rather than a refusal on every call.
+ * The two exchanges default to `providers.js` and are injectable so that a
+ * test (and the plan's own flows) need no network.
  */
 export class IdentityStore {
   #settings;
@@ -159,6 +161,15 @@ export class IdentityStore {
       if (typeof settings[method] !== 'function') throw new TypeError(`the settings port must provide ${method}`);
     }
     if (sessions === null || typeof sessions !== 'object') throw new TypeError('an identity session store is required');
+    // The same refusal for the sessions port, and for the same reason: the
+    // app's secure-store PORT is an object with `getItem`/`setItem`/
+    // `deleteItem`, one wrap away from the `IdentitySessionStore` this takes.
+    // Handed in unwrapped it type-checks and then throws out of `add` -- after
+    // the record was written, so the caller gets a rejection instead of a
+    // refusal and a record is left with no item behind it.
+    for (const method of ['put', 'get', 'delete']) {
+      if (typeof sessions[method] !== 'function') throw new TypeError(`the identity session store must provide ${method}`);
+    }
     if (typeof apiKey !== 'string' || apiKey === '') throw new TypeError('the identity project\'s API key is required');
     this.#settings = settings;
     this.#sessions = sessions;

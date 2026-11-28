@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The runs of these tests are on PR 7 of acme/app, on the branch a fresh run
@@ -665,6 +666,35 @@ func TestFollowupsMarksDebtAndParent(t *testing.T) {
 		// it opens one of its own.
 		if spec.IsFollowUp() || spec.PR != 0 || spec.PreviousRun != "" {
 			t.Errorf("task %d continues a pull request: %+v", i, spec)
+		}
+	}
+}
+
+// TestFollowupsFilesTheTaskOnTheProjectsDefaultAccount: a debt task is a first
+// run of its own, so it takes the account a first run takes. Filed with none,
+// it went to the repository's job that mounts no Claude token and every stage
+// that runs on an account failed after the code was written.
+func TestFollowupsFilesTheTaskOnTheProjectsDefaultAccount(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-overflow:\n    allow_data_to: [\"acme/app\"]\ndefault_claude_account: acme-overflow\n")
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github }\nagent:\n  auth: oauth\n" +
+		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	parent := mergedParent(t, f, allDeferred(t))
+	launchable(t, f)
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
+
+	doc := followUpsDoc(t, parent, "--launch")
+	if len(doc.Tasks) == 0 {
+		t.Fatal("no task was filed")
+	}
+	for i, task := range doc.Tasks {
+		if got := readSpec(t, f, task.RunID).OAuthToken; got != "acme-overflow" {
+			t.Errorf("task %d's OAuthToken = %q, want acme-overflow: the project default", i, got)
 		}
 	}
 }
@@ -1309,7 +1339,7 @@ func TestFollowUpsWithoutAnAppIDNamesBothPlaces(t *testing.T) {
 	if ExitCode(errors.New(err)) == 0 {
 		t.Fatalf("the refusal reads as a success: %s", err)
 	}
-	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo acme/app --github-app-id", providers.EnvGitHubAppID} {
+	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo --github-app-id", providers.EnvGitHubAppID} {
 		if !strings.Contains(err, want) {
 			t.Errorf("the refusal does not name %q: %s", want, err)
 		}

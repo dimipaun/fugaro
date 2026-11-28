@@ -20,6 +20,10 @@ const (
 	tsSched   = "fugaro-scheduler@fp-1.iam.gserviceaccount.com"
 	tsAdminSD = "firebase-adminsdk-fbsvc@fp-1.iam.gserviceaccount.com"
 	tsMinter  = "projects/fp-1/roles/fugaroTokenMinter"
+	// tsIssuer is the credentials service's own account: the one designed
+	// signer of the runs' identity (LM13's issuer row grants it the minter role
+	// on the signer).
+	tsIssuer = "fugaro-credentials@fp-1.iam.gserviceaccount.com"
 )
 
 type signerRig struct {
@@ -114,30 +118,36 @@ func TestTokenSignersNone(t *testing.T) {
 	}
 }
 
-// The designed path and the Firebase Admin SDK account are listed, as
-// expected, and never as a risk.
+// The credentials service's own account and the Firebase Admin SDK account are
+// listed, as expected, and never as a risk: the service is the one designed
+// signer of the runs' identity, and it holds the minter role on the signer
+// (D3121, LM13).
 func TestTokenSignersExpected(t *testing.T) {
 	r := newSignerRig(t)
-	r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: tsMinter, Members: []string{"user:launcher@example.com", "group:ops@example.com"}})
+	r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: tsMinter, Members: []string{"serviceAccount:" + tsIssuer}})
 	r.crm.SetPolicy(tsProject,
 		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
 		gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"serviceAccount:" + tsAdminSD}},
 		gcpfake.Binding{Role: "roles/firebase.sdkAdminServiceAgent", Members: []string{"serviceAccount:" + tsAdminSD}})
 	r.iam.SetServiceAccountPolicy(tsProject, tsAdminSD, gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"serviceAccount:" + tsAdminSD}})
-	fs, err := r.find(t)
+	fs, err := r.findManaged(t, 111, Managed{Issuer: tsIssuer})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fs) != 5 || len(unexpected(fs)) != 0 {
+	if len(fs) != 4 || len(unexpected(fs)) != 0 {
 		t.Fatalf("findings %+v", fs)
 	}
-	for _, f := range fs {
-		if f.Class == SignerOwner {
-			continue
+	var issuer *SignerFinding
+	for i := range fs {
+		if strings.EqualFold(fs[i].Member, "serviceAccount:"+tsIssuer) {
+			issuer = &fs[i]
 		}
-		if f.Why == "" {
+		if f := fs[i]; f.Class != SignerOwner && f.Why == "" {
 			t.Errorf("expected finding without a reason: %+v", f)
 		}
+	}
+	if issuer == nil || !issuer.Expected || issuer.OldMinter || issuer.Why == "" {
+		t.Fatalf("the credentials service is not the designed signer: %+v", fs)
 	}
 }
 
@@ -286,42 +296,47 @@ func TestTokenSignersServiceAccountLevel(t *testing.T) {
 	}
 }
 
-// The minter role is expected on the signer only, and only while it is
-// still signJwt and nothing else.
+// The minter role is the design's ON THE SIGNER, held by the credentials
+// service's own account, and only while it is still signJwt and nothing else.
+// A launcher or a group still holding it is the old path and a finding
+// (D3127): so is the same row with no issuer configured, or on any other
+// account.
 func TestTokenSignersMinterBoundary(t *testing.T) {
-	m := gcpfake.Binding{Role: tsMinter, Members: []string{"user:launcher@example.com"}}
+	issuer := gcpfake.Binding{Role: tsMinter, Members: []string{"serviceAccount:" + tsIssuer}}
+	person := gcpfake.Binding{Role: tsMinter, Members: []string{"user:launcher@example.com"}}
 	for name, tc := range map[string]struct {
 		setup      func(r *signerRig)
+		managed    Managed
 		unexpected int
 	}{
-		"on the signer":      {func(r *signerRig) { r.iam.SetServiceAccountPolicy(tsProject, tsSigner, m) }, 0},
-		"on another account": {func(r *signerRig) { r.iam.SetServiceAccountPolicy(tsProject, tsSched, m) }, 1},
-		"on the project": {func(r *signerRig) {
-			r.crm.SetPolicy(tsProject, m)
-		}, 1},
+		"the issuer on the signer":       {func(r *signerRig) { r.iam.SetServiceAccountPolicy(tsProject, tsSigner, issuer) }, Managed{Issuer: tsIssuer}, 0},
+		"a launcher still on the signer": {func(r *signerRig) { r.iam.SetServiceAccountPolicy(tsProject, tsSigner, person) }, Managed{Issuer: tsIssuer}, 1},
+		"no issuer configured":           {func(r *signerRig) { r.iam.SetServiceAccountPolicy(tsProject, tsSigner, issuer) }, Managed{}, 1},
+		"the issuer on another account":  {func(r *signerRig) { r.iam.SetServiceAccountPolicy(tsProject, tsSched, issuer) }, Managed{Issuer: tsIssuer}, 1},
+		"on the project":                 {func(r *signerRig) { r.crm.SetPolicy(tsProject, issuer) }, Managed{Issuer: tsIssuer}, 1},
 		"on the signer, widened": {func(r *signerRig) {
-			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, m)
+			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, issuer)
 			r.iam.SetRolePermissions(tsMinter, "iam.serviceAccounts.signJwt", "iam.serviceAccounts.getAccessToken")
-		}, 1},
+		}, Managed{Issuer: tsIssuer}, 1},
 		"on the signer, emptied and refilled with keys": {func(r *signerRig) {
-			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, m)
+			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, issuer)
 			r.iam.SetRolePermissions(tsMinter, "iam.serviceAccountKeys.create")
-		}, 1},
+		}, Managed{Issuer: tsIssuer}, 1},
 		"another project's minter on the signer": {func(r *signerRig) {
 			r.iam.AddRole("other", "fugaroTokenMinter", "x", false)
 			r.iam.SetRolePermissions("projects/other/roles/fugaroTokenMinter", "iam.serviceAccounts.signJwt")
-			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: "projects/other/roles/fugaroTokenMinter", Members: []string{"user:launcher@example.com"}})
-		}, 1},
+			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: "projects/other/roles/fugaroTokenMinter", Members: []string{"serviceAccount:" + tsIssuer}})
+		}, Managed{Issuer: tsIssuer}, 1},
 		"a look-alike role on the signer": {func(r *signerRig) {
 			r.iam.AddRole(tsProject, "fugaroTokenMinter2", "x", false)
 			r.iam.SetRolePermissions("projects/fp-1/roles/fugaroTokenMinter2", "iam.serviceAccounts.signJwt")
-			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: "projects/fp-1/roles/fugaroTokenMinter2", Members: []string{"user:launcher@example.com"}})
-		}, 1},
+			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: "projects/fp-1/roles/fugaroTokenMinter2", Members: []string{"serviceAccount:" + tsIssuer}})
+		}, Managed{Issuer: tsIssuer}, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newSignerRig(t)
 			tc.setup(r)
-			fs, err := r.find(t)
+			fs, err := r.findManaged(t, 111, tc.managed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -484,22 +499,41 @@ func TestTokenSignersResolvesEveryRole(t *testing.T) {
 	}
 }
 
-// The designed path is for people, groups and service accounts only; a
-// binding to everyone is a risk even on the signer with the real minter role.
+// Only the credentials service's own account is the designed signer. A person,
+// a group, a roster service account that is not the service, and a binding to
+// everyone are all findings; the roster's own member types are the old row
+// (D3127, OldMinter), which is what tells doctor to send the reader to the
+// update rather than to a removal.
 func TestTokenSignersMinterMemberTypes(t *testing.T) {
-	for member, want := range map[string]int{
-		"user:a@example.com": 0, "group:g@example.com": 0, "serviceAccount:x@fp-1.iam.gserviceaccount.com": 0,
-		"allUsers": 1, "allAuthenticatedUsers": 1, "domain:example.com": 1,
+	for member, tc := range map[string]struct {
+		unexpected int
+		oldMinter  bool
+	}{
+		"serviceAccount:" + tsIssuer:                    {0, false},
+		"user:a@example.com":                            {1, true},
+		"group:g@example.com":                           {1, true},
+		"serviceAccount:x@fp-1.iam.gserviceaccount.com": {1, true},
+		"allUsers":              {1, false},
+		"allAuthenticatedUsers": {1, false},
+		"domain:example.com":    {1, false},
 	} {
-		r := newSignerRig(t)
-		r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: tsMinter, Members: []string{member}})
-		fs, err := r.find(t)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := len(unexpected(fs)); got != want {
-			t.Errorf("%s: %d unexpected, want %d (%+v)", member, got, want, fs)
-		}
+		t.Run(member, func(t *testing.T) {
+			r := newSignerRig(t)
+			r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: tsMinter, Members: []string{member}})
+			fs, err := r.findManaged(t, 111, Managed{Issuer: tsIssuer})
+			if err != nil {
+				t.Fatal(err)
+			}
+			u := unexpected(fs)
+			if len(u) != tc.unexpected {
+				t.Fatalf("%+v, want %d unexpected", fs, tc.unexpected)
+			}
+			for _, f := range u {
+				if f.OldMinter != tc.oldMinter {
+					t.Errorf("%+v: OldMinter %v, want %v", f, f.OldMinter, tc.oldMinter)
+				}
+			}
+		})
 	}
 }
 
@@ -507,7 +541,7 @@ func TestTokenSignersMinterMemberTypes(t *testing.T) {
 // account is never the signer.
 func TestTokenSignersSignerComparison(t *testing.T) {
 	r := newSignerRig(t)
-	r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: tsMinter, Members: []string{"user:a@example.com"}})
+	r.iam.SetServiceAccountPolicy(tsProject, tsSigner, gcpfake.Binding{Role: tsMinter, Members: []string{"serviceAccount:" + tsIssuer}})
 	ctx := context.Background()
 	opts := func(u string) []option.ClientOption {
 		return []option.ClientOption{option.WithEndpoint(u), option.WithoutAuthentication()}
@@ -515,7 +549,7 @@ func TestTokenSignersSignerComparison(t *testing.T) {
 	c, _ := crm.NewService(ctx, opts(r.crm.URL+"/")...)
 	i, _ := iam.NewService(ctx, opts(r.iam.URL+"/")...)
 	for signer, want := range map[string]int{strings.ToUpper(tsSigner): 0, tsSched: 1, "x" + tsSigner: 1, tsSigner[:len(tsSigner)-1]: 1} {
-		fs, err := TokenSigners(ctx, c, i, tsProject, signer, 111, Managed{})
+		fs, err := TokenSigners(ctx, c, i, tsProject, signer, 111, Managed{Issuer: tsIssuer})
 		if err != nil {
 			t.Fatal(err)
 		}

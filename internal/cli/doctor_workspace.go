@@ -267,21 +267,25 @@ func doctorWorkspacePoolChecks(ctx context.Context, lc *localcfg.Config, node *p
 	if err := store.check(ctx); err != nil {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s declares %d shared credential(s) and has no bundle container (%s): nothing of the pool has a value to attach, so every entry it declares shared is offered to a member and served to nobody", safetext.Field(node.Name), len(node.Shared), pluginwire.Printable(store.id)),
-			Fix:     selfCommand() + " creds set NAME (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " update (the workspace's own installation creates the container), then " + selfCommand() + " creds set NAME"}}
 	}
 	meta, err := store.newest(ctx)
 	switch {
 	case errors.Is(err, errNoBundleVersion):
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s declares %d shared credential(s) and its bundle (%s) holds no version: every entry the node offers is served to nobody until a value is stored", safetext.Field(node.Name), len(node.Shared), pluginwire.Printable(store.id)),
-			Fix:     selfCommand() + " creds set NAME (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " creds set NAME (writes the bundle's first version)"}}
 	case err != nil:
 		return unreadable("the bundle's newest version (" + oneLineCLI(err.Error()) + ")")
 	}
 	if meta.state != "ENABLED" {
+		fix := selfCommand() + " creds set NAME writes a new version"
+		if meta.state == "DISABLED" {
+			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
+		}
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s declares %d shared credential(s) and the newest version of its bundle (%s, version %s) is %s: Secret Manager will not serve it, so every entry the node offers is served to nobody", safetext.Field(node.Name), len(node.Shared), pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
-			Fix:     selfCommand() + " creds set NAME writes a new version (no update writes a credential)"}}
+			Fix:     fix}}
 	}
 	doc, err := store.access(ctx, meta.number)
 	if err != nil {
@@ -300,7 +304,7 @@ func doctorWorkspacePoolChecks(ctx context.Context, lc *localcfg.Config, node *p
 	if len(missing) > 0 {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s's bundle (%s) holds no credential for %s, and the node declares each of them shared: a member the entry is offered to is served nothing from it, and the value is stored under the entry's own name", safetext.Field(node.Name), pluginwire.Printable(store.id), strings.Join(missing, ", ")),
-			Fix:     selfCommand() + " creds set NAME for each one named above (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " creds set NAME for each one named above"}}
 	}
 	return []doctorCheck{{ID: id, OK: true, Severity: "info",
 		Problem: fmt.Sprintf("the workspace %s's bundle (%s) holds every one of the %d credential(s) the node declares shared", safetext.Field(node.Name), pluginwire.Printable(store.id), len(node.Shared)),
@@ -410,20 +414,23 @@ func doctorWorkspacePersonalCheck(ctx context.Context, lc *localcfg.Config, rc r
 func workspacePersonalLine(lc *localcfg.Config, on bool, rc routeConfig, routes map[string]creds.Route, derived bool) doctorCheck {
 	id := workspacePersonalCheckID
 	project := routeProject(lc)
-	where := fmt.Sprintf("%s is a member of workspace %s", project, safetext.Field(lc.Workspace))
+	// The state every branch below reads from: the switch's own name, and whose
+	// it is. The decision numbers this line is derived from stay in this file's
+	// comments and the design docs, never in what a person reads.
+	state := project + " (workspace " + safetext.Field(lc.Workspace) + "): " + creds.PersonSwitchKey
 	if !on {
 		return doctorCheck{ID: id, OK: true, Severity: "info",
-			Problem: where + " and the switch " + creds.PersonSwitchKey + " is off: no run of it is offered a person's own token, and every call it makes is served the workspace's shared entries (R9, D2972)",
+			Problem: state + " is off: no run of it draws on a person's own token, and every call takes the workspace's shared entries",
 			Fix:     "nothing to run for this: turn it on with `" + selfCommand() + " settings set " + creds.PersonSwitchKey + " true`, then run `" + selfCommand() + " update` to publish it"}
 	}
 	if !derived {
 		return doctorCheck{ID: id, Severity: "info", unread: true,
-			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and the credential route this project derives could not be read: whether the model route takes a personal token away from it was not checked (D3141)",
+			Problem: state + " is on, and the route this project derives could not be read: whether it serves a personal token was not checked",
 			Fix:     "fix what the route line beside this one names, and rerun doctor"}
 	}
 	if !rc.publishes() {
 		return doctorCheck{ID: id, Severity: "warning",
-			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and its pin names no workspace service address: its model route is this project's own, so no run of it is served a personal token and the switch reaches nothing (D3141)",
+			Problem: state + " is on, and the pin names no workspace service address: the model route is this project's own, so the switch reaches nothing",
 			Fix:     "name the address with `" + selfCommand() + " workspace add --service-address <url>` and run `" + selfCommand() + " update`, or turn the switch off"}
 	}
 	var shadowed []string
@@ -434,16 +441,16 @@ func workspacePersonalLine(lc *localcfg.Config, on bool, rc routeConfig, routes 
 	}
 	if len(routes) == 0 {
 		return doctorCheck{ID: id, OK: true, Severity: "info",
-			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and this project records no repository: it has no model route for the switch to serve (D3141)",
+			Problem: state + " is on, and this project records no repository: there is no model route for the switch to serve",
 			Fix:     "nothing to run for this"}
 	}
 	if len(shadowed) == 0 {
 		return doctorCheck{ID: id, OK: true, Severity: "info",
-			Problem: where + " and the switch " + creds.PersonSwitchKey + " is on, and the model route of every repository of " + project + " is the workspace's: a person who stored a token at the workspace is served it by their runs here (R9, D3141)",
+			Problem: state + " is on, and every repository's model route is the workspace's: runs here draw on the token its person stored there",
 			Fix:     "nothing to run for this: the switch is on and the route serves the workspace"}
 	}
 	return doctorCheck{ID: id, Severity: "warning",
-		Problem: fmt.Sprintf("%s and the switch %s is on, and %d of its repositories take their model credential from this project's own copy (%s): a personal token is served only where the model route is the workspace, so the switch is shadowed there until that credential is removed (D3141, WC11)", where, creds.PersonSwitchKey, len(shadowed), strings.Join(shadowed, ", ")),
+		Problem: fmt.Sprintf("%s is on, and %d of its repositories take their model credential from this project's own copy (%s), where no personal token is served", state, len(shadowed), strings.Join(shadowed, ", ")),
 		Fix:     "remove the account that serves them (`" + selfCommand() + " accounts rm <name>` removes it, its admission and its secret), or turn the switch off: while a repository's model route is this project's, no personal token is served in it"}
 }
 

@@ -364,7 +364,7 @@ func tellTokenReadFor(ctx context.Context, env *cloudEnv, s *runstore.Store, slu
 	return tellTokenRead{
 		expression: gcp.TokenBucketCondition(bucket, slug),
 		missing:    "no read of tokens/" + slug + "/ for this repository's job accounts",
-		fix:        "The repository's root has not been re-applied since the budget token moved under tokens/: an operator runs fugaro update --repo <owner/name> in its checkout",
+		fix:        "The repository's root has not been re-applied since the budget token moved under tokens/: an operator runs fugaro update --repo in its checkout",
 	}, nil
 }
 

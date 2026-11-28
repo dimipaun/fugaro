@@ -319,6 +319,116 @@ func TestDoctorRouting(t *testing.T) {
 				t.Errorf("the measurement does not say the bundle holds them: %q", cs[0].Problem)
 			}
 		})
+
+		// The read stands behind credsOwnerOnly, as every other reader of the
+		// bundle does: a run's own process is answered that the bundle was not
+		// read rather than answered, and the document is left unopened. A
+		// coding agent's session never gets this far (`--check-bitbucket-token`
+		// is refused at the flag, refuseBitbucketTokenReadInAgent), so the
+		// process that meets the guard is a run's — and every other sub-test
+		// here runs with no marker at all, so without this one the refusal
+		// could be deleted from doctorRoutingBundleChecks and the whole suite
+		// would still pass.
+		t.Run("the refusal stands in front of the read", func(t *testing.T) {
+			for _, marker := range []string{"FUGARO_RUN", "CLOUD_RUN_JOB"} {
+				t.Run(marker, func(t *testing.T) {
+					r := doctorRoutingRig(t, doctorRoutingSources)
+					id := bundleFixtureFor(t, r.sm, "aurora", []byte(config.BitbucketSecret+": "+credsValue(t, "token")+"\n"))
+					t.Setenv(marker, "aurora/run-1")
+
+					o, out := doctorRoutingOutput(t, checkBitbucketTokenFlag)
+					cs := checksByID(o, doctorRoutingBundleID)
+					if len(cs) != 1 || cs[0].Severity != "info" {
+						t.Fatalf("routing-bundle-source = %+v, want one unread line with %s set:\n%s", cs, marker, out)
+					}
+					// An unread line is a read that answers nothing: not ok,
+					// info so that it fails no run, and an audit line rather
+					// than a measurement.
+					if cs[0].OK || cs[0].Class != doctorClassAudit {
+						t.Errorf("routing-bundle-source = %+v, want a not-ok audit line: whether the bundle holds the table's credentials is not answered with %s set", cs[0], marker)
+					}
+					for _, want := range []string{"was not read", "rerun doctor at your own terminal"} {
+						if !strings.Contains(cs[0].Problem+cs[0].Fix, want) {
+							t.Errorf("the line does not carry %q, so a reader cannot tell a bundle that was refused from one that was read:\n%s", want, out)
+						}
+					}
+					if checksFail(cs, true) {
+						t.Errorf("a bundle nobody was allowed to read fails doctor under --strict: %+v", cs)
+					}
+					for _, got := range r.sm.Accessed() {
+						if got == id {
+							t.Errorf("the bundle's document was opened with %s set: the refusal is asked before the store is opened, and the bundle holds every model credential the service issues", marker)
+						}
+					}
+				})
+			}
+		})
+	})
+
+	// The bundle's own state, before any entry of it is asked about: the
+	// container's absence, the container with nothing in it, and a version
+	// Secret Manager will not serve. The fix is the command that runs in the
+	// state its own line reports, and the three are not the same command: a
+	// `creds set` is refused on a container that is not there (credsSet's own
+	// answer names the apply that creates it) and on a version that is DISABLED
+	// (credsDisabledRefusal), so a line naming it there hands the owner a
+	// command the state it just read refuses.
+	t.Run("bundle_state", func(t *testing.T) {
+		t.Run("the container is not there", func(t *testing.T) {
+			doctorRoutingRig(t, doctorRoutingSources)
+
+			o, out := doctorRoutingOutput(t, checkBitbucketTokenFlag)
+			cs := checksByID(o, doctorRoutingBundleID)
+			if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+				t.Fatalf("routing-bundle-source = %+v, want one warning:\n%s", cs, out)
+			}
+			if !strings.Contains(cs[0].Problem, "has no bundle container") {
+				t.Errorf("the line does not name the state it read: %q", cs[0].Problem)
+			}
+			if update, set := strings.Index(cs[0].Fix, selfCommand()+" update"), strings.Index(cs[0].Fix, selfCommand()+" creds set"); update < 0 || set < 0 || update > set {
+				t.Errorf("the fix = %q, want the apply that creates the container first: a `creds set` of this state is refused", cs[0].Fix)
+			}
+		})
+
+		t.Run("the container holds no version", func(t *testing.T) {
+			r := doctorRoutingRig(t, doctorRoutingSources)
+			bundleFixtureFor(t, r.sm, "aurora", nil)
+
+			o, out := doctorRoutingOutput(t, checkBitbucketTokenFlag)
+			cs := checksByID(o, doctorRoutingBundleID)
+			if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+				t.Fatalf("routing-bundle-source = %+v, want one warning:\n%s", cs, out)
+			}
+			if !strings.Contains(cs[0].Problem, "holds no version") {
+				t.Errorf("the line does not name the state it read: %q", cs[0].Problem)
+			}
+			// A container with no version is the first write's starting point
+			// (errNoBundleVersion), so `creds set` is the whole fix and no
+			// update belongs in the line.
+			if !strings.Contains(cs[0].Fix, selfCommand()+" creds set NAME") || strings.Contains(cs[0].Fix, "update") {
+				t.Errorf("the fix = %q, want the first `creds set` alone", cs[0].Fix)
+			}
+		})
+
+		t.Run("the newest version is DISABLED", func(t *testing.T) {
+			r := doctorRoutingRig(t, doctorRoutingSources)
+			id := bundleFixtureFor(t, r.sm, "aurora", []byte(config.BitbucketSecret+": "+credsValue(t, "token")+"\n"))
+			r.sm.DisableVersions(id)
+
+			o, out := doctorRoutingOutput(t, checkBitbucketTokenFlag)
+			cs := checksByID(o, doctorRoutingBundleID)
+			if len(cs) != 1 || cs[0].OK || cs[0].Severity != "warning" {
+				t.Fatalf("routing-bundle-source = %+v, want one warning:\n%s", cs, out)
+			}
+			if !strings.Contains(cs[0].Problem, "DISABLED") {
+				t.Errorf("the line does not name the state it read: %q", cs[0].Problem)
+			}
+			// A DISABLED version is one `creds set` refuses too, so the enable
+			// comes first and the write second.
+			if enable, set := strings.Index(cs[0].Fix, "gcloud secrets versions enable"), strings.Index(cs[0].Fix, selfCommand()+" creds set"); enable < 0 || set < 0 || enable > set {
+				t.Errorf("the fix = %q, want the enable first: a `creds set` of a disabled bundle is refused", cs[0].Fix)
+			}
+		})
 	})
 
 	// The launcher's pool where the project declares none: no designation could

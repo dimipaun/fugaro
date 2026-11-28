@@ -19,7 +19,7 @@ It covers audit rows RC12, RC13, RC38, RC39, RC75, RC98, RC104 and RC105.
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
 | [reconciliation.md](reconciliation.md) | Assumptions A1–A5, findings F1–F50 (F15–F30 from review round 1, F31–F41 from round 2, F42–F50 from round 3), decisions D3340–D3352 with the owner's answers (D3343, D3347 and D3349 amended after review and confirmed), resolutions R1–R22, open items O1–O3 (O3 closed), UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, the tasks (U1, U2, U3a, U3b, U4, U5, U6a, U6b, U7a, U7b, U8, U9a–U9d, U10, U13, with U11 cancelled and U12 added by D3353), integration I1, the owner's Check 930 (K1) and one contract change that runs only if raised, in seven levels. Also the critical path, the shared files and the edges broken and kept. **U11 is cancelled and U12 no longer waits on it** (D3420 amends D3353) |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, the tasks (U1, U2, U3a, U3b, U4, U5, U6a, U6b, U7a, U7b, U8, U9a–U9d, U10, U13, with U11 cancelled and U12 added by D3353), integration I1, the owner's Check 930 (K1) and one contract change that runs only if raised, in eight levels. Also the critical path, the shared files and the edges broken and kept. **U11 is cancelled and U12 no longer waits on it** (D3420 amends D3353) |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 **The owner's answers, all as recommended:**

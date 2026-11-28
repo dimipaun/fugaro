@@ -811,9 +811,10 @@ const imageMapMigratedLine = "note: the repository-to-image map (`repo_images`) 
 // localcfg.ImageMapEffective) a file that writes a map states the project's
 // whole map, so a file that names none — the state every machine is in before
 // its first `fugaro image map set` — would publish a one-entry map over the
-// node's and take every other repository's mapping away with it. That is the
-// trap `fugaro image map set` warns about in its own note; here the effective
-// map is what the write starts from, so the node's entries survive.
+// node's and take every other repository's mapping away with it. The write
+// starts from the effective map for that reason, as `fugaro image map set`'s
+// does (imageMapWith, whose note says the project's map is carried into the
+// file), so the node's entries survive.
 //
 // The migration (R13, S3) rides that write and never starts one. A project
 // still serving the old member — on this machine or on the published node — has

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/issue-mine.schema.json",
   "title": "Fugaro issue mine listing",
-  "description": "The document `fugaro issue mine --json` prints: the issues this machine's user reported to a project, as `fugaro issue mine` and `fugaro issue list --mine` show them (F12). It is one versioned object, and `format` is its version — a member is only ever added, and a member whose meaning has to change is a new member under a new name with `format` raised, because the console and the mobile app read this shape (CLAUDE.md). No object here is closed for the same reason: `additionalProperties` is left true everywhere, so a consumer never refuses a document a newer CLI wrote. What is not here is what the command must not say: no reporter's name and no digest of one, and no command to run — other people who hit an issue are counted (`others_hit`), and the one suggestion the text listing may print is this machine's own command and stays in the text (F8, F15).",
+  "description": "The document `fugaro issue mine --json` prints: the issues this machine's user reported to a project, as `fugaro issue mine` and `fugaro issue list --mine` show them (F12). It is one versioned object, and `format` is its version — a member is only ever added, and a member whose meaning has to change is a new member under a new name with `format` raised, because the console and the mobile app read this shape (CLAUDE.md). No object here is closed for the same reason: `additionalProperties` is left true everywhere, so a consumer never refuses a document a newer CLI wrote. What is not here is what the command must not say: no reporter's name and no digest of one (other people who hit an issue are counted, `others_hit`), and never another party's command — the one command a row may carry, `retry`, is this machine's own and is checked against this build's tree before it is written (F8, F15).",
   "type": "object",
   "required": ["format", "source", "as_of", "installed", "hidden", "truncated", "issues"],
   "properties": {
@@ -97,6 +97,10 @@
           "type": "integer",
           "minimum": 0,
           "description": "How many other people have hit the issue, this user never among them. It is a count and never a name or a digest of one (F15)."
+        },
+        "retry": {
+          "type": "string",
+          "description": "The command to try again, present only for a row this machine is covered for and whose own issue file holds one this build can run (F8, O4). It is the command alone, exactly what the text listing prints after `retry:`: this machine's own file's command and never a shared record's, checked against this build's own command tree (D1614), and nothing is ever run for the reader — the sentence the text adds around it, that commands change things and that nothing is run for you, is the text's and not this member's. Absent for every row that may not offer one: a `behind` or `unknown` row, one with no matching local file, and one whose recorded command is not a `fugaro` command this build has."
         }
       }
     }

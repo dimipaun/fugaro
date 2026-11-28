@@ -798,6 +798,22 @@ import (
 // `fugaro` answers the three doctor documents, the update logs of the case's own,
 // the run listing and the version, so a case says what both updates left and that
 // the member without the switch saw no change.
+// Check 841 is the launcher-does-not-mint plan's own owner-run check, the one
+// that converges a live installation from the release behind to the release that
+// issues a run's identity with a run in flight. Its three fakes are the whole
+// chain: a fake `gcloud` whose `auth print-identity-token` records the account it
+// was told to impersonate (which is the caller a ticket ask is attributed to), a
+// fake `fugaro` that is the installation -- its `doctor`, `project policy show`,
+// `runs ls`, `run` (which asks for its ticket and claims it, through the fake
+// curl), `update` and `pair` -- and a fake `curl` that is both the credentials
+// service and the Realtime Database, the ticket route writing the issuance
+// record the check reads and the claim route marking it claimed. So a case says
+// that a run in flight is followed across the update and finishes, that a launch
+// after it gets a session it can prove, that a second account's ask for that run
+// is refused by the record and not by the roster, that a ticket claimed twice is
+// the finding the row exists for, that a binary of the release behind prints the
+// upgrade sentence the tree spells, and that no token, ticket or pairing payload
+// ever reaches the block.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -919,6 +935,7 @@ var liveCheckScripts = []struct {
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-831.sh", "check-831_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
+	{"check-841.sh", "check-841_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
 	{"check-750-review-against-task.sh", "check-750-review-against-task_test.sh"},
 	{"check-720.sh", "check-720_test.sh"},

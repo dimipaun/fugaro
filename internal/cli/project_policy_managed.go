@@ -532,11 +532,11 @@ func policyPublishGate(ctx context.Context, lc *localcfg.Config, db *rtdb.Client
 // publishAgentRefusal is the refusal a coding agent's session reads at this
 // command's removal: taking the policy away changes what every run of the
 // project is admitted by, an irreplaceable delete is refused to a session
-// (D3430), and the sentence names what would have gone. It is written once
-// because two places read it: the loop's own refusal for a removal, and the
-// refusal for a managed project whose second mark read found it is not managed
-// any more (D1024). Two copies of one refusal are two chances for them to
-// drift.
+// (D3430), and the sentence names what would have gone.
+//
+// policyPublishProceed's removal branch is its only reader: a publish proceeds
+// whatever the gate answered (D3425) — the second read that finds the mark
+// revoked included (D1024) — so no other path refuses with it.
 func publishAgentRefusal(agent string) error {
 	return userErr("nothing was removed: fugaro project policy publish --delete removes the policy every run of the project is admitted by, which is a person's: %s", initflow.AgentRefusal(agent))
 }

@@ -137,9 +137,7 @@ func (r *release) paths() []string {
 // test ends.
 func pointAt(t *testing.T, s *httptest.Server) {
 	t.Helper()
-	old := releaseBase
-	releaseBase = s.URL + "/"
-	t.Cleanup(func() { releaseBase = old })
+	t.Cleanup(PointAtForTest(s.URL + "/"))
 }
 
 // countingServer is an httptest server answering 404 to everything, for the
@@ -332,6 +330,105 @@ func TestUpgradeFailureOneLine(t *testing.T) {
 	}
 	if !strings.Contains(msg, good) {
 		t.Fatalf("error %q does not name the version", msg)
+	}
+}
+
+// TestEnsureMarksTheInstall: Ensure is VS1's upgrade plus the two things a
+// job needs from it — the sha256 the runner re-checks before each later
+// stage, and the marker that stops the process it re-execs from upgrading
+// a second time (D3442, F33).
+func TestEnsureMarksTheInstall(t *testing.T) {
+	r := newRelease(t, good, archiveOf(t, regular("fugaro", payload)))
+	inst, err := Ensure(context.Background(), good, old)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if inst.Exe == "" || inst.Dir != filepath.Dir(inst.Exe) {
+		t.Fatalf("install = %+v", inst)
+	}
+	sum := sha256.Sum256(payload)
+	if inst.Sum != hex.EncodeToString(sum[:]) {
+		t.Fatalf("sum = %q, want the sha256 of the installed binary", inst.Sum)
+	}
+	// The process that re-execs the installed binary carries the marker, so
+	// its own Ensure fetches nothing.
+	t.Setenv(EnvDir, inst.Dir)
+	again, err := Ensure(context.Background(), good, old)
+	if err != nil || again.Exe != "" {
+		t.Fatalf("Ensure with the marker set = %+v, %v; want nothing", again, err)
+	}
+	if n := len(r.paths()); n != 2 {
+		t.Fatalf("%d requests: the marked process fetched a second release", n)
+	}
+}
+
+// TestInstallDirTampered: the install an upgrade left is read-only, and the
+// runner re-checks before every later stage that it still holds exactly the
+// binary with the checksum (F33). A tool planted beside it, the binary
+// replaced, and the directory holding anything else each end the run in one
+// line.
+func TestInstallDirTampered(t *testing.T) {
+	archive := archiveOf(t, regular("fugaro", payload))
+	for _, c := range []struct {
+		name   string
+		tamper func(dir, exe string) error
+	}{
+		{"a tool planted beside it", func(dir, _ string) error {
+			return os.WriteFile(filepath.Join(dir, "claude"), []byte("#!/bin/sh\n"), 0o755)
+		}},
+		{"the binary replaced", func(_, exe string) error {
+			if err := os.Chmod(exe, 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(exe, []byte("#!/bin/sh\necho evil\n"), 0o755)
+		}},
+		{"a symlink in its place", func(_, exe string) error {
+			if err := os.Remove(exe); err != nil {
+				return err
+			}
+			return os.Symlink("/bin/sh", exe)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			exe, err := install(archive, good)
+			if err != nil {
+				t.Fatalf("install: %v", err)
+			}
+			dir := filepath.Dir(exe)
+			sum, err := fileSum(exe)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Check(dir, sum); err != nil {
+				t.Fatalf("the fresh install was refused: %v", err)
+			}
+			// The job's user owns the directory and could undo its mode,
+			// which is the whole reason the check exists.
+			if err := os.Chmod(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.tamper(dir, exe); err != nil {
+				t.Fatal(err)
+			}
+			err = Check(dir, sum)
+			if err == nil {
+				t.Fatalf("%s left the install passing its own check", c.name)
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "\n") || len(msg) > 140 {
+				t.Fatalf("the refusal is not one short line: %q", msg)
+			}
+		})
+	}
+}
+
+// A run that never upgraded has no install to check, and nothing is
+// refused for it.
+func TestCheckWithoutAnInstall(t *testing.T) {
+	for _, c := range [][2]string{{"", ""}, {t.TempDir(), ""}, {"", "abc"}} {
+		if err := Check(c[0], c[1]); err != nil {
+			t.Fatalf("Check(%q, %q) = %v, want nil", c[0], c[1], err)
+		}
 	}
 }
 

@@ -621,8 +621,78 @@ func TestDoctorBrokeringCredentialsServiceDeployed(t *testing.T) {
 		if !strings.Contains(cs[0].Problem, "could not be checked") {
 			t.Errorf("a role doctor cannot read is reported as a grant that is missing: %q", cs[0].Problem)
 		}
+		// The unread marker is not asserted here: the doctor run this subtest
+		// reads went through --json, which does not carry an unexported field.
+		// TestDoctorMarksAReadThatFailedAsUnread pins it on both read-failure
+		// arms, where the check is called directly.
 	})
 
+}
+
+// TestDoctorMarksTheReadFailureOfTheDeployedHalfAsUnread: every arm of this
+// check a read that did not answer produces carries the unread marker, on both
+// halves — the one that could not look at the service at all and the one whose
+// grant could not be judged. It is not decoration: doctorClassOf files an
+// unmarked arm as a measurement of the installation when its severity is info,
+// and workspaceMemberServing tells a member's service that was not read from one
+// that does not serve by this field alone. The severity stays a warning, so the
+// state prints and --strict is where it becomes a failure — nothing was read.
+func TestDoctorMarksTheReadFailureOfTheDeployedHalfAsUnread(t *testing.T) {
+	// No Cloud Run endpoint: the check cannot look at the service at all, which
+	// is the closure every read this half makes goes through — the job accounts,
+	// the API, the service's own policy.
+	lc := &localcfg.Config{
+		Name:               "fugaro",
+		GCPProject:         "proj-1234",
+		Region:             "us-east5",
+		CredentialsService: &localcfg.CredentialsService{URL: "https://fugaro-credentials-abc-uc.a.run.app"},
+		Endpoints:          localcfg.Endpoints{NoAuth: true},
+		Repos: map[string]localcfg.Repo{
+			"workspace-a/repo-a": {Provider: "bitbucket", Workflows: []string{"app"}},
+		},
+	}
+	assertUnreadReadFailure(t, "the service could not be read", "the credentials service could not be read",
+		doctorCredentialsServiceDeployed(t.Context(), lc))
+
+	// The other read-failure arm: the service is there and its one caller holds
+	// a role doctor cannot judge, so whether that account may invoke it is the
+	// fact nobody read.
+	svcs := gcpfake.NewRunServices(t)
+	svcs.AddService(infra.CredentialsServiceName)
+	svcs.SetServicePolicy(infra.CredentialsServiceName,
+		gcpfake.Binding{Role: "projects/proj-1234/roles/deployer", Members: []string{brokeringJobAccount("app")}})
+	runs := gcpfake.NewRun(t)
+	granted := *lc
+	granted.Endpoints = localcfg.Endpoints{NoAuth: true, Run: cloudRunEndpoint(t, runs, svcs)}
+	assertUnreadReadFailure(t, "the invoker grant could not be judged", "the credentials service's invoker grant could not be read",
+		doctorCredentialsServiceDeployed(t.Context(), &granted))
+}
+
+// assertUnreadReadFailure is the one shape both read-failure arms of this check
+// have to keep: a warning that says the fact was not read, marked unread so that
+// a reader outside the sentence — doctorClassOf, workspaceMemberServing — can
+// tell it from a fact about the service, and so that --strict still does not go
+// green over an installation nobody could look at.
+func assertUnreadReadFailure(t *testing.T, what, sentence string, checks []doctorCheck) {
+	t.Helper()
+	cs := checksByID(doctorOutput{Checks: checks}, "credentials-service-deployed")
+	if len(cs) != 1 {
+		t.Fatalf("%s emitted %d checks, want one: %+v", what, len(cs), cs)
+	}
+	if cs[0].OK || cs[0].Severity != "warning" {
+		t.Fatalf("%s is reported as %+v, want the warning of a read that failed", what, cs[0])
+	}
+	if !cs[0].unread {
+		t.Errorf("%s does not carry the unread marker: %+v", what, cs[0])
+	}
+	// The arm is the one under test and not its neighbour: both say a read did
+	// not answer, and only the sentence says which read.
+	if !strings.Contains(cs[0].Problem, sentence) {
+		t.Errorf("%s is the wrong arm: %q", what, cs[0].Problem)
+	}
+	if !checksFail(cs, true) {
+		t.Errorf("%s leaves --strict green: %+v", what, cs[0])
+	}
 }
 
 // TestDoctorCredentialsServiceDeployedCountsTheDeployedVariants: the row
@@ -2516,7 +2586,10 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		def := doctorDefaultOutput(t, o.Checks)
 		wants(t, def,
 			"warning bitbucket-direct: a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.",
-			"update --repo workspace-a/repo-a")
+			"update --repo in workspace-a/repo-a's checkout")
+		if strings.Contains(def, "update --repo workspace-a/repo-a") {
+			t.Errorf("the fix passes the repository as --repo's argument, which takes a checkout's PATH:\n%s", def)
+		}
 		if !strings.Contains(doctorAllOutput(t, o.Checks), job) {
 			t.Errorf("--all does not name the job that still mounts the token")
 		}

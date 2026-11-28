@@ -288,6 +288,81 @@ func TestReposNoticesAreTheStepsAlone(t *testing.T) {
 	}
 }
 
+// TestRunStagesMarksTheLoop: the same guard as the test above, driven the way
+// a command drives it. That one sets inStages by hand, and the census below
+// reads the source for the one place that may call the loop, so neither holds
+// runStages itself to anything: this one runs a real loop through the entry
+// point every loop goes through, with a stage that reports from its Check the
+// way a real one does (secretsStage.reportList, and every run makes that pass).
+// What it pins is the pair -- a stage's lines are the stage's while the loop
+// runs, a step's are the run's notices after it, and the run's own phase is
+// exactly where it was when the loop returned (C1, U13, R12).
+func TestRunStagesMarksTheLoop(t *testing.T) {
+	lines := []initflow.RepoLine{{Repo: "acme/app", State: initflow.RepoDone, Detail: "stored"}}
+	// A plan-only run reaches every stage's Check, which is where a stage
+	// reports its lines, and applies none of them.
+	opts := func() initflow.Options { return initflow.Options{PlanOnly: true, Out: &syncBuf{}} }
+
+	e := &initEngine{r: &initRun{}}
+	stage := &stubStage{name: initflow.Secrets, onCheck: func() { e.reportRepos(initflow.Secrets, lines) }}
+	if _, err := e.r.runStages(context.Background(), []initflow.Stage{stage}, opts()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(e.reposState.stages); n != 1 {
+		t.Fatalf("the stage reported %d times, want 1: a stage reports its lines while the loop runs, and runStages is what makes it a stage's", n)
+	}
+	if got := e.reposState.stages[0]; got.name != initflow.Secrets || !slices.Equal(got.lines, lines) {
+		t.Errorf("the stage's report is %+v, want the lines it reported under its own name", got)
+	}
+	if got := e.notices(); len(got) != 0 {
+		t.Fatalf("a stage's lines came back as the notices %+v, want none: they are the stage's own, on its result", got)
+	}
+	if e.r.inStages {
+		t.Fatalf("the run still says its stage loop is running after runStages returned: a step after the loop would file its lines as a stage's, and the document would carry none of them")
+	}
+
+	// The same entry point, after the loop: a step has no stage of its own.
+	e.reportRepos("backlog", lines)
+	got := e.notices()
+	if len(got) != 1 {
+		t.Fatalf("the notices are %+v, want the one line the step reported: nothing was running the stage loop", got)
+	}
+	if got[0].Step != "backlog" || got[0].Repo != "acme/app" {
+		t.Errorf("the notice is %+v, want the step's own name on the line it reported", got[0])
+	}
+	if n := len(e.reposState.stages); n != 1 {
+		t.Errorf("the step's line was filed as a stage's (%d stage reports, want 1): only a line reported while the loop runs is one", n)
+	}
+
+	t.Run("a loop inside a loop gives back the outer one's phase", func(t *testing.T) {
+		e := &initEngine{r: &initRun{}}
+		inner := &stubStage{name: initflow.Plugin, onCheck: func() { e.reportRepos(initflow.Plugin, lines) }}
+		outer := &stubStage{name: initflow.Secrets, onCheck: func() {
+			if _, err := e.r.runStages(context.Background(), []initflow.Stage{inner}, opts()); err != nil {
+				t.Errorf("the stage's own loop: %v", err)
+			}
+			if !e.r.inStages {
+				t.Errorf("a loop inside the stage loop left the run saying the stage loop was over: the inner loop gives back the phase it found, and the outer one's stages are still stages")
+			}
+			// Reported after the inner loop returned: the outer stage's line,
+			// which the outer loop is still running for.
+			e.reportRepos(initflow.Secrets, lines)
+		}}
+		if _, err := e.r.runStages(context.Background(), []initflow.Stage{outer}, opts()); err != nil {
+			t.Fatal(err)
+		}
+		if e.r.inStages {
+			t.Fatalf("the run still says its stage loop is running after the outer loop returned")
+		}
+		if n := len(e.reposState.stages); n != 2 {
+			t.Errorf("the two loops' stages reported %d times, want 2: each loop's stage is a stage", n)
+		}
+		if got := e.notices(); len(got) != 0 {
+			t.Errorf("the notices are %+v, want none: every line here was reported while a loop was running", got)
+		}
+	})
+}
+
 // TestRepoNoticesAreRedacted: a step's line about a repository can quote a
 // value the run holds -- a token its read returned, the installation's own name
 // in a URL -- and a notice is a line of the document and of the feed like a

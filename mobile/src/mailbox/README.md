@@ -533,9 +533,10 @@ reused, with one addition (below).
 
 `mobile/src/accounts/secure-store.js` gained `SecretStore.use(accountId, item,
 fn)`. The reason is the boundary fence rather than convenience: `reveal(` is
-allowed in exactly two files (`secret.js` and `secure-store.js`), so this
-directory **cannot** read the MAC key itself, and widening that allow-list to a
-file that signs messages would be the wrong trade. `use` is the narrow
+allowed in only three files (`secret.js`, `secure-store.js` and
+`src/session/devicekey.js`), none under `src/mailbox/`, so this directory
+**cannot** read the MAC key itself, and widening that allow-list to a file that
+signs inbox messages would be the wrong trade. `use` is the narrow
 alternative -- the material is handed over for the duration of one callback and
 a result that carries it is refused (`leaked`), with seven tests of its own.
 P3.6 is the task that needed it; the PR says so.

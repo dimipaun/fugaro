@@ -48,57 +48,34 @@ type Grades map[string]Grade
 // ModelGradeKey is the policy key of one grade ("model_grades.strong").
 func ModelGradeKey(grade string) string { return "model_grades." + grade }
 
-// tightenGrades applies one layer's grades. project is whether the layer is
-// the merge's first: the project's own, which in a run is the ceiling — the
-// owner's policy node or the copy of his project layer the job carries (F25).
+// tightenGrades applies the project's grades: the merge's first layer, which in
+// a run is the ceiling — the owner's policy node or the copy of his project
+// layer the job carries (F25).
 //
-// Only that layer may set a grade, and every other layer's entry is dropped
-// and recorded. This is the strictest of the merge's project-only rules, and
-// the reason is the one thing a grade decides: which model a rung reaches for.
-// The credentials and pools of docs/model-crafts are a later layer's to select
-// among because the owner names them; a grade is that selection already made,
-// so a repository that could write one could hand its own runs the model the
-// project reserved for another rung — and the ladder's whole point is that the
-// stronger model arrives when the ladder says so and not when the repository
-// does.
+// It is the only layer's grades the merge reads, and there is no other to read:
+// the two names a repository's file may still write are lifted
+// (config.LiftedKeys), so the reader drops them before a layer is built and
+// names them where they are written. This is the strictest of the merge's
+// project-only rules, and the reason is the one thing a grade decides: which
+// model a rung reaches for. The credentials and pools of docs/model-crafts are
+// a later layer's to select among because the owner names them; a grade is that
+// selection already made, so a repository that could write one could hand its
+// own runs the model the project reserved for another rung — and the ladder's
+// whole point is that the stronger model arrives when the ladder says so and
+// not when the repository does.
 //
-// A value equal to the effective one is not recorded: the layer said nothing
-// new (Merge). An entry with no model is not a grade and is dropped without a
-// record, which is the decoder's refusal to make where the block is written: a
-// layer in Go that carries none has written nothing.
-func (e *Effective) tightenGrades(g Grades, src string, project bool) {
+// An entry with no model is not a grade and is skipped, which is the decoder's
+// refusal to make where the block is written: a layer in Go that carries none
+// has written nothing.
+func (e *Effective) tightenGrades(g Grades, src string) {
 	for _, name := range slices.Sorted(maps.Keys(g)) {
 		grade := g[name]
 		if name == "" || grade.Model == "" {
 			continue
 		}
-		key := ModelGradeKey(name)
-		if project {
-			if e.Grades == nil {
-				e.Grades = make(Grades, len(g))
-			}
-			e.Grades[name], e.Sources[key] = grade, src
-			continue
+		if e.Grades == nil {
+			e.Grades = make(Grades, len(g))
 		}
-		cur, defined := e.Grades[name]
-		if defined && cur == grade {
-			continue
-		}
-		e.Ignored = append(e.Ignored, Ignored{key, gradeText(grade), gradeText(cur), e.craftSource(key)})
+		e.Grades[name], e.Sources[ModelGradeKey(name)] = grade, src
 	}
-}
-
-// gradeText is a grade as an Ignored entry renders it: the model and, when the
-// grade names one, the credential or pool its calls go out on.
-//
-// Empty is reserved for a grade with no effective counterpart at all
-// (craftSource), the same reading poolStrategyText keeps for a pool's strategy:
-// a reader that shows one has to tell "the project's grade lost to this value"
-// from "the project names no such grade", and the effective field is the only
-// thing that answers it.
-func gradeText(g Grade) string {
-	if g.Access == "" {
-		return g.Model
-	}
-	return g.Model + " on " + g.Access
 }

@@ -173,14 +173,30 @@ func clampWarning(ig policy.Ignored) config.Problem {
 // problem is what the reader fixes first, and the notes are about keys a drop
 // that never happened would have named.
 func resolutionNotes(res *config.Resolution) []config.Problem {
+	notes, _ := resolutionNotesAndRefusals(res, false)
+	return notes
+}
+
+// resolutionNotesAndRefusals is resolutionNotes with L13's dead grade models
+// split off (DK2, R11): where refuseDead is set — the file in hand is the
+// default branch's own — each of the ladder's two grade models is a problem
+// rather than a note, refused with the sentence its own row carries, because
+// the merge has dropped a repository's grade since G3 and nothing a run reads
+// changes by refusing the line. Every other ref keeps the note, as it keeps
+// the drop (R2), and so does every caller that is not judge of a branch
+// (doctor), which is why the two answers come back together.
+func resolutionNotesAndRefusals(res *config.Resolution, refuseDead bool) (notes, problems []config.Problem) {
 	if res == nil {
-		return nil
+		return nil, nil
 	}
-	var notes []config.Problem
 	for _, n := range res.Lifted {
 		// C1's Why names the key itself and begins with its path, so it stands
 		// alone and takes no Path of its own: the line reads "note: <the key>
 		// is the project's choice…", not the key twice (LiftedKey.Why).
+		if refuseDead && deadGradeModelPath(n.Path) {
+			problems = append(problems, config.Problem{Message: n.Why})
+			continue
+		}
 		notes = append(notes, config.Problem{Message: n.Why})
 	}
 	for _, ig := range res.IgnoredKeys {
@@ -193,7 +209,7 @@ func resolutionNotes(res *config.Resolution) []config.Problem {
 		notes = append(notes, config.Problem{Path: ig.Key, Message: fmt.Sprintf(
 			"the repository wrote %s; the project's %s stands: review depth and spend only tighten", ig.Value, ig.Effective)})
 	}
-	return notes
+	return notes, problems
 }
 
 // ceilingText is the ceiling in one line, for update --repo.
@@ -2129,6 +2145,26 @@ func setsPolicy(cfg *config.Config) bool {
 		cfg.Agent.MaxOutputTokens != (config.RoleTokens{}) || cfg.RepoGovernanceSet
 }
 
+// onDefaultBranch reports whether path is the fugaro.yaml of a checkout whose
+// working branch is that checkout's default branch — the branch the ruling
+// makes authoritative (R2, R11), read here the way every launch gate reads it
+// (defaultBranchRef, origin/HEAD else origin/main or origin/master, over
+// remote-tracking refs only). False outside a checkout, with no default branch
+// known locally, and on a detached HEAD, which is no branch to be the default
+// one (branchNote's reading).
+func onDefaultBranch(ctx context.Context, path string) bool {
+	dir := filepath.Dir(path)
+	ref := defaultBranchRef(ctx, dir)
+	if ref == "" {
+		return false
+	}
+	cur, err := gitRead(ctx, dir, "branch", "--show-current")
+	if err != nil || cur == "" {
+		return false
+	}
+	return cur == strings.TrimPrefix(ref, "origin/")
+}
+
 // branchNote says, when the file is a checkout's and its branch isn't the
 // default branch, that the runner reads policy from the default branch's file
 // and this file can only tighten it. "" when the file isn't in a checkout, is on a detached HEAD or
@@ -2311,7 +2347,17 @@ func newValidateCmd() *cobra.Command {
 				// The keys the project now owns and the values the merge
 				// dropped, before the file's own checks: they are about the
 				// file in hand, and a reader meets them first (S2).
-				notes = append(notes, resolutionNotes(rf.Res)...)
+				// L13's dead grade models are the one lifted key refused
+				// rather than noted when the file in hand is the default
+				// branch's own (DK2, R11): the merge has dropped them since
+				// G3, so refusing the line costs a run nothing, where an older
+				// ref keeps the drop and the note (R2). A file that is no
+				// checkout's, and one on another branch, is not the default
+				// branch's own, and neither is doctor's read, which judges no
+				// branch and so keeps every note.
+				resNotes, resProblems := resolutionNotesAndRefusals(rf.Res, onDefaultBranch(cmd.Context(), path))
+				notes = append(notes, resNotes...)
+				problems = append(problems, resProblems...)
 				// Every offline check this file has on this installation's
 				// backend: the file's own, the compute limits, and the Batch
 				// backend's offline checks (plan 2026-10-19-compute-backend.md

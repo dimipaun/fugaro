@@ -117,6 +117,18 @@ test('the door exports the port’s factory and the vocabulary, and no transport
   assert.equal('refreshSession' in session, false);
 });
 
+test('the door’s vocabulary is one name per code, with `bad-endpoint` spelled once', () => {
+  // `refresh.js` and the port both name `bad-endpoint`, and the door's spread
+  // lets the later set win: a respelling on either side would hand a caller a
+  // code the other set does not carry, so the overlap is pinned rather than
+  // assumed away.
+  assert.equal(REFRESH_CODES.BAD_ENDPOINT, PORT_CODES.BAD_ENDPOINT);
+  const codes = Object.values(session.SESSION_CODES);
+  const names = Object.keys(session.SESSION_CODES);
+  assert.equal(new Set(codes).size, codes.length, 'two names share one code');
+  assert.equal(names.length, codes.length, 'a name has no code');
+});
+
 test('the session it builds is one C2’s port accepts', async () => {
   const { built } = await build();
   assert.equal(built.ok, true);
@@ -140,6 +152,19 @@ test('idToken() refreshes through the project and stores the successor token', a
   // handed back, and the fetch would have numbered a second one.
   assert.equal(await built.session.idToken(), token);
   assert.equal(state.refreshes, 1);
+});
+
+test('a refresh whose answer carries a policy the port refuses does not install it', async () => {
+  const { built } = await build({
+    fetch: fetchOf({ status: 200, body: refreshAnswer({ policy: { ...POLICY, compact_threshold_percent: 100 } }) }),
+  });
+  // The percent maps to a fraction of 1, which the port refuses: a refresh
+  // installs the policy it read without a second port check, so the refusal has
+  // to happen where the policy is read.
+  await assert.rejects(() => built.session.idToken(), (error) => error.code === REFRESH_CODES.BAD_RESPONSE);
+  // The policy the session paired with is still the one it carries: the refused
+  // one was never a value the port describes.
+  assert.equal(built.session.policy.compaction_threshold, 0.4);
 });
 
 test('a held token near its hour is refreshed rather than trusted', async () => {

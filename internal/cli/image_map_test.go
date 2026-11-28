@@ -146,8 +146,9 @@ func TestImageMapSetWritesTheMapping(t *testing.T) {
 	f.appendConfig(t, catalogYAML)
 	path := os.Getenv("FUGARO_CONFIG")
 
-	// The first mapping: the file holds no map, so the note about the whole-map
-	// replacement is what the operator reads before the write.
+	// The first mapping: the file holds no map, so the note saying this file
+	// states the project's map from here on is what the operator reads before the
+	// write.
 	out, errOut, err := execute(t, "image", "map", "set", "acme/app", "tools")
 	if err != nil {
 		t.Fatalf("image map set: %v\n%s", err, out)
@@ -156,7 +157,13 @@ func TestImageMapSetWritesTheMapping(t *testing.T) {
 		t.Errorf("image map set printed %q, want the mapping it wrote", out)
 	}
 	if !strings.Contains(errOut, "names no repo-to-image map") {
-		t.Errorf("the first write says nothing about replacing the project's published map: %q", errOut)
+		t.Errorf("the first write does not say the project config names no map of its own: %q", errOut)
+	}
+	// The note is pinned to what the write does, not only to the state it prints
+	// for: the file takes the project's map over, so a claim that it replaced the
+	// published one is the drift this test exists to catch (imageMapWith).
+	if strings.Contains(errOut, "replaced by this file's") {
+		t.Errorf("stderr = %q, want no claim that the project's map was replaced", errOut)
 	}
 	_, got := imageMapFile(t)
 	if want := map[string]string{"github/acme/app": "tools"}; !reflect.DeepEqual(got, want) {
@@ -301,6 +308,22 @@ func TestImageMapSetCarriesThePublishedMapIn(t *testing.T) {
 	}
 	if strings.Contains(errOut, "replaced by this file's") {
 		t.Errorf("stderr = %q, want no claim that the project's map was replaced", errOut)
+	}
+}
+
+// TestImageMapSetHelpSaysTheMapIsCarriedIn: the long help is the other place
+// this write's sentence is read, and it says what the write does (R12): a file
+// that names no map of its own takes the project's map into it first
+// (imageMapWith, R13). The note's own wording claimed the opposite once, and the
+// note's test is the only thing that would have caught it, so the help is pinned
+// here and a rewording of the write moves both.
+func TestImageMapSetHelpSaysTheMapIsCarriedIn(t *testing.T) {
+	help := newImageMapSetCmd().Long
+	if !strings.Contains(help, "takes the map the project publishes into it first") {
+		t.Errorf("image map set --help does not say the file takes the project's map first:\n%s", help)
+	}
+	if strings.Contains(help, "replaced by this file's") {
+		t.Errorf("image map set --help claims the file's map replaced the one the project published:\n%s", help)
 	}
 }
 
