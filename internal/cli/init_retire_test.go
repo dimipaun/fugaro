@@ -438,11 +438,12 @@ func TestInitRepoRetireGateReadsTheStateNotTheAddressList(t *testing.T) {
 // anything is removed.
 func TestInitRepoUnreadableStateWarnsAndCarriesOn(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, stateUnreadable: true})
+	before := logNames(t, "setup")
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--allow-delete", retireSvcAddr)
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
-	text := out + errOut
+	text := out + errOut + logsAdded(t, before, "setup")
 	if !strings.Contains(text, "could not read") || !strings.Contains(text, "a retirement cannot be predicted") {
 		t.Errorf("the run did not warn that the state could not be read:\n%s", text)
 	}
@@ -1636,12 +1637,15 @@ func TestPreventDestroySignatureIsWhitespaceNormalized(t *testing.T) {
 // message, and the stdout the summary owns.
 func TestInitRepoPreventDestroyReframed(t *testing.T) {
 	r := newRetireRig(t, retireOpts{planAbort: fixture(t, "prevent_destroy_wrapped.txt")})
+	before := logNames(t, "setup")
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
-	if !strings.Contains(out, "⚠ This change retires") || !strings.Contains(out, retireJobAddr) {
-		t.Errorf("the summary was not printed:\n%s", out)
+	// The addresses are the log's (printRetirements); the line is the run's.
+	text := out + logsAdded(t, before, "setup")
+	if !strings.Contains(text, "⚠ This change retires") || !strings.Contains(text, retireJobAddr) {
+		t.Errorf("the summary was not printed:\n%s", text)
 	}
 	if strings.Contains(out, "lifecycle.prevent_destroy") {
 		t.Errorf("Terraform's text reached stdout:\n%s", out)

@@ -136,11 +136,13 @@ func vaultFlipRig(t *testing.T, addr string) *initRig {
 func TestUpdateConvergesTheVaultFlipOnAProjectThatIsNotManaged(t *testing.T) {
 	t.Run("the flip's own delete is applied", func(t *testing.T) {
 		r := vaultFlipRig(t, vaultAccessorAddr)
+		before := logNames(t, "update")
 		out, errOut, err := executeStdin(t, "", "update", "--repo", "--no-build")
 		if err != nil {
 			t.Fatalf("one plain fugaro update --repo did not converge B3.8's flip on a project that is not managed, so the one command is not the whole upgrade for it: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
 		}
-		text := out + errOut
+		// The summary's addresses are the log's (printRetirements).
+		text := out + errOut + logsAdded(t, before, "update")
 		if !strings.Contains(text, vaultAccessorAddr) {
 			t.Fatalf("the run does not name %s anywhere, so the state this test scripted was not the state it read and nothing below is about the flip\n%s", vaultAccessorAddr, text)
 		}
