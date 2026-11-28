@@ -289,6 +289,7 @@ func (e *cloudEnv) registerJob(ctx context.Context, req identitywire.JobRequest)
 	hreq.Header.Set("Content-Type", "application/json")
 	hreq.Header.Set("Accept", "application/json")
 	hreq.Header.Set("Authorization", "Bearer "+identity)
+	hreq.Header.Set(credsvc.HeaderPersonIdentity, identity)
 	// The ticket ask's own client, and not a second one (slipClient).
 	resp, err := slipClient().Do(hreq)
 	if err != nil {
