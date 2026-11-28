@@ -646,12 +646,7 @@ func liftOpener(ctx context.Context, e *initEngine, lc *localcfg.Config) gitprov
 // than asked. Nothing is typed.
 func (s *liftStage) confirmWrite(env initflow.Env, what string) error {
 	r := s.e.r
-	if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
-		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): %s\n", s.p.lc.Name, what)
-		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
-		return nil
-	}
-	return confirmStageWrite(r.cmd, s.p.lc, restoreAsk(r.conditions(), r.asksBack()), env.Yes, what)
+	return confirmStageWrite(r.cmd, s.p.lc, restoreAsk(r.conditions(), r.asksBack()), r.gateStandsIn(), env.Yes, what)
 }
 
 // say prints every line of every change, once, and it is the first thing this

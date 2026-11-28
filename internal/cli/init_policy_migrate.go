@@ -836,7 +836,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	// the flag puts back (restoreAsk).
 	ask := c.Ask && managed
 	if m.generations != nil {
-		return m.confirmReseed(ctx, cmd, restoreAsk(c, ask), yes, w, admitted)
+		return m.confirmReseed(ctx, cmd, restoreAsk(c, ask), managed, yes, w, admitted)
 	}
 	if !m.writesNode() {
 		if len(m.importCloneURLs) > 0 {
@@ -845,7 +845,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			// published node and nowhere else, so it is confirmed the way the
 			// node's own write is rather than riding on the one-line record
 			// that would otherwise be this run's whole work (spec §6.4).
-			if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, policyCloneURLsWhat); err != nil {
+			if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), managed, yes, policyCloneURLsWhat); err != nil {
 				return err
 			}
 			if err := m.recordGeneration(ctx, cmd); err != nil {
@@ -952,7 +952,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 					return err
 				}
 			}
-		} else if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, what); err != nil {
+		} else if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), managed, yes, what); err != nil {
 			return err
 		}
 	}
@@ -1211,10 +1211,10 @@ func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Comma
 // takes: the file the re-seed replaces is backed up beside it, so nothing is
 // lost and nothing secret is written, and a person at their own terminal
 // answers it by having read the three-way state above (nothing is typed, T7).
-func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, c initflow.Conditions, yes bool, w io.Writer, admitted bool) error {
+func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, c initflow.Conditions, managed, yes bool, w io.Writer, admitted bool) error {
 	m.printGenerationState(w)
 	if !admitted {
-		if err := confirmStageWrite(cmd, m.lc, c, yes, policyReseedWhat); err != nil {
+		if err := confirmStageWrite(cmd, m.lc, c, managed, yes, policyReseedWhat); err != nil {
 			return err
 		}
 	}

@@ -1551,7 +1551,7 @@ func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer
 		return nil
 	}
 	if len(p.allWidens()) == 0 {
-		return confirmStageWrite(cmd, p.lc, c, yes, what)
+		return confirmStageWrite(cmd, p.lc, c, managed, yes, what)
 	}
 	if stdinIsTerminal(cmd.InOrStdin()) {
 		fmt.Fprintf(w, "%s\n", p.wideningWhy())

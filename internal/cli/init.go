@@ -2035,6 +2035,22 @@ func (r *initRun) accountWriter() io.Writer {
 // at first, which is what the person is confirming (D3438) — and the addresses
 // go with the stream, which no state puts on a screen any more.
 func (r *initRun) planBlock(plan *tf.Plan) {
+	if r.gateStandsIn() {
+		// Nobody confirms this plan, so there is no review to ask for: "⚠ Review
+		// these first" is a heading for a person about to answer, and under the
+		// gate the answer is already the marks' (the owner's feedback of
+		// 2026-11-28). The screen gets what the plan holds — one line — and the
+		// log the whole of it, the review lines included (D3438).
+		if plan == nil {
+			fmt.Fprint(r.w, tf.Brief(plan))
+			return
+		}
+		fmt.Fprintf(r.w, "Plan: %s.\n", tf.Counts(plan))
+		if r.rep != nil && r.repLog != nil {
+			fmt.Fprint(r.rep.Log(), tf.Brief(plan)+tf.Summary(plan))
+		}
+		return
+	}
 	if r.rep == nil || r.repLog == nil {
 		fmt.Fprint(r.w, tf.Brief(plan))
 		return
@@ -3005,6 +3021,22 @@ func (r *initRun) ask(what string) (bool, error) {
 	return ok, err
 }
 
+// asksNothing is whether a step of this run takes no confirmation from anybody
+// here: the marks answered "managed" — update's own gate, or the read `fugaro
+// image refresh` makes for itself, the one other gate there is — the person
+// who would have been asked is at their own terminal, and --ask has not put the
+// question back. It is the one answer every printer of a step's confirmation
+// asks, so the banner and the record cannot both be printed for one step.
+//
+// It is the decision this file's printers share (askBanner, askClass,
+// confirmStageWrite and planBlock), and the reason it is one function: the
+// owner's run of 2026-11-27 read a ⚠ CONFIRM banner, a "⚠ Review these first"
+// block and the sentence saying nothing is typed, all for steps that waited for
+// no answer.
+func (r *initRun) asksNothing() bool {
+	return (r.gateStandsIn() || r.refresh != nil) && r.stepConfirmation(false) == stepTyped && !r.o.ask
+}
+
 // askBanner is ask's question, asked between the pause and the resume. The
 // banner is a note now, not a prompt: what answers for the step is the reader
 // of it (confirmNow), and the only arm that reads is --ask's, which asks the
@@ -3012,12 +3044,13 @@ func (r *initRun) ask(what string) (bool, error) {
 //
 // The banner is printed only where something follows it that answers for the
 // step: a question, a flag, or a person whose presence is the answer. An arm
-// that asks nothing at all prints the step's note under willDo instead.
+// that asks nothing at all prints the step's note under willDo instead
+// (asksNothing).
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	if r.refresh.asksNothing(r) {
+	if r.asksNothing() {
 		r.willDo(what)
 		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 		return true, nil
@@ -3070,8 +3103,18 @@ func (r *initRun) askBanner(what string) (bool, error) {
 // The banner goes to the command's own output, where the typed confirmation's
 // went before it, and to the run's writer only through it: a --json run prints
 // its document on stdout, and the refusal below is the error cobra reports.
-func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditions, yes bool, what string) error {
+//
+// managed is whether the gate stands in for this write (initRun.gateStandsIn).
+// Where it does, the write is no question and no warning: the step's own record
+// is one plain line, and neither the banner nor the sentence saying nothing is
+// typed is printed (the owner's feedback of 2026-11-28 — a finished step read as
+// a question).
+func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditions, managed, yes bool, what string) error {
 	out := cmd.OutOrStdout()
+	if managed && initflow.PersonAtTheTerminal(c) {
+		fmt.Fprintf(out, "note: %s\n", what)
+		return nil
+	}
 	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
 	switch {
 	case c.Ask:
@@ -3156,7 +3199,18 @@ const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never
 // was asked and the caller leaves the step for the user. What answers for it is
 // confirmNow: the person at the terminal, who types nothing, and the y/N --ask
 // puts back.
+//
+// A step the gate stands in for is not a question at all (asksNothing): the
+// person reads the step's own note under the run's words for exactly that
+// (willDo), and the banner is not printed — under it would stand the sentence
+// saying nothing is answered, which is the contradiction the owner's feedback of
+// 2026-11-28 is about.
 func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bool, err error) {
+	if r.asksNothing() {
+		r.willDo(what)
+		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.OwnerProceeded())
+		return true, true, nil
+	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	switch r.stepConfirmation(ownAnswer) {
 	case stepLeave:

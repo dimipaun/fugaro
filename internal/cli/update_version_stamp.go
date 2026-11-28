@@ -413,7 +413,7 @@ func (s *versionStampStage) Apply(ctx context.Context, env initflow.Env) (initfl
 		}
 		cmd := s.e.r.cmd
 		if err := s.e.r.asking(func() error {
-			return confirmStageWrite(cmd, p.lc, restoreAsk(s.e.r.conditions(), s.e.r.asksBack()), env.Yes, versionStampWhat)
+			return confirmStageWrite(cmd, p.lc, restoreAsk(s.e.r.conditions(), s.e.r.asksBack()), s.e.r.gateStandsIn(), env.Yes, versionStampWhat)
 		}); err != nil {
 			return initflow.Outcome{}, err
 		}

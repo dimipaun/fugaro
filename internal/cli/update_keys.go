@@ -1053,9 +1053,9 @@ func (p *copyPlan) write(ctx context.Context, cmd *cobra.Command) (bundleAddResu
 // are already this installation's into the document its own service reads, and
 // it decides nothing about who is admitted, what may be spent or what may be
 // read.
-func (p *copyPlan) confirm(cmd *cobra.Command, yes bool, w io.Writer, c initflow.Conditions) error {
+func (p *copyPlan) confirm(cmd *cobra.Command, yes bool, w io.Writer, managed bool, c initflow.Conditions) error {
 	p.print(w)
-	return confirmStageWrite(cmd, p.lc, c, yes, p.what())
+	return confirmStageWrite(cmd, p.lc, c, managed, yes, p.what())
 }
 
 // what names this write as the confirmation reads it.
@@ -1201,7 +1201,7 @@ func (s *copyStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outco
 	}
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
-		return p.confirm(cmd, env.Yes, s.e.r.w, s.e.r.conditions())
+		return p.confirm(cmd, env.Yes, s.e.r.w, s.e.r.gateStandsIn(), s.e.r.conditions())
 	}); err != nil {
 		p.release()
 		return initflow.Outcome{}, err
