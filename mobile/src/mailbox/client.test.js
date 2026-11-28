@@ -31,6 +31,7 @@
 // installation (`belong` least of all, Global Constraint 11).
 
 import assert from 'node:assert/strict';
+import { createPublicKey, generateKeyPairSync, sign as ed25519Sign, verify as ed25519Verify } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
@@ -76,6 +77,56 @@ const HEARTBEAT = `mailbox/${UID}/heartbeat`;
 /** A message as this pairing signs it, for the phone to read out of its outbox. */
 function signed(record, direction, key = MAC_KEY) {
   return { ...record, mac: macOf(record, key, direction) };
+}
+
+// ---------------------------------------------------------------------------
+// O12's fixtures: the consumer's own key (J5c)
+// ---------------------------------------------------------------------------
+
+// The consumer's key pair, minted here and thrown away: its private half is the
+// installation's in Cloud KMS and never comes near the app, and its public half
+// is what C1's pair response carries and what a phone paired the new way pins.
+// A fake port would pin neither the key's length nor the bytes the signature
+// covers, and those are exactly what this client has to hold the consumer to.
+const CONSUMER = generateKeyPairSync('ed25519');
+const OTHER_CONSUMER = generateKeyPairSync('ed25519');
+
+/** ED25519_SPKI_PREFIX is the twelve bytes every Ed25519 public key's DER
+ * spelling starts with, so the raw 32-byte key the pair response carries can be
+ * handed to Node. `licence/verify.test.js` has the same constant for the same
+ * reason. */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+/** The public half as the pair response spells it: the 32 raw bytes of an
+ * Ed25519 key, unpadded base64url (`internal/mailbox/kmssigner.go`). */
+function rawPublicKey(pair) {
+  const der = pair.publicKey.export({ type: 'spki', format: 'der' });
+  return Buffer.from(der.subarray(der.length - 32)).toString('base64url');
+}
+
+/** The consumer's public key, as a phone paired the new way pinned it. */
+const CONSUMER_KEY = rawPublicKey(CONSUMER);
+
+/** The Ed25519 port `createMailboxClient` takes: Node's own, over the raw
+ * 32-byte key, which is the shape the licence verifier is handed too. It
+ * refuses a key or a signature of another length rather than reading one, so a
+ * length the app's own primitive would throw on is a `false` here. */
+function consumerVerify(signature, message, publicKey) {
+  if (publicKey.length !== 32) throw new RangeError('the public key is not 32 bytes');
+  if (signature.length !== 64) throw new RangeError('the signature is not 64 bytes');
+  const key = createPublicKey({
+    key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(publicKey)]),
+    format: 'der',
+    type: 'spki',
+  });
+  return ed25519Verify(null, Buffer.from(message), key, Buffer.from(signature));
+}
+
+/** A record as the consumer writes it: the same canonical bytes the phone MACs,
+ * covered by its own signature instead (J6's KMS signer, in one line). */
+function consumerSigned(record, direction, pair = CONSUMER) {
+  const bytes = ed25519Sign(null, Buffer.from(canonicalBytes(record, direction), 'utf8'), pair.privateKey);
+  return { ...record, sig: Buffer.from(bytes).toString('base64url') };
 }
 
 function refuse(code, field) {
@@ -197,7 +248,15 @@ async function harness(options = {}) {
     ...(options.licence === undefined ? {} : { licence: options.licence }),
     // O6's port, on the same terms: a client without one is a phone paired the
     // OLD way and a test that never mentions it is a test about that phone.
+    //
+    // A session brings the other two with it (J5c, O12): a phone paired the new
+    // way holds no MAC key, so it reads the consumer's records with the public
+    // key the pairing returned and the Ed25519 port, and the harness defaults
+    // both -- a test about a session-paired phone is a test about a phone that
+    // has them. A test that wants the half-wired client passes them explicitly.
     ...(options.session === undefined ? {} : { session: options.session }),
+    ...(options.consumerKey === undefined ? {} : { consumerKey: options.consumerKey }),
+    ...(options.verifySignature === undefined ? {} : { verifySignature: options.verifySignature }),
   });
 
   // **The phone starts where the app's does: one poll already made.**

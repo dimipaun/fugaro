@@ -30,14 +30,14 @@
 // has to be taught to ignore.
 
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, sign as ed25519Sign, verify as ed25519Verify } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync, sign as ed25519Sign, verify as ed25519Verify } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { DIRECTIONS, SIG_CHARS, canonicalBytes, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { macOf as nodeMacOf, verifyMac as nodeVerifyMac } from '../../../shared/mailbox-schema/mac.js';
 import { decodeBase64url } from '../pairing/base64url.js';
-import { macOf, sigOf, verifyMac } from './mac.js';
+import { macOf, sigOf, verifyMac, verifySig } from './mac.js';
 
 const VECTORS = JSON.parse(readFileSync(new URL('../../../shared/mailbox-schema/vectors.json', import.meta.url), 'utf8'));
 
@@ -397,5 +397,130 @@ test('sigOf throws for a signer or a record it cannot sign with', async () => {
   for (const answer of [new Uint8Array(63), new Uint8Array(65), new Uint8Array(0), 'sig', null, undefined]) {
     const sign = async () => answer;
     await assert.rejects(() => sigOf(message, sign, 'inbox'), TypeError, String(answer));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// O12: the consumer's own signature, and the key the pairing pinned (J5c)
+// ---------------------------------------------------------------------------
+
+// The consumer's key pair, minted here and thrown away: its private half is the
+// installation's in Cloud KMS and never comes near the app, and its public half
+// is what C1's pair response carries and what the phone pins. A fake port would
+// pin neither the key's length nor the bytes the signature covers.
+const CONSUMER = generateKeyPairSync('ed25519');
+const OTHER_CONSUMER = generateKeyPairSync('ed25519');
+
+/** The public half as the pair response spells it: the 32 raw bytes, unpadded
+ * base64url -- `internal/mailbox/kmssigner.go`'s own encoding. */
+function rawPublicKey(pair) {
+  const der = pair.publicKey.export({ type: 'spki', format: 'der' });
+  return Buffer.from(der.subarray(der.length - 32)).toString('base64url');
+}
+
+const CONSUMER_KEY = rawPublicKey(CONSUMER);
+
+/** ED25519_SPKI_PREFIX is the twelve bytes every Ed25519 public key's DER
+ * spelling starts with, so the raw 32-byte key the app carries can be handed to
+ * Node. The licence verifier's test file has the same constant for the same
+ * reason. */
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+
+/** The port `verifySig` takes, in the app's own shape: Node's Ed25519 over the
+ * raw 32-byte key. It is the differential the sibling suites use -- the
+ * signature is checked by a second implementation of the primitive -- and it
+ * refuses a key or a signature of another length rather than reading one. */
+function nodeVerify(signature, message, publicKey) {
+  if (publicKey.length !== 32) throw new RangeError('the public key is not 32 bytes');
+  if (signature.length !== 64) throw new RangeError('the signature is not 64 bytes');
+  const key = createPublicKey({
+    key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(publicKey)]),
+    format: 'der',
+    type: 'spki',
+  });
+  return ed25519Verify(null, Buffer.from(message), key, Buffer.from(signature));
+}
+
+/** What the consumer's KMS signer makes of a record (J6): Ed25519 over the same
+ * canonical bytes the phone MACs, spelled as unpadded base64url. */
+function consumerSig(record, direction, pair = CONSUMER) {
+  const bytes = ed25519Sign(null, Buffer.from(canonicalBytes(record, direction), 'utf8'), pair.privateKey);
+  return Buffer.from(bytes).toString('base64url');
+}
+
+test('verifySig accepts the consumer\'s own signature over the canonical bytes', () => {
+  // O12 and J5c's second acceptance line: the phone verifies what the consumer
+  // wrote against the key the pairing returned. The bytes are the schema's, the
+  // same ones the MAC covers, so the two schemes are one serialisation.
+  const record = { at: 1_700_000_000_000, boot: 'boot-0001' };
+  const sig = consumerSig(record, 'heartbeat');
+
+  assert.equal(sig.length, SIG_CHARS);
+  assert.equal(verifySig({ ...record, sig }, CONSUMER_KEY, nodeVerify, 'heartbeat'), true);
+  assert.equal(validateHeartbeat({ ...record, sig }).ok, true, 'the schema accepts what the consumer writes');
+});
+
+test('verifySig refuses a record signed for another direction, or by another key', () => {
+  // The direction is inside the covered bytes here too, so a heartbeat presented
+  // as a reply fails; and a signature under a key this phone did not pin is a
+  // stranger's, however well-formed it is. That second case is the whole point
+  // of pinning: the phone holds no other way to tell the consumer from anyone
+  // who can write the node.
+  const record = { at: 1_700_000_000_000, boot: 'boot-0001' };
+  const sig = consumerSig(record, 'heartbeat');
+
+  assert.equal(verifySig({ ...record, sig }, CONSUMER_KEY, nodeVerify, 'outbox'), false, 'another direction');
+  assert.equal(verifySig({ ...record, sig }, rawPublicKey(OTHER_CONSUMER), nodeVerify, 'heartbeat'), false,
+    'another key');
+  const moved = { ...record, at: record.at + 1, sig };
+  assert.equal(verifySig(moved, CONSUMER_KEY, nodeVerify, 'heartbeat'), false, 'the covered bytes moved');
+  assert.equal(verifySig({ ...record, sig: consumerSig(moved, 'heartbeat') }, CONSUMER_KEY, nodeVerify, 'heartbeat'), true,
+    'and the positive control: the same signature over the moved record does verify');
+});
+
+test('verifySig answers false for everything it cannot decide, and never throws', () => {
+  // The reader's asymmetry, exactly as `verifyMac` has it: this is called on
+  // values that arrived from outside the app, in the phone's message loop, and a
+  // throw there is a way to stop the loop with a record.
+  const record = { at: 1_700_000_000_000, boot: 'boot-0001' };
+  const good = { ...record, sig: consumerSig(record, 'heartbeat') };
+
+  for (const value of [null, undefined, 7, 'record', [], () => {}]) {
+    assert.equal(verifySig(value, CONSUMER_KEY, nodeVerify, 'heartbeat'), false, String(value));
+  }
+  // A `sig` that is missing, not a string, the wrong length, outside the
+  // alphabet, padded, or non-canonical: three other last characters spell the
+  // same 64 bytes, and a phone that took one would verify a signature nobody
+  // wrote (`base64url.js`'s strict rule, which the licence verifier shares).
+  const { sig: _sig, ...unsigned } = good;
+  for (const sig of [undefined, null, 42, '', 'not-a-signature', `${good.sig}=`, `${good.sig}A`, good.sig.slice(0, -1)]) {
+    assert.equal(verifySig({ ...unsigned, sig }, CONSUMER_KEY, nodeVerify, 'heartbeat'), false, String(sig));
+  }
+  // The pinned key is the wiring's and a value that is not one is a refusal, not
+  // a throw: a key of another length, another alphabet, or not a string at all.
+  for (const key of [undefined, null, 42, '', 'AAAA', `${CONSUMER_KEY}=`, 'x'.repeat(43)]) {
+    assert.equal(verifySig(good, key, nodeVerify, 'heartbeat'), false, String(key));
+  }
+  assert.equal(verifySig(good, CONSUMER_KEY, nodeVerify, 'nowhere'), false, 'an unknown direction');
+  assert.equal(verifySig({ ...good, direction: 'heartbeat' }, CONSUMER_KEY, nodeVerify, 'heartbeat'), false,
+    'a record that carries its own direction is refused by the serialisation');
+  // A port that throws -- Node's own does, for a length it cannot use -- is a
+  // false and not an exception out of the loop.
+  const throwing = () => { throw new RangeError('not a key this primitive takes'); };
+  assert.equal(verifySig(good, CONSUMER_KEY, throwing, 'heartbeat'), false);
+  // A port that answers a truthy non-boolean answered something this file did
+  // not ask for: only the primitive's own `true` admits a record.
+  for (const answer of [1, 'true', {}, [], undefined, null]) {
+    assert.equal(verifySig(good, CONSUMER_KEY, () => answer, 'heartbeat'), false, String(answer));
+  }
+});
+
+test('verifySig throws for a port that is not one, which is the wiring and not a record', () => {
+  // The one throw this reader has, and it is deliberately not a `false`: a
+  // missing port is caught at the client's construction, and a reader that
+  // answered `false` for it would be a phone that silently drops every reply.
+  const record = { at: 1_700_000_000_000, boot: 'boot-0001', sig: consumerSig({ at: 1_700_000_000_000, boot: 'boot-0001' }, 'heartbeat') };
+  for (const verify of [undefined, null, 'verify', 42, {}, []]) {
+    assert.throws(() => verifySig(record, CONSUMER_KEY, verify, 'heartbeat'), TypeError, String(verify));
   }
 });
