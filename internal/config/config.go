@@ -89,8 +89,8 @@ type Config struct {
 	// loop-escalation E2, D2039): the model each grade runs and the credential
 	// or pool its calls go out on. The project layer's defaults.model_grades
 	// is what a repository that writes none takes, and a repository's own
-	// block may name a grade, which the merge drops and records — a grade is
-	// a model choice the project owns (G3).
+	// block may name a grade, which no layer of a run's merge reads — a grade
+	// is a model choice the project owns (G3).
 	//
 	// Like Rigor the pointer is what keeps an absent block out of the resolved
 	// config's hash: SHA256 marshals this struct (resolve.go), and a pointer

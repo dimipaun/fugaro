@@ -51,7 +51,7 @@ const (
 	whyRepoShape        = "it is the repository's own"
 	whyCredentialAccess = "it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here"
 	whyRemoved          = "it was removed in 0.7.0 (" + MigrationDoc + ")"
-	whyGrade            = "it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and recorded by the merge (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so this is the one layer a grade's credential or pool can be named in"
+	whyGrade            = "it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is named where it is written and read by no layer of a run's merge (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so this is the one layer a grade's credential or pool can be named in"
 	whyGradeModel       = "it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and named where it is written (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so the project layer states every grade's model"
 	whyGovernance       = "it is a guardrail Fugaro ships: the project layer sets it for every repository of the project" +
 		" (a top-level key of the layer file, like claude_models) and a repository can only tighten it," +

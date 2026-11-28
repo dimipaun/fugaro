@@ -188,7 +188,7 @@ const (
 // repository's own `model_grades.*` key and four for the project layer's
 // `defaults.model_grades.*`, and not one of them is in the allowlist -- the
 // block is the project's own model choice (G3), and a repository's entry is
-// dropped and recorded by the merge rather than written by it.
+// read by no layer of a run's merge rather than written by it.
 //
 // The account aliases moved it twice, by one row each and neither of them the
 // allowlist's, for the clone URLs' reason: the block is local-only (D2090). AL0
