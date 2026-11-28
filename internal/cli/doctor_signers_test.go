@@ -15,6 +15,10 @@ const (
 	dsSigner = "fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
 	dsSched  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
 	dsMinter = "projects/proj-1234/roles/fugaroTokenMinter"
+	// dsIssuer is the credentials service's own account, which doctor derives
+	// from the local config's project (LM13's issuer row grants it the minter
+	// role on the signer: the one designed signer of the runs' identity).
+	dsIssuer = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
 	// dsDeployer is the managed deployment's deployer account (tf.DeployerAccount)
 	// and dsDeployerRole the conditioned custom role the module binds it under,
 	// the one whose permissions resolve to iam.serviceAccounts.setIamPolicy.
@@ -74,6 +78,31 @@ func (r *signerRig) withOperators(t *testing.T, ops ...string) {
 		quoted[i] = `"` + o + `"`
 	}
 	if err := os.WriteFile(r.cfgPath, append(b, []byte("terraform: { operators: ["+strings.Join(quoted, ", ")+"] }\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// withRoster records the two lists a current local config carries:
+// terraform.operators is the installation's launchers (the role word is
+// operator) and terraform.admins the admins (admin). A version-1 document has
+// one key for both of them — its `operators` is today's admins — so the
+// document is written as version 2.
+func (r *signerRig) withRoster(t *testing.T, operators, admins []string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Replace(string(b), "version: 1\n", "version: 2\n", 1)
+	list := func(members []string) string {
+		quoted := make([]string, len(members))
+		for i, m := range members {
+			quoted[i] = `"` + m + `"`
+		}
+		return "[" + strings.Join(quoted, ", ") + "]"
+	}
+	cfg += "terraform: { operators: " + list(operators) + ", admins: " + list(admins) + " }\n"
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -210,11 +239,11 @@ func TestDoctorTokenSignersImpersonationOnAnotherAccountWarns(t *testing.T) {
 	}
 }
 
-// Only the designed path and the Admin SDK account: informational, so it
+// Only the designed signer and the Admin SDK account: informational, so it
 // never fails doctor, even with --strict.
 func TestDoctorTokenSignersOnlyExpectedIsInfo(t *testing.T) {
 	r := newSignerDoctorRig(t)
-	r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"user:launcher@example.com"}})
+	r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"serviceAccount:" + dsIssuer}})
 	r.iam.AddServiceAccount("proj-1234", "firebase-adminsdk-fbsvc@proj-1234.iam.gserviceaccount.com", "adminsdk")
 	r.project(gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"serviceAccount:firebase-adminsdk-fbsvc@proj-1234.iam.gserviceaccount.com"}})
 	o, err := r.doctor(t, "--strict")
@@ -223,14 +252,132 @@ func TestDoctorTokenSignersOnlyExpectedIsInfo(t *testing.T) {
 		t.Fatalf("err %v, checks %+v", err, o.Checks)
 	}
 	if c.OK || c.Severity != "info" || c.Fix == "" ||
-		!strings.Contains(c.Problem, "user:launcher@example.com") || !strings.Contains(c.Problem, "firebase-adminsdk-fbsvc@") {
+		!strings.Contains(c.Problem, dsIssuer) || !strings.Contains(c.Problem, "firebase-adminsdk-fbsvc@") {
 		t.Fatalf("check %+v", c)
+	}
+}
+
+// The credentials service's own account is reported as the one designed signer
+// of the runs' identity (LM13's issuer row is the minter role on the signer,
+// and LM14's move takes it off every launcher): the summary names it under
+// "can sign as designed" and nothing else holds that row.
+func TestDoctorNamesTheIssuerAsTheDesignedSigner(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"serviceAccount:" + dsIssuer}})
+	o, err := r.doctor(t, "--strict")
+	if err != nil || len(signerChecks(o)) != 0 {
+		t.Fatalf("--strict must stay green on the moved grant: err %v, checks %+v", err, o.Checks)
+	}
+	c, ok := summary(o)
+	if !ok {
+		t.Fatalf("no summary: %+v", o.Checks)
+	}
+	for _, want := range []string{"can sign as designed", "the credentials service, the one designed signer of the runs' identity", dsIssuer} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("summary %q lacks %q", c.Problem, want)
+		}
+	}
+	// The row held by anyone but the service is not on that line.
+	r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"user:launcher@example.com"}})
+	o, _ = r.doctor(t)
+	if c, ok := summary(o); ok && strings.Contains(c.Problem, dsIssuer) {
+		t.Errorf("a launcher's row is reported as the designed signer: %+v", c)
+	}
+}
+
+// A person who still holds the minter row on the signer is a finding whose fix
+// is the update that moves the grant: removing the row by hand would stop every
+// launch while the credentials service is the only thing that can mint (D3127).
+func TestDoctorFlagsAPersonWhoStillSigns(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"user:launcher@example.com"}})
+	o, err := r.doctor(t)
+	if err != nil {
+		t.Fatalf("a warning failed doctor without --strict: %v", err)
+	}
+	cs := signerChecks(o)
+	if len(cs) != 1 {
+		t.Fatalf("checks %+v", cs)
+	}
+	c := cs[0]
+	for _, want := range []string{"user:launcher@example.com", dsMinter, "service account " + dsSigner,
+		"the row the design moves to the credentials service",
+		"can sign sign-in tokens with any claims, i.e. act as any run against the budget database"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("problem %q lacks %q", c.Problem, want)
+		}
+	}
+	if !strings.Contains(c.Fix, " update, which moves the grant once the credentials service answers") {
+		t.Errorf("fix %q does not send the reader to the update", c.Fix)
+	}
+	if !strings.Contains(c.Fix, "remove-iam-policy-binding "+dsSigner) {
+		t.Errorf("fix %q carries no removal for a row that outlives the update", c.Fix)
+	}
+	if c.Severity != "warning" || c.OK {
+		t.Fatalf("check %+v", c)
+	}
+	if _, err := r.doctor(t, "--strict"); err == nil {
+		t.Fatal("--strict: a person who still signs must fail doctor")
+	}
+}
+
+// A `group:` roster entry is a finding of its own: IAM admits the group's
+// members through the binding, but the issuer verifies the caller's own
+// address, so the group can no longer launch and its people have to be named
+// (D3123).
+func TestDoctorFlagsAGroupLauncher(t *testing.T) {
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	for _, tc := range []struct {
+		what    string
+		ops     []string
+		admins  []string
+		roleArg string
+	}{
+		{"on the launchers' list", []string{"group:ops@example.com", "user:someone@example.com"}, nil, "--role operator"},
+		{"on the admins' list", nil, []string{"group:ops@example.com"}, "--role admin"},
+		{"on neither list", nil, nil, "--role <operator|admin>"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newSignerDoctorRig(t)
+			r.withRoster(t, tc.ops, tc.admins)
+			r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"group:ops@example.com"}})
+			o, err := r.doctor(t)
+			if err != nil {
+				t.Fatalf("a warning failed doctor without --strict: %v", err)
+			}
+			if _, err := r.doctor(t, "--strict"); err == nil {
+				t.Fatal("--strict: a group that still signs must fail doctor")
+			}
+			cs := signerChecks(o)
+			if len(cs) != 1 {
+				t.Fatalf("checks %+v", o.Checks)
+			}
+			c := cs[0]
+			for _, want := range []string{"group:ops@example.com", "the row the design moves to the credentials service"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("problem %q lacks %q", c.Problem, want)
+				}
+			}
+			// The fix names the update that removes the row, the removal for a
+			// row no roster list names — which the update's plan does not hold,
+			// so it would never destroy it — and the command that puts the
+			// group's people back, role included: `fugaro user add` stops on a
+			// line that names no list.
+			for _, want := range []string{"run fugaro update, which removes the row if its plan holds it",
+				"if the row outlives it, remove it: gcloud iam service-accounts remove-iam-policy-binding " + dsSigner + " --project proj-1234 --member=group:ops@example.com --role=" + dsMinter,
+				"a group holds no token the issuer verifies, so name each person: fugaro user add user:<email> " + tc.roleArg} {
+				if !strings.Contains(c.Fix, want) {
+					t.Errorf("fix %q lacks %q", c.Fix, want)
+				}
+			}
+		})
 	}
 }
 
 func TestDoctorTokenSignersUnexpectedWarns(t *testing.T) {
 	r := newSignerDoctorRig(t)
-	r.iam.SetServiceAccountPolicy("proj-1234", dsSigner, gcpfake.Binding{Role: dsMinter, Members: []string{"user:launcher@example.com"}})
 	r.project(gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"user:eve@example.com"}})
 	o, err := r.doctor(t)
 	if err != nil {
