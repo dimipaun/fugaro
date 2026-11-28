@@ -1467,19 +1467,43 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // ends up not needing is the cheap side of that (PinnedModels, which every
 // other pin rule already reads, holds the same four).
 //
+// onAccount are the mix stages a Claude OAuth account serves (the names of
+// MixedAccountStages, resolved from the machine's own config by the caller:
+// internal/cli's accountStages), and they are the one thing the model IDs
+// cannot say. A call such a stage makes goes direct to Anthropic on the
+// account's own token and never on the stored key, which is the credential the
+// job mounts for it (docs/mixed-credentials/spec.md §11), so the model that
+// stage runs is no call this rule asks the key for -- the owner's own
+// repository is exactly that case: a provider's coder beside a Claude reviewer
+// whose review runs on the account. nil is a run that mixes nothing, and the
+// models are then the role, vision and level pins alone.
+//
+// A level's own model is read through MixedStageModel rather than counted
+// outright, because that is the model its stage runs: the two roles and the
+// three levels are the same set of models (review and triage run level 2 or the
+// reviewer, adversarial level 3 or the reviewer), so an empty onAccount reads
+// every one of them just as before, and a stage the account serves is the only
+// model this drops.
+//
 // Callers ask this only where the gateway is on and enforcing: without it a
 // provider model is refused (CheckProviderGateway) and every call would go to
 // Anthropic, which AnthropicKeyNeeded decides.
-func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
-	models := []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)}
+func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string, onAccount []string) bool {
+	models := []string{a.ModelFor(RoleCoder), EffectiveBackground(a, providers)}
 	if vision := a.VisionModel(); vision != "" {
 		// An unset slot is no model at all, and an empty ID matches no route:
 		// it is left out rather than counted as the direct call it is not.
 		models = append(models, vision)
 	}
-	for _, l := range []*LevelSetting{a.Levels.L1, a.Levels.L2, a.Levels.L3} {
-		if l != nil && l.Model != "" {
-			models = append(models, l.Model)
+	if l := a.Levels.L1; l != nil && l.Model != "" {
+		models = append(models, l.Model)
+	}
+	for _, stage := range MixedAccountStages {
+		if slices.Contains(onAccount, stage) {
+			continue
+		}
+		if m := MixedStageModel(a, stage); m != "" {
+			models = append(models, m)
 		}
 	}
 	for _, model := range models {
@@ -1498,12 +1522,13 @@ func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string)
 // mode), so under any other mode every call goes to Anthropic whatever the
 // pins are -- and under enforce it is the pins, exactly as NeedsAnthropicKey
 // reads them. mode is the effective one (the project's ceiling merged with the
-// file), the same value the runner and validate compute.
-func AnthropicKeyNeeded(a Agent, providers map[string]ModelProvider, repo, mode string) bool {
+// file), the same value the runner and validate compute, and onAccount is
+// NeedsAnthropicKey's own list of the mix stages a Claude OAuth account serves.
+func AnthropicKeyNeeded(a Agent, providers map[string]ModelProvider, repo, mode string, onAccount []string) bool {
 	if a.Auth != "api-key" {
 		return false
 	}
-	return mode != policy.ModeEnforce || NeedsAnthropicKey(a, providers, repo)
+	return mode != policy.ModeEnforce || NeedsAnthropicKey(a, providers, repo, onAccount)
 }
 
 // EffectiveBackground is the model of Claude Code's background (haiku-role)

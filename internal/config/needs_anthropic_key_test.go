@@ -33,7 +33,7 @@ func TestNeedsAnthropicKey(t *testing.T) {
 		}, "acme/other", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := NeedsAnthropicKey(tc.agent, tc.providers, tc.repo); got != tc.want {
+			if got := NeedsAnthropicKey(tc.agent, tc.providers, tc.repo, nil); got != tc.want {
 				t.Errorf("NeedsAnthropicKey = %v, want %v", got, tc.want)
 			}
 		})
@@ -66,7 +66,7 @@ func TestNeedsAnthropicKeyReadsALevelModel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ag := pins
 			ag.Levels = tc.levels
-			if got := NeedsAnthropicKey(ag, open, "acme/app"); got != tc.want {
+			if got := NeedsAnthropicKey(ag, open, "acme/app", nil); got != tc.want {
 				t.Errorf("NeedsAnthropicKey = %v, want %v", got, tc.want)
 			}
 		})
@@ -101,7 +101,7 @@ func TestNeedsAnthropicKeyReadsTheVisionSlot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ag := pins
 			ag.Models.Vision = tc.vision
-			if got := NeedsAnthropicKey(ag, open, tc.repo); got != tc.want {
+			if got := NeedsAnthropicKey(ag, open, tc.repo, nil); got != tc.want {
 				t.Errorf("NeedsAnthropicKey = %v, want %v", got, tc.want)
 			}
 		})
@@ -133,7 +133,7 @@ func TestNeedsAnthropicKeyLevelModelServedByAProvider(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ag := Agent{Model: "deepseek/deepseek-v4-flash", Levels: tc.levels}
-			if got := NeedsAnthropicKey(ag, open, tc.repo); got != tc.want {
+			if got := NeedsAnthropicKey(ag, open, tc.repo, nil); got != tc.want {
 				t.Errorf("NeedsAnthropicKey(repo %q) = %v, want %v", tc.repo, got, tc.want)
 			}
 		})
@@ -171,8 +171,87 @@ func TestAnthropicKeyNeeded(t *testing.T) {
 		{"Vertex, observing: the job's own account", Agent{Auth: "vertex", Model: "claude-sonnet-5-5"}, nil, "acme/app", "observe", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := AnthropicKeyNeeded(tc.agent, tc.providers, tc.repo, tc.mode); got != tc.want {
+			if got := AnthropicKeyNeeded(tc.agent, tc.providers, tc.repo, tc.mode, nil); got != tc.want {
 				t.Errorf("AnthropicKeyNeeded(mode %q) = %v, want %v", tc.mode, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNeedsAnthropicKeyReadsTheStageAccounts: the mix stages a Claude OAuth
+// account serves send their call direct to Anthropic on the account's own
+// token, which is the credential the job mounts for them
+// (docs/mixed-credentials/spec.md §11), so a repository whose only Anthropic
+// pin runs on one of those stages needs no stored key — and one whose pin runs
+// on a stage the account does not serve still does. The stages are the
+// caller's (internal/cli's accountStages, which resolved the mix from the
+// local config): this rule reads no config of its own.
+func TestNeedsAnthropicKeyReadsTheStageAccounts(t *testing.T) {
+	open := map[string]ModelProvider{
+		"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+	}
+	// The owner's own pair (fugaro.yaml, docs/dogfooding.md): a provider's
+	// coder and a Claude reviewer.
+	mixed := Agent{Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Reviewer: "claude-opus-5-5"}}
+	all := []string{"review", "adversarial", "triage"}
+	for _, tc := range []struct {
+		name      string
+		agent     Agent
+		onAccount []string
+		want      bool
+	}{
+		{"every mix stage on the account", mixed, all, false},
+		{"no stage account: the reviewer still goes direct", mixed, nil, true},
+		{"the reviews on it and the triage not", mixed, []string{"review", "adversarial"}, true},
+		{"the triage alone on it, the reviews not", mixed, []string{"triage"}, true},
+		{"a reviewer a provider serves, on the account", Agent{Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Reviewer: "deepseek/deepseek-v4-pro"}}, all, false},
+		// A level's own model is the model its stage runs (MixedStageModel),
+		// so the stage the account serves is asked about that one: the
+		// reviewer pin beside it is dead only where both levels name a model.
+		{"a Claude level 2 with the review off the account", Agent{Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Reviewer: "claude-opus-5-5"}, Levels: ReviewLevels{L2: &LevelSetting{Model: "claude-sonnet-5-5"}}}, []string{"adversarial", "triage"}, true},
+		{"a Claude level 2 with the review on the account", Agent{Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Reviewer: "claude-opus-5-5"}, Levels: ReviewLevels{L2: &LevelSetting{Model: "claude-sonnet-5-5"}}}, all, false},
+		{"a provider level 2 beside a Claude reviewer, every stage on the account", Agent{Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Reviewer: "claude-opus-5-5"}, Levels: ReviewLevels{L2: &LevelSetting{Model: "deepseek/deepseek-v4-pro"}, L3: &LevelSetting{Model: "deepseek/deepseek-v4-pro"}}}, all, false},
+		{"a Claude coder: the account serves no coder stage", Agent{Model: "claude-sonnet-5-5"}, all, true},
+		{"a Claude level 1 beside a served reviewer", Agent{Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Reviewer: "claude-opus-5-5"}, Levels: ReviewLevels{L1: &LevelSetting{Model: "claude-haiku-4-5"}}}, all, true},
+		{"a Claude background model", Agent{Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Background: "claude-haiku-4-5"}}, all, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NeedsAnthropicKey(tc.agent, open, "acme/app", tc.onAccount); got != tc.want {
+				t.Errorf("NeedsAnthropicKey(on %v) = %v, want %v", tc.onAccount, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAnthropicKeyNeededReadsTheStageAccounts: the mode gates the same rule
+// (AnthropicKeyNeeded), and the stage accounts are the pins' own business --
+// a stage a Claude account serves is no direct call on the stored key at any
+// mode, and the modes that route nothing to a provider still need the key
+// whatever the accounts are.
+func TestAnthropicKeyNeededReadsTheStageAccounts(t *testing.T) {
+	open := map[string]ModelProvider{
+		"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+	}
+	mixed := Agent{Auth: "api-key", Model: "deepseek/deepseek-v4-flash", Models: ModelRoles{Reviewer: "claude-opus-5-5"}}
+	all := []string{"review", "adversarial", "triage"}
+	for _, tc := range []struct {
+		name      string
+		agent     Agent
+		onAccount []string
+		mode      string
+		want      bool
+	}{
+		{"enforcing, every stage on the account", mixed, all, "enforce", false},
+		{"enforcing, no stage account", mixed, nil, "enforce", true},
+		{"observing: nothing routes to a provider", mixed, all, "observe", true},
+		{"off: no gateway at all", mixed, all, "off", true},
+		{"oauth: its own token owns every stage", Agent{Auth: "oauth", Model: "claude-sonnet-5-5"}, nil, "enforce", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := AnthropicKeyNeeded(tc.agent, open, "acme/app", tc.mode, tc.onAccount); got != tc.want {
+				t.Errorf("AnthropicKeyNeeded(mode %q, on %v) = %v, want %v", tc.mode, tc.onAccount, got, tc.want)
 			}
 		})
 	}

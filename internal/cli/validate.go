@@ -64,7 +64,45 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 		layer = cfg.Layer
 	}
 	providers, _, _ := layerRoutes(lc, layer, repo)
-	return config.AnthropicKeyNeeded(cfg.Agent, providers, repo, mode)
+	return config.AnthropicKeyNeeded(cfg.Agent, providers, repo, mode, accountServedStages(lc, cfg, repo))
+}
+
+// accountServedStages are the mix stages of this configuration that a Claude OAuth
+// account serves, and so the stages whose call goes direct to Anthropic on the
+// account's own token rather than on the stored key: they are the stages
+// config.NeedsAnthropicKey is not asked about (docs/mixed-credentials/spec.md
+// §11). It is the resolution the launch, the run and the job set each take,
+// read here where the CLI decides the key.
+//
+// The two rungs are the run's own: rung 2 is the stage's own
+// stages.<stage>.claude_account, and rung 4 the project's
+// default_claude_account where that stage's model is an Anthropic one and no
+// stage key names another account (infra.MixedDefaultAccount, the job set's own
+// reading of the ruling). A key naming an account this repository may not use
+// is not one of these either: no job of the set carries that token
+// (infra.MixedStageAccounts), and validate refuses the key by name.
+func accountServedStages(lc *localcfg.Config, cfg *config.Config, repo string) []string {
+	if lc == nil || cfg == nil || cfg.Agent.Auth != config.AuthAPIKey {
+		return nil
+	}
+	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	def := infra.MixedDefaultAccount(cfg, lc, repo)
+	var out []string
+	for _, stage := range config.MixedAccountStages {
+		if name, _ := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount); name != "" {
+			if slices.Contains(allowed, name) {
+				out = append(out, stage)
+			}
+			continue
+		}
+		// Rung 4 serves the stage where its own model is an Anthropic one
+		// (r.mixedDefaultAccount, internal/runner): a stage a provider serves
+		// keeps that route, account or no account.
+		if def != "" && config.IsClaudeModel(config.MixedStageModel(cfg.Agent, stage)) {
+			out = append(out, stage)
+		}
+	}
+	return out
 }
 
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
@@ -506,7 +544,7 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	// stored is another, so this is a note, never a warning or a refusal:
 	// the gateway refuses such a call by name when no key is stored (design
 	// docs/project-centric/spec.md §6.1).
-	if config.AnthropicKeyNeeded(cfg.Agent, claimed, repo, mode) {
+	if config.AnthropicKeyNeeded(cfg.Agent, claimed, repo, mode, accountServedStages(lc, cfg, repo)) {
 		msg := anthropicKeyNeeded
 		if mode != policy.ModeEnforce {
 			// The sharper reason, and the sharper fix: with no route to a
@@ -1452,7 +1490,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			} else {
 				notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf("%s -> direct (no switch names it: D1b's default)", p.model)})
 			}
-			if msg := claudeDirectKeyNote(cfg.Agent, p, routes, ownProviders, repo, mode); msg != "" {
+			if msg := claudeDirectKeyNote(cfg.Agent, p, routes, ownProviders, repo, mode, accountServedStages(lc, cfg, repo)); msg != "" {
 				notes = append(notes, config.Problem{Path: p.path, Message: msg})
 			}
 		case rerr != nil:
@@ -1465,7 +1503,7 @@ func routingProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 			// for the same reason).
 			notes = append(notes, config.Problem{Path: "routing.claude", Message: fmt.Sprintf(
 				"%s unresolved: the routes a run carries are the ones its repository may send code to (allow_data_to), and this checkout's origin could not be read (%v), so no repository can be said to carry the switch's route; run validate in the checkout, or from one whose origin names owner/name", p.model, rerr)})
-			if msg := claudeDirectKeyNote(cfg.Agent, p, routes, ownProviders, repo, mode); msg != "" {
+			if msg := claudeDirectKeyNote(cfg.Agent, p, routes, ownProviders, repo, mode, accountServedStages(lc, cfg, repo)); msg != "" {
 				notes = append(notes, config.Problem{Path: p.path, Message: msg})
 			}
 		case !ok:
@@ -2064,6 +2102,11 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 // call goes to Anthropic, and a route that would take it), and that pair is what
 // this note turns on.
 //
+// A third reading joins them: a Claude pin one of the mix stages runs on a
+// Claude OAuth account is no direct call on the stored key at all, so there is
+// nothing to say about it here either -- accountServedStages is that list, and
+// config.AnthropicKeyNeeded reads it the same way it reads the routes.
+//
 // The two provider tables it asks are two different questions. routes is the
 // table the run will have, which is what "does this run need the key" is about
 // (config.AnthropicKeyNeeded, the rule providerProblems' own note asks). own is
@@ -2082,14 +2125,14 @@ func claudeSwitchOf(r *config.Routing) *config.RoutingClaude {
 // "write the switch" is not advice that run can take — and that filter is asked
 // first, for the entry's name; the written question is then asked of the
 // operator's entry by that name.
-func claudeDirectKeyNote(a config.Agent, p claudePin, routes, own map[string]config.ModelProvider, repo, mode string) string {
+func claudeDirectKeyNote(a config.Agent, p claudePin, routes, own map[string]config.ModelProvider, repo, mode string, onAccount []string) string {
 	if mode != policy.ModeEnforce {
 		// Without a gateway there is no routing at all: nothing is sent to a
 		// provider, and "write the switch" would be advice this run cannot take
 		// (the same reading providerProblems' key note gives that state).
 		return ""
 	}
-	if !config.AnthropicKeyNeeded(a, routes, repo, mode) {
+	if !config.AnthropicKeyNeeded(a, routes, repo, mode, onAccount) {
 		// The run does not need the key on this configuration (an oauth run
 		// brings its own token): nothing is missing.
 		return ""

@@ -2797,6 +2797,18 @@ func (r *initRun) warn(msg string) {
 	fmt.Fprintln(r.w, r.qs.Warning(msg))
 }
 
+// detailOnly is warn's other half: a fact the run found and can do nothing about.
+// It is in the result's warnings, which is what --json carries, and in the
+// run's log, and it is deliberately not printed at the terminal: the operator
+// reads that screen for what is left for them to do, and a line asking for
+// work nobody needs is worse than no line at all (docs/no-prompt-policy). What
+// keeps such a fact out of a person's output is this method, so a caller that
+// passes one here has to have nothing for them to do.
+func (r *initRun) detailOnly(msg string) {
+	r.res.Warnings = append(r.res.Warnings, msg)
+	fmt.Fprintln(r.progress(), msg)
+}
+
 // withheld is a write this run did not make: one line, what happened and what
 // is left for the operator, on the screen and in the result's warnings (the
 // field a reader outside this binary consumes), and the reason whole in the
@@ -6655,6 +6667,12 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if first {
 		for _, n := range im.Notes {
 			r.warn(n)
+		}
+		// A detail is the same run's knowledge with nothing for the operator
+		// to do about it -- a grant the plan neither makes nor withdraws -- so
+		// it goes to the log and to --json and never onto their screen.
+		for _, d := range im.Details {
+			r.detailOnly(d)
 		}
 	}
 	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly, r.o.doorName())

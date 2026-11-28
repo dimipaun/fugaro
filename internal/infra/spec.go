@@ -3184,6 +3184,19 @@ func MixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 	return mixedStageAccounts(cfg, lc, repo)
 }
 
+// MixedDefaultAccount is mixedDefaultAccount for the readers outside this
+// package that have to ask which stages the project's default account serves:
+// internal/cli's accountStages decides whether a run needs the stored Anthropic
+// key with it, and it must read rung 4 the way the job set and the run do, or
+// the CLI would ask the owner for a key its reviews never read (or promise one
+// no job carries).
+func MixedDefaultAccount(cfg *config.Config, lc *localcfg.Config, repo string) string {
+	if lc == nil {
+		return ""
+	}
+	return mixedDefaultAccount(cfg, lc, config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo))
+}
+
 // mixedStageAccountJob is whether token is one of the repository's mixed stage
 // accounts: the job that account gets is its OWN variant (gcp.WorkflowVariant),
 // the one a run of this repository is launched on when the mix's stages go out

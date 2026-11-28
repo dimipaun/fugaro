@@ -1149,7 +1149,7 @@ func TestAttachNamesTheBackgroundModelTheRunWillActuallyUse(t *testing.T) {
 	if got := config.EffectiveBackground(ag, lc.Providers); got != "coder-1" {
 		t.Fatalf("EffectiveBackground = %q, want the coder's model", got)
 	}
-	if config.NeedsAnthropicKey(ag, lc.Providers, "acme/app") {
+	if config.NeedsAnthropicKey(ag, lc.Providers, "acme/app", nil) {
 		t.Fatal("this configuration makes no Anthropic call; the test's premise moved")
 	}
 	got := attachProviders(lc, ag, "acme/app")
@@ -1186,7 +1186,7 @@ func TestAttachNamesTheProviderThatServesTheVisionSlot(t *testing.T) {
 		"acme-gw": {Models: []string{"coder-*", "vision-*"}},
 	}}
 	ag := config.Agent{Auth: "api-key", Models: config.ModelRoles{Coder: "coder-1", Reviewer: "coder-1", Vision: "vision-1"}}
-	if config.NeedsAnthropicKey(ag, lc.Providers, "acme/app") {
+	if config.NeedsAnthropicKey(ag, lc.Providers, "acme/app", nil) {
 		t.Fatal("this configuration's every model is served by the provider; the test's premise moved")
 	}
 	if got := attachProviders(lc, ag, "acme/app"); strings.Join(got, ",") != "acme-gw" {
@@ -1195,7 +1195,7 @@ func TestAttachNamesTheProviderThatServesTheVisionSlot(t *testing.T) {
 	// The same slot on a Claude ID: the coder's stage runs it, so the run makes
 	// an Anthropic call and the direct route belongs on the line.
 	ag.Models.Vision = "claude-sonnet-5-5"
-	if !config.NeedsAnthropicKey(ag, lc.Providers, "acme/app") {
+	if !config.NeedsAnthropicKey(ag, lc.Providers, "acme/app", nil) {
 		t.Error("NeedsAnthropicKey = false for a Claude vision slot: the coder's stage runs it, so the run needs the key")
 	}
 	if got := attachProviders(lc, ag, "acme/app"); !slices.Contains(got, attachDirectAnthropic) {
