@@ -700,7 +700,9 @@ MD_EOF
 # write_log: the entries one job's task logs answer with — the container's own
 # C830 lines, which is where the check reads the metadata, the token's claims and
 # the marker's control. MODE bends the token: full, noclaims (the token arrives
-# without the instance claims) or notoken (the metadata server gave no token).
+# without the instance claims), notoken (the metadata server gave no token),
+# mdblocked (no metadata read answered at all) or curlip (python3 absent, the
+# server's address answered through curl).
 write_log() { # write_log FILE UID VM ZONE IID CONTROL ATTRS MODE [EXTRA]
   python3 - "$@" <<'PY'
 import json, sys
@@ -708,24 +710,41 @@ import json, sys
 out, uid, vm, zone, iid, control, attrs, mode = sys.argv[1:9]
 extra = sys.argv[9] if len(sys.argv) > 9 else ""
 md = "projects/123456789/zones/%s" % zone
-lines = [
-    "C830 start host=%s" % vm,
-    "C830 metadata instance/name=%s" % vm,
-    "C830 metadata instance/id=%s" % iid,
-    "C830 metadata instance/zone=%s" % md,
-    "C830 metadata instance/hostname=%s" % vm,
-    "C830 project fugaro-dev",
-    "C830 attrs %s" % attrs,
-    "C830 sa 1234-compute@developer.gserviceaccount.com",
-]
-if mode != "notoken":
+if mode == "mdblocked":
+    lines = [
+        "C830 md-tool python3=present curl=absent",
+        "C830 start host=%s" % vm,
+        "C830 md-error instance/name URLError: <urlopen error [Errno -2] Name does not resolve>",
+        "C830 metadata instance/name=<unreachable>",
+        "C830 metadata instance/id=<unreachable>",
+        "C830 metadata instance/zone=<unreachable>",
+        "C830 metadata instance/hostname=<unreachable>",
+        "C830 project <unreachable>",
+        "C830 attrs <unreachable>",
+        "C830 sa <unreachable>",
+        "C830 token <unreachable>",
+    ]
+else:
+    lines = [
+        "C830 md-tool python3=%s curl=present" % ("absent" if mode == "curlip" else "present"),
+    ] + ["C830 md-route instance/name curl-ip"] * (mode == "curlip") + [
+        "C830 start host=%s" % vm,
+        "C830 metadata instance/name=%s" % vm,
+        "C830 metadata instance/id=%s" % iid,
+        "C830 metadata instance/zone=%s" % md,
+        "C830 metadata instance/hostname=%s" % vm,
+        "C830 project fugaro-dev",
+        "C830 attrs %s" % attrs,
+        "C830 sa 1234-compute@developer.gserviceaccount.com",
+    ]
+if mode not in ("notoken", "mdblocked"):
     lines += [
         "C830 token len=987",
         "C830 token aud=https://fugaro-chk830.invalid/",
         "C830 token iss=https://accounts.google.com",
         "C830 token claims=aud,exp,google.compute_engine,iat,iss,sub",
     ]
-    if mode == "full":
+    if mode in ("full", "curlip"):
         lines += [
             "C830 token instance_id=%s" % iid,
             "C830 token instance_name=%s" % vm,
@@ -1155,6 +1174,12 @@ write_default_case() { # write_default_case DIR [bend...]
       ;;
     notoken)
       write_log "$d/state/log-$uid_a.json" "$uid_a" "$vm_a" "$zone" "$instance_id" present "job_uid=$uid_a" notoken
+      ;;
+    md-blocked)
+      write_log "$d/state/log-$uid_a.json" "$uid_a" "$vm_a" "$zone" "$instance_id" present "job_uid=$uid_a" mdblocked
+      ;;
+    curl-ip)
+      write_log "$d/state/log-$uid_a.json" "$uid_a" "$vm_a" "$zone" "$instance_id" present "job_uid=$uid_a" curlip
       ;;
     metadata-unreachable)
       write_log "$d/state/log-$uid_a.json" "$uid_a" "<unreachable>" "$zone" "$instance_id" present "job_uid=$uid_a" full
@@ -1868,6 +1893,70 @@ test_a_token_that_could_not_be_minted_fails_u2() {
   expect_row u2-token "R4 applies" "no token: the work returns to the owner"
 }
 
+test_a_container_that_reached_no_metadata_at_all_leaves_u2_open() {
+  setup_case token-md-blocked
+  write_default_case "$dir" md-blocked
+  run_check
+  expect_verdict u2-token INFO "no metadata read answered: the row"
+  expect_row u2-token "could not reach the metadata server at all" "no metadata read answered: what it says"
+  expect_row u2-token "C830 md-error" "no metadata read answered: the evidence is named"
+  expect_row u2-token "stays open" "no metadata read answered: U2 is not answered against the design"
+}
+
+test_metadata_that_answered_without_a_token_keeps_the_fail() {
+  setup_case token-md-answered
+  write_default_case "$dir" notoken
+  run_check
+  expect_verdict u2-token FAIL "answered reads and no token: the row"
+  expect_row u2-token "could not obtain an identity token" "answered reads and no token: what failed"
+}
+
+test_a_container_without_python3_that_read_through_the_address_passes_u2() {
+  setup_case token-curl-ip
+  write_default_case "$dir" curl-ip
+  run_check
+  expect_verdict probe-ran PASS "no python3: the lines parse"
+  expect_verdict u2-token PASS "no python3, the address answered: the row"
+  expect_row u2-token "instance_name=${vm_a}" "no python3, the address answered: the claims are read"
+}
+
+# The container script itself, cut out of the check and run with a python3 that
+# does not run and a curl that answers: it must say so and still read.
+test_the_container_reads_without_python3() {
+  local d=$work/container fakes tok payload code
+  rm -rf "$d"
+  fakes=$d/bin
+  mkdir -p "$fakes"
+  sed -n "/<<'C830CONTAINER'/,/^C830CONTAINER\$/p" "$script" | sed '1d;$d' >"$d/container.sh"
+  [ -s "$d/container.sh" ] || fail "the container: it could not be cut out of the check"
+  payload=$(python3 -c 'import base64, json
+d = {"aud": "a", "iss": "i", "exp": 7200, "iat": 3600, "google.compute_engine": {"instance_id": "42", "instance_name": "vmx", "project_id": "p", "zone": "z"}}
+print(base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("="))')
+  tok="h.${payload}.s"
+  printf '#!/bin/sh\nexit 127\n' >"$fakes/python3"
+  cat >"$fakes/curl" <<EOF
+#!/bin/sh
+case "\$*" in
+*identity*) printf '%s' '$tok' ;;
+*) printf 'val' ;;
+esac
+EOF
+  chmod +x "$fakes/python3" "$fakes/curl"
+  code=0
+  out=$(PATH="$fakes:$PATH" FUGARO_CHK830_LINGER=0 FUGARO_CHK830_AUD=aud FUGARO_CHK830_MARKER=MK MK=1 sh "$d/container.sh" 2>&1) || code=$?
+  expect_contains "$out" "C830 md-tool python3=absent curl=present" "no python3: the tools are named"
+  expect_contains "$out" "C830 md-route instance/name curl" "no python3: the route that answered"
+  expect_contains "$out" "C830 token instance_name=vmx" "no python3: the token is decoded without it"
+  expect_contains "$out" "C830 token life=3600s" "no python3: the life is read"
+  expect_status "$code" 131 "no python3: the exit status keeps its bits"
+
+  printf '#!/bin/sh\ncase "$*" in *169.254.169.254*) printf val ;; *) echo "curl: (6) Could not resolve host" >&2; exit 6 ;; esac\n' >"$fakes/curl"
+  out=$(PATH="$fakes:$PATH" FUGARO_CHK830_LINGER=0 FUGARO_CHK830_AUD=aud sh "$d/container.sh" 2>&1) || true
+  expect_contains "$out" "C830 md-error instance/name curl: curl: (6) Could not resolve host" "no DNS: the reason is named"
+  expect_contains "$out" "C830 md-route instance/name curl-ip" "no DNS: the address answers"
+  [ "$(printf '%s\n' "$out" | grep -c 'C830 md-error')" = 1 ] || fail "no DNS: one reason is named once, got: $out"
+}
+
 test_a_container_that_cannot_name_its_vm_falls_back_to_the_list() {
   setup_case vm-fallback
   write_default_case "$dir" metadata-unreachable
@@ -2300,6 +2389,10 @@ t test_a_link_on_the_job_object_is_reported_as_such
 t test_a_second_job_that_reproduces_a_job_home_link_fails_u1_forge
 t test_a_token_without_the_instance_claims_fails_u2
 t test_a_token_that_could_not_be_minted_fails_u2
+t test_a_container_that_reached_no_metadata_at_all_leaves_u2_open
+t test_metadata_that_answered_without_a_token_keeps_the_fail
+t test_a_container_without_python3_that_read_through_the_address_passes_u2
+t test_the_container_reads_without_python3
 t test_a_container_that_cannot_name_its_vm_falls_back_to_the_list
 t test_a_vm_that_cannot_be_resolved_is_a_failure
 t test_a_marker_that_reaches_the_jobs_own_logs_fails_u3

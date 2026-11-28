@@ -395,9 +395,10 @@ JOB_SA_ROLES="roles/batch.agentReporter roles/logging.logWriter"
 SA_TRIES=${CHK830_SA_TRIES:-6}
 SA_RETRY=${CHK830_SA_RETRY_SECONDS:-5}
 SA_SETTLE=${CHK830_SA_SETTLE_SECONDS:-15}
-# A container that needs a POSIX shell and python3 and nothing else: the probe
-# reads the metadata server with python3, the same interpreter it decodes the
-# token with, so the image never has to carry curl. It is a Google-hosted public
+# A container that needs a POSIX shell and nothing else: the probe reads the
+# metadata server with python3 and falls back to curl and then to the server's
+# address, and decodes the token with python3 or, without it, with cut, tr and
+# base64, so the image need carry neither. It is a Google-hosted public
 # image — the probe is not about the installation's own image, and naming one
 # that a project may not have would make this check depend on a build — and it
 # is the Alpine variant of the gcloud SDK image rather than its `slim` one
@@ -643,19 +644,117 @@ write_container() {
 #!/bin/sh
 set -u
 MD=http://metadata.google.internal/computeMetadata/v1
-# python3 is this container's one hard requirement — it decodes the token below
-# — so it reads the metadata server too, and the image is free to be a small one
-# that carries no curl.
+MDIP=http://169.254.169.254/computeMetadata/v1
+# A python3 that is on PATH but does not run counts as absent: the line below is
+# what tells a missing interpreter from a blocked network.
+if command -v python3 >/dev/null 2>&1 && python3 -c 'pass' >/dev/null 2>&1; then PY=present; else PY=absent; fi
+if command -v curl >/dev/null 2>&1; then CURL=present; else CURL=absent; fi
+echo "C830 md-tool python3=$PY curl=$CURL"
+SEEN=$(mktemp)
+ERRF=$(mktemp)
+ROUTE=$(mktemp)
+rm -f "$ROUTE"
+# fd 3 is the container's own stdout, which md's command substitution would
+# otherwise swallow along with the value it returns.
+exec 3>&1
+mdnote() {
+  m=$(printf '%s' "$2" | tr '\n\r' '  ' | cut -c1-120)
+  grep -qxF -- "$m" "$SEEN" 2>/dev/null && return 0
+  printf '%s\n' "$m" >>"$SEEN"
+  echo "C830 md-error $1 $m" >&3
+}
+mdroute() {
+  [ -e "$ROUTE" ] && return 0
+  : >"$ROUTE"
+  echo "C830 md-route $1 $2" >&3
+}
+# Each route is tried in turn and a failure is named once per distinct reason,
+# so a read that answers nothing says why. The address is tried as well as the
+# name, so a DNS failure is never the reason a read is lost.
 md() {
-  python3 - "$1" <<'C830MD' 2>/dev/null || true
+  if [ "$PY" = present ]; then
+    if r=$(python3 -c '
 import sys, urllib.request
 req = urllib.request.Request("http://metadata.google.internal/computeMetadata/v1/" + sys.argv[1],
                              headers={"Metadata-Flavor": "Google"})
 try:
     sys.stdout.write(urllib.request.urlopen(req, timeout=8).read().decode())
+except Exception as e:
+    sys.stderr.write("%s: %s" % (type(e).__name__, e))
+    sys.exit(1)
+' "$1" 2>"$ERRF"); then
+      mdroute "$1" python3
+      printf '%s' "$r"
+      return 0
+    fi
+    mdnote "$1" "$(cat "$ERRF" 2>/dev/null)"
+  fi
+  if [ "$CURL" = present ]; then
+    for route in curl curl-ip; do
+      base=$MD
+      [ "$route" = curl-ip ] && base=$MDIP
+      if r=$(curl -fsS --max-time 8 -H 'Metadata-Flavor: Google' "$base/$1" 2>"$ERRF"); then
+        mdroute "$1" "$route"
+        printf '%s' "$r"
+        return 0
+      fi
+      mdnote "$1" "$route: $(cat "$ERRF" 2>/dev/null)"
+    done
+  fi
+  return 0
+}
+decode_py() {
+  python3 -c '
+import base64, json, sys
+t = sys.stdin.read().strip()
+try:
+    p = t.split(".")[1]
+    p += "=" * (-len(p) % 4)
+    d = json.loads(base64.urlsafe_b64decode(p))
 except Exception:
-    pass
-C830MD
+    print("C830 token <undecodable>")
+    sys.exit(3)
+print("C830 token aud=%s" % d.get("aud", "<absent>"))
+print("C830 token iss=%s" % d.get("iss", "<absent>"))
+print("C830 token claims=%s" % ",".join(sorted(str(k) for k in d)))
+ce = d.get("google.compute_engine") or {}
+for k in ("instance_id", "instance_name", "project_id", "zone"):
+    print("C830 token %s=%s" % (k, ce.get(k, "<absent>")))
+if "exp" in d and "iat" in d:
+    print("C830 token life=%ss" % (int(d["exp"]) - int(d["iat"])))
+sys.exit(0 if all(ce.get(k) for k in ("instance_id", "instance_name", "project_id", "zone")) else 3)
+'
+}
+# Without python3 the payload is cut, padded and decoded with the shell's own
+# tools, the way check195.sh reads a claim; the claims line lists every key of
+# the payload, nested ones included, so it is a superset of the python3 route's.
+claim() {
+  printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\).*/\1/p" | head -n 1
+}
+decode_sh() {
+  payload=$(cut -d. -f2 | tr '_-' '/+')
+  case $((${#payload} % 4)) in 2) payload="${payload}==" ;; 3) payload="${payload}=" ;; esac
+  json=$(printf '%s' "$payload" | base64 -d 2>/dev/null) || json=''
+  if [ -z "$json" ]; then
+    echo "C830 token <undecodable>"
+    return 3
+  fi
+  echo "C830 token aud=$(claim "$json" aud)"
+  echo "C830 token iss=$(claim "$json" iss)"
+  echo "C830 token claims=$(printf '%s' "$json" | grep -o '"[A-Za-z_.]*"[[:space:]]*:' | tr -d '": ' | sort -u | tr '\n' ',' | sed 's/,$//')"
+  ok=0
+  for k in instance_id instance_name project_id zone; do
+    v=$(claim "$json" "$k")
+    [ -n "$v" ] || { v='<absent>'; ok=1; }
+    echo "C830 token $k=$v"
+  done
+  e=$(claim "$json" exp)
+  i=$(claim "$json" iat)
+  case "$e$i" in *[!0-9]* | '') ;; *) echo "C830 token life=$((e - i))s" ;; esac
+  return $ok
+}
+decode() {
+  if [ "$PY" = present ]; then decode_py; else decode_sh; fi
 }
 bits=0
 echo "C830 start host=$(hostname)"
@@ -685,26 +784,7 @@ else
   # The decoder's own status is the fifth reading: it exits 0 only when the
   # token carries all four claims, so the shell needs no second decode to set
   # the bit. It prints no part of the token.
-  if printf '%s' "$tok" | python3 -c '
-import base64, json, sys
-t = sys.stdin.read().strip()
-try:
-    p = t.split(".")[1]
-    p += "=" * (-len(p) % 4)
-    d = json.loads(base64.urlsafe_b64decode(p))
-except Exception:
-    print("C830 token <undecodable>")
-    sys.exit(3)
-print("C830 token aud=%s" % d.get("aud", "<absent>"))
-print("C830 token iss=%s" % d.get("iss", "<absent>"))
-print("C830 token claims=%s" % ",".join(sorted(str(k) for k in d)))
-ce = d.get("google.compute_engine") or {}
-for k in ("instance_id", "instance_name", "project_id", "zone"):
-    print("C830 token %s=%s" % (k, ce.get(k, "<absent>")))
-if "exp" in d and "iat" in d:
-    print("C830 token life=%ss" % (int(d["exp"]) - int(d["iat"])))
-sys.exit(0 if all(ce.get(k) for k in ("instance_id", "instance_name", "project_id", "zone")) else 3)
-'; then
+  if printf '%s' "$tok" | decode; then
     bits=$((bits + 8))
   else
     case "$?" in 127) echo "C830 token <no-decoder>" ;; esac
@@ -1455,6 +1535,12 @@ step_u2_token() {
     else
       fact u2-token PASS "the container reached the metadata server and its identity token in full format carries all four claims: ${got} (aud=${aud:-<none>}, iss=${iss:-<none>}${life:+, life=${life}}). The container's own metadata reads agree with them: instance name ${A_VM_NAME:-<unread>}, id ${A_VM_ID:-<unread>}, zone ${A_VM_ZONE:-<unread>}. The token itself is not printed anywhere — it is a bearer credential for that VM"
     fi
+  elif [ "$LINES_A" = yes ] && ! grep -E '^C830 (metadata |project |sa )' "$SCRATCH/lines-a" 2>/dev/null | grep -qv '<unreachable>'; then
+    # None of the container's metadata reads answered, so a missing token says nothing about
+    # whether one can be minted: the first-run lesson below, from the other side.
+    local mdwhy
+    mdwhy=$(grep -E '^C830 md-(tool|error) ' "$SCRATCH/lines-a" 2>/dev/null | head -n 3 | tr '\n' ';' | cut -c1-300)
+    fact u2-token INFO "the probe's container could not reach the metadata server at all: every metadata read it made, its project, its service account and its token came back <unreachable>, so whether a token can be obtained is UNMEASURED and U2 stays open, not answered against the design. The evidence is its own md-tool and md-error lines: ${mdwhy:-<none came back: a container from before those lines>}"
   elif [ "$LINES_A" = yes ]; then
     # The container's own lines came back through to 'C830 read', which it prints
     # after its token attempt: it reached that attempt, and no token line came
