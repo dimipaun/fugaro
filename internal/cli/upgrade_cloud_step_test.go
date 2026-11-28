@@ -585,9 +585,12 @@ func TestJobConfigCopyNoteReportsCloudFailedInsteadOfGoingSilent(t *testing.T) {
 		t.Fatal("not a checkout")
 	}
 	testutil.Git(t, loc.Root, "remote", "remove", "origin")
-	note := jobConfigCopyNote(t.Context(), loc.Root, cloudOptions{})
-	if !strings.Contains(note, "could not check the job's config copy (") {
-		t.Fatalf("jobConfigCopyNote = %q, want a could-not-check note for resolveCloudRepo's cloudFailed", note)
+	line, detail := jobConfigCopyNote(t.Context(), loc.Root, cloudOptions{})
+	if !strings.Contains(line, "could not check the job's config copy (") {
+		t.Fatalf("jobConfigCopyNote = %q, want a could-not-check line for resolveCloudRepo's cloudFailed", line)
+	}
+	if !strings.Contains(detail, "could not check the job's config copy (") {
+		t.Fatalf("jobConfigCopyNote detail = %q, want the same could-not-check sentence the line carries", detail)
 	}
 }
 

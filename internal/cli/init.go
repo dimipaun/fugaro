@@ -1989,6 +1989,24 @@ func (r *initRun) stageDetail() io.Writer {
 	return streamOut(r.rep, r.repLog, r.w)
 }
 
+// configWriteAccount is where the prose of a config write goes — the diff of
+// the file and the path its backup landed at: the log always, and the terminal
+// only where the run has no log to keep it in (G5's read-only state directory,
+// and the runs built outside the converge). A write's own line, one per
+// repository, is a step's line and goes to stageDetail; this is everything
+// under it.
+func (r *initRun) configWriteAccount() io.Writer {
+	if r.rep != nil {
+		// A converge stage's own writer: the log always, the terminal under
+		// --verbose, exactly as stageDetail has it.
+		return streamOut(r.rep, r.repLog, r.w)
+	}
+	if r.repLog != nil {
+		return r.repLog
+	}
+	return r.w
+}
+
 // failureShown marks a failed stage's error as one the screen has already read:
 // the step line and the account under it are the whole of that error on the
 // terminal, so main's top-level line would be the same failure a second time
@@ -4776,13 +4794,16 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		}
 		return nil
 	}
-	// The diff is what the confirmation below is about: it stays on screen where
-	// that question is really asked (a project whose gate does not stand in),
-	// and under the gate — where nothing is asked of anybody — it is the run's
-	// own account of the file (stageDetail).
-	diff := r.w
-	if r.gateStandsIn() {
-		diff = r.stageDetail()
+	// Where the diff goes: it is the account of the write and, where a question
+	// is really asked, the question's own content. A run that asks nothing —
+	// an answered confirmation, and the gate that stands in for one — keeps it
+	// in the log, because the terminal of an update owes a person one line per
+	// write and not a wall of YAML (D1354, and the same reason stageDetail
+	// exists for every other step): what the file gained is still there to read
+	// in the log and in --json.
+	diff := r.configWriteAccount()
+	if !confirmed && !(r.gateStandsIn() && r.conditions().Agent != "") {
+		diff = r.w
 	}
 	fmt.Fprintf(diff, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
 	if !confirmed {
@@ -4812,7 +4833,7 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 			return userErr("backing up the local config: %v", err)
 		}
 		r.res.Backup = backup
-		fmt.Fprintf(r.stageDetail(), "backed up the old local config to %s\n", backup)
+		fmt.Fprintf(r.configWriteAccount(), "backed up the old local config to %s\n", backup)
 	}
 	if err := writeFileAtomic(path, data); err != nil {
 		return userErr("writing the local config: %v", err)

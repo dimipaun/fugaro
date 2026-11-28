@@ -796,7 +796,11 @@ func (s *liftStage) writeLayer(p *liftPlan, env initflow.Env) error {
 		if err := writeFileAtomic(p.layerPath, p.next); err != nil {
 			return userErr("writing the lifted values into %s: %v", p.layerPath, err)
 		}
-		fmt.Fprintf(w, "wrote the lifted values into %s (backup at %s); the Layer stage of this run publishes it\n", p.layerPath, backup)
+		// The line is the write; the backup's path and what the run does with
+		// the file next are the account of it (the log and --json), which is
+		// where a person looking for either reads them.
+		fmt.Fprintf(s.e.r.configWriteAccount(), "the file the lifted values replaced is at %s; this run's Layer stage publishes the file\n", backup)
+		fmt.Fprintf(w, "wrote the lifted values into %s\n", p.layerPath)
 	} else {
 		if err := os.MkdirAll(filepath.Dir(p.layerPath), 0o700); err != nil {
 			return userErr("creating %s: %v", p.layerPath, err)
@@ -804,7 +808,8 @@ func (s *liftStage) writeLayer(p *liftPlan, env initflow.Env) error {
 		if err := writeFileAtomic(p.layerPath, p.next); err != nil {
 			return userErr("creating %s with the lifted values: %v", p.layerPath, err)
 		}
-		fmt.Fprintf(w, "created %s from %s with the lifted values; the Layer stage of this run publishes it\n", p.layerPath, p.baseFrom)
+		fmt.Fprintf(s.e.r.configWriteAccount(), "%s is created from %s; this run's Layer stage publishes it\n", p.layerPath, p.baseFrom)
+		fmt.Fprintf(w, "created %s with the lifted values\n", p.layerPath)
 	}
 	if s.e.layer != nil {
 		s.e.layer.forget()
