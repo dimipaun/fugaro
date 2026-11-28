@@ -253,6 +253,68 @@ func TestDoctorReportsTheWorkspaceService(t *testing.T) {
 		}
 	})
 
+	// The bundle's own state, before any entry of it is asked about: the
+	// container's absence, the container with nothing in it, and a version
+	// Secret Manager will not serve. Each line's fix is the command that runs in
+	// the state it reports, and a `creds set` is refused in two of the three
+	// (the container that is not there, the DISABLED version).
+	t.Run("the bundle's own state", func(t *testing.T) {
+		pool := func(t *testing.T) doctorCheck {
+			t.Helper()
+			o, out := wsDoctorRun(t)
+			c, ok := doctorCheckByID(o.Checks, workspacePoolCheckID)
+			if !ok {
+				t.Fatalf("no %s check:\n%s", workspacePoolCheckID, out)
+			}
+			if c.OK || c.Severity != "warning" {
+				t.Fatalf("%s = %+v, want a warning", workspacePoolCheckID, c)
+			}
+			return c
+		}
+
+		t.Run("the container is not there", func(t *testing.T) {
+			_, db, _ := wsDoctorServiceRig(t, wsDoctorSharedYAML)
+			wsDoctorSeedNode(t, db, "aurora", wsDoctorNode("aurora", wsDoctorShared()...))
+
+			c := pool(t)
+			if !strings.Contains(c.Problem, "has no bundle container") {
+				t.Errorf("the line does not name the state it read: %q", c.Problem)
+			}
+			if update, set := strings.Index(c.Fix, selfCommand()+" update"), strings.Index(c.Fix, selfCommand()+" creds set"); update < 0 || set < 0 || update > set {
+				t.Errorf("the fix = %q, want the apply that creates the container first: a `creds set` of this state is refused", c.Fix)
+			}
+		})
+
+		t.Run("the container holds no version", func(t *testing.T) {
+			r, db, _ := wsDoctorServiceRig(t, wsDoctorSharedYAML)
+			wsDoctorSeedNode(t, db, "aurora", wsDoctorNode("aurora", wsDoctorShared()...))
+			bundleFixtureFor(t, r.sm, "aurora", nil)
+
+			c := pool(t)
+			if !strings.Contains(c.Problem, "holds no version") {
+				t.Errorf("the line does not name the state it read: %q", c.Problem)
+			}
+			if !strings.Contains(c.Fix, selfCommand()+" creds set NAME") || strings.Contains(c.Fix, "update") {
+				t.Errorf("the fix = %q, want the first `creds set` alone", c.Fix)
+			}
+		})
+
+		t.Run("the newest version is DISABLED", func(t *testing.T) {
+			r, db, _ := wsDoctorServiceRig(t, wsDoctorSharedYAML)
+			wsDoctorSeedNode(t, db, "aurora", wsDoctorNode("aurora", wsDoctorShared()...))
+			id := bundleFixtureFor(t, r.sm, "aurora", wsDoctorBundleDoc(t, true))
+			r.sm.DisableVersions(id)
+
+			c := pool(t)
+			if !strings.Contains(c.Problem, "DISABLED") {
+				t.Errorf("the line does not name the state it read: %q", c.Problem)
+			}
+			if enable, set := strings.Index(c.Fix, "gcloud secrets versions enable"), strings.Index(c.Fix, selfCommand()+" creds set"); enable < 0 || set < 0 || enable > set {
+				t.Errorf("the fix = %q, want the enable first: a `creds set` of a disabled bundle is refused", c.Fix)
+			}
+		})
+	})
+
 	// The pool's check is a reader of the workspace's own bundle document, so it
 	// is behind the refusal that guards every other reader of one (credsOwnerOnly):
 	// a coding agent's session is answered "the bundle was not read" instead of

@@ -270,7 +270,7 @@ const SERVICE_STATES: readonly { readonly name: string; readonly line: Record<st
       severity: 'warning',
       problem:
         'the credentials service fugaro-credentials is deployed and serving, and it admits nobody: the bundle it serves from (fugaro-credentials) holds no version, so the loader fails closed and every model call of a run against it is refused',
-      fix: 'fugaro creds set NAME (the only writer of the bundle: no update writes a credential)',
+      fix: 'fugaro creds set NAME (writes the bundle’s first version)',
     }),
   },
   {
@@ -330,7 +330,7 @@ const HELD_OFF: readonly Record<string, unknown>[] = [
     ok: true,
     severity: 'info',
     problem: 'example-one/gamma is held off: the bundle holds nothing to replace the job’s credential',
-    fix: 'fugaro creds set NAME (the only writer of the bundle: no update writes a credential)',
+    fix: 'fugaro creds set NAME',
   }),
   check({
     ok: true,

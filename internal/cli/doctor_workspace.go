@@ -267,21 +267,25 @@ func doctorWorkspacePoolChecks(ctx context.Context, lc *localcfg.Config, node *p
 	if err := store.check(ctx); err != nil {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s declares %d shared credential(s) and has no bundle container (%s): nothing of the pool has a value to attach, so every entry it declares shared is offered to a member and served to nobody", safetext.Field(node.Name), len(node.Shared), pluginwire.Printable(store.id)),
-			Fix:     selfCommand() + " creds set NAME (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " update (the workspace's own installation creates the container), then " + selfCommand() + " creds set NAME"}}
 	}
 	meta, err := store.newest(ctx)
 	switch {
 	case errors.Is(err, errNoBundleVersion):
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s declares %d shared credential(s) and its bundle (%s) holds no version: every entry the node offers is served to nobody until a value is stored", safetext.Field(node.Name), len(node.Shared), pluginwire.Printable(store.id)),
-			Fix:     selfCommand() + " creds set NAME (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " creds set NAME (writes the bundle's first version)"}}
 	case err != nil:
 		return unreadable("the bundle's newest version (" + oneLineCLI(err.Error()) + ")")
 	}
 	if meta.state != "ENABLED" {
+		fix := selfCommand() + " creds set NAME writes a new version"
+		if meta.state == "DISABLED" {
+			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
+		}
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s declares %d shared credential(s) and the newest version of its bundle (%s, version %s) is %s: Secret Manager will not serve it, so every entry the node offers is served to nobody", safetext.Field(node.Name), len(node.Shared), pluginwire.Printable(store.id), pluginwire.Printable(meta.number), pluginwire.Printable(meta.state)),
-			Fix:     selfCommand() + " creds set NAME writes a new version (no update writes a credential)"}}
+			Fix:     fix}}
 	}
 	doc, err := store.access(ctx, meta.number)
 	if err != nil {
@@ -300,7 +304,7 @@ func doctorWorkspacePoolChecks(ctx context.Context, lc *localcfg.Config, node *p
 	if len(missing) > 0 {
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the workspace %s's bundle (%s) holds no credential for %s, and the node declares each of them shared: a member the entry is offered to is served nothing from it, and the value is stored under the entry's own name", safetext.Field(node.Name), pluginwire.Printable(store.id), strings.Join(missing, ", ")),
-			Fix:     selfCommand() + " creds set NAME for each one named above (the bundle's only writer: no update writes a credential)"}}
+			Fix:     selfCommand() + " creds set NAME for each one named above"}}
 	}
 	return []doctorCheck{{ID: id, OK: true, Severity: "info",
 		Problem: fmt.Sprintf("the workspace %s's bundle (%s) holds every one of the %d credential(s) the node declares shared", safetext.Field(node.Name), pluginwire.Printable(store.id), len(node.Shared)),

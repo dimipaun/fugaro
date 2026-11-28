@@ -418,7 +418,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 	case errors.Is(err, errNoBundleVersion):
 		return []doctorCheck{{ID: id, Severity: "warning",
 			Problem: fmt.Sprintf("the credentials service has nothing in its bundle to serve a run. The credentials service %s is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (%s) holds no version, so the loader fails closed and every model call of a run against it is refused; %s is the writer", infra.CredentialsServiceName, pluginwire.Printable(store.id), selfCommand()+" creds set NAME"),
-			Fix:     selfCommand() + " creds set NAME (the only writer of the bundle: no update writes a credential)"}}
+			Fix:     selfCommand() + " creds set NAME (writes the bundle's first version)"}}
 	case err != nil:
 		return unreadable("the bundle's newest version ("+oneLineCLI(err.Error())+")",
 			"whether there is a document for it to serve a run's credential out of could not be checked",
@@ -433,7 +433,7 @@ func doctorCredentialsServiceServing(ctx context.Context, lc *localcfg.Config, i
 	// why the fix is the enable first: a `creds set` would refuse too until the
 	// version is served again.
 	if meta.state != "ENABLED" {
-		fix := selfCommand() + " creds set NAME (writes a new version: no update writes a credential)"
+		fix := selfCommand() + " creds set NAME writes a new version"
 		if meta.state == "DISABLED" {
 			fix = fmt.Sprintf("gcloud secrets versions enable %s --secret=%s (the document is there; Secret Manager will not serve a disabled version), then %s creds set NAME writes a new one", pluginwire.Printable(meta.number), pluginwire.Printable(store.id), selfCommand())
 		}
