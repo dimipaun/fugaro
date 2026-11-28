@@ -105,8 +105,6 @@ export function isRelayAddress(email) {
   return typeof email === 'string' && email.toLowerCase().endsWith(APPLE_RELAY_DOMAIN);
 }
 
-const decoder = new TextDecoder();
-
 /** The base64url alphabet, and the value of each character, built once. */
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 const VALUES = (() => {
@@ -117,15 +115,17 @@ const VALUES = (() => {
 
 /**
  * `part`, the base64url of one JWT segment, as text -- or null for a character
- * outside the alphabet.
+ * outside the alphabet or bytes that are not UTF-8.
  *
- * **Written out rather than reached for.** `atob` is a browser global that
- * React Native's Hermes does not guarantee (`src/pairing/base64url.js` and
- * `spike/src/identity/provider-token.js` say the same thing), and it decodes
- * the padded standard alphabet rather than this one; an engine without it
- * would refuse *every* sign-in here instead of reading a token. `TextDecoder`
- * is used because this tree's code already relies on it
- * (`src/pairing/delivery.js`, `src/voice-switch/hop.js`).
+ * **Written out rather than reached for, both steps.** `atob` is a browser
+ * global that React Native's Hermes does not guarantee (the pairing module and
+ * the identity spike say the same thing), and it decodes the padded standard
+ * alphabet rather than this one; an engine without it would refuse *every*
+ * sign-in here instead of reading a token. The UTF-8 step is hand-written for
+ * the same reason, as `src/licence/verify.js` does for its own payload: a
+ * primitive the format depends on is one this module should not have to hope
+ * for, and a `TextDecoder` built at module scope would fail to load this file
+ * at all on an engine without it.
  */
 function base64UrlText(part) {
   const bytes = new Uint8Array(Math.floor((part.length * 6) / 8));
@@ -147,7 +147,57 @@ function base64UrlText(part) {
       acc &= (1 << bits) - 1;
     }
   }
-  return decoder.decode(bytes);
+  return utf8Text(bytes);
+}
+
+/**
+ * `bytes` as text, or null when they are not UTF-8.
+ *
+ * Strict, like the licence verifier's reader: an overlong form, a surrogate, a
+ * truncated sequence or a byte that starts no sequence is not text, and a
+ * payload that is not text is not a claim set. A claim set the identity project
+ * answered with is always UTF-8, so this refuses only a token that is not one.
+ */
+function utf8Text(bytes) {
+  let out = '';
+  for (let i = 0; i < bytes.length; ) {
+    const first = bytes[i];
+    let codePoint;
+    let length;
+    if (first < 0x80) {
+      codePoint = first;
+      length = 1;
+    } else if (first >= 0xc2 && first <= 0xdf) {
+      codePoint = first & 0x1f;
+      length = 2;
+    } else if (first >= 0xe0 && first <= 0xef) {
+      codePoint = first & 0x0f;
+      length = 3;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+      codePoint = first & 0x07;
+      length = 4;
+    } else {
+      // 0x80..0xc1 and 0xf5..0xff start no sequence: the first is a
+      // continuation byte or an overlong form, the second is past U+10FFFF.
+      return null;
+    }
+    if (i + length > bytes.length) return null;
+    for (let j = 1; j < length; j += 1) {
+      const next = bytes[i + j];
+      if (next < 0x80 || next > 0xbf) return null;
+      codePoint = (codePoint << 6) | (next & 0x3f);
+    }
+    // The forms whose first byte admits a shorter encoding of the same code
+    // point, and the ones the standard puts outside the range at all: an
+    // overlong sequence, a surrogate, and the 4-byte forms past U+10FFFF.
+    if (length === 3 && codePoint < 0x800) return null;
+    if (length === 4 && codePoint < 0x10000) return null;
+    if (codePoint > 0x10ffff) return null;
+    if (codePoint >= 0xd800 && codePoint <= 0xdfff) return null;
+    out += String.fromCodePoint(codePoint);
+    i += length;
+  }
+  return out;
 }
 
 /**
