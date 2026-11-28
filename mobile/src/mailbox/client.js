@@ -25,7 +25,11 @@
 //     before it speaks a word or acks (the tension (b) resolution): a message
 //     whose tag does not verify is dropped, never spoken and never acked, and
 //     an unsigned or wrongly signed heartbeat is `offline` with its advertised
-//     agent list ignored.
+//     agent list ignored. The scheme is the wiring's here too, and it is the
+//     consumer's rather than this client's: the OLD way checks the consumer's
+//     records with the pairing's key, and the NEW way -- a phone that holds no
+//     MAC key at all -- checks them with the consumer's public key the pairing
+//     returned and the app pinned (O12, `verifySig`).
 //   * it **acks a message only after it has spoken it**, and a speak that
 //     failed leaves the message unacked so the next pass tries again.
 //   * **it never writes an unsigned message, and never attempts one**: with no
@@ -46,7 +50,11 @@
 // **What is injected, and why nothing is reached for.** The client reads no
 // clock (`now` is D117's server-anchored now, supplied by the app), mints no
 // id of its own (`newId`), touches no device (`store`, `speaker`) and derives
-// no key (`keys`). The one thing it takes as configuration rather than as a
+// no key (`keys`). Nor does it reach for a primitive: the device signature and
+// the consumer's are made and checked through ports -- C2's `signMessage` and
+// the Ed25519 `verifySignature` -- because the app's suite runs in a fresh clone
+// with no `node_modules` and the app's one Ed25519 lives in `mobile/index.js`
+// (`mobile/README.md`). The one thing it takes as configuration rather than as a
 // function is D118's mailbox TTL, and the number it carries is the plan's 72
 // hours. Nothing here reads `Date.now`, `Math.random`, a file, a global or a
 // network, which is what makes every test in this directory a test of a
@@ -154,7 +162,7 @@ import {
 } from '../../../shared/presence/index.js';
 import { UNWIRED_CONNECTION } from './connection.js';
 import { evaluateConnection, evaluateGate, offlineSpeech } from './gate.js';
-import { macOf, sigOf, verifyMac } from './mac.js';
+import { macOf, sigOf, verifyMac, verifySig } from './mac.js';
 import { isDatabaseKey, mailboxPaths } from './paths.js';
 import { outboundRedactor } from './redact.js';
 import { STORE_CODES } from './store.js';
@@ -514,6 +522,8 @@ export function createMailboxClient(options = {}) {
     connection = UNWIRED_CONNECTION,
     licence = UNENFORCED_LICENCE,
     session = null,
+    consumerKey = null,
+    verifySignature = null,
     speaker,
     now,
     newId,
@@ -543,6 +553,21 @@ export function createMailboxClient(options = {}) {
   if (session !== null
     && (typeof session !== 'object' || typeof session.signMessage !== 'function')) {
     throw new TypeError('createMailboxClient: a session must carry signMessage() when one is given');
+  }
+  // O12's half of the same choice, and it is the same choice: a phone paired the
+  // new way holds NO MAC key, so what it checks the consumer's replies and its
+  // heartbeat with is the public key the pairing returned. The key and the port
+  // that reads it therefore arrive with the session and never without it -- a
+  // session-paired phone with no pinned key would drop every reply it could not
+  // verify, silently, and a pinned key with no device key is half a phone.
+  if (session !== null && (typeof consumerKey !== 'string' || consumerKey === '')) {
+    throw new TypeError('createMailboxClient: a session-paired phone needs the consumer public key the pairing returned');
+  }
+  if (session !== null && typeof verifySignature !== 'function') {
+    throw new TypeError('createMailboxClient: a session-paired phone needs an Ed25519 verify port');
+  }
+  if (session === null && (consumerKey !== null || verifySignature !== null)) {
+    throw new TypeError('createMailboxClient: the consumer public key belongs to a session-paired phone, and this client has no session');
   }
   if (speaker === null || typeof speaker !== 'object' || typeof speaker.speak !== 'function') {
     throw new TypeError('createMailboxClient: a speaker with speak() is required');
@@ -643,6 +668,55 @@ export function createMailboxClient(options = {}) {
    * the scheme's own shape, so `validateMessage` judges the caller's fields and
    * not this client's choice of tag. */
   const placeholderTag = () => (session === null ? { mac: MAC_PLACEHOLDER } : { sig: SIG_PLACEHOLDER });
+
+  /** The field this phone's scheme carries its tag in, and the one a forgery is
+   * reported against: `mac` for the old way, `sig` for the new one. It is the
+   * same choice as `tagOf`'s and it is made in the same place, at the wiring --
+   * a phone that named the field per record would tell the owner to look at a
+   * tag its own scheme never writes. */
+  const tagField = session === null ? 'mac' : 'sig';
+
+  /**
+   * The consumer's tag on what it wrote, judged under the scheme this phone was
+   * wired for: `verifyMac` with the pairing's key, or `verifySig` with the
+   * public key the pairing returned (O12).
+   *
+   * **It is the same choice as `tagOf`'s and it is made in the same place.** The
+   * phone verifies the OTHER end's records, so the scheme here is the consumer's
+   * and not this client's -- and it is the wiring that says which one, never the
+   * record: a record that could name its own scheme would be a forger's way of
+   * choosing the weaker one. The two halves are wired together by construction
+   * (a session brings the pinned key), so a phone cannot end up signing one way
+   * and verifying the other.
+   *
+   * The old way reads the key once per pass, inside the store's callback, and
+   * never holds it -- which is why the answer comes back as the store's own
+   * `{ok, result}` shape and a refusal here is `keyRefusal`'s. The new way holds
+   * no key to read: the pinned key and the port are the wiring's, and the
+   * verdict is this pass's own.
+   *
+   * @param {Array<{record: object}>} listed the outbox as it was read
+   * @param {{ok: boolean, heartbeat?: object}|null} heartbeat the validated
+   *   heartbeat, or `null` when the read failed or the node is not one
+   * @returns {{ok: true, result: {outbox: Array<boolean>, heartbeat: boolean}}
+   *   | {ok: false, code: string, field: string|null}} frozen
+   */
+  function judgeTags(listed, heartbeat) {
+    const beat = heartbeat !== null && heartbeat.ok;
+    if (consumerKey === null) {
+      return withKey((key) => Object.freeze({
+        outbox: freezeList(listed.map((entry) => verifyMac(entry.record, key, 'outbox'))),
+        heartbeat: beat ? verifyMac(heartbeat.heartbeat, key, 'heartbeat') : false,
+      }));
+    }
+    return Object.freeze({
+      ok: true,
+      result: Object.freeze({
+        outbox: freezeList(listed.map((entry) => verifySig(entry.record, consumerKey, verifySignature, 'outbox'))),
+        heartbeat: beat ? verifySig(heartbeat.heartbeat, consumerKey, verifySignature, 'heartbeat') : false,
+      }),
+    });
+  }
 
   // keyRefusal turns the store's answer about the key into this module's:
   // `absent` is "this phone is not paired", and everything else is "the key is
@@ -1180,14 +1254,9 @@ export function createMailboxClient(options = {}) {
     const beat = await store.read(paths.heartbeat);
     const heartbeat = beat.ok ? validateHeartbeat(beat.value) : null;
 
-    // One read of the key per poll, and the material stays inside the callback:
-    // what comes back is a verdict per outbox message and one for the heartbeat.
-    const verdicts = await withKey((key) => Object.freeze({
-      outbox: freezeList(listed.map((entry) => verifyMac(entry.record, key, 'outbox'))),
-      heartbeat: heartbeat !== null && heartbeat.ok
-        ? verifyMac(heartbeat.heartbeat, key, 'heartbeat')
-        : false,
-    }));
+    // One verdict per outbox message and one for the heartbeat, under the
+    // scheme this phone was wired for.
+    const verdicts = judgeTags(listed, heartbeat);
     if (!verdicts.ok) return keyRefusal(verdicts);
 
     // P6.10: the one thing this pass leaves behind. It is the RAW look -- the
@@ -1212,7 +1281,7 @@ export function createMailboxClient(options = {}) {
         return;
       }
       if (verdicts.result.outbox[index] !== true) {
-        dropped.push(Object.freeze({ id: entry.id, code: CLIENT_CODES.FORGED, field: 'mac' }));
+        dropped.push(Object.freeze({ id: entry.id, code: CLIENT_CODES.FORGED, field: tagField }));
         return;
       }
       // A verified reply answers the message it names (`reply_to`, which the

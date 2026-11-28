@@ -400,14 +400,24 @@ func leaseClient(t *testing.T, f *gcpfake.RTDB) *rtdb.Client {
 	return c
 }
 
+// leaseSignerFunc adapts a bare function to LeaseSigner for the tests that
+// inject a signer which fails, or one whose tag the schema refuses (M4's third
+// row). The field is the MAC's: every injected signer in this suite but J5c's
+// KMS one stands in for the keychain's, which is D171's scheme.
+type leaseSignerFunc func(hb Heartbeat) (string, error)
+
+func (f leaseSignerFunc) Field() string { return tagFieldMAC }
+
+func (f leaseSignerFunc) Heartbeat(_ context.Context, hb Heartbeat) (string, error) { return f(hb) }
+
 // stubSigner is a stand-in for T2a's `Sign`: the tag it returns is a real
 // HMAC-SHA-256 shape (64 lowercase hex characters, which the schema requires),
 // derived from the heartbeat so a test can tell two holders' writes apart.
 func stubSigner(salt string) LeaseSigner {
-	return func(hb Heartbeat) (string, error) {
+	return leaseSignerFunc(func(hb Heartbeat) (string, error) {
 		sum := sha256.Sum256([]byte(salt + "|" + hb.Boot + "|" + strconv.FormatInt(hb.At, 10)))
 		return hex.EncodeToString(sum[:]), nil
-	}
+	})
 }
 
 func leaseOptions(holder string, at int64) LeaseOptions {
@@ -873,7 +883,7 @@ func TestLeaseSignerFailureWritesNothing(t *testing.T) {
 	store := &countingStore{inner: leaseClient(t, f)}
 
 	failing := leaseOptions(leaseHolder, leaseAt)
-	failing.Sign = func(Heartbeat) (string, error) { return "", errors.New("the key is gone") }
+	failing.Sign = leaseSignerFunc(func(Heartbeat) (string, error) { return "", errors.New("the key is gone") })
 	if _, err := Take(context.Background(), store, failing); err == nil {
 		t.Fatal("a take whose heartbeat cannot be signed succeeded")
 	}
@@ -894,7 +904,7 @@ func TestLeaseSignerFailureWritesNothing(t *testing.T) {
 	// validated before the write, so the store never sees a heartbeat the other
 	// end would refuse.
 	bad := leaseOptions(leaseHolder, leaseAt)
-	bad.Sign = func(Heartbeat) (string, error) { return "not-a-tag", nil }
+	bad.Sign = leaseSignerFunc(func(Heartbeat) (string, error) { return "not-a-tag", nil })
 	if _, err := Take(context.Background(), store, bad); err == nil {
 		t.Fatal("a heartbeat with a tag the schema refuses was written")
 	}
@@ -985,7 +995,7 @@ func TestLeaseHeartbeatPath(t *testing.T) {
 // expects to find on the node.
 func mustSign(t *testing.T, opts LeaseOptions) string {
 	t.Helper()
-	tag, err := opts.Sign(Heartbeat{At: opts.At, Boot: opts.Holder})
+	tag, err := opts.Sign.Heartbeat(context.Background(), Heartbeat{At: opts.At, Boot: opts.Holder})
 	if err != nil {
 		t.Fatalf("signing the heartbeat: %v", err)
 	}

@@ -386,7 +386,7 @@ func consumeMailbox(ctx context.Context, reader ConsumerReader, m ConsumerMailbo
 		Mailbox: m.Mailbox,
 		Holder:  holder,
 		At:      at.UnixMilli(),
-		Sign:    mailbox.NewHeartbeatSigner(m.Key).Heartbeat,
+		Sign:    mailbox.NewHeartbeatSigner(m.Key),
 	}
 	// Renew first: this pass holds the mailbox on every tick after the first,
 	// and a take of a fresh claim is refused to its own holder (lease.go's own

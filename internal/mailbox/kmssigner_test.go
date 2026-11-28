@@ -102,7 +102,7 @@ func TestKMSSignerSignsAValueThePhoneVerifies(t *testing.T) {
 	signer := kmsSignerFor(t, ring, ConsumerCryptoKeyVersionPath("proj-1234", "us-central1"), directionOutbox)
 
 	value := consumerValue()
-	sig, err := signer.Signature(context.Background(), value)
+	sig, err := signer.Tag(context.Background(), value)
 	if err != nil {
 		t.Fatalf("signing a reply: %v", err)
 	}
@@ -156,11 +156,11 @@ func TestKMSSignerSignsOneNodeAndNotTheOther(t *testing.T) {
 	// the whole of why the direction is the signer's and not the caller's.
 	outbox := kmsSignerFor(t, ring, ConsumerKeyVersionName, directionOutbox)
 	heartbeat := kmsSignerFor(t, ring, ConsumerKeyVersionName, directionHeartbeat)
-	outSig, err := outbox.Signature(context.Background(), value)
+	outSig, err := outbox.Tag(context.Background(), value)
 	if err != nil {
 		t.Fatalf("signing for the outbox: %v", err)
 	}
-	hbSig, err := heartbeat.Signature(context.Background(), value)
+	hbSig, err := heartbeat.Tag(context.Background(), value)
 	if err != nil {
 		t.Fatalf("signing for the heartbeat: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestKMSSignerRefusesWhatIsNotASignature(t *testing.T) {
 			ring := newFakeKeyRing(t)
 			ring.answer = tc.answer
 			signer := kmsSignerFor(t, ring, ConsumerKeyVersionName, directionOutbox)
-			sig, err := signer.Signature(context.Background(), consumerValue())
+			sig, err := signer.Tag(context.Background(), consumerValue())
 			if !errors.Is(err, ErrUnsignable) {
 				t.Fatalf("signing answered (%q, %v), want ErrUnsignable: nothing is written for a value that could not be signed", sig, err)
 			}
@@ -232,7 +232,7 @@ func TestKMSSignerRefusesAValueNothingCanonicalises(t *testing.T) {
 		{"a null", Record{"at": nil}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			sig, err := signer.Signature(context.Background(), tc.value)
+			sig, err := signer.Tag(context.Background(), tc.value)
 			if !errors.Is(err, ErrUnsignable) || sig != "" {
 				t.Fatalf("signing answered (%q, %v), want ErrUnsignable and no signature", sig, err)
 			}
@@ -272,7 +272,7 @@ func TestKMSSignerNeedsAClientAVersionAndANode(t *testing.T) {
 		t.Fatalf("the key ring was called %d time(s) with a payload the signer refuses", len(ring.payloads))
 	}
 	var nilSigner *KMSSigner
-	if sig, err := nilSigner.Signature(context.Background(), consumerValue()); !errors.Is(err, ErrUnsignable) || sig != "" {
+	if sig, err := nilSigner.Tag(context.Background(), consumerValue()); !errors.Is(err, ErrUnsignable) || sig != "" {
 		t.Errorf("a nil signer answered (%q, %v), want ErrUnsignable", sig, err)
 	}
 }

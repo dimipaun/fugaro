@@ -1158,7 +1158,7 @@ func TestTheWriteSetIsTheOutboxAndTheHeartbeat(t *testing.T) {
 	ctx := context.Background()
 
 	opts := leaseOptions(leaseHolder, leaseAt)
-	opts.Sign = NewHeartbeatSigner(keychain.NewKey(key)).Heartbeat
+	opts.Sign = NewHeartbeatSigner(keychain.NewKey(key))
 	if _, err := Take(ctx, store, opts); err != nil {
 		t.Fatalf("taking the lease: %v", err)
 	}

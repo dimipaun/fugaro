@@ -3152,8 +3152,21 @@ func TestRevokeDestroysTheCloudCopyOfADisabledVersion(t *testing.T) {
 	if len(destroyed) != 1 || !strings.HasSuffix(destroyed[0], "/versions/1") {
 		t.Fatalf("destroyed = %v, want the disabled version carrying the revoked device's uid", destroyed)
 	}
-	if disabled := f.secrets.Disabled(); len(disabled) != 1 || !strings.HasSuffix(disabled[0], "/versions/2") {
-		t.Fatalf("disabled = %v, want one disable, of the other pairing's version: the enable the revoke made to read it is undone, so a revoke hands no other pairing's key back to the consumer", disabled)
+	// The container is read twice in one revoke — once for the revoked device's
+	// own copy (pairDeleteDeviceFootprint's step 2b) and once by the retirement
+	// sweep (J5c) — and each read of a version a disable hides costs an enable
+	// and a disable, so the count is not one. What has to hold is that every
+	// enable is undone and no version but the other pairing's is left DISABLED:
+	// that is what keeps a revoke from handing another pairing's key back to the
+	// consumer.
+	if disabled := f.secrets.Disabled(); len(disabled) == 0 {
+		t.Fatal("disabled = none, want the other pairing's version left DISABLED again after the enable the revoke made to read it")
+	} else {
+		for _, name := range disabled {
+			if !strings.HasSuffix(name, "/versions/2") {
+				t.Fatalf("disabled = %v, want only the other pairing's version: the enable the revoke made to read a version is undone, so a revoke hands no other pairing's key back to the consumer", disabled)
+			}
+		}
 	}
 	if n := len(f.secrets.EnabledVersions(infra.OrchestratorPairingSecretID)); n != 0 {
 		t.Fatalf("the container answers %d enabled version(s), want none: one is destroyed and the other is DISABLED again", n)

@@ -100,11 +100,12 @@ type OutboxStore interface {
 }
 
 // ReplySigner signs one outbound value for the **outbox** node (M4b): the tag
-// it answers, and the node it signs for. `*Signer` is the shipped
-// implementation — `NewOutboxSigner`'s, with the key read once at startup (M5)
-// — and a test injects one that fails, because M4's third row is unreachable in
-// a shipped build: no key that loads refuses one value while accepting another
-// (§8.2.4).
+// it answers, the node it signs for, and the field the tag lands in. `*Signer`
+// is the shipped implementation — `NewOutboxSigner`'s, with the key read once at
+// startup (M5) — and `*KMSSigner` is the one a phone paired the new way gets
+// (J5c, O12); a test injects one that fails, because M4's third row is
+// unreachable in a shipped build: no key that loads refuses one value while
+// accepting another (§8.2.4).
 //
 // **The direction is part of the interface, not of the value.** The two
 // outbound families are signed in two directions (§8.2.3), so a signer built
@@ -113,15 +114,22 @@ type OutboxStore interface {
 // create-only (M10, C0), no later write could correct it: the retry would find
 // the id present and leave the unverifiable value in place forever. The
 // heartbeat path makes the same mistake impossible by construction, because
-// only `Signer.Heartbeat` — which checks its own direction — matches
-// `LeaseSigner`; this is the outbox's half of that guarantee, and WriteReply
-// refuses a signer that signs for any other node.
+// only `Heartbeat` — which checks its own direction — matches `LeaseSigner`;
+// this is the outbox's half of that guarantee, and WriteReply refuses a signer
+// that signs for any other node.
+//
+// **The field is the signer's too**, for the same reason and one more: a caller
+// that spelled `mac` or `sig` itself would be choosing a scheme per value, and
+// the scheme is what the device node decided (O6) — the signer is the object
+// built from that decision.
 type ReplySigner interface {
 	// Direction is the node this signer signs for. The outbox takes nothing
 	// but directionOutbox.
 	Direction() string
+	// Field is the record field the tag lands in: `mac` or `sig` (J5r).
+	Field() string
 	// Tag is the value's tag over exactly the fields it carries (§8.2.1).
-	Tag(value Record) (string, error)
+	Tag(ctx context.Context, value Record) (string, error)
 }
 
 // ReplyVerdict is what one reply write answered, in the words the command
@@ -166,7 +174,9 @@ type ReplyRun struct {
 //     that errors means **nothing is written** and the answer is a per-write
 //     refusal (M4b) — the reply is owed again next pass, because nothing here
 //     records it.
-//  3. **Add `mac` last**, so what the tag covers is exactly what lands.
+//  3. **Add the tag last**, in the field the signer names — `mac` for a phone
+//     paired the old way, `sig` for one paired the new way (J5r) — so what the
+//     tag covers is exactly what lands.
 //  4. **Validate** the signed value against the merged schema (M10). A value the
 //     schema refuses is not written either, and the refusal carries the schema's
 //     own code: `too-long`, `bad-mac`, the kind/field table's own answer.
@@ -189,19 +199,23 @@ func WriteReply(ctx context.Context, store OutboxStore, sign ReplySigner, reply 
 	// in the `heartbeat` direction is a tag no outbox reader accepts, and a
 	// caller that reached here with either has a bug worth the same answer
 	// rather than a write that can never be verified or corrected (M10, C0).
-	if sign == nil || sign.Direction() != directionOutbox {
-		return ReplyRun{Verdict: ReplyRefused, Refusal: refuse(CodeBadMAC, "mac")}, nil
+	if sign == nil {
+		return ReplyRun{Verdict: ReplyRefused, Refusal: unsignedRefusal("")}, nil
+	}
+	if sign.Direction() != directionOutbox {
+		return ReplyRun{Verdict: ReplyRefused, Refusal: unsignedRefusal(sign.Field())}, nil
 	}
 	value := reply.Value()
-	tag, err := sign.Tag(value)
+	tag, err := sign.Tag(ctx, value)
 	if err != nil {
 		// M4's third row, and the code is the schema's own for a tag that is not
-		// a tag: the value has no `mac` it could carry, which is `bad-mac`'s
-		// meaning. Nothing is written and nothing is recorded, so this reply is
-		// owed again on the next pass (M2, §8.2.4).
-		return ReplyRun{Verdict: ReplyRefused, Refusal: refuse(CodeBadMAC, "mac")}, nil
+		// a tag: the value has no tag it could carry, which is `bad-mac`'s meaning
+		// for the MAC and `bad-sig`'s for a signature (J5r). Nothing is written
+		// and nothing is recorded, so this reply is owed again on the next pass
+		// (M2, §8.2.4).
+		return ReplyRun{Verdict: ReplyRefused, Refusal: unsignedRefusal(sign.Field())}, nil
 	}
-	value["mac"] = tag
+	value[sign.Field()] = tag
 	if _, refusal := ValidateMessage(value); refusal != nil {
 		return ReplyRun{Verdict: ReplyRefused, Refusal: refusal}, nil
 	}

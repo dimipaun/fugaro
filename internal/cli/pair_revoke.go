@@ -106,7 +106,7 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 		return pairRefuseIn(ev, o.asJSON, pairRefusedTwoSelectors,
 			fmt.Errorf("revoke was given --uid %s and --name %s: a device is revoked by one of them, and two selectors could name two devices, so revoke refuses rather than guess which was meant", o.uid, o.name))
 	}
-	lc, db, err := pairOpen(cmd, o.cloudOptions, ev, o.asJSON, pairRefusedDatabaseAdmin)
+	sel, lc, db, err := pairOpen(cmd, o.cloudOptions, ev, o.asJSON, pairRefusedDatabaseAdmin)
 	if err != nil {
 		return err
 	}
@@ -183,6 +183,26 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 				fp.CopyErr, fp.Node, pairCloudCopyName(lc), pairPushLeftover(fp.PushErr, device.UID)))
 	}
 
+	// The revoked uid has no device node from the line above on, so it is one of
+	// the pairings the retirement sweep is for (J5c): the key's two other homes —
+	// this laptop's keychain item where the config named one, and a version of
+	// the installation's container — go with it, and so does every other pairing
+	// no device node names any more, which is what retires the keys of the
+	// pairings revoked before this release.
+	//
+	// A failure here is refused rather than passed over: the device is revoked
+	// either way, but a MAC key the operator believes is gone and is not is the
+	// one outcome that looks like success, and no second `fugaro pair revoke`
+	// could name this pairing again to finish the job.
+	ret, err := pairRetireOrphanedMACKeys(ctx, lc, db, sel.Path)
+	if err != nil {
+		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(err, pairRefusedUnreachable), dbErr(lc, err, true))
+	}
+	if len(ret.Failed) > 0 {
+		return pairRefuseIn(ev, o.asJSON, pairRefusedMACRetire,
+			fmt.Errorf("the device node %s is deleted and the phone is off the allowlist, but the MAC keys of the pairings no device node names any more could not all be retired: %s", fp.Node, strings.Join(ret.Failed, "; ")))
+	}
+
 	// The pairing session's own node is the third thing §4.3 names, and it is
 	// deliberately not deleted here: its key is the p~ uid MintPairing drew,
 	// and nothing on this laptop records it — the device node holds the name,
@@ -200,8 +220,9 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 			Device:       pairDevice{UID: device.UID, Name: device.Name, Email: device.Email, Role: device.Role},
 			KeychainItem: fp.Item,
 			Wrote:        fp.Wrote,
+			Retired:      ret.Wrote,
 			Refused:      []string{},
-			Warnings:     []string{},
+			Warnings:     ret.Warnings,
 		}})
 	}
 	out := cmd.OutOrStdout()
@@ -216,6 +237,22 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 		fmt.Fprintf(out, "destroyed the installation's own cloud copy of the pairing's key at %s, so the pairing's messages stop verifying in the cloud as well as on this laptop\n", pairCloudCopyName(lc))
 	}
 	fmt.Fprintf(out, "deleted this laptop's OS keychain item %s\n", fp.Item)
+	if len(ret.UIDs) > 0 {
+		var did []string
+		if len(ret.Items) > 0 {
+			did = append(did, "deleted this laptop's keychain item(s) "+pairCells(ret.Items))
+		}
+		if ret.Cloud > 0 {
+			did = append(did, fmt.Sprintf("destroyed %d version(s) of the installation's own cloud copy", ret.Cloud))
+		}
+		if ret.Config != "" {
+			did = append(did, "removed their mailbox.keychain_item entries from "+ret.Config)
+		}
+		fmt.Fprintf(out, "retired the MAC key of %d pairing(s) no device node names any more: %s\n", len(ret.UIDs), strings.Join(did, ", "))
+	}
+	for _, w := range ret.Warnings {
+		fmt.Fprintf(out, "warning: %s\n", w)
+	}
 	fmt.Fprintf(out, "the %s Auth user is not deleted here — no role a Terraform grant gives an operator can delete one — and the history sweep removes it now that its device node is gone; an abandoned pairing node, if this pairing left one, is what the same sweep removes with it\n", device.UID)
 	return nil
 }

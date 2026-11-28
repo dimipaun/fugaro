@@ -98,6 +98,7 @@ const (
 	pairRefusedTwoPairings         = "pairing_name_not_unique"
 	pairRefusedKeychainDelete      = "keychain_delete_failed"
 	pairRefusedCloudKeyDelete      = "cloud_key_delete_failed"
+	pairRefusedMACRetire           = "mac_key_retire_failed"
 	// The invitation's own refusals (P2). They are separate codes from the
 	// pairing's because a console switches on them and the fix differs: an
 	// invitation names a role for somebody else, so "the roster grants them
@@ -230,8 +231,15 @@ type pairRevokeDocument struct {
 	Device       pairDevice `json:"device"`
 	KeychainItem string     `json:"keychain_item"`
 	Wrote        []string   `json:"wrote"`
-	Refused      []string   `json:"refused"`
-	Warnings     []string   `json:"warnings"`
+	// retired is the retirement sweep's own half (J5c): the MAC keys of the
+	// pairings no device node names any more that this act took away with the
+	// one it revoked. It is a list of paths like wrote's and never a key, and it
+	// is a field of its own rather than more entries in wrote because wrote is
+	// the revoked device's footprint, in M4's order — the sweep is about other
+	// pairings, and a reader telling the two apart is what a console needs.
+	Retired  []string `json:"retired"`
+	Refused  []string `json:"refused"`
+	Warnings []string `json:"warnings"`
 }
 
 type pairPairing struct {

@@ -645,6 +645,18 @@ func TestMailboxRefusedActionWithADeliveredMessageExitsZero(t *testing.T) {
 	}
 }
 
+// refusedHeartbeatSigner is the signer M4's third row is reached with: the layer
+// is loaded and this value is the one it cannot sign. The field is the MAC's
+// because that is the scheme the keychain's signer writes; J5c's KMS signer is
+// the one that answers `sig`.
+type refusedHeartbeatSigner struct{}
+
+func (refusedHeartbeatSigner) Field() string { return "mac" }
+
+func (refusedHeartbeatSigner) Heartbeat(context.Context, mailbox.Heartbeat) (string, error) {
+	return "", fmt.Errorf("%w: injected for this test", mailbox.ErrUnsignable)
+}
+
 // TestMailboxSignerRefusedWriteExitsZero is M4's third row: the key is loaded
 // and the signer errors on this value, so nothing is written for it and the
 // pass continues — an outcome of a completed pass, exit 0, and not §8.3's
@@ -655,9 +667,7 @@ func TestMailboxSignerRefusedWriteExitsZero(t *testing.T) {
 	f.writeMessage(t, "msg-1", mailboxNowMs())
 	prev := mailboxHeartbeatSigner
 	mailboxHeartbeatSigner = func(keychain.Key) mailbox.LeaseSigner {
-		return func(mailbox.Heartbeat) (string, error) {
-			return "", fmt.Errorf("%w: injected for this test", mailbox.ErrUnsignable)
-		}
+		return refusedHeartbeatSigner{}
 	}
 	t.Cleanup(func() { mailboxHeartbeatSigner = prev })
 

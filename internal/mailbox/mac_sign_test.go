@@ -64,12 +64,23 @@ func signerForDirection(key []byte, direction string) *Signer {
 // refusal.
 type outboxSignerFunc struct {
 	direction string
+	field     string
 	tag       func(Record) (string, error)
 }
 
 func (s outboxSignerFunc) Direction() string { return s.direction }
 
-func (s outboxSignerFunc) Tag(value Record) (string, error) { return s.tag(value) }
+// Field is the MAC's unless a test says otherwise: an injected signer stands in
+// for the keychain's, which is D171's scheme, and the field it names is what a
+// refusal points at (J5r).
+func (s outboxSignerFunc) Field() string {
+	if s.field == "" {
+		return tagFieldMAC
+	}
+	return s.field
+}
+
+func (s outboxSignerFunc) Tag(_ context.Context, value Record) (string, error) { return s.tag(value) }
 
 // failingOutboxSigner is an outbox signer whose tag function always errors: the
 // key is loaded and it is this value it cannot sign (M4's third row).
@@ -154,7 +165,7 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 			readFrom := text(t, vector["direction"], "direction")
 			for _, direction := range outbound {
 				signed := cloneRecord(t, record)
-				tag, err := signerIn(t, key, direction).Tag(signed)
+				tag, err := signerIn(t, key, direction).Tag(context.Background(), signed)
 				if err != nil {
 					t.Fatalf("signing for the %s node: %v", direction, err)
 				}
@@ -229,7 +240,7 @@ func TestTheCoveredFieldSetIsTheSameInBothDirections(t *testing.T) {
 	covered := map[string]map[string]bool{}
 	for what, record := range records {
 		for _, direction := range []string{directionOutbox, directionHeartbeat} {
-			base, err := signerIn(t, key, direction).Tag(record)
+			base, err := signerIn(t, key, direction).Tag(context.Background(), record)
 			if err != nil {
 				t.Fatalf("signing %s for %s: %v", what, direction, err)
 			}
@@ -240,7 +251,7 @@ func TestTheCoveredFieldSetIsTheSameInBothDirections(t *testing.T) {
 				seen[field] = true
 				clone := cloneRecord(t, record)
 				clone[field] = changedValue(clone[field])
-				got, err := signerIn(t, key, direction).Tag(clone)
+				got, err := signerIn(t, key, direction).Tag(context.Background(), clone)
 				if err != nil {
 					t.Fatalf("signing %s (%s changed) for %s: %v", what, field, direction, err)
 				}
@@ -355,7 +366,7 @@ func TestTheHeartbeatIsSignedInItsOwnDirection(t *testing.T) {
 	signer := NewHeartbeatSigner(keychain.NewKey(key))
 
 	opts := leaseOptions(leaseHolder, leaseAt)
-	opts.Sign = signer.Heartbeat
+	opts.Sign = signer
 	if _, err := Take(context.Background(), store, opts); err != nil {
 		t.Fatalf("taking the lease: %v", err)
 	}
@@ -375,7 +386,7 @@ func TestTheHeartbeatIsSignedInItsOwnDirection(t *testing.T) {
 	}
 	// The tag is over `{at, boot}` and nothing else: the two fields the
 	// heartbeat's MAC covers, which is what a reader with the same key verifies.
-	tag, err := signer.Heartbeat(Heartbeat{At: leaseAt, Boot: leaseHolder})
+	tag, err := signer.Heartbeat(context.Background(), Heartbeat{At: leaseAt, Boot: leaseHolder})
 	if err != nil {
 		t.Fatalf("signing the heartbeat: %v", err)
 	}
@@ -393,7 +404,7 @@ func TestTheHeartbeatIsSignedInItsOwnDirection(t *testing.T) {
 func TestDirectionsAreNotInterchangeable(t *testing.T) {
 	key := []byte(vectorKey(t))
 	hb := Heartbeat{At: leaseAt, Boot: leaseHolder}
-	if tag, err := NewOutboxSigner(keychain.NewKey(key)).Heartbeat(hb); err == nil {
+	if tag, err := NewOutboxSigner(keychain.NewKey(key)).Heartbeat(context.Background(), hb); err == nil {
 		t.Errorf("a signer built for the outbox signed a heartbeat: %q", tag)
 	}
 	// The mutation this catches is a heartbeat signed in the outbox direction
@@ -472,7 +483,7 @@ func TestAHeartbeatAdvertisingAgentsIsSignedAndCovered(t *testing.T) {
 	agents := []Agent{{ID: "orchestrator", Name: "Orchestrator"}, {ID: "scout", Name: "Scout"}}
 	hb := Heartbeat{At: leaseAt, Boot: leaseHolder, Agents: agents}
 
-	tag, err := signer.Heartbeat(hb)
+	tag, err := signer.Heartbeat(context.Background(), hb)
 	if err != nil {
 		t.Fatalf("a heartbeat advertising %d agents could not be signed: %v", len(agents), err)
 	}
@@ -491,7 +502,7 @@ func TestAHeartbeatAdvertisingAgentsIsSignedAndCovered(t *testing.T) {
 	}
 	// A heartbeat advertising nothing is the one P4.1 writes, and it still signs
 	// and verifies: the list is optional, not required.
-	tag, err = signer.Heartbeat(Heartbeat{At: leaseAt, Boot: leaseHolder})
+	tag, err = signer.Heartbeat(context.Background(), Heartbeat{At: leaseAt, Boot: leaseHolder})
 	if err != nil {
 		t.Fatalf("a heartbeat advertising no agent could not be signed: %v", err)
 	}
@@ -512,7 +523,7 @@ func TestTheLeaseWritesTheAdvertisedAgents(t *testing.T) {
 	agents := []Agent{{ID: "orchestrator", Name: "Orchestrator"}}
 	opts := leaseOptions(leaseHolder, leaseAt)
 	opts.Agents = agents
-	opts.Sign = NewHeartbeatSigner(keychain.NewKey(key)).Heartbeat
+	opts.Sign = NewHeartbeatSigner(keychain.NewKey(key))
 
 	run, err := Take(context.Background(), leaseClient(t, f), opts)
 	if err != nil || run.Verdict != LeaseHeld {
@@ -545,7 +556,7 @@ func TestUnsignedHeartbeatIsNotWritten(t *testing.T) {
 	}
 
 	opts := leaseOptions(leaseHolder, leaseAt)
-	opts.Sign = func(Heartbeat) (string, error) { return "", errors.New("the signing service is gone") }
+	opts.Sign = leaseSignerFunc(func(Heartbeat) (string, error) { return "", errors.New("the signing service is gone") })
 	run, err := Take(context.Background(), store, opts)
 	if err == nil {
 		t.Fatal("a take whose heartbeat cannot be signed succeeded")
@@ -562,7 +573,7 @@ func TestUnsignedHeartbeatIsNotWritten(t *testing.T) {
 	// The key is loaded and the same consumer signs a good value: this is M4's
 	// third row, not its first — nothing here is the availability check.
 	good := leaseOptions(leaseHolder, leaseAt)
-	good.Sign = NewHeartbeatSigner(keychain.NewKey([]byte(vectorKey(t)))).Heartbeat
+	good.Sign = NewHeartbeatSigner(keychain.NewKey([]byte(vectorKey(t))))
 	if _, err := Take(context.Background(), store, good); err != nil {
 		t.Fatalf("the same consumer could not sign a heartbeat it can sign: %v", err)
 	}
@@ -615,7 +626,7 @@ func TestSigningFailureIsAPerWriteRefusal(t *testing.T) {
 	// the question that matters — which of M4's three rows is this.
 	hbStore := &replyRecorder{inner: leaseClient(t, gcpfake.NewRTDB(t))}
 	hb := leaseOptions(leaseHolder, leaseAt)
-	hb.Sign = func(Heartbeat) (string, error) { return "", errors.New("this value cannot be signed") }
+	hb.Sign = leaseSignerFunc(func(Heartbeat) (string, error) { return "", errors.New("this value cannot be signed") })
 	_, heartbeatErr := Take(ctx, hbStore, hb)
 	if !errors.Is(heartbeatErr, ErrUnsignable) {
 		t.Errorf("an unsignable heartbeat ended as %v, not ErrUnsignable", heartbeatErr)
@@ -693,7 +704,7 @@ func TestTheSignerNeverPrintsTheKey(t *testing.T) {
 	}
 	// An error the signer produced: the value it could not sign is a record the
 	// canonical serialisation refuses, so the error is one this package made.
-	_, signErr := signer.Tag(Record{"id": "m-0001", "at": number("1700000000000"), "landed_at": nil})
+	_, signErr := signer.Tag(context.Background(), Record{"id": "m-0001", "at": number("1700000000000"), "landed_at": nil})
 	if signErr == nil {
 		t.Fatal("signing a record canonicalBytes refuses succeeded")
 	}
@@ -885,7 +896,7 @@ func testReply(t *testing.T, id, replyTo string) Reply {
 // tagOrError is a nil signer's tag call, for the redaction test: a nil receiver
 // must answer an error and not a panic, and the error must carry no key.
 func tagOrError(s *Signer) string {
-	tag, err := s.Tag(Record{"id": "m-0001", "sender": "phone", "text": "x", "at": 1700000000000})
+	tag, err := s.Tag(context.Background(), Record{"id": "m-0001", "sender": "phone", "text": "x", "at": 1700000000000})
 	if err != nil {
 		return err.Error()
 	}
@@ -895,7 +906,7 @@ func tagOrError(s *Signer) string {
 // heartbeatOrError is a heartbeat signed by a signer built for another node: the
 // refusal, for the redaction test.
 func heartbeatOrError(s *Signer, hb Heartbeat) string {
-	tag, err := s.Heartbeat(hb)
+	tag, err := s.Heartbeat(context.Background(), hb)
 	if err != nil {
 		return err.Error()
 	}

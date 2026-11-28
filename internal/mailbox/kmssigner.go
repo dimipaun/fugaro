@@ -7,7 +7,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"strings"
+
+	kms "cloud.google.com/go/kms/apiv1"
+	"cloud.google.com/go/kms/apiv1/kmspb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // The consumer's signing key: the key the laptop signs its mailbox replies and
@@ -213,6 +218,85 @@ type AsymmetricSigner interface {
 // read as a key that failed.
 const maxSignBytes = 64 << 10
 
+// crcTable is the checksum Cloud KMS counts in, and it is Castagnoli's and not
+// the IEEE one: the field is named crc32c on both sides of the call.
+var crcTable = crc32.MakeTable(crc32.Castagnoli)
+
+// KMSClient is Cloud KMS as AsymmetricSigner: one asymmetric key version's
+// signing call, with the request and the answer reduced to the signature that
+// came back. It is the adapter the deployment builds — `*kms.KeyManagementClient`
+// is what it wraps, and the caller builds that with its own credential, because
+// this package reads no environment and no key file — and it is here rather than
+// beside the caller so that the CLI's consumer and the orchestrator's share one
+// (J5c).
+//
+// **What it checks, and what it does not.** The checks are the wire's and not
+// the cryptography's: KMS answers a CRC32C of the signature beside it and
+// checks one sent with the payload, so both directions are compared — the bytes
+// signed are the ones this package built and the signature answered is the one
+// the key ring made — and an answer naming another key version is refused
+// rather than read, because a signature under a version nobody asked for is one
+// no phone verifies. Neither check is a signature check: whether the signature
+// is the right one under the public key is the phone's and the vectors' (M9).
+// The length and the payload bounds are `KMSSigner.sign`'s, one call up, and
+// are not repeated here.
+type KMSClient struct {
+	client *kms.KeyManagementClient
+}
+
+// NewKMSClient wraps a client the caller built. A nil client is refused rather
+// than stored: a signer over it would sign nothing, and the refusal belongs at
+// the construction rather than at the first reply that could not be written.
+func NewKMSClient(client *kms.KeyManagementClient) (*KMSClient, error) {
+	if client == nil {
+		return nil, errors.New("mailbox: there is no Cloud KMS client to sign through")
+	}
+	return &KMSClient{client: client}, nil
+}
+
+// Close releases the client's connection. It is the caller's to call, and it is
+// the only thing here that is not the signing call.
+func (c *KMSClient) Close() error {
+	if c == nil || c.client == nil {
+		return nil
+	}
+	return c.client.Close()
+}
+
+// SignAsymmetric is the signing call: the payload as the request's `data` and
+// not as a digest, because the key this signs with is Ed25519 (O17) and a
+// managed Ed25519 key signs the payload itself — a digest would be signed as
+// opaque bytes, and what answered would be a signature no phone accepts.
+func (c *KMSClient) SignAsymmetric(ctx context.Context, keyVersion string, payload []byte) ([]byte, error) {
+	if c == nil || c.client == nil {
+		return nil, errors.New("mailbox: there is no Cloud KMS client to sign through")
+	}
+	sum := int64(crc32.Checksum(payload, crcTable))
+	answer, err := c.client.AsymmetricSign(ctx, &kmspb.AsymmetricSignRequest{
+		Name:       keyVersion,
+		Data:       payload,
+		DataCrc32C: wrapperspb.Int64(sum),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mailbox: the key ring's signing call: %w", err)
+	}
+	if !answer.GetVerifiedDataCrc32C() {
+		return nil, fmt.Errorf("mailbox: the key ring did not check the %d byte(s) it was asked to sign, so what it signed is not what this package built", len(payload))
+	}
+	if signed := answer.GetName(); signed != "" && signed != keyVersion {
+		return nil, fmt.Errorf("mailbox: the key ring signed with %s, and this signer signs under %s", signed, keyVersion)
+	}
+	signature := answer.GetSignature()
+	if len(signature) == 0 {
+		return nil, errors.New("mailbox: the key ring answered an empty signature")
+	}
+	counted := answer.GetSignatureCrc32C()
+	if counted == nil || counted.Value != int64(crc32.Checksum(signature, crcTable)) {
+		return nil, fmt.Errorf("mailbox: the key ring answered a %d-byte signature whose bytes are not the ones it counted, so the signature is not the one it made", len(signature))
+	}
+	return signature, nil
+}
+
 // KMSSigner is §8.2's signer over the consumer's Ed25519 key in Cloud KMS: the
 // value's canonical bytes go to the key version's signing call, and the
 // signature that answers is the value's `sig` (J5r).
@@ -262,6 +346,22 @@ func NewKMSSigner(client AsymmetricSigner, keyVersion, direction string) (*KMSSi
 	return &KMSSigner{client: client, keyVersion: version, direction: direction}, nil
 }
 
+// NewKMSOutboxSigner and NewKMSHeartbeatSigner are NewKMSSigner for the two
+// nodes the consumer writes (J5c): the reply and the heartbeat, named the way
+// the MAC signers' constructors are, so that a caller outside this package never
+// spells a direction. The direction is inside the signed bytes, and one spelled
+// wrong is a signature no reader verifies — with no error to say why, because
+// the reader rebuilds the bytes from the node it read.
+func NewKMSOutboxSigner(client AsymmetricSigner, keyVersion string) (*KMSSigner, error) {
+	return NewKMSSigner(client, keyVersion, directionOutbox)
+}
+
+// NewKMSHeartbeatSigner is NewKMSOutboxSigner's other half: the signer a
+// heartbeat is written with, which is the lease itself (M1).
+func NewKMSHeartbeatSigner(client AsymmetricSigner, keyVersion string) (*KMSSigner, error) {
+	return NewKMSSigner(client, keyVersion, directionHeartbeat)
+}
+
 // Direction is the node this signer signs for. It is safe to print: the
 // direction is in the signed bytes and is not a secret.
 func (s *KMSSigner) Direction() string {
@@ -289,13 +389,29 @@ func (s *KMSSigner) String() string {
 	return fmt.Sprintf("mailbox.KMSSigner{direction: %s, key version: %s}", s.direction, s.keyVersion)
 }
 
-// Signature is the value's signature: the Ed25519 signature over
-// CanonicalBytes(value, this signer's direction), which is the bytes `MacOf`
-// hashes and therefore the bytes the phone's verifier rebuilds from the node it
-// read (J5c). It answers the unpadded-base64url spelling `sig` carries, and it
-// is over the value the caller built — the value is built first, signed second
-// and `sig` added last, so what the signature covers is exactly what lands
-// (§8.2.1).
+// Field is the record field this signer's tag lands in: `sig`, which is the
+// field J5r's rules accept in place of `mac` and the one a phone paired the new
+// way verifies. It is `Signer.Field`'s sibling — a writer reads it to place the
+// tag and to name the right field in a refusal — so the two schemes are one
+// interface with one question answered two ways.
+func (s *KMSSigner) Field() string {
+	if s == nil {
+		return ""
+	}
+	return tagFieldSig
+}
+
+// Tag is the value's tag: the Ed25519 signature over CanonicalBytes(value, this
+// signer's direction), which is the bytes `MacOf` hashes and therefore the bytes
+// the phone's verifier rebuilds from the node it read (J5c). It answers the
+// unpadded-base64url spelling `sig` carries, and it is over the value the caller
+// built — the value is built first, signed second and `sig` added last, so what
+// the signature covers is exactly what lands (§8.2.1).
+//
+// **It is `Tag` and not `Signature`** (J5c): the MAC `Signer` beside it answers
+// the same question under the same name, and one writer holds either without
+// knowing which — two names for one operation would be two methods to keep in
+// step.
 //
 // A value the canonical serialisation refuses is an error rather than a
 // signature, exactly as it is for the MAC signer, and for the same reason:
@@ -304,7 +420,7 @@ func (s *KMSSigner) String() string {
 // refusal, the one that writes nothing for that value and owes the reply again
 // on the next pass — so a caller never has to guess which of M4's three rows it
 // is looking at.
-func (s *KMSSigner) Signature(ctx context.Context, value Record) (string, error) {
+func (s *KMSSigner) Tag(ctx context.Context, value Record) (string, error) {
 	if s == nil || s.client == nil {
 		return "", fmt.Errorf("%w: there is no signer", ErrUnsignable)
 	}
@@ -317,6 +433,25 @@ func (s *KMSSigner) Signature(ctx context.Context, value Record) (string, error)
 		return "", fmt.Errorf("%w: %w", ErrUnsignable, err)
 	}
 	return base64.RawURLEncoding.EncodeToString(signature), nil
+}
+
+// Heartbeat is the heartbeat's signature, and it is `LeaseSigner`'s own shape
+// (J5c) exactly as the MAC `Signer.Heartbeat` is: the lease's writer takes a
+// signer and never a key, and it reads the field off `Field` rather than
+// spelling it. The record it covers is `heartbeatValue` — the same function the
+// lease writes the record with — so the list a consumer advertises is inside the
+// bytes this signs, and a stored heartbeat whose list was changed afterwards
+// verifies nowhere.
+//
+// It refuses a signer built for another node, for the reason the MAC signer
+// does: a heartbeat signed in the `outbox` direction is a heartbeat nothing
+// verifies, and a phone paired the new way would find that out with no error to
+// say why.
+func (s *KMSSigner) Heartbeat(ctx context.Context, hb Heartbeat) (string, error) {
+	if s == nil || s.direction != directionHeartbeat {
+		return "", fmt.Errorf("%w: a heartbeat is signed in the %s direction, and this signer signs for another node", ErrUnsignable, directionHeartbeat)
+	}
+	return s.Tag(ctx, heartbeatValue(hb))
 }
 
 // sign is the one call out, with the checks a signature has to pass before it

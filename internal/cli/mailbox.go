@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -16,7 +17,9 @@ import (
 	"time"
 	"unicode"
 
+	"cloud.google.com/go/kms/apiv1"
 	"github.com/spf13/cobra"
+	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
@@ -443,8 +446,59 @@ var mailboxOutboxSigner = func(key keychain.Key) mailbox.ReplySigner {
 // is a variable for the same reason as the outbox's: the per-write refusal is a
 // fault path no shipped build reaches by itself.
 var mailboxHeartbeatSigner = func(key keychain.Key) mailbox.LeaseSigner {
-	signer := mailbox.NewHeartbeatSigner(key)
-	return signer.Heartbeat
+	return mailbox.NewHeartbeatSigner(key)
+}
+
+// mailboxConsumerSigners builds the two signers one pairing whose device node
+// holds a public key is served by — the reply's and the heartbeat's — over the
+// installation's one signing key in Cloud KMS (J5c, O12, O17). It is the
+// consumer's own half of O6: the phone signs what it sends and verifies what it
+// reads against the public key the pairing returned, so nothing the consumer
+// writes for such a phone is signed with the pairing's MAC key.
+//
+// It is a variable for the same reason the MAC signers are — no test in this
+// tree reaches a real key ring, and the test that pins the KMS write injects a
+// signer over a key it generated — and the client it opens is **not closed**:
+// the pairings that hold these signers live for the life of the process, and
+// closing it would be closing it under a running pass.
+var mailboxConsumerSigners = func(ctx context.Context, lc *localcfg.Config) (mailbox.ReplySigner, mailbox.LeaseSigner, error) {
+	if lc.GCPProject == "" || lc.Region == "" {
+		return nil, nil, fmt.Errorf("project %s names no gcp_project or no region, and the consumer's signing key is named by both", lc.Name)
+	}
+	client, err := kms.NewKeyManagementClient(ctx, mailboxKMSOptions(lc)...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the Cloud KMS client the consumer's own signing key is reached through: %w", err)
+	}
+	adapter, err := mailbox.NewKMSClient(client)
+	if err != nil {
+		return nil, nil, err
+	}
+	version := mailbox.ConsumerCryptoKeyVersionPath(lc.GCPProject, lc.Region)
+	reply, err := mailbox.NewKMSOutboxSigner(adapter, version)
+	if err != nil {
+		return nil, nil, err
+	}
+	heartbeat, err := mailbox.NewKMSHeartbeatSigner(adapter, version)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reply, heartbeat, nil
+}
+
+// mailboxKMSOptions are the client options the consumer's signing key is reached
+// with: the caller's own ADC — the operator's login, no key file and no
+// credential in the environment, which is U12's open question at the owner — the
+// installation's project as the quota project, and the same two switches the
+// doctor's own API clients take, so an installation that fakes its endpoints is
+// not one this client reaches Google with.
+func mailboxKMSOptions(lc *localcfg.Config) []option.ClientOption {
+	opts := []option.ClientOption{option.WithLogger(slog.New(slog.DiscardHandler))}
+	if lc.Endpoints.NoAuth {
+		opts = append(opts, option.WithoutAuthentication())
+	} else if lc.GCPProject != "" {
+		opts = append(opts, option.WithQuotaProject(lc.GCPProject))
+	}
+	return opts
 }
 
 // mailboxNow is this process's own clock. The pass reads it for exactly two
@@ -581,8 +635,8 @@ type mailboxPairing struct {
 	// the scheme**, so a non-empty value here means a gate that takes signatures
 	// only — a MAC-tagged message is refused rather than checked — and no MAC
 	// signer: this consumer's own key for that pairing's replies and its
-	// heartbeat is J5c's KMS signer, and until it is wired a pairing of this
-	// shape is verified and takes no lease (M4b's row).
+	// heartbeat is the installation's KMS key (J5c, O12), so a pairing of this
+	// shape writes `sig` where a MAC pairing writes `mac` (J5r).
 	publicKey string
 	// revoked is a pairing whose keychain item holds no key and whose device
 	// node holds no public key either: the state a `fugaro pair revoke` leaves.
@@ -614,9 +668,10 @@ type mailboxPairing struct {
 // O6 retires — and a pairing with no signer takes no lease, which is M4b's row.
 //
 // A pairing whose item holds no key and whose node holds no public key is **not
-// served and is reported**: a config entry survives the `pair revoke` that
-// deletes the item — revoke edits no config — so refusing to start over one
-// would leave the consumer unable to serve any other phone on the machine. It
+// served and is reported**: an entry can outlive its item — a revoke that
+// predates J5c's retirement sweep, a config this machine may not write — so
+// refusing to start over one would leave the consumer unable to serve any other
+// phone on the machine. It
 // comes back from here as a pairing of its own with `revoked` set, so that the
 // pass it is given is the one that drops the prompts nobody can answer any more,
 // and it is a pass **in its sorted place** beside the served ones rather than a
@@ -649,6 +704,22 @@ func mailboxKeyring(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, n
 	// document's place in the output is a fact about the config rather than
 	// about Go's map order.
 	sort.Strings(uids)
+
+	// The consumer's own signing key is reached **at most once per keyring and
+	// only when a node holds a public key**: an installation whose phones were
+	// all paired the old way opens no KMS client at all, and the second
+	// signature pairing on this machine reuses the first one's. The failure is
+	// remembered rather than retried per pairing, so the answer an operator gets
+	// is the same whichever pairing reached it first.
+	var kmsReply mailbox.ReplySigner
+	var kmsHeartbeat mailbox.LeaseSigner
+	var kmsErr error
+	consumerSigners := func() (mailbox.ReplySigner, mailbox.LeaseSigner, error) {
+		if kmsReply == nil && kmsErr == nil {
+			kmsReply, kmsHeartbeat, kmsErr = mailboxConsumerSigners(ctx, lc)
+		}
+		return kmsReply, kmsHeartbeat, kmsErr
+	}
 
 	store := mailboxKeychain()
 	pairings := make([]mailboxPairing, 0, len(uids))
@@ -685,6 +756,17 @@ func mailboxKeyring(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, n
 				return nil, userErr("the device node for pairing %s holds a public_key this command cannot read (%v); that key is what verifies its messages, so the pairing is re-paired rather than served on a weaker scheme", uid, err)
 			}
 			pairing.gate = gate
+			// The consumer's own half (J5c): this pairing's replies and its
+			// heartbeat are signed with the installation's key in Cloud KMS, and
+			// the phone verifies them against the public key it pinned (O12,
+			// O16). A key this machine cannot reach is a refusal to start and
+			// never a fallback to the MAC: the phone no longer holds a MAC key to
+			// check one with, so a MAC-signed reply would be one it cannot read.
+			reply, heartbeat, err := consumerSigners()
+			if err != nil {
+				return nil, userErr("the consumer's own signing key could not be reached for pairing %s (%v); it is the installation's key in Cloud KMS (projects/%s/locations/%s/keyRings/%s), the account running this command signs with it, and a phone paired the new way verifies these replies against it", uid, err, lc.GCPProject, lc.Region, mailbox.ConsumerKeyRingName)
+			}
+			pairing.signer, pairing.heartbeat = reply, heartbeat
 		case pairing.gate == nil:
 			pairing.revoked = true
 		}
