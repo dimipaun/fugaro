@@ -394,6 +394,49 @@ func TestLiftStageMigratesOnce(t *testing.T) {
 	}
 }
 
+// TestLiftStageNamesTheBudgetDropBeforeTheWrite: B4's tighten-only value is not
+// migrated, so the repository's own file keeps it and its runs stop at the
+// project's baseline — the stage names the drop and the command that fixes it
+// before it writes anything, and it names it on a repository already migrated
+// too, because a record says a value was moved and no item moves this one
+// (contract-migrate.md: what a planner still does for a migrated repository is
+// name a value its file still writes).
+func TestLiftStageNamesTheBudgetDropBeforeTheWrite(t *testing.T) {
+	const drop = "acme/one: agent.max_budget_usd 500 dropped; runs stop at $25; fix: `fugaro settings set agent.max_budget_usd 500 --layer project`"
+	for _, tc := range []struct {
+		name     string
+		migrated bool
+	}{
+		{"a repository this run migrates", false},
+		{"a repository already migrated", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newLayerRig(t, testProjectLayer)
+			if tc.migrated {
+				layerRigFile(t, filepath.Join(r.runs, filepath.FromSlash(lift.RecordPath(liftSlug(t, "acme/one")))), `{"release":"0.0.0"}`)
+			}
+			f := newLiftFixture(t, []lift.Repo{{
+				Repo: "acme/one", Provider: "github", Config: []byte("agent:\n  max_budget_usd: 500\n"),
+			}})
+			f.plan(lift.PlannerTighten, lift.PlanTighten)
+			f.plan(lift.PlannerModels, func(lift.Project, []lift.Repo) (lift.Change, error) {
+				return liftOneChange(t), nil
+			})
+			fakeTerminal(t)
+
+			out, errOut, err := executeStdin(t, "", "update")
+			all := out + errOut
+			if err != nil {
+				t.Fatalf("fugaro update failed: %v\n%s", err, all)
+			}
+			if !strings.Contains(all, drop) {
+				t.Errorf("the value B4's rule drops is not named:\n%s", all)
+			}
+			liftBefore(t, all, drop, liftLayerWhat)
+		})
+	}
+}
+
 // TestLiftStageNamesUnlistedPatterns: D3306's real list is the local config's
 // repositories plus the concrete names the published admits carry, and the two
 // things it cannot reach are named rather than dropped in silence: an admit

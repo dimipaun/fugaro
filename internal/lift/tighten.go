@@ -20,11 +20,16 @@ import (
 //
 // It names and writes nothing: a tightened key is not lifted, so release A
 // leaves it in the repository's own file and every run resolves it — the fix is
-// the person's (state the value in the project layer, or lower it in the
-// repository), which is why this item has no layer edit, no store object, no
-// database node and no migration record at all (C2). A repository the project
-// already migrated is not named again (D3305): the update that migrated it ran
-// this item too and printed the line there.
+// the person's, and the line names it, which is why this item has no layer edit,
+// no store object, no database node and no migration record at all (C2).
+//
+// A repository the project already migrated is named too. The migration record
+// (D3305) says a value was moved for it; B4 moves none, so the value stays in
+// the repository's file and the rule drops it at every run of every later
+// update. Reading the record here would name the drop once, at the update that
+// wrote it, and leave every later update silent about a drop that still stands
+// — the one thing a planner still does for a migrated repository is name a
+// value its file still writes (contract-migrate.md).
 //
 // What it judges, and what it leaves to the rule that owns it:
 //
@@ -64,9 +69,6 @@ func PlanTighten(p Project, repos []Repo) (Change, error) {
 			continue
 		}
 		seen[slug] = true
-		if p.Migrated[slug] {
-			continue
-		}
 		written, ok := tightenWritten(r.Config)
 		if !ok {
 			continue
@@ -290,8 +292,8 @@ func silentTightenDrop(repo string, w tightenValue) string {
 		if f <= config.DefaultMaxBudgetUSD {
 			return ""
 		}
-		return fmt.Sprintf("%s: %s %s dropped; the project sets none, so its runs now stop at %s",
-			repo, w.path, w.text, tightenUSD(config.DefaultMaxBudgetUSD))
+		return fmt.Sprintf("%s: %s %s dropped; runs stop at %s; fix: `fugaro settings set %s %s --layer project`",
+			repo, w.path, w.text, tightenUSD(config.DefaultMaxBudgetUSD), w.path, w.text)
 	case "agent.review_stop_fraction":
 		if f == 0 || f >= config.DefaultReviewStopFraction {
 			return ""

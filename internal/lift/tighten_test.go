@@ -40,7 +40,7 @@ func TestPlanTightenNamesTheBudgetCap(t *testing.T) {
 			repoAt(t, "acme/api", "agent:\n  models:\n    coder: claude-sonnet-5\n"),
 		})
 		checkChange(t, got, nil, []string{
-			"acme/app: agent.max_budget_usd 50 dropped; the project sets none, so its runs now stop at $25",
+			"acme/app: agent.max_budget_usd 50 dropped; runs stop at $25; fix: `fugaro settings set agent.max_budget_usd 50 --layer project`",
 		})
 		tightenNamesNothing(t, got)
 	})
@@ -57,13 +57,20 @@ func TestPlanTightenNamesTheBudgetCap(t *testing.T) {
 		tightenNamesNothing(t, got)
 	})
 
-	t.Run("a repository already migrated is not named again", func(t *testing.T) {
+	// B4 migrates nothing, so the record says nothing about these keys: a
+	// repository already migrated still writes the value its runs no longer
+	// get, and every update names it (contract-migrate.md: the one thing a
+	// planner still does for a migrated repository is name a value its file
+	// still writes).
+	t.Run("a repository already migrated is still named", func(t *testing.T) {
 		p := Project{
 			Layer:    layerOf(t, "version: 1\n"),
 			Migrated: map[string]bool{slugOf(t, "github", "acme/app"): true},
 		}
 		got := planTighten(t, p, []Repo{repoAt(t, "acme/app", "agent:\n  max_budget_usd: 50\n")})
-		checkChange(t, got, nil, nil)
+		checkChange(t, got, nil, []string{
+			"acme/app: agent.max_budget_usd 50 dropped; runs stop at $25; fix: `fugaro settings set agent.max_budget_usd 50 --layer project`",
+		})
 		tightenNamesNothing(t, got)
 	})
 
@@ -76,6 +83,31 @@ func TestPlanTightenNamesTheBudgetCap(t *testing.T) {
 		checkChange(t, got, nil, nil)
 		tightenNamesNothing(t, got)
 	})
+}
+
+// TestPlanTightenNamesTheFix: the line is what a person acts on, so it names
+// the value, what a run now does, and the one command that sets the project's
+// own value — and it is one line under the bound CLAUDE.md gives a message.
+func TestPlanTightenNamesTheFix(t *testing.T) {
+	got := planTighten(t, Project{Layer: layerOf(t, "version: 1\n")}, []Repo{
+		repoAt(t, "acme/app", "agent:\n  max_budget_usd: 500\n"),
+	})
+	if len(got.Lines) != 1 {
+		t.Fatalf("Lines = %q, want one", got.Lines)
+	}
+	line := got.Lines[0]
+	for _, want := range []string{
+		"agent.max_budget_usd 500 dropped",
+		"runs stop at $25",
+		"`fugaro settings set agent.max_budget_usd 500 --layer project`",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the line does not name %q: %s", want, line)
+		}
+	}
+	if n := len([]rune(line)); n > 140 {
+		t.Errorf("the line is %d characters, over the 140 a message gets: %s", n, line)
+	}
 }
 
 // TestPlanTightenNamesEveryValueTheProjectDrops: what RT3 names is what RT1
