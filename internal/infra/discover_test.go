@@ -1106,8 +1106,8 @@ func TestDiscoverCountsAdoptedBindings(t *testing.T) {
 	if got, want := im.Bindings.String(), "IAM: 3 bindings match the live ones (adopted), 2 new"; got != want {
 		t.Errorf("summary = %q, want %q", got, want)
 	}
-	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, legacyBuild) && strings.Contains(n, npm) }) {
-		t.Errorf("notes = %q, want one about %s on %s", im.Notes, legacyBuild, npm)
+	if !slices.ContainsFunc(im.Details, func(n string) bool { return strings.Contains(n, legacyBuild) && strings.Contains(n, npm) }) {
+		t.Errorf("details = %q, want one about %s on %s", im.Details, legacyBuild, npm)
 	}
 }
 
@@ -2302,8 +2302,18 @@ func TestDiscoverRepoImportsExtraSecretsAndNotesTheirGrant(t *testing.T) {
 	}) {
 		t.Errorf("imports = %+v, want %s at the live ID %s", im.List, want, id)
 	}
-	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, id) && strings.Contains(n, member) }) {
-		t.Errorf("notes = %q, want one naming %s and its accessor %s", im.Notes, id, member)
+	// The fact is a Detail and not a Note: the update neither makes nor
+	// withdraws this grant, so the person is told nothing to do about it and
+	// the terminal never carries the line. A detail that asked for a hand-made
+	// removal was what the owner read on their own repository (2026-11-27).
+	if slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, id) }) {
+		t.Errorf("notes = %q, want the extra accessor kept out of the person's output", im.Notes)
+	}
+	if !slices.ContainsFunc(im.Details, func(n string) bool { return strings.Contains(n, id) && strings.Contains(n, member) }) {
+		t.Errorf("details = %q, want one naming %s and its accessor %s", im.Details, id, member)
+	}
+	if slices.ContainsFunc(im.Details, func(n string) bool { return strings.Contains(n, "by hand") }) {
+		t.Errorf("details = %q, want no hand-made step: the plan neither grants nor removes this grant, and no step of the owner's is missing", im.Details)
 	}
 }
 

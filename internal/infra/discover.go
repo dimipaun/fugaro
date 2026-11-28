@@ -1253,11 +1253,20 @@ func (d *discovery) checkGrants(spec RepoSpec, ws WorkflowSpec, b *storage.Bucke
 	return nil
 }
 
-// noteExtraAccessors notes the accessors of each existing secret that the
+// noteExtraAccessors records the accessors of each existing secret that the
 // spec doesn't plan: the plan leaves them, since it grants only members.
 // extras carries the live IDs of the secrets the current config no longer
 // computes (Existing.ExtraSecrets) -- their names are in this map's keys
 // but not in spec.Secrets, which Readiness's own union fills in later.
+//
+// The fact goes to Imports.Details and not to Notes: the update neither makes
+// nor withdraws such a grant, so there is no step for the operator and nothing
+// to say at the terminal. It is deliberately also not removed -- the container
+// and its grant may be one a run of the release behind still holds (an
+// in-flight run mounts the token of a mix stage account, and the credentials
+// service reads it), and an update never rewrites what a run holds
+// (docs/design/update-in-flight.md). Whether one may be withdrawn is the
+// delete-classes question the ground rules leave open.
 func (d *discovery) noteExtraAccessors(spec RepoSpec, extras map[string]string, secretPolicies map[string]*secretmanager.Policy) {
 	planned := map[string]map[string]bool{}
 	plan := func(logical, email string) {
@@ -1292,7 +1301,7 @@ func (d *discovery) noteExtraAccessors(spec RepoSpec, extras map[string]string, 
 			if id == "" {
 				id = extras[logical]
 			}
-			d.im.Notes = append(d.im.Notes, fmt.Sprintf("secret %s can also be read by %s, which the plan neither grants nor removes; remove the grant by hand once nothing needs it",
+			d.im.Details = append(d.im.Details, fmt.Sprintf("secret %s can also be read by %s, which the plan neither grants nor removes",
 				id, strings.Join(extra, ", ")))
 		}
 	}

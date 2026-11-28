@@ -46,6 +46,12 @@ type Imports struct {
 	LogBucketLocation string
 	// Notes are things the user should know that don't stop the plan.
 	Notes []string
+	// Details are the facts the plan found and can do nothing about: they go
+	// to the run's log and to --json, and never to the person's own output,
+	// because there is no step for them to take -- a grant the plan neither
+	// makes nor withdraws is the case (noteExtraAccessors). An update that
+	// asks for work nobody needs is a defect, so a detail is not a Note.
+	Details []string
 }
 
 // BindingCount counts the IAM grants a repository plans for its job

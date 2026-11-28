@@ -789,6 +789,164 @@ func TestRepoEngineBuildsKeylessProviderOnly(t *testing.T) {
 	}
 }
 
+// stageAccountRepo is the project config of an api-key repository whose
+// reviews may go out on a Claude account (docs/mixed-credentials/spec.md §11):
+// openrouter serves the coder, and mix is the account half the test variants
+// with -- the owner's own shape (fugaro.yaml here, docs/dogfooding.md).
+const stageAccountRepo = "budget: { mode: enforce, per_run_usd: 2 }\n" +
+	"providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n" +
+	"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [acme/sandbox]\n"
+
+// stageAccountMix names the account for this repository's review stages: the
+// project's default_claude_account where the stage's own model is an
+// Anthropic one (rung 4), and stages.review.claude_account beside it (rung 2).
+const stageAccountMix = "claude_accounts:\n  bmb: { allow_data_to: [acme/sandbox] }\n" +
+	"default_claude_account: bmb\n" +
+	"stages:\n  review: { claude_account: bmb }\n"
+
+// stageAccountEngine drives update --repo over a checkout whose coder is
+// openrouter's and whose reviewer is a Claude model -- the pair the owner runs,
+// where the review is the only Anthropic pin. mix is the account half of the
+// local project config, "" for a repository that names no account. It returns
+// the run, the terminal output and the builder, so a test can read what the run
+// recorded as missing.
+func stageAccountEngine(t *testing.T, mix string) (*initEngine, *syncBuf, *fakeBuilder) {
+	t.Helper()
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.appendConfig(t, stageAccountRepo+mix+"base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0}\n")
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
+	r.save(t)
+	isolateCache(t)
+	layerDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(layerDir, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The layer's own pins are the same pair as the checkout's: openrouter
+	// serves the coder and the reviewer is the Claude model the account serves,
+	// which is also what D721's guard asks of a layer naming both (they differ).
+	layer := layerWithAgent("auth: api-key, model: deepseek/deepseek-v4-flash, " +
+		"models: { reviewer: claude-opus-5-5, background: deepseek/deepseek-v4-flash }")
+	if err := os.WriteFile(filepath.Join(layerDir, "fugaro", "project-layer.yaml"), []byte(layer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	openLayer := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = openLayer })
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+layerDir) }
+	openRecords := openRecordBucket
+	t.Cleanup(func() { openRecordBucket = openRecords })
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+t.TempDir())
+	}
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\n" +
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-opus-5-5, background: deepseek/deepseek-v4-flash } }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
+	t.Chdir(dir)
+	slug := mustSlug("bitbucket", "acme/sandbox")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedLabels := func(name string) map[string]string {
+		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
+	}
+	// Every mount this run cannot go without has a version: the git credential,
+	// the provider's key, and the account's own token -- whether the mix names
+	// the account is the variant's business, and seeding the token of a
+	// repository that does not mount it is no mount either way. The Anthropic
+	// key is deliberately NOT seeded: that is what the notice is about.
+	r.sm.Seed(gcp.SecretID(slug, "bitbucket-token"), seedLabels("bitbucket-token"), []byte("tok"))
+	r.sm.Seed(gcp.SecretID(slug, "openrouter-api-key"), seedLabels("openrouter-api-key"), []byte("key"))
+	r.sm.Seed(gcp.SecretID(slug, config.ClaudeAccountSecret("bmb")), seedLabels(config.ClaudeAccountSecret("bmb")), []byte("tok"))
+	// The credentials service's own account reads the account's token: the
+	// live grant the owner's own update found and could do nothing about
+	// (2026-11-27). The plan neither grants nor removes it, and no step of the
+	// owner's is missing for it.
+	accountSecret := gcp.SecretID(slug, config.ClaudeAccountSecret("bmb"))
+	r.sm.SetPolicy(accountSecret, []gcpfake.Binding{{Role: gcp.SecretAccessorRole,
+		Members: []string{"serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com"}}})
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 8))
+	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	return e, out, fb
+}
+
+// A repository whose reviews run on a Claude OAuth account needs no stored
+// Anthropic API key: the review is its only Anthropic pin, and that call goes
+// direct on the account's own token (docs/mixed-credentials/spec.md §11). The
+// "Still missing" list is the one place update --repo tells the owner what to
+// store, and it must not ask for a key no call of this run would read -- before
+// this it did, on the owner's own repository (docs/dogfooding.md), whose config
+// is this one.
+//
+// Mutation (run, restore): read the reviewer role as an unconditional direct
+// call again (drop the stage-account loop in config.NeedsAnthropicKey) and the
+// key comes back into res.Missing and onto the terminal.
+func TestRepoEngineStageAccountNeedsNoAnthropicKey(t *testing.T) {
+	e, out, fb := stageAccountEngine(t, stageAccountMix)
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" {
+		t.Fatalf("specs = %+v, want the app workflow's first build: the keyless run must not be stranded", fb.specs)
+	}
+	for _, m := range e.r.res.Missing {
+		if strings.Contains(m, config.AnthropicSecret) {
+			t.Errorf("the key is listed as missing for a run whose reviews go out on a Claude account: %v", e.r.res.Missing)
+		}
+	}
+	if strings.Contains(out.String(), config.AnthropicSecret) {
+		t.Errorf("the terminal asks for the key of a run whose reviews go out on a Claude account:\n%s", out.String())
+	}
+	// The live grant on the account's token is the same run's other notice:
+	// no step of the owner's is missing for it, so it is nowhere on their
+	// screen -- in the log and in the result, and never a "by hand" line.
+	if strings.Contains(out.String(), "can also be read by") || strings.Contains(out.String(), "by hand") {
+		t.Errorf("the terminal asks the owner to settle a grant the plan neither grants nor removes:\n%s", out.String())
+	}
+	kept := false
+	for _, w := range e.r.res.Warnings {
+		if strings.Contains(w, "can also be read by") {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Errorf("the grant is in no field a log or --json reader sees: %v", e.r.res.Warnings)
+	}
+}
+
+// The other half: the same repository with no account named still needs the
+// key, and is told so. The Claude reviewer is a direct call to Anthropic
+// there, and `fugaro secrets set anthropic-api-key` is the step that makes it
+// work (config.AnthropicKeyNeeded, the rule init's own secrets stage asks).
+func TestRepoEngineClaudeReviewWithoutAnAccountNeedsTheAnthropicKey(t *testing.T) {
+	e, out, _ := stageAccountEngine(t, "")
+	found := false
+	for _, m := range e.r.res.Missing {
+		if strings.Contains(m, config.AnthropicSecret) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the key is not listed as missing for a run whose reviewer goes direct to Anthropic: %v", e.r.res.Missing)
+	}
+	if !strings.Contains(out.String(), config.AnthropicSecret) {
+		t.Errorf("the terminal does not ask for the key a direct reviewer needs:\n%s", out.String())
+	}
+}
+
 // rigEngine is an engine over the rig's local config, as the converge builds
 // it: no new config to write (old is the file's content).
 func rigEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
