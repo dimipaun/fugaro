@@ -6086,24 +6086,30 @@ func classifiedTypes(bearing bool) map[string]bool {
 // ruling is about types: it is what makes a type's removal refuse wherever it
 // appears, whether or not the plan says anything else about it.
 func DataBearingType(t string) (dataBearing, classified bool) {
-	row, ok := removalClasses[t]
-	return row.bearing, ok
+	if dataBearingTypes[t] {
+		return true, true
+	}
+	if nonDataBearingTypes[t] {
+		return false, true
+	}
+	return false, false
 }
 
-// RefusesRemovalType is D1551's rule for a reader that holds a TYPE alone: a
+// RefusesRemovalType is D1551's rule as the delete and replace rule reads it: a
 // removal of a data-bearing type refuses, and so does one of an unclassified
-// type — a type added to allowedTypes later refuses until somebody decides it
-// on purpose.
+// type — a type added to allowedTypes later refuses until somebody classifies
+// it on purpose. Every other classified, non-data-bearing type is one the
+// managed gate now takes with a warning (D1545).
 //
-// It reads the BEARING column and not the class column, because DG0 is inert:
-// the readers that hold a type alone are the gate's own — GuardManaged, the
-// managed cover, removalContent — and DG1a moves them onto RemovalClass and the
-// per-change exceptions (D3454's person, D3456's workspace account) in one
-// step. Until then a google_artifact_registry_repository and a
-// google_service_account keep refusing exactly as they did before.
+// DG0 does not move it. Its callers hold a TYPE alone — GuardManaged, the
+// managed cover, removalContent — so they never reach D3454's person or D3456's
+// workspace account, and DG1a is the step that takes them onto RemovalClass
+// with them. Until then a google_artifact_registry_repository and a
+// google_service_account keep refusing here exactly as they did before, though
+// their class column reads recreatable.
 func RefusesRemovalType(t string) bool {
-	row, ok := removalClasses[t]
-	return !ok || row.bearing
+	bearing, classified := DataBearingType(t)
+	return !classified || bearing
 }
 
 // removalClass is the class the table gives a type, with an unclassified type
@@ -6135,8 +6141,9 @@ const accountMemberPrefix = "serviceAccount:"
 // reach and records the person, and the owning member's own `update` may then
 // remove a grant the command could not reach. A principal that is neither a
 // service account nor a recorded person — a group, a domain, a public member —
-// is refused (fail closed), and so is a before view that carries no member at
-// all.
+// is refused (fail closed), and so are a before view that carries no member at
+// all and a member that names no address ("serviceAccount:" or "user:" with
+// nothing after it): a name a plan did not write is not a member Fugaro made.
 //
 // The workspace service account (WorkspaceIAMAccountID, Terraform's
 // workspace_iam) is the one exception among them: D3456 makes it
@@ -6165,7 +6172,7 @@ func RemovalClass(rc ResourceChange, people []string) Class {
 // member grant, read from the member it names and the roster of people whose
 // removal is recorded.
 func memberGrantClass(member string, people []string) Class {
-	if strings.HasPrefix(member, accountMemberPrefix) {
+	if account, ok := strings.CutPrefix(member, accountMemberPrefix); ok && account != "" {
 		return ClassRecreatable
 	}
 	if person, ok := strings.CutPrefix(member, workspacePersonPrefix); ok && recordedRemoval(people, person) {
@@ -6179,8 +6186,18 @@ func memberGrantClass(member string, people []string) Class {
 // holds addresses, and a member is "user:" and an address). Both sides are
 // compared without the member prefix, so a roster that wrote either spelling
 // answers the same.
+//
+// An empty person and an empty roster entry are both no record: a member of
+// "user:" names nobody, and a roster entry of "" or "user:" is nobody's
+// removal, so neither admits a delete. That is the fail-closed direction the
+// rule is written in — without it the two blanks would compare equal and a
+// nameless grant would be admitted.
 func recordedRemoval(people []string, person string) bool {
+	if person == "" {
+		return false
+	}
 	return slices.ContainsFunc(people, func(p string) bool {
-		return strings.TrimPrefix(p, workspacePersonPrefix) == person
+		p = strings.TrimPrefix(p, workspacePersonPrefix)
+		return p != "" && p == person
 	})
 }

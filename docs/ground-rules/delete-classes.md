@@ -13,9 +13,10 @@ resource type of `allowedTypes`. Each row carries both answers, because `Refuses
 type question) and `RemovalClass` (D3430's per-change question) ask the same thing and may not be
 told different classifications.
 
-The class column is D3430's; the gate still reads D1551's column. A removal of a
-`google_artifact_registry_repository` or a `google_service_account` therefore refuses today exactly
-as it did before DG0, and `RemovalClass` is the answer DG1a moves that gate onto.
+The class column is D3430's; the gate still reads D1551's column, and `RefusesRemovalType` is
+byte for byte the predicate it was. A removal of a `google_artifact_registry_repository` or a
+`google_service_account` therefore refuses today exactly as it did before DG0, and `RemovalClass` is
+the answer DG1a moves that gate onto.
 
 ## Per change, not only per type
 
@@ -32,8 +33,10 @@ as it did before DG0, and `RemovalClass` is the answer DG1a moves that gate onto
   is the member owner's act and no admin list exists for `update` to re-grant from, so a recreated
   account is not the installation's again.
 
-An **unclassified type** — one added to `allowedTypes` and no row — is irreplaceable, and so is a
-change that carries no member where the rule needs one. A task that finds a type Fugaro makes missing
+An **unclassified type** — one added to `allowedTypes` and no row — is irreplaceable, and so are a
+change that carries no member where the rule needs one, a member whose address is empty
+(`serviceAccount:` or `user:` with nothing after it) and a record that names nobody. Blank inputs
+are refused rather than compared with each other. A task that finds a type Fugaro makes missing
 from the table adds its row in its own change.
 
 Consumers: DG1a (the managed gate), DG2 (`tf.Guard` and `--allow-delete`), DG3 (`prevent_destroy`),

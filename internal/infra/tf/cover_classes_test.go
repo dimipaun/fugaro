@@ -66,7 +66,8 @@ func TestRemovalClassFollowsD3430(t *testing.T) {
 	// alone, and DG0 moves none of it: the two types D3430 makes recreatable —
 	// a registry repository and a service account — keep refusing here until
 	// DG1a takes the gate that asks this onto RemovalClass, which is what makes
-	// DG0 inert.
+	// DG0 inert. TestRefusesRemovalTypeIsD1551sRuleUnchanged holds the whole
+	// predicate against D1551's own list.
 	for _, tc := range []struct {
 		typ  string
 		want bool
@@ -81,6 +82,67 @@ func TestRemovalClassFollowsD3430(t *testing.T) {
 		if got := RefusesRemovalType(tc.typ); got != tc.want {
 			t.Errorf("RefusesRemovalType(%s) = %v, want %v: it is D1551's column, and an unclassified type is irreplaceable", tc.typ, got, tc.want)
 		}
+	}
+}
+
+// TestRefusesRemovalTypeIsD1551sRuleUnchanged pins the LIVE predicate: DG0 adds
+// the class column beside D1551's table and moves no answer the gate gives
+// today. The list below is D1551's own — the types whose objects hold data a
+// delete or a replace would destroy — written out here rather than read from
+// the table, so this test is what fails if the predicate is ever pointed at the
+// class column (the two types whose columns disagree, an artifact registry
+// repository and a service account, would stop refusing) or if a type is
+// reclassified under one rule without the other.
+//
+// Mutation (run, restore): read the class column in RefusesRemovalType, and the
+// two types named below fail; drop a name from D1551's side of the table, and
+// the same type fails here.
+func TestRefusesRemovalTypeIsD1551sRuleUnchanged(t *testing.T) {
+	d1551DataBearing := map[string]bool{
+		"google_apikeys_key":                   true,
+		"google_artifact_registry_repository":  true,
+		"google_firebase_database_instance":    true,
+		"google_kms_crypto_key":                true,
+		"google_logging_log_view":              true,
+		"google_logging_project_bucket_config": true,
+		"google_secret_manager_secret":         true,
+		"google_service_account":               true,
+		"google_storage_bucket":                true,
+		"google_storage_bucket_object":         true,
+	}
+	for typ := range allowedTypes {
+		bearing, classified := DataBearingType(typ)
+		if !classified {
+			t.Fatalf("%s is in allowedTypes and in no removalClasses row: every type is decided, and this test reads that decision", typ)
+		}
+		if want := d1551DataBearing[typ]; bearing != want {
+			t.Errorf("DataBearingType(%s) says data-bearing=%v, want %v: D1551's list is what the live predicate reads", typ, bearing, want)
+		}
+		if got, want := RefusesRemovalType(typ), d1551DataBearing[typ]; got != want {
+			t.Errorf("RefusesRemovalType(%s) = %v, want %v: DG0 is inert, so the gate's answer is D1551's and not the class column's", typ, got, want)
+		}
+	}
+	// Every data-bearing name is a real row: a list entry for a type the table
+	// does not carry would make the loop above assert nothing about it.
+	for typ := range d1551DataBearing {
+		if _, ok := removalClasses[typ]; !ok {
+			t.Errorf("%s is data-bearing in D1551's list and has no removalClasses row", typ)
+		}
+	}
+	// And the names the two rules disagree about, from the class side: the
+	// predicate refuses them while their class column reads recreatable, which
+	// is the state DG1a changes and nothing before it.
+	for _, typ := range []string{"google_artifact_registry_repository", "google_service_account"} {
+		if got := RemovalClass(removal(typ, nil), nil); got != ClassRecreatable {
+			t.Errorf("RemovalClass(%s) = %s, want %s: D3430 makes it recreatable, which is why the two columns are compared above", typ, got, ClassRecreatable)
+		}
+		if !RefusesRemovalType(typ) {
+			t.Errorf("RefusesRemovalType(%s) = false, want true: the class column is D3430's and the predicate still reads D1551's", typ)
+		}
+	}
+	// A type nobody decided refuses for a caller holding the type alone.
+	if !RefusesRemovalType("google_firestore_database") {
+		t.Error("an unclassified type does not refuse its removal: the live predicate fails open on the one input it cannot read")
 	}
 }
 
@@ -127,6 +189,14 @@ func TestPersonGrantIsIrreplaceable(t *testing.T) {
 	if got := RemovalClass(grantTo("google_project_iam_member", "user:"+person), []string{"someone-else@example.com"}); got != ClassIrreplaceable {
 		t.Errorf("RemovalClass of an unrecorded person's grant = %s, want %s: another person's record admits nothing", got, ClassIrreplaceable)
 	}
+	// A member that names nobody and a roster entry that records nobody are
+	// both no record: comparing the two blanks must not admit the delete.
+	if got := RemovalClass(grantTo("google_project_iam_member", "user:"), []string{""}); got != ClassIrreplaceable {
+		t.Errorf("RemovalClass of a grant to \"user:\" with a blank roster entry = %s, want %s: two blanks are not a recorded person", got, ClassIrreplaceable)
+	}
+	if got := RemovalClass(grantTo("google_project_iam_member", "user:"), []string{"user:"}); got != ClassIrreplaceable {
+		t.Errorf("RemovalClass of a grant to \"user:\" with a prefix-only roster entry = %s, want %s: an entry that names nobody records nobody", got, ClassIrreplaceable)
+	}
 }
 
 // TestServiceAccountGrantIsRecreatable is the other half of the member rule: a
@@ -152,6 +222,12 @@ func TestServiceAccountGrantIsRecreatable(t *testing.T) {
 	rc := removal("google_project_iam_member", map[string]any{"member": account})
 	if got := RemovalClass(rc, []string{"operator@example.com"}); got != ClassRecreatable {
 		t.Errorf("RemovalClass of a service account's grant with a roster = %s, want %s: a binding is judged by its member, not by the roster", got, ClassRecreatable)
+	}
+	// The prefix without an address is not an account Fugaro wrote: a plan that
+	// wrote "serviceAccount:" and nothing after it is refused rather than
+	// admitted as a binding.
+	if got := RemovalClass(removal("google_project_iam_member", map[string]any{"member": "serviceAccount:"}), nil); got != ClassIrreplaceable {
+		t.Errorf("RemovalClass of a grant to \"serviceAccount:\" = %s, want %s: the prefix alone names no account", got, ClassIrreplaceable)
 	}
 }
 
