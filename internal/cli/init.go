@@ -2035,6 +2035,22 @@ func (r *initRun) accountWriter() io.Writer {
 // at first, which is what the person is confirming (D3438) — and the addresses
 // go with the stream, which no state puts on a screen any more.
 func (r *initRun) planBlock(plan *tf.Plan) {
+	if r.gateStandsIn() {
+		// Nobody confirms this plan, so there is no review to ask for: "⚠ Review
+		// these first" is a heading for a person about to answer, and under the
+		// gate the answer is already the marks' (the owner's feedback of
+		// 2026-11-28). The screen gets what the plan holds — one line — and the
+		// log the whole of it, the review lines included (D3438).
+		if plan == nil {
+			fmt.Fprint(r.w, tf.Brief(plan))
+			return
+		}
+		fmt.Fprintf(r.w, "Plan: %s.\n", tf.Counts(plan))
+		if r.rep != nil && r.repLog != nil {
+			fmt.Fprint(r.rep.Log(), tf.Brief(plan)+tf.Summary(plan))
+		}
+		return
+	}
 	if r.rep == nil || r.repLog == nil {
 		fmt.Fprint(r.w, tf.Brief(plan))
 		return
@@ -3012,7 +3028,11 @@ func (r *initRun) ask(what string) (bool, error) {
 //
 // The banner is printed only where something follows it that answers for the
 // step: a question, a flag, or a person whose presence is the answer. An arm
-// that asks nothing at all prints the step's note under willDo instead.
+// that asks nothing at all prints the step's note under willDo instead
+// (refreshManaged.asksNothing) — and it is only the refresh's own document-free
+// steps that reach one: a step carrying a document the gate did not admit keeps
+// its banner, which is what says it is outside what the run announced
+// (TestUpdateManagedRetirementDoesNotCarryALooseningIn).
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
@@ -3070,8 +3090,19 @@ func (r *initRun) askBanner(what string) (bool, error) {
 // The banner goes to the command's own output, where the typed confirmation's
 // went before it, and to the run's writer only through it: a --json run prints
 // its document on stdout, and the refusal below is the error cobra reports.
-func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditions, yes bool, what string) error {
+//
+// managed is whether the gate stands in for this write (initRun.gateStandsIn).
+// Where it does, the write is no question and no warning: the step's own record
+// is one plain line, and neither the banner nor the sentence saying nothing is
+// typed is printed (the owner's feedback of 2026-11-28 — a finished step read as
+// a question).
+func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditions, managed, yes bool, what string) error {
 	out := cmd.OutOrStdout()
+	if managed && initflow.PersonAtTheTerminal(c) {
+		fmt.Fprintf(out, "note: %s\n", what)
+		fmt.Fprintf(out, "  %s\n", initflow.OwnerProceeded())
+		return nil
+	}
 	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
 	switch {
 	case c.Ask:
@@ -3156,6 +3187,12 @@ const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never
 // was asked and the caller leaves the step for the user. What answers for it is
 // confirmNow: the person at the terminal, who types nothing, and the y/N --ask
 // puts back.
+//
+// The banner stays for every step this reaches, whatever the gate's verdict
+// was: a money or permanent step is the owner's own, and the step that reads it
+// is one the run's one confirmation did not cover
+// (TestManagedBillableFirstBuildKeepsTheOwnersTerminal, and askClass's own
+// ruling of 2026-10-20).
 func (r *initRun) askClass(what string, ownAnswer bool) (confirmed, reachable bool, err error) {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	switch r.stepConfirmation(ownAnswer) {

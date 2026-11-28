@@ -468,8 +468,8 @@ func TestWorkflowAddInAManagedProjectFilesTheAdmissionAtTheOwnersTerminal(t *tes
 		t.Errorf("the write did not land:\n%s", got)
 	}
 	assertNoPrompt(t, out)
-	if !strings.Contains(out, initflow.GateProceeded()) {
-		t.Errorf("the run does not say what decided the step:\n%s", out)
+	if strings.Contains(out, initflow.GateProceeded()) {
+		t.Errorf("a step that needs no answer read the sentence of a confirmation:\n%s", out)
 	}
 	if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
 		t.Errorf("the day holds %+v, want the one admission of this write", recs)

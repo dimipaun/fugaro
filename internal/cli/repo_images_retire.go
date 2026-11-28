@@ -332,7 +332,7 @@ func (s *imageMapRetireStage) Apply(ctx context.Context, env initflow.Env) (init
 	}
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
-		return confirmStageWrite(cmd, p.lc, s.e.r.conditions(), env.Yes, imageMapRetireWhat)
+		return confirmStageWrite(cmd, p.lc, s.e.r.conditions(), s.e.r.gateStandsIn(), env.Yes, imageMapRetireWhat)
 	}); err != nil {
 		return initflow.Outcome{}, err
 	}

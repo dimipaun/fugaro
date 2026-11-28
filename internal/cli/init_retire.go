@@ -862,7 +862,7 @@ func (r *initRun) retireConsent(ctx context.Context, t *tf.TF, rets []infra.Reti
 		return r.retireConfirm(rets, spec, undone)
 	}
 	if !plan {
-		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+		gateNote(r.w, r.gateProceeded())
 		return nil
 	}
 	return r.retireAdmit(ctx, t, rets, spec, undone, pl, imports)
@@ -917,7 +917,7 @@ func (r *initRun) retireAdmit(ctx context.Context, t *tf.TF, rets []infra.Retire
 	if !initflow.GateStandsIn(r.conditions(), m) {
 		return r.retireConfirm(rets, spec, undone)
 	}
-	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	gateNote(r.w, r.gateProceeded())
 	return nil
 }
 

@@ -263,8 +263,8 @@ func assertNotAsked(t *testing.T, errOut string, want string) {
 	if strings.Contains(errOut, "Type "+initProjectName+" to submit the build: ") {
 		t.Errorf("a managed project's own terminal was asked to type the project's name:\n%s", errOut)
 	}
-	if !strings.Contains(errOut, initflow.GateProceeded()) {
-		t.Errorf("the person did not read that the gate's verdict is the confirmation:\n%s", errOut)
+	if strings.Contains(errOut, initflow.GateProceeded()) {
+		t.Errorf("a step that needs no answer read the sentence of a confirmation:\n%s", errOut)
 	}
 	if !strings.Contains(errOut, want) {
 		t.Errorf("the plan the verdict is about is not what was printed:\n%s", errOut)

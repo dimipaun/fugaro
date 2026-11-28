@@ -176,12 +176,14 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	//
 	// Which sentence that is read as is the session's own, and nothing else in
 	// this path is: a coding agent's session reads AgentProceeded, which names
-	// the marker this step proceeds under, and the owner's terminal reads
-	// GateProceeded, which says where the verdict was recorded. gateSentence is
-	// the one place that choice is made (update_managed.go), so this surface
-	// cannot be the one that prints the owner's line to a session.
+	// the marker this step proceeds under, and the owner's own terminal reads
+	// no sentence at all — the diff above and the step's own line are the whole
+	// of what a step nobody is asked about prints (the owner's run of
+	// 2026-11-27/28). gateSentence is the one place that choice is made
+	// (update_managed.go), so this surface cannot be the one that prints the
+	// owner's line to a session.
 	if !e.Yes && !e.Typed && initflow.GateStandsIn(conds, e.Managed) {
-		fmt.Fprintf(out, "  %s\n", gateSentence(conds.Agent))
+		gateNote(out, gateSentence(conds.Agent))
 	} else if e.Typed {
 		// A widening is the owner's own step, and the owner's own terminal
 		// asks nothing for it (D1552, D1555): a coding agent's session was

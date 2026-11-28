@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -492,9 +493,8 @@ func (r *initRun) gateLeavesTheIAMCall() bool {
 
 // gateProceeded is the line a gate-admitted step prints where its confirmation
 // would have been: the agent's own sentence in a coding agent's session, and
-// the owner's in their own terminal (initflow's AgentProceeded and
-// GateProceeded, which are two sentences because they are addressed to two
-// readers).
+// nothing in the owner's own terminal, where the step's record is the whole of
+// what is read (gateSentence).
 func (r *initRun) gateProceeded() string {
 	return gateSentence(agentMarker(os.Getenv, r.stdinTerminal()))
 }
@@ -502,16 +502,26 @@ func (r *initRun) gateProceeded() string {
 // gateSentence is the same choice for a caller that holds the marker rather
 // than the run: the settings write's reader is a surface of its own (it is
 // handed initflow.Conditions, not an initRun), and a second copy of the rule
-// here would be the copy that drifts. An empty marker is the owner's own
-// terminal, which reads GateProceeded — the sentence that says a verdict was
-// taken, not GateOrdinary's, which says a step was announced and no rule read
-// anything. A step that reaches a sentence at all has a verdict behind it: the
-// gate's answer is what the caller passed.
+// here would be the copy that drifts. Only a coding agent's session reads a
+// sentence here: the owner's own terminal reads the step's own record and
+// nothing else, because a step that needs no answer may not read as a question
+// — the sentence saying which verdict stood in for the confirmation is what
+// made it read as one (the owner's run of 2026-11-27/28, and initflow's
+// GateProceeded, which no surface prints any more).
 func gateSentence(marker string) string {
 	if marker != "" {
 		return initflow.AgentProceeded(marker)
 	}
-	return initflow.GateProceeded()
+	return ""
+}
+
+// gateNote prints the gate's own sentence under the step it decided, and prints
+// nothing where there is none: the one place that decides what a step whose
+// confirmation the verdict replaced is read as (gateSentence above).
+func gateNote(w io.Writer, sentence string) {
+	if sentence != "" {
+		fmt.Fprintf(w, "  %s\n", sentence)
+	}
 }
 
 // gateContentWarning is the line a gated step prints above the rules the gate
@@ -692,7 +702,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	gateNote(r.w, r.gateProceeded())
 	return true, nil
 }
 
@@ -732,7 +742,7 @@ func (s *rulesStage) gateStep(ctx context.Context) (bool, error) {
 	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	gateNote(r.w, r.gateProceeded())
 	return true, nil
 }
 
@@ -835,7 +845,7 @@ func (s *policyMigrateStage) gateStep(ctx context.Context, m *policyMigration) (
 		}
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	gateNote(r.w, r.gateProceeded())
 	return true, nil
 }
 
@@ -960,7 +970,7 @@ func (s *workspaceStage) gateStep(ctx context.Context, p *workspacePublication) 
 		}
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	gateNote(r.w, r.gateProceeded())
 	return true, nil
 }
 
@@ -1028,7 +1038,7 @@ func (s *versionStampStage) gateStep(ctx context.Context, p *versionStampPlan, d
 	if !initflow.GateStandsIn(r.conditions(), m) {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+	gateNote(r.w, r.gateProceeded())
 	return true, nil
 }
 

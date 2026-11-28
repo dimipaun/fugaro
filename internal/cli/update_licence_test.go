@@ -318,12 +318,15 @@ func TestTheReviewCoversTheRenewalBindingTheUpdatePlans(t *testing.T) {
 	// The fixture's own check: the review really was taken, so the assertion
 	// above is about a step the review judged rather than about a run that
 	// asked each step separately.
-	// A managed project's covered step reads the gate's sentence rather than
-	// the review's: the run's one confirmation is the review's, and the gate
-	// takes that verdict on the plan and records it (U3, D1016), so it is what
-	// stands where the review's own question stood in an unmanaged project.
-	if !strings.Contains(out, initflow.GateProceeded()) {
-		t.Errorf("no step of this update read as covered by the run's one confirmation, so this fixture is not the review's own case:\n%s", out)
+	//
+	// What says so is the absence of a question, and since the owner's run of
+	// 2026-11-27/28 that is the whole of what it can be: the gate takes the
+	// run's one confirmation on the plan and records it (U3, D1016), and a step
+	// whose confirmation the verdict replaced prints one plain record and no
+	// sentence of its own any more. A run that asked each step separately is
+	// exactly the run that prints the banner and the review block below.
+	if strings.Contains(out, "⚠ CONFIRM") || strings.Contains(out, "⚠ Review these first") {
+		t.Errorf("a step of this update asked its own confirmation, so this fixture is not the review's own case:\n%s", out)
 	}
 }
 

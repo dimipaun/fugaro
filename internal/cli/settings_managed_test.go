@@ -866,15 +866,14 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 				t.Errorf("the write did not land:\n%s", after)
 			}
 			assertNoPrompt(t, out)
-			// The owner's own terminal reads the sentence that says where the
-			// verdict was taken, not GateOrdinary's — this step's diff IS the
-			// document the gate judged and the record above names its digest,
-			// which is not a step no rule read anything about.
-			if !strings.Contains(out, initflow.GateProceeded()) {
-				t.Errorf("the run does not say what decided the step:\n%s", out)
-			}
-			if strings.Contains(out, initflow.GateOrdinary()) {
-				t.Errorf("the step says no rule read anything, and the gate read this edit's document:\n%s", out)
+			// The owner's own terminal reads the diff the write printed and no
+			// sentence at all: a step that needs no answer may not read as a
+			// question, and the record above names the digest of the document
+			// the gate judged (the owner's run of 2026-11-27/28).
+			for _, gate := range []string{initflow.GateProceeded(), initflow.GateOrdinary()} {
+				if strings.Contains(out, gate) {
+					t.Errorf("a step that needs no answer read the sentence of a confirmation:\n%s", out)
+				}
 			}
 			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
 				t.Errorf("the day holds %+v, want the one admission of this write", recs)

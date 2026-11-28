@@ -1150,7 +1150,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 // asking anyone for it (locationLine).
 func (r *initRun) confirmDatabase(what string) error {
 	if r.gateStandsIn() {
-		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+		gateNote(r.w, r.gateProceeded())
 		return nil
 	}
 	return r.confirmOrdinary(what, "the database was not written", r.firebaseReason())

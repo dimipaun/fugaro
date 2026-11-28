@@ -1416,8 +1416,11 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 			t.Errorf("a managed project's own terminal printed the question %q:\n%s", no, got)
 		}
 	}
-	if !strings.Contains(got, initflow.GateProceeded()) {
-		t.Errorf("the run does not say what decided the step:\n%s", got)
+	// The step's own record is the whole of what the owner reads: the sentence
+	// accounting for the confirmation the verdict replaced is what made a
+	// finished step read as a question (the owner's run of 2026-11-27/28).
+	if strings.Contains(got, initflow.GateProceeded()) {
+		t.Errorf("a step that needs no answer read the sentence of a confirmation:\n%s", got)
 	}
 	// The review is the run's own account of what it would do, and the gate
 	// stands in for the confirmation it used to precede: the screen is the

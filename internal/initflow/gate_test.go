@@ -302,8 +302,8 @@ func TestNobodyIsAtTheSessionIsThePipeAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestGateSentencesNameNoWayPast: the two sentences a run prints when the gate
-// stood in for a confirmation are read by the person the prompt would have
+// TestGateSentencesNameNoWayPast: the sentences the gate's vocabulary carries
+// for the steps it stood in for are read by the person the prompt would have
 // asked, and by nobody else — but a coding agent's session can read them too
 // (it is the session that can change the line above), so they follow
 // AgentRefusal's own rule and name no flag, no variable and no marker a reader

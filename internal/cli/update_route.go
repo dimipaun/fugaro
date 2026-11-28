@@ -783,7 +783,7 @@ func (s *routeStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 	}
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
-		return p.confirm(cmd, env.Yes, s.e.r.w, s.e.r.conditions())
+		return p.confirm(cmd, env.Yes, s.e.r.w, s.e.r.gateStandsIn(), s.e.r.conditions())
 	}); err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -806,9 +806,9 @@ func (s *routeStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 // repository's own admission (R5), and the workspace's money is spent under
 // the entry's allow-list the workspace owner published. There is nothing here
 // to reserve for the owner's own typed word.
-func (p *routePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer, c initflow.Conditions) error {
+func (p *routePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer, managed bool, c initflow.Conditions) error {
 	p.print(w)
-	return confirmStageWrite(cmd, p.lc, c, yes, p.what())
+	return confirmStageWrite(cmd, p.lc, c, managed, yes, p.what())
 }
 
 // what names this write as the confirmation reads it.
