@@ -319,6 +319,50 @@ func TestDoctorRouting(t *testing.T) {
 				t.Errorf("the measurement does not say the bundle holds them: %q", cs[0].Problem)
 			}
 		})
+
+		// The read stands behind credsOwnerOnly, as every other reader of the
+		// bundle does: a run's own process is answered that the bundle was not
+		// read rather than answered, and the document is left unopened. A
+		// coding agent's session never gets this far (`--check-bitbucket-token`
+		// is refused at the flag, refuseBitbucketTokenReadInAgent), so the
+		// process that meets the guard is a run's — and every other sub-test
+		// here runs with no marker at all, so without this one the refusal
+		// could be deleted from doctorRoutingBundleChecks and the whole suite
+		// would still pass.
+		t.Run("the refusal stands in front of the read", func(t *testing.T) {
+			for _, marker := range []string{"FUGARO_RUN", "CLOUD_RUN_JOB"} {
+				t.Run(marker, func(t *testing.T) {
+					r := doctorRoutingRig(t, doctorRoutingSources)
+					id := bundleFixtureFor(t, r.sm, "aurora", []byte(config.BitbucketSecret+": "+credsValue(t, "token")+"\n"))
+					t.Setenv(marker, "aurora/run-1")
+
+					o, out := doctorRoutingOutput(t, checkBitbucketTokenFlag)
+					cs := checksByID(o, doctorRoutingBundleID)
+					if len(cs) != 1 || cs[0].Severity != "info" {
+						t.Fatalf("routing-bundle-source = %+v, want one unread line with %s set:\n%s", cs, marker, out)
+					}
+					// An unread line is a read that answers nothing: not ok,
+					// info so that it fails no run, and an audit line rather
+					// than a measurement.
+					if cs[0].OK || cs[0].Class != doctorClassAudit {
+						t.Errorf("routing-bundle-source = %+v, want a not-ok audit line: whether the bundle holds the table's credentials is not answered with %s set", cs[0], marker)
+					}
+					for _, want := range []string{"was not read", "rerun doctor at your own terminal"} {
+						if !strings.Contains(cs[0].Problem+cs[0].Fix, want) {
+							t.Errorf("the line does not carry %q, so a reader cannot tell a bundle that was refused from one that was read:\n%s", want, out)
+						}
+					}
+					if checksFail(cs, true) {
+						t.Errorf("a bundle nobody was allowed to read fails doctor under --strict: %+v", cs)
+					}
+					for _, got := range r.sm.Accessed() {
+						if got == id {
+							t.Errorf("the bundle's document was opened with %s set: the refusal is asked before the store is opened, and the bundle holds every model credential the service issues", marker)
+						}
+					}
+				})
+			}
+		})
 	})
 
 	// The launcher's pool where the project declares none: no designation could
